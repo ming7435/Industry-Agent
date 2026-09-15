@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设备监测控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <span class="eyebrow">工业设备监测</span>
+        <h1>实时设备监测</h1>
+        <p id="deviceLabel" class="subline">数据源：模拟工厂 · 正在连接</p>
+      </div>
+      <div class="toolbar">
+        <label class="switch-control" title="开启或暂停自动监测">
+          <input id="monitorSwitch" type="checkbox" checked>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span id="switchLabel">监测开启</span>
+        </label>
+        <button id="resetStats" class="button" type="button">归零统计</button>
+      </div>
+    </header>
+
+    <section class="status-strip" aria-label="运行状态">
+      <div class="status-item"><span>监测状态</span><strong id="monitorState">--</strong></div>
+      <div class="status-item"><span>设备状态</span><strong id="deviceState">--</strong></div>
+      <div class="status-item"><span>当前告警</span><strong id="alarmCode">--</strong></div>
+      <div class="status-item"><span>采样次数</span><strong id="sampleCount">--</strong></div>
+      <div class="status-item"><span>告警事件次数</span><strong id="alarmEventCount">--</strong></div>
+      <div class="status-item"><span>Agent诊断任务</span><strong id="triggerCount">--</strong></div>
+      <div class="status-item"><span>采样周期</span><strong id="sampleInterval">--</strong></div>
+      <div class="status-item"><span>整机健康度</span><strong id="healthScore">--</strong></div>
+      <div id="connectionBadge" class="connection-badge">连接中</div>
+    </section>
+
+    <section class="main-grid">
+      <section class="panel metrics-panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">实时快照</span><h2>实时指标</h2></div>
+          <span id="lastSample" class="muted">--</span>
+        </div>
+        <div id="metrics" class="metrics-grid"></div>
+        <div id="missingVibration" class="notice" hidden>
+          当前设备数据源没有提供振动字段，振动不会被其他指标替代；其他设备指标仍会继续监测。
+        </div>
+        <div class="subsection-heading"><span class="eyebrow">设备联锁与执行部件</span><strong>整机状态</strong></div>
+        <div id="equipmentStates" class="equipment-grid"><div class="empty-state">等待设备状态</div></div>
+      </section>
+
+      <section class="panel decision-panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">监测判定</span><h2>监测判定</h2></div>
+          <span id="decisionStatus" class="severity-pill normal">正常</span>
+        </div>
+        <div id="observations" class="observation-list"><div class="empty-state">等待实时数据</div></div>
+        <div class="threshold-note">
+          <span>触发条件</span>
+          <strong>关键故障立即触发；普通指标阈值+5秒；间歇故障5分钟内3次；趋势/联合异常</strong>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel trigger-panel">
+      <div class="panel-heading">
+        <div><span class="eyebrow">诊断移交</span><h2>诊断触发记录</h2></div>
+        <span class="muted">只记录监测器已确认的触发事件</span>
+      </div>
+      <div id="triggers" class="trigger-list"><div class="empty-state">暂无触发记录</div></div>
+    </section>
+
+    <section class="panel diagnosis-panel">
+      <div class="panel-heading">
+        <div><span class="eyebrow">智能诊断</span><h2>诊断结果</h2></div>
+        <span id="diagnosisStatus" class="severity-pill normal">等待异常</span>
+      </div>
+      <div id="diagnosisResult" class="diagnosis-result">
+        <div class="empty-state">满足触发条件后自动生成诊断结果</div>
+      </div>
+    </section>
+
+    <footer id="errorBar" class="error-bar" hidden></footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
