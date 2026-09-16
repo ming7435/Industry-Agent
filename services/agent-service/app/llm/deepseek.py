@@ -73,7 +73,12 @@ class DeepSeekClient:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 body = response.read().decode("utf-8")
-        except (HTTPError, URLError, TimeoutError) as error:
+        except HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                "DeepSeek 请求失败：HTTP %s %s" % (error.code, detail)
+            ) from error
+        except (URLError, TimeoutError) as error:
             raise RuntimeError("DeepSeek 请求失败：%s" % error) from error
 
         try:

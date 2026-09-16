@@ -462,7 +462,12 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
   return (
     <section className="panel workshop-panel">
       <div className="factory-map" aria-label="车间设备分布图">
-        <Machine3DScene status={selectedStatus} onSelect={() => selectedMachine && onSelectMachine(selectedMachine.id)} />
+        <Machine3DScene
+          machines={machines}
+          selectedMachineId={selectedMachineId}
+          status={selectedStatus}
+          onSelect={(machineId) => onSelectMachine(machineId || selectedMachine?.id)}
+        />
         <div className="scene-overlay">
           <div>
             <span className="eyebrow">车间总览</span>
@@ -474,22 +479,6 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
             <span><i className="legend-dot fault" />故障</span>
           </div>
         </div>
-        {machines.map((machine) => {
-          const status = machineStatus(machine, machine.result);
-          return (
-            <button
-              key={machine.id}
-              type="button"
-              className={`scene-device-badge ${status} ${machine.id === selectedMachineId ? "active" : ""}`}
-              style={{ left: `${machine.x}%`, top: `${machine.y}%`, bottom: "auto" }}
-              onClick={() => onSelectMachine(machine.id)}
-              aria-label={`${machine.name} ${machineStatusLabel(status)}`}
-            >
-              <strong>{machine.name}</strong>
-              <span>{machineStatusLabel(status)}</span>
-            </button>
-          );
-        })}
         <div className="scene-control-hint">内部加工动画 · 拖动旋转 · 滚轮缩放</div>
       </div>
       <div className="map-summary">
@@ -519,13 +508,25 @@ function machineStatusLabel(status) {
   return "正常";
 }
 
-function Machine3DScene({ status, onSelect }) {
+function Machine3DScene({ machines = [], selectedMachineId, status, onSelect }) {
   const mountRef = useRef(null);
   const onSelectRef = useRef(onSelect);
+  const machinesRef = useRef(machines);
+  const hoverTimerRef = useRef(null);
+  const hoveredMachineRef = useRef(null);
+  const [hoveredLabel, setHoveredLabel] = useState(null);
+  const sceneMachineState = useMemo(
+    () => machines.map((machine) => `${machine.id}:${machine.live ? 1 : 0}`).join("|"),
+    [machines],
+  );
 
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
+
+  useEffect(() => {
+    machinesRef.current = machines;
+  }, [machines]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -559,6 +560,30 @@ function Machine3DScene({ status, onSelect }) {
     controls.zoomSpeed = .72;
     controls.update();
 
+    const machineById = new Map(machinesRef.current.map((machine) => [machine.id, machine]));
+    const getCurrentMachine = (id) => machinesRef.current.find((machine) => machine.id === id);
+    const currentStatusForMachine = (id) => {
+      const machine = getCurrentMachine(id);
+      return machineStatus(machine, machine?.result);
+    };
+    const statusForMachine = (id) => machineStatus(machineById.get(id), machineById.get(id)?.result);
+    const colorForMachine = (id) => statusColor(statusForMachine(id));
+    const isSelectedMachine = (id) => id === selectedMachineId;
+    const isAlertStatus = (localStatus) => {
+      return localStatus === "fault" || localStatus === "alarm" || localStatus === "warning";
+    };
+    const labelForMachine = (id) => {
+      const machine = getCurrentMachine(id);
+      if (!machine) return null;
+      const localStatus = currentStatusForMachine(id);
+      return {
+        id,
+        name: machine.name || id,
+        type: machine.type || "设备",
+        status: localStatus,
+        statusLabel: machineStatusLabel(localStatus),
+      };
+    };
     const accent = statusColor(status);
     const floorMat = new THREE.MeshStandardMaterial({ color: 0xe4ecea, roughness: .84, metalness: .02 });
     const roadMat = new THREE.MeshStandardMaterial({ color: 0xc4d3d0, roughness: .78, metalness: .01 });
@@ -575,7 +600,6 @@ function Machine3DScene({ status, onSelect }) {
     const lightMat = new THREE.MeshStandardMaterial({ color: 0xb9bec2, roughness: .55, metalness: .12, transparent: true, opacity: .68 });
     const glassMat = new THREE.MeshStandardMaterial({ color: 0x8fb4bc, roughness: .2, metalness: .04, transparent: true, opacity: .24, side: THREE.DoubleSide });
     const accentMat = new THREE.MeshStandardMaterial({ color: accent, roughness: .42, metalness: .12, emissive: accent, emissiveIntensity: .08 });
-    const translucentAccent = new THREE.MeshStandardMaterial({ color: accent, transparent: true, opacity: .45, roughness: .6, metalness: .05, side: THREE.DoubleSide });
     const innerMat = new THREE.MeshStandardMaterial({ color: 0x95a0a5, roughness: .52, metalness: .28 });
     const railMat = new THREE.MeshStandardMaterial({ color: 0x49545a, roughness: .36, metalness: .45 });
     const rawMat = new THREE.MeshStandardMaterial({ color: 0xb7822a, roughness: .42, metalness: .22, emissive: 0x3a2300, emissiveIntensity: .05 });
@@ -583,7 +607,20 @@ function Machine3DScene({ status, onSelect }) {
     const cutterMat = new THREE.MeshStandardMaterial({ color: 0x425059, roughness: .28, metalness: .78 });
     const chipMat = new THREE.MeshStandardMaterial({ color: 0xd0a33c, roughness: .5, metalness: .38, emissive: 0x5a3800, emissiveIntensity: .06 });
     const edgeMat = new THREE.LineBasicMaterial({ color: 0x263238, transparent: true, opacity: .42 });
-    const scanMat = new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: .22, side: THREE.DoubleSide, depthWrite: false });
+    const hitMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .001, depthWrite: false });
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const interactiveObjects = [];
+    const alertEffects = [];
+
+    const registerMachineObject = (root, id, hitTarget) => {
+      root.userData.machineId = id;
+      root.traverse((object) => {
+        object.userData.machineId = id;
+      });
+      if (hitTarget) interactiveObjects.push(hitTarget);
+      return root;
+    };
 
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(26, 16), floorMat);
     floor.rotation.x = -Math.PI / 2;
@@ -621,25 +658,63 @@ function Machine3DScene({ status, onSelect }) {
     addSceneBox([.08, .03, 3.95], [-3.4, -.235, .02], safetyMat);
     addSceneBox([.08, .03, 3.95], [3.4, -.235, .02], safetyMat);
 
-    const addConveyor = (size, position, rotation = [0, 0, 0]) => {
+    const addConveyor = (size, position, rotation = [0, 0, 0], edgeNormal = new THREE.Vector3(0, 0, 1)) => {
       addSceneBox(size, position, conveyorMat, rotation);
-      addSceneBox([size[0], .035, .08], [position[0], position[1] + .06, position[2] - size[2] / 2], conveyorEdgeMat, rotation);
-      addSceneBox([size[0], .035, .08], [position[0], position[1] + .06, position[2] + size[2] / 2], conveyorEdgeMat, rotation);
+      addSceneBox(
+        [size[0], .035, .08],
+        [position[0] - edgeNormal.x * size[2] / 2, position[1] + .06, position[2] - edgeNormal.z * size[2] / 2],
+        conveyorEdgeMat,
+        rotation,
+      );
+      addSceneBox(
+        [size[0], .035, .08],
+        [position[0] + edgeNormal.x * size[2] / 2, position[1] + .06, position[2] + edgeNormal.z * size[2] / 2],
+        conveyorEdgeMat,
+        rotation,
+      );
     };
-    addConveyor([3.25, .13, .52], [-4.35, -.08, 1.05]);
-    addConveyor([3.35, .13, .52], [4.35, -.08, 1.05]);
 
-    for (let index = 0; index < 7; index += 1) {
-      const leftRoller = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, .62, 16), railMat);
-      leftRoller.position.set(-5.75 + index * .46, .03, 1.05);
-      leftRoller.rotation.x = Math.PI / 2;
-      scene.add(leftRoller);
+    const conveyorRollers = [];
+    const conveyorFlights = [];
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const addConveyorSegment = (start, end, width = .52, flightCount = 6) => {
+      const from = new THREE.Vector3(start[0], -.08, start[1]);
+      const to = new THREE.Vector3(end[0], -.08, end[1]);
+      const delta = new THREE.Vector3().subVectors(to, from);
+      const length = delta.length();
+      const center = new THREE.Vector3().addVectors(from, to).multiplyScalar(.5);
+      const yaw = Math.atan2(delta.x, delta.z);
+      const rotation = [0, yaw - Math.PI / 2, 0];
 
-      const rightRoller = leftRoller.clone();
-      rightRoller.material = railMat;
-      rightRoller.position.x = 3.0 + index * .46;
-      scene.add(rightRoller);
-    }
+      const direction = delta.clone().normalize();
+      const normal = new THREE.Vector3(-direction.z, 0, direction.x);
+      addConveyor([length, .13, width], [center.x, center.y, center.z], rotation, normal);
+      const rollerCount = Math.max(3, Math.round(length / .45));
+      for (let index = 0; index <= rollerCount; index += 1) {
+        const t = index / rollerCount;
+        const point = from.clone().lerp(to, t);
+        const roller = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, width + .1, 16), railMat);
+        roller.position.set(point.x, .03, point.z);
+        roller.quaternion.setFromUnitVectors(yAxis, normal);
+        scene.add(roller);
+        conveyorRollers.push(roller);
+      }
+
+      for (let index = 0; index < flightCount; index += 1) {
+        const flight = new THREE.Mesh(new THREE.BoxGeometry(.08, .035, width + .06), railMat);
+        flight.userData.offset = index / flightCount;
+        flight.quaternion.setFromAxisAngle(yAxis, yaw - Math.PI / 2);
+        flight.castShadow = true;
+        scene.add(flight);
+        conveyorFlights.push({ mesh: flight, start: from, end: to });
+      }
+    };
+
+    addConveyorSegment([-5.45, -.25], [-5.45, 1.05], .46, 4);
+    addConveyorSegment([-5.45, 1.05], [-2.35, 1.05], .52, 7);
+    addConveyorSegment([-2.35, 1.05], [2.2, 1.05], .46, 8);
+    addConveyorSegment([2.2, 1.05], [4.95, 1.05], .52, 7);
+    addConveyorSegment([4.95, 1.05], [4.95, .45], .46, 4);
 
     addSceneBox([1.45, .42, .75], [-6.15, -.08, -4.95], blockMat);
     addSceneBox([1.55, .13, .85], [-6.15, .22, -4.95], roofMat);
@@ -654,6 +729,271 @@ function Machine3DScene({ status, onSelect }) {
       column.castShadow = true;
       scene.add(column);
     }
+
+    const addMachineHalo = (id, position, radius = 1.45) => {
+      const color = colorForMachine(id);
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(radius, radius + .07, 64),
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: isSelectedMachine(id) ? .72 : .24,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(position[0], -.245, position[2]);
+      scene.add(ring);
+      return ring;
+    };
+
+    const addMachineAlert = (id, position, radius = 1.45) => {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(radius + .1, radius + .24, 72),
+        new THREE.MeshBasicMaterial({
+          color: 0xd91f1f,
+          transparent: true,
+          opacity: 0,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(position[0], -.22, position[2]);
+      ring.visible = false;
+      scene.add(ring);
+
+      const glow = new THREE.PointLight(0xff2d2d, 0, 4.2);
+      glow.position.set(position[0], 1.35, position[2]);
+      scene.add(glow);
+      alertEffects.push({ id, ring, glow });
+      return { ring, glow };
+    };
+
+    const addBarFeeder = () => {
+      const id = "LNS-QL-SERVO-80-S2-001";
+      const color = colorForMachine(id);
+      const accentLocal = new THREE.MeshStandardMaterial({ color, roughness: .4, metalness: .12, emissive: color, emissiveIntensity: isSelectedMachine(id) ? .16 : .05 });
+      const feederWhiteMat = new THREE.MeshStandardMaterial({ color: 0xe6e9ec, roughness: .56, metalness: .08 });
+      const feederPanelMat = new THREE.MeshStandardMaterial({ color: 0xcfd5d8, roughness: .5, metalness: .12 });
+      const feederGlassMat = new THREE.MeshStandardMaterial({ color: 0x9eb9c0, roughness: .2, metalness: .04, transparent: true, opacity: .42, side: THREE.DoubleSide });
+      const feederGroup = new THREE.Group();
+      const feederRollers = [];
+      feederGroup.position.set(-5.45, -.28, -.8);
+      feederGroup.rotation.y = .1;
+      feederGroup.scale.set(.86, .86, .86);
+      scene.add(feederGroup);
+      addMachineHalo(id, [feederGroup.position.x, feederGroup.position.y, feederGroup.position.z], 1.5);
+      addMachineAlert(id, [feederGroup.position.x, feederGroup.position.y, feederGroup.position.z], 1.5);
+
+      const addFeederBox = (size, position, material, rotation = [0, 0, 0]) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+        mesh.position.set(...position);
+        mesh.rotation.set(...rotation);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        feederGroup.add(mesh);
+        return mesh;
+      };
+
+      const addFeederCylinder = (radius, length, position, material, rotation = [0, 0, 0], segments = 24) => {
+        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, segments), material);
+        mesh.position.set(...position);
+        mesh.rotation.set(...rotation);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        feederGroup.add(mesh);
+        return mesh;
+      };
+
+      const addTubeBetween = (start, end, radius, material) => {
+        const from = new THREE.Vector3(...start);
+        const to = new THREE.Vector3(...end);
+        const direction = new THREE.Vector3().subVectors(to, from);
+        const length = direction.length();
+        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 16), material);
+        mesh.position.copy(from.add(to).multiplyScalar(.5));
+        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        feederGroup.add(mesh);
+        return mesh;
+      };
+
+      addFeederBox([4.3, .08, 1.08], [0, .06, 0], railMat);
+      addFeederBox([4.05, .08, .1], [0, .18, -.48], darkMat);
+      addFeederBox([4.05, .08, .1], [0, .18, .48], darkMat);
+      addFeederBox([.18, .16, .24], [-1.92, .13, -.48], darkMat);
+      addFeederBox([.18, .16, .24], [-1.92, .13, .48], darkMat);
+      addFeederBox([.18, .16, .24], [1.92, .13, -.48], darkMat);
+      addFeederBox([.18, .16, .24], [1.92, .13, .48], darkMat);
+
+      addFeederBox([1.05, .78, .82], [-.35, .55, .03], feederPanelMat);
+      addFeederBox([.86, .52, .06], [-.35, .58, .46], feederWhiteMat);
+      addFeederBox([.5, .08, .08], [-.35, .9, .5], accentLocal);
+      addFeederBox([.42, .18, .04], [-.35, .46, .5], darkMat);
+
+      addTubeBetween([-1.45, .16, -.42], [-.82, .88, -.2], .035, railMat);
+      addTubeBetween([1.45, .16, -.42], [.82, .88, -.2], .035, railMat);
+      addTubeBetween([-1.45, .16, .42], [-.82, .88, .2], .035, railMat);
+      addTubeBetween([1.45, .16, .42], [.82, .88, .2], .035, railMat);
+
+      addFeederBox([4.1, .24, .72], [0, 1.02, 0], feederWhiteMat);
+      addFeederBox([4.28, .14, .84], [0, 1.2, 0], feederPanelMat);
+      addFeederBox([.34, .74, .84], [-2.0, .9, 0], feederPanelMat);
+      addFeederBox([.34, .66, .84], [2.0, .86, 0], feederPanelMat);
+      addFeederBox([3.75, .08, .64], [0, 1.37, -.18], feederWhiteMat, [-.18, 0, 0]);
+      addFeederBox([1.05, .055, .34], [-.82, 1.45, -.36], feederGlassMat, [-.18, 0, 0]);
+      addFeederBox([1.05, .055, .34], [.82, 1.45, -.36], feederGlassMat, [-.18, 0, 0]);
+      addFeederBox([4.08, .08, .12], [0, 1.31, .46], darkMat);
+
+      addFeederBox([3.85, .09, .24], [.18, .88, .43], conveyorMat);
+      addFeederCylinder(.09, 4.25, [.18, .94, .55], conveyorMat, [0, 0, Math.PI / 2], 32);
+      addFeederCylinder(.045, 4.0, [.08, 1.03, .43], rawMat, [0, 0, Math.PI / 2], 24);
+      const pusher = addFeederBox([.18, .16, .28], [-1.72, 1.03, .55], accentLocal);
+      addFeederBox([1.05, .09, .18], [1.28, 1.02, .58], accentLocal);
+      addFeederBox([.42, .18, .24], [2.1, .96, .55], darkMat);
+
+      addFeederBox([3.35, .055, .06], [0, .78, -.35], railMat);
+      addFeederBox([3.35, .055, .06], [0, .78, .35], railMat);
+
+      for (let index = 0; index < 8; index += 1) {
+        const roller = new THREE.Mesh(new THREE.CylinderGeometry(.055, .055, .78, 18), railMat);
+        roller.position.set(-1.45 + index * .42, .82, 0);
+        roller.rotation.x = Math.PI / 2;
+        roller.castShadow = true;
+        feederGroup.add(roller);
+        feederRollers.push(roller);
+      }
+
+      for (let index = 0; index < 4; index += 1) {
+        const wheelX = index < 2 ? -1.82 : 1.82;
+        const wheelZ = index % 2 === 0 ? -.55 : .55;
+        addFeederCylinder(.09, .08, [wheelX, .04, wheelZ], darkMat, [Math.PI / 2, 0, 0], 20);
+      }
+
+      const hitBox = new THREE.Mesh(new THREE.BoxGeometry(4.7, 1.6, 1.3), hitMat);
+      hitBox.position.set(0, .78, .02);
+      feederGroup.add(hitBox);
+      registerMachineObject(feederGroup, id, hitBox);
+      return { feederGroup, feederRollers, pusher };
+    };
+
+    const addRobotCell = () => {
+      const id = "ELITE-CS612-ROBOT-001";
+      const color = colorForMachine(id);
+      const accentLocal = new THREE.MeshStandardMaterial({ color, roughness: .38, metalness: .16, emissive: color, emissiveIntensity: isSelectedMachine(id) ? .18 : .06 });
+      const robotShellMat = new THREE.MeshStandardMaterial({ color: 0xf1f3f5, roughness: .34, metalness: .08 });
+      const robotArmMat = new THREE.MeshStandardMaterial({ color: 0xcfd4d8, roughness: .24, metalness: .62 });
+      const robotBandMat = new THREE.MeshStandardMaterial({ color: 0x172b68, roughness: .28, metalness: .2 });
+      const robotDarkMat = new THREE.MeshStandardMaterial({ color: 0x2a2f35, roughness: .42, metalness: .4 });
+      const robotGroup = new THREE.Group();
+      robotGroup.position.set(5.05, -.22, .2);
+      robotGroup.rotation.y = -1.05;
+      robotGroup.scale.set(.95, .95, .95);
+      scene.add(robotGroup);
+      addMachineHalo(id, [robotGroup.position.x, robotGroup.position.y, robotGroup.position.z], 1.28);
+      addMachineAlert(id, [robotGroup.position.x, robotGroup.position.y, robotGroup.position.z], 1.28);
+
+      const addRobotCylinder = (radius, length, position, material, rotation = [0, 0, 0], segments = 40) => {
+        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, segments), material);
+        mesh.position.set(...position);
+        mesh.rotation.set(...rotation);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        robotGroup.add(mesh);
+        return mesh;
+      };
+
+      const addRobotBox = (size, position, material, rotation = [0, 0, 0]) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+        mesh.position.set(...position);
+        mesh.rotation.set(...rotation);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        robotGroup.add(mesh);
+        return mesh;
+      };
+
+      const basePlate = addRobotCylinder(.58, .1, [0, .12, 0], robotDarkMat, [0, 0, Math.PI / 2], 54);
+      basePlate.scale.z = .55;
+      addRobotCylinder(.34, .26, [0, .28, 0], robotShellMat, [0, 0, Math.PI / 2], 48);
+      addRobotCylinder(.28, .05, [0, .44, 0], robotBandMat, [0, 0, Math.PI / 2], 48);
+      const jointA = addRobotCylinder(.3, .42, [0, .62, 0], robotShellMat, [Math.PI / 2, 0, 0], 48);
+      addRobotCylinder(.31, .045, [0, .62, .24], robotBandMat, [Math.PI / 2, 0, 0], 48);
+
+      const upperArm = addRobotCylinder(.14, 1.18, [.28, 1.1, 0], robotArmMat, [0, 0, -.42], 48);
+      const upperBandA = addRobotCylinder(.145, .06, [.03, .69, 0], robotBandMat, [0, 0, -.42], 48);
+      const upperBandB = addRobotCylinder(.145, .06, [.55, 1.5, 0], robotBandMat, [0, 0, -.42], 48);
+
+      const jointB = addRobotCylinder(.28, .42, [.63, 1.58, 0], robotShellMat, [Math.PI / 2, 0, 0], 48);
+      addRobotCylinder(.29, .045, [.63, 1.58, .24], robotBandMat, [Math.PI / 2, 0, 0], 48);
+
+      const foreArm = addRobotCylinder(.12, 1.22, [1.05, 1.43, 0], robotArmMat, [0, 0, 1.22], 48);
+      const foreBandA = addRobotCylinder(.125, .055, [.77, 1.55, 0], robotBandMat, [0, 0, 1.22], 48);
+      const foreBandB = addRobotCylinder(.125, .055, [1.34, 1.3, 0], robotBandMat, [0, 0, 1.22], 48);
+
+      const wrist = addRobotCylinder(.22, .36, [1.48, 1.22, 0], robotShellMat, [Math.PI / 2, 0, 0], 48);
+      addRobotCylinder(.19, .06, [1.7, 1.18, 0], robotBandMat, [Math.PI / 2, 0, 0], 48);
+      addRobotCylinder(.17, .24, [1.82, 1.14, 0], robotShellMat, [Math.PI / 2, 0, Math.PI / 2], 48);
+      addRobotCylinder(.16, .045, [1.96, 1.1, 0], robotBandMat, [Math.PI / 2, 0, Math.PI / 2], 48);
+
+      const toolCarrier = new THREE.Group();
+      toolCarrier.position.set(1.78, 1.03, 0);
+      robotGroup.add(toolCarrier);
+
+      const flange = new THREE.Mesh(new THREE.CylinderGeometry(.15, .15, .07, 40), robotShellMat);
+      flange.rotation.z = Math.PI / 2;
+      flange.position.set(.08, 0, 0);
+      flange.castShadow = true;
+      toolCarrier.add(flange);
+
+      for (let index = 0; index < 6; index += 1) {
+        const angle = index * Math.PI / 3;
+        const bolt = new THREE.Mesh(new THREE.CylinderGeometry(.012, .012, .018, 12), robotDarkMat);
+        bolt.rotation.z = Math.PI / 2;
+        bolt.position.set(.125, Math.cos(angle) * .095, Math.sin(angle) * .095);
+        toolCarrier.add(bolt);
+      }
+
+      const gripper = new THREE.Mesh(new THREE.BoxGeometry(.36, .065, .1), cutterMat);
+      gripper.position.set(.27, -.02, 0);
+      gripper.castShadow = true;
+      toolCarrier.add(gripper);
+
+      const fingerA = new THREE.Mesh(new THREE.BoxGeometry(.055, .1, .32), cutterMat);
+      fingerA.position.set(.44, -.08, .15);
+      fingerA.castShadow = true;
+      toolCarrier.add(fingerA);
+      const fingerB = fingerA.clone();
+      fingerB.position.z = -.15;
+      toolCarrier.add(fingerB);
+
+      const hitBox = new THREE.Mesh(new THREE.BoxGeometry(2.25, 1.95, 1.65), hitMat);
+      hitBox.position.set(.72, 1.0, 0);
+      robotGroup.add(hitBox);
+      registerMachineObject(robotGroup, id, hitBox);
+      return {
+        robotGroup,
+        jointA,
+        jointB,
+        upperArm,
+        upperBandA,
+        upperBandB,
+        foreArm,
+        foreBandA,
+        foreBandB,
+        wrist,
+        toolCarrier,
+        gripper,
+        fingerA,
+        fingerB,
+      };
+    };
+
+    const feederCell = addBarFeeder();
+    const robotCell = addRobotCell();
 
     const group = new THREE.Group();
     group.position.set(.05, -.1, -.08);
@@ -775,11 +1115,6 @@ function Machine3DScene({ status, onSelect }) {
     beacon.castShadow = true;
     group.add(beacon);
 
-    const scanPlane = new THREE.Mesh(new THREE.PlaneGeometry(4.8, 2.7), scanMat);
-    scanPlane.position.set(-2.05, 1.28, .02);
-    scanPlane.rotation.y = Math.PI / 2;
-    group.add(scanPlane);
-
     const createRawPart = (offset) => {
       const part = new THREE.Group();
       part.userData.offset = offset;
@@ -796,29 +1131,70 @@ function Machine3DScene({ status, onSelect }) {
       return part;
     };
 
-    const createFinishedPart = (offset) => {
+    const createScrewPart = (offset = 0, material = cutMetalMat) => {
       const part = new THREE.Group();
       part.userData.offset = offset;
-      part.name = "finishedParts";
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(.095, .095, .48, 40), cutMetalMat);
+      part.name = "screwPart";
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, .42, 32), material);
       body.rotation.z = Math.PI / 2;
       body.castShadow = true;
       part.add(body);
-      const collar = new THREE.Mesh(new THREE.CylinderGeometry(.14, .14, .14, 40), cutMetalMat);
-      collar.position.x = -.16;
+
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(.09, .09, .08, 32), material);
+      collar.position.x = -.23;
       collar.rotation.z = Math.PI / 2;
       collar.castShadow = true;
       part.add(collar);
-      const bore = new THREE.Mesh(new THREE.CylinderGeometry(.042, .042, .5, 24), darkMat);
-      bore.rotation.z = Math.PI / 2;
-      bore.scale.set(1, 1, 1);
-      part.add(bore);
+
+      const slot = new THREE.Mesh(new THREE.BoxGeometry(.018, .13, .018), darkMat);
+      slot.position.x = -.275;
+      slot.castShadow = true;
+      part.add(slot);
+
       scene.add(part);
       return part;
     };
 
+    const createFinishedPart = (offset) => {
+      const part = createScrewPart(offset);
+      part.name = "finishedParts";
+      const bore = new THREE.Mesh(new THREE.CylinderGeometry(.022, .022, .44, 24), darkMat);
+      bore.rotation.z = Math.PI / 2;
+      bore.scale.set(1, 1, 1);
+      part.add(bore);
+      return part;
+    };
+
     const rawParts = [createRawPart(0), createRawPart(.48)];
-    const finishedParts = [createFinishedPart(.1), createFinishedPart(.62)];
+    const finishedParts = [createFinishedPart(.05), createFinishedPart(.34), createFinishedPart(.68)];
+    const carriedScrew = createScrewPart(0, cutMetalMat);
+    if (robotCell?.toolCarrier) {
+      robotCell.toolCarrier.add(carriedScrew);
+      carriedScrew.position.set(.22, -.1, 0);
+      carriedScrew.rotation.set(0, 0, Math.PI / 2);
+      carriedScrew.scale.setScalar(.78);
+      carriedScrew.visible = false;
+    }
+
+    const boxMat = new THREE.MeshStandardMaterial({ color: 0xb87a36, roughness: .72, metalness: .03 });
+    const boxPosition = new THREE.Vector3(5.9, -.16, .45);
+    addSceneBox([1.05, .12, .82], [boxPosition.x, boxPosition.y, boxPosition.z], boxMat);
+    addSceneBox([1.05, .48, .08], [boxPosition.x, boxPosition.y + .24, boxPosition.z - .41], boxMat);
+    addSceneBox([1.05, .48, .08], [boxPosition.x, boxPosition.y + .24, boxPosition.z + .41], boxMat);
+    addSceneBox([.08, .48, .82], [boxPosition.x - .52, boxPosition.y + .24, boxPosition.z], boxMat);
+    addSceneBox([.08, .48, .82], [boxPosition.x + .52, boxPosition.y + .24, boxPosition.z], boxMat);
+
+    const boxedScrews = Array.from({ length: 9 }, (_, index) => {
+      const screw = createScrewPart(index / 9, cutMetalMat);
+      screw.position.set(
+        boxPosition.x - .28 + (index % 3) * .22,
+        boxPosition.y + .16 + Math.floor(index / 3) * .035,
+        boxPosition.z - .2 + Math.floor(index / 3) * .18,
+      );
+      screw.rotation.set(.2 + index * .16, 0, index * .35);
+      screw.scale.setScalar(.72);
+      return screw;
+    });
 
     const chips = Array.from({ length: 18 }, (_, index) => {
       const chip = new THREE.Mesh(new THREE.BoxGeometry(.055, .018, .018), chipMat);
@@ -828,22 +1204,12 @@ function Machine3DScene({ status, onSelect }) {
       return chip;
     });
 
-    const ground = new THREE.Mesh(new THREE.CircleGeometry(2.55, 72), translucentAccent);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.set(.15, -.27, .15);
-    ground.receiveShadow = true;
-    scene.add(ground);
-
-    const statusPillar = new THREE.Mesh(new THREE.BoxGeometry(.22, 1.45, .07), translucentAccent);
-    statusPillar.position.set(.8, 1.62, -1.55);
-    statusPillar.rotation.y = -.18;
-    statusPillar.castShadow = true;
-    scene.add(statusPillar);
-
-    const statusCap = new THREE.Mesh(new THREE.SphereGeometry(.13, 24, 16), accentMat);
-    statusCap.position.set(.8, 2.42, -1.55);
-    statusCap.castShadow = true;
-    scene.add(statusCap);
+    addMachineHalo("TRAK-TC820LTYSI-001", [group.position.x, group.position.y, group.position.z], 2.05);
+    addMachineAlert("TRAK-TC820LTYSI-001", [group.position.x, group.position.y, group.position.z], 2.05);
+    const machineHitBox = new THREE.Mesh(new THREE.BoxGeometry(5.1, 2.8, 2.3), hitMat);
+    machineHitBox.position.set(.08, 1.15, .05);
+    group.add(machineHitBox);
+    registerMachineObject(group, "TRAK-TC820LTYSI-001", machineHitBox);
 
     const ambient = new THREE.HemisphereLight(0xffffff, 0xb8c5c9, 1.4);
     scene.add(ambient);
@@ -855,11 +1221,82 @@ function Machine3DScene({ status, onSelect }) {
     rim.position.set(-3, 2.5, -2);
     scene.add(rim);
 
+    const toolHomePosition = new THREE.Vector3(.56, 1.16, .1);
+    const toolPickHoverPosition = new THREE.Vector3(.574, 1.16, .397);
+    const toolPickPosition = new THREE.Vector3(.574, .82, .397);
+    const toolLiftPosition = new THREE.Vector3(.62, 1.22, .05);
+    const toolBoxHoverPosition = new THREE.Vector3(.543, 1.14, -.495);
+    const toolBoxDropPosition = new THREE.Vector3(.543, .92, -.495);
+    const robotHeldOffset = new THREE.Vector3(.22, -.1, 0);
+    const robotYAxis = new THREE.Vector3(0, 1, 0);
+    const robotBaseYaw = -1.05;
+    const handoffScrew = finishedParts[0];
+    const tempA = new THREE.Vector3();
+    const tempB = new THREE.Vector3();
+    const tempC = new THREE.Vector3();
+    const tempD = new THREE.Vector3();
+    const buildMotionPath = (points) => {
+      const segments = [];
+      let total = 0;
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const from = points[index];
+        const to = points[index + 1];
+        const length = from.distanceTo(to);
+        segments.push({ from, to, length });
+        total += length;
+      }
+      return { segments, total };
+    };
+    const rawMotionPath = buildMotionPath([
+      new THREE.Vector3(-5.45, .08, -.25),
+      new THREE.Vector3(-5.45, .08, 1.05),
+      new THREE.Vector3(-2.35, .08, 1.05),
+    ]);
+    const finishedMotionPath = buildMotionPath([
+      new THREE.Vector3(2.2, .08, 1.05),
+      new THREE.Vector3(4.95, .08, 1.05),
+    ]);
+    const pointOnMotionPath = (path, progress, target) => {
+      let distance = Math.max(0, Math.min(1, progress)) * path.total;
+      for (const segment of path.segments) {
+        if (distance <= segment.length) {
+          return target.copy(segment.from).lerp(segment.to, segment.length ? distance / segment.length : 0);
+        }
+        distance -= segment.length;
+      }
+      const lastSegment = path.segments[path.segments.length - 1];
+      return target.copy(lastSegment.to);
+    };
+
+    const moveBetween = (from, to, progress) => tempA.copy(from).lerp(to, progress);
+    const moveOverArc = (from, via, to, progress) => {
+      tempB.copy(from).lerp(via, progress);
+      tempC.copy(via).lerp(to, progress);
+      return tempA.copy(tempB).lerp(tempC, progress);
+    };
+    const easeInOut = (value) => value * value * (3 - 2 * value);
+    const robotTravelForPosition = (position) => Math.min(Math.max((position.x - toolPickPosition.x) / (toolBoxHoverPosition.x - toolPickPosition.x), 0), 1);
+    const heldScrewWorldAt = (toolPosition, travel) => {
+      const toolYaw = -.15 + travel * .38;
+      const robotYaw = robotBaseYaw + (travel - .5) * .28;
+      return tempD
+        .copy(robotHeldOffset)
+        .applyAxisAngle(robotYAxis, toolYaw)
+        .add(toolPosition)
+        .multiplyScalar(.95)
+        .applyAxisAngle(robotYAxis, robotYaw)
+        .add(robotCell.robotGroup.position);
+    };
+    const handoffPickWorld = heldScrewWorldAt(toolPickPosition, 0).clone();
+    const handoffDropWorld = heldScrewWorldAt(toolBoxDropPosition, 1).clone();
+
     let frameId = 0;
     const animate = () => {
       frameId = window.requestAnimationFrame(animate);
       const time = performance.now() * 0.001;
       const cutCycle = (Math.sin(time * 1.05) + 1) / 2;
+      const lineCycle = (time * .18) % 1;
+      const robotCycle = (time % 6) / 6;
 
       spindleChuck.rotation.x = time * 8.6;
       machiningWorkpiece.rotation.x = time * 14;
@@ -870,20 +1307,98 @@ function Machine3DScene({ status, onSelect }) {
       cutter.material.emissive = new THREE.Color(0xff8d2a);
       cutter.material.emissiveIntensity = .08 + cutCycle * .18;
       loadingArm.rotation.z = Math.sin(time * 1.2) * .18;
-      scanPlane.position.x = -2.1 + ((time * .35) % 4.2);
-      scanPlane.material.opacity = .12 + Math.sin(time * 2.2) * .05;
+      conveyorRollers.forEach((roller) => {
+        roller.rotation.y -= .16;
+      });
+      conveyorFlights.forEach((flight) => {
+        const progress = (lineCycle + flight.mesh.userData.offset) % 1;
+        tempB.copy(flight.start).lerp(flight.end, progress);
+        flight.mesh.position.set(tempB.x, .02, tempB.z);
+      });
+      if (feederCell) {
+        feederCell.feederRollers.forEach((roller) => {
+          roller.rotation.y -= .18;
+        });
+        feederCell.pusher.position.x = -1.72 + ((time * .32) % 1) * 3.18;
+      }
+      if (robotCell) {
+        const carrying = robotCycle >= .38 && robotCycle < .82;
+        const gripping = robotCycle >= .34 && robotCycle < .86;
+        let toolPosition = toolHomePosition;
+        if (robotCycle < .12) {
+          toolPosition = toolHomePosition;
+        } else if (robotCycle < .24) {
+          toolPosition = moveBetween(toolHomePosition, toolPickHoverPosition, easeInOut((robotCycle - .12) / .12));
+        } else if (robotCycle < .34) {
+          toolPosition = moveBetween(toolPickHoverPosition, toolPickPosition, easeInOut((robotCycle - .24) / .1));
+        } else if (robotCycle < .44) {
+          toolPosition = toolPickPosition;
+        } else if (robotCycle < .54) {
+          toolPosition = moveBetween(toolPickPosition, toolPickHoverPosition, easeInOut((robotCycle - .44) / .1));
+        } else if (robotCycle < .7) {
+          toolPosition = moveOverArc(toolPickHoverPosition, toolLiftPosition, toolBoxHoverPosition, easeInOut((robotCycle - .54) / .16));
+        } else if (robotCycle < .8) {
+          toolPosition = moveBetween(toolBoxHoverPosition, toolBoxDropPosition, easeInOut((robotCycle - .7) / .1));
+        } else if (robotCycle < .88) {
+          toolPosition = toolBoxDropPosition;
+        } else if (robotCycle < .96) {
+          toolPosition = moveBetween(toolBoxDropPosition, toolBoxHoverPosition, easeInOut((robotCycle - .88) / .08));
+        } else {
+          toolPosition = moveBetween(toolBoxHoverPosition, toolHomePosition, easeInOut((robotCycle - .96) / .04));
+        }
 
+        robotCell.toolCarrier.position.copy(toolPosition);
+        const armTravel = robotTravelForPosition(robotCell.toolCarrier.position);
+        robotCell.robotGroup.rotation.y = robotBaseYaw + (armTravel - .5) * .28;
+        robotCell.jointA.rotation.y = -.72 + armTravel * 1.25;
+        robotCell.upperArm.rotation.z = -.42 + Math.sin(robotCycle * Math.PI) * .08;
+        robotCell.upperBandA.rotation.z = robotCell.upperArm.rotation.z;
+        robotCell.upperBandB.rotation.z = robotCell.upperArm.rotation.z;
+        robotCell.jointB.rotation.y = armTravel * .55;
+        robotCell.jointB.rotation.z = -.36 + Math.sin(robotCycle * Math.PI) * .7;
+        robotCell.foreArm.rotation.z = 1.22 - Math.sin(robotCycle * Math.PI) * .12;
+        robotCell.foreBandA.rotation.z = robotCell.foreArm.rotation.z;
+        robotCell.foreBandB.rotation.z = robotCell.foreArm.rotation.z;
+        robotCell.wrist.rotation.x = -.18 + Math.sin(robotCycle * Math.PI * 2) * .18;
+        robotCell.toolCarrier.rotation.y = -.15 + armTravel * .38;
+        robotCell.gripper.rotation.y = 0;
+        robotCell.fingerA.position.z = gripping ? .085 : .18;
+        robotCell.fingerB.position.z = gripping ? -.085 : -.18;
+        carriedScrew.visible = carrying;
+      }
       rawParts.forEach((part) => {
-        const progress = (time * .16 + part.userData.offset) % 1;
-        part.position.set(-5.78 + progress * 2.45, .08, 1.05);
+        const progress = (time * .2 + part.userData.offset) % 1;
+        const stagedProgress = progress > .78 ? .78 + (progress - .78) * .18 : progress;
+        pointOnMotionPath(rawMotionPath, stagedProgress, tempB);
+        part.position.copy(tempB);
         part.rotation.x = time * 2.5;
       });
 
-      finishedParts.forEach((part) => {
-        const progress = (time * .15 + part.userData.offset) % 1;
-        part.position.set(2.86 + progress * 2.65, .08, 1.05);
-        part.rotation.x = time * 3.4;
+      if (handoffScrew) {
+        if (robotCycle < .38) {
+          handoffScrew.visible = true;
+          handoffScrew.position.copy(handoffPickWorld);
+        } else if (robotCycle < .82) {
+          handoffScrew.visible = false;
+        } else {
+          handoffScrew.visible = true;
+          handoffScrew.position.copy(handoffDropWorld);
+        }
+        handoffScrew.rotation.x = time * 2.6;
+        handoffScrew.rotation.y = .08;
+      }
+
+      finishedParts.slice(1).forEach((part) => {
+        const progress = (time * .17 + part.userData.offset) % 1;
+        const stagedProgress = progress > .86 ? .86 + (progress - .86) * .18 : progress;
+        pointOnMotionPath(finishedMotionPath, stagedProgress, tempB);
+        part.position.copy(tempB);
+        part.rotation.x = time * 2.6;
         part.rotation.y = Math.sin(time * 1.6 + part.userData.offset) * .08;
+      });
+
+      boxedScrews.forEach((screw, index) => {
+        screw.rotation.y += .002 + index * .0002;
       });
 
       chips.forEach((chip) => {
@@ -896,8 +1411,14 @@ function Machine3DScene({ status, onSelect }) {
         chip.rotation.set(time * 4 + progress, time * 2.3, progress * 6);
         chip.material.opacity = 1 - progress * .7;
       });
-      beacon.material.emissiveIntensity = .12 + Math.abs(Math.sin(time * 3.2)) * .36;
-      statusCap.material.emissiveIntensity = .12 + Math.abs(Math.sin(time * 3.2)) * .36;
+      alertEffects.forEach((effect) => {
+        const shouldAlert = isAlertStatus(currentStatusForMachine(effect.id));
+        const pulse = .35 + Math.abs(Math.sin(time * 4.6)) * .65;
+        effect.ring.visible = shouldAlert;
+        effect.ring.material.opacity = shouldAlert ? .18 + pulse * .44 : 0;
+        effect.ring.scale.setScalar(1 + pulse * .08);
+        effect.glow.intensity = shouldAlert ? .8 + pulse * 2.1 : 0;
+      });
       controls.update();
       renderer.render(scene, camera);
     };
@@ -912,14 +1433,67 @@ function Machine3DScene({ status, onSelect }) {
     const resizeObserver = new ResizeObserver(handleResize);
     resizeObserver.observe(mount);
 
-    const handleClick = () => onSelectRef.current();
+    const clearHover = () => {
+      if (hoverTimerRef.current) {
+        window.clearTimeout(hoverTimerRef.current);
+        hoverTimerRef.current = null;
+      }
+      hoveredMachineRef.current = null;
+      setHoveredLabel(null);
+    };
+
+    const pickMachineAtPointer = (event) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(interactiveObjects, false);
+      return hits[0]?.object?.userData?.machineId || null;
+    };
+
+    const handlePointerMove = (event) => {
+      const machineId = pickMachineAtPointer(event);
+      if (!machineId) {
+        clearHover();
+        return;
+      }
+
+      const tooltipPosition = {
+        x: Math.min(Math.max(event.offsetX + 14, 14), Math.max(mount.clientWidth - 250, 14)),
+        y: Math.min(Math.max(event.offsetY + 14, 14), Math.max(mount.clientHeight - 112, 14)),
+      };
+
+      if (hoveredMachineRef.current === machineId) {
+        setHoveredLabel((current) => current ? { ...current, ...tooltipPosition } : current);
+        return;
+      }
+
+      if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
+      hoveredMachineRef.current = machineId;
+      setHoveredLabel(null);
+      hoverTimerRef.current = window.setTimeout(() => {
+        const label = labelForMachine(machineId);
+        if (!label || hoveredMachineRef.current !== machineId) return;
+        setHoveredLabel({ ...label, ...tooltipPosition });
+      }, 2000);
+    };
+
+    const handlePointerLeave = () => clearHover();
+    const handleClick = () => onSelectRef.current(hoveredMachineRef.current);
+    renderer.domElement.addEventListener("pointermove", handlePointerMove);
+    renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
     renderer.domElement.addEventListener("click", handleClick);
 
     return () => {
       window.cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
+      clearHover();
+      renderer.domElement.removeEventListener("pointermove", handlePointerMove);
+      renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
       renderer.domElement.removeEventListener("click", handleClick);
-      mount.removeChild(renderer.domElement);
+      if (renderer.domElement.parentNode === mount) {
+        mount.removeChild(renderer.domElement);
+      }
       scene.traverse((object) => {
         if (object.geometry) object.geometry.dispose();
         if (object.material) {
@@ -929,10 +1503,24 @@ function Machine3DScene({ status, onSelect }) {
       });
       controls.dispose();
       renderer.dispose();
+      renderer.forceContextLoss();
     };
-  }, [status]);
+  }, [sceneMachineState]);
 
-  return <div ref={mountRef} className="machine-3d-canvas" aria-hidden="true" />;
+  return (
+    <div ref={mountRef} className="machine-3d-canvas" aria-hidden="true">
+      {hoveredLabel ? (
+        <div
+          className={`scene-hover-label ${hoveredLabel.status}`}
+          style={{ left: hoveredLabel.x, top: hoveredLabel.y }}
+        >
+          <strong>{hoveredLabel.name}</strong>
+          <span>{hoveredLabel.type}</span>
+          <em>{hoveredLabel.statusLabel}</em>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function statusColor(status) {
