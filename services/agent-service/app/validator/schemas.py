@@ -126,9 +126,15 @@ class WorkOrder(BaseModel):
 class QualityResult(BaseModel):
     workorder_id: str
     passed: bool
+    status: Literal["pass", "fail", "review"] = "fail"
     device_recovered: bool
     alarm_cleared: bool
+    parameters_recovered: bool = False
+    workorder_compliance: bool = False
     sop_compliant: bool
+    failed_checks: List[str] = Field(default_factory=list)
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    recommendation: str = ""
     findings: List[str] = Field(default_factory=list)
     checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

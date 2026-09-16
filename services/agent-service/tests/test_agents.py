@@ -43,7 +43,7 @@ class AllAgentTests(unittest.TestCase):
         plan = MaintenanceAgent().run({"diagnosis": diagnosis, "knowledge": knowledge.model_dump(), "cad": cad.model_dump()})
         workorders = WorkOrderService(self.tools)
         order = workorders.create_from_plan(plan)
-        workorders.mark_repair_completed(order.workorder_id)
+        workorders.mark_repair_completed(order.workorder_id, feedback="已检查冷却泵并完成空载复测")
         quality = QualityAgent(self.tools).run({"workorder": workorders.get(order.workorder_id)})
         report = ReportAgent().run({"diagnosis": diagnosis, "maintenance_plan": plan.model_dump(), "workorder": workorders.get(order.workorder_id), "quality": quality.model_dump()})
 
@@ -60,6 +60,9 @@ class AllAgentTests(unittest.TestCase):
         self.assertTrue(plan.repair_steps)
         self.assertEqual(order.status, "open")
         self.assertTrue(quality.passed)
+        self.assertEqual(quality.status, "pass")
+        self.assertTrue(quality.workorder_compliance)
+        self.assertTrue(quality.sop_compliant)
         self.assertTrue(report.report_id)
 
     def test_automatic_event_runs_full_agent_chain(self):
@@ -192,6 +195,24 @@ class AllAgentTests(unittest.TestCase):
 
         self.assertFalse(result.workorder_ready)
         self.assertIn("涉及拆装或部件操作但缺少 CAD/BOM 依据", result.validation_findings)
+
+    def test_quality_agent_requires_completed_workorder_and_feedback(self):
+        workorders = WorkOrderService(self.tools)
+        order = workorders.create("CNC-001", "主轴温度维修", steps=["检查冷却泵"])
+        open_quality = QualityAgent(self.tools).run({"workorder": workorders.get(order["workorder_id"])})
+        workorders.mark_repair_completed(order["workorder_id"])
+        missing_feedback = QualityAgent(self.tools).run({"workorder": workorders.get(order["workorder_id"])})
+        workorders.mark_repair_completed(order["workorder_id"], feedback="已检查冷却泵，报警已清除")
+        passed = QualityAgent(self.tools).run({"workorder": workorders.get(order["workorder_id"])})
+
+        self.assertFalse(open_quality.passed)
+        self.assertIn("workorder_not_completed", open_quality.failed_checks)
+        self.assertFalse(missing_feedback.passed)
+        self.assertIn("repair_feedback_missing", missing_feedback.failed_checks)
+        self.assertTrue(passed.passed)
+        self.assertTrue(passed.alarm_cleared)
+        self.assertTrue(passed.parameters_recovered)
+        self.assertTrue(any(item.get("type") == "sop" for item in passed.evidence))
 
     def test_core_agent_registry_and_experience_module(self):
         self.assertEqual(set(CORE_AGENT_REGISTRY), {"router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"})
