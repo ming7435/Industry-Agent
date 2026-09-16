@@ -78,7 +78,9 @@ class AllAgentTests(unittest.TestCase):
 
         for key in ("diagnosis", "knowledge", "cad", "maintenance_plan", "workorder", "quality", "report", "experience", "memory", "trace"):
             self.assertIn(key, result)
-        self.assertEqual(result["report"]["report_type"], "maintenance")
+        self.assertEqual(result["report"]["report_type"], "full_case_report")
+        self.assertEqual(result["report"]["status"], "completed")
+        self.assertTrue(result["report"]["source_refs"])
         self.assertEqual(result["workorder"]["status"], "closed")
         self.assertTrue(result["quality"]["passed"])
         self.assertTrue(result["experience"]["memory_saved"])
@@ -213,6 +215,67 @@ class AllAgentTests(unittest.TestCase):
         self.assertTrue(passed.alarm_cleared)
         self.assertTrue(passed.parameters_recovered)
         self.assertTrue(any(item.get("type") == "sop" for item in passed.evidence))
+
+    def test_report_agent_separates_plan_execution_and_quality_sources(self):
+        report = ReportAgent().run({
+            "report_type": "full_case_report",
+            "task_id": "TASK-REPORT-001",
+            "trace_id": "TRACE-REPORT-001",
+            "diagnosis": {
+                "event_id": "EVT-001",
+                "device_id": "CNC-001",
+                "fault": "主轴温度异常",
+                "diagnosis_run_id": "RUN-001",
+                "source": "deepseek",
+            },
+            "maintenance_plan": {
+                "plan_id": "PLAN-001",
+                "repair_target": "主轴冷却系统",
+                "repair_steps": ["检查冷却泵"],
+                "source_documents": ["SOP-COOLING-001"],
+                "cad_components": ["COOLING-PUMP"],
+            },
+            "workorder": {
+                "workorder_id": "WO-001",
+                "device_id": "CNC-001",
+                "plan_id": "PLAN-001",
+                "status": "closed",
+                "title": "主轴温度维修",
+                "steps": ["检查冷却泵"],
+                "repair_feedback": "已检查冷却泵并完成复测",
+            },
+            "quality": {
+                "workorder_id": "WO-001",
+                "passed": True,
+                "status": "pass",
+                "device_recovered": True,
+                "alarm_cleared": True,
+                "sop_compliant": True,
+                "evidence": [{"type": "sop", "document_id": "SOP-COOLING-001"}],
+            },
+            "trace": [{"type": "agent", "name": "diagnosis"}, {"type": "node", "name": "workorder"}],
+        })
+
+        self.assertEqual(report.report_type, "full_case_report")
+        self.assertEqual(report.status, "completed")
+        self.assertEqual(report.sections["maintenance_plan"]["repair_steps"], ["检查冷却泵"])
+        self.assertEqual(report.sections["workorder"]["repair_feedback"], "已检查冷却泵并完成复测")
+        self.assertTrue(any(item["section"] == "maintenance_plan" and item["id"] == "SOP-COOLING-001" for item in report.source_refs))
+        self.assertTrue(any(item["section"] == "workorder" and item["id"] == "WO-001" for item in report.source_refs))
+        self.assertTrue(any(item["section"] == "quality" and item["id"] == "WO-001" for item in report.source_refs))
+
+    def test_report_agent_marks_missing_sources_incomplete_without_inventing_facts(self):
+        report = ReportAgent().run({
+            "report_type": "maintenance_report",
+            "diagnosis": {"device_id": "CNC-001", "fault": "主轴温度异常"},
+            "maintenance_plan": {"plan_id": "PLAN-001", "repair_target": "主轴冷却系统", "repair_steps": ["检查冷却泵"]},
+        })
+
+        self.assertEqual(report.status, "incomplete")
+        self.assertTrue(report.validation_findings)
+        self.assertIn("workorder", report.validation_findings[0] or "")
+        self.assertIn("主轴温度异常", report.summary)
+        self.assertNotIn("根因已确认", report.summary)
 
     def test_core_agent_registry_and_experience_module(self):
         self.assertEqual(set(CORE_AGENT_REGISTRY), {"router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"})

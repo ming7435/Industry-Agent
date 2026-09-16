@@ -1,10 +1,18 @@
 name: report
-goal: 生成诊断、维修、质检和日报
-input: Agent流程结果
+goal: 汇总已有诊断、维修、工单、质检记录并生成可追溯报告，不新增事实
+input: DiagnosisResult, MaintenancePlan, WorkOrder, QualityResult, TraceSummary
 steps:
-  - 汇总诊断和维修证据
-  - 记录工单和质量结果
-  - 输出结构化报告
+  - 加载已有流程记录
+  - 检查记录完整性和来源引用
+  - 区分维修计划与实际执行
+  - 汇总工单、维修反馈和质量结果
+  - 输出结构化报告和source_refs
 tools:
-  - generate_report
-output: ReportResult
+  - get_diagnosis_record
+  - get_maintenance_record
+  - get_workorder
+  - get_quality_record
+  - get_trace_summary
+  - persist_report
+  - generate_report_file
+output: ReportResult(status, sections, source_refs)
