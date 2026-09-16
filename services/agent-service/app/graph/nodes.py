@@ -120,8 +120,13 @@ class OrchestratorNodes:
         if state.get("entry") == "trigger":
             payload = {"route": "diagnosis", "route_result": {"intent": "diagnosis", "target_agent": "diagnosis", "confidence": 1.0, "reason": "设备异常自动触发"}}
         else:
-            result = self.harnesses["router"].execute_agent(state.get("user_text", ""))
-            payload = {"route": result.intent, "route_result": _serialize_agent_result(result)}
+            result = self.harnesses["router"].execute_agent({
+                "user_text": state.get("user_text", ""),
+                "context": state.get("context", {}),
+            })
+            route_result = _serialize_agent_result(result)
+            context = {**dict(state.get("context") or {}), **dict(route_result.get("target_input") or {})}
+            payload = {"route": result.intent, "route_result": route_result, "context": context}
         return self._finish("route", state, payload)
 
     def diagnosis(self, state: AgentState) -> Dict[str, Any]:
@@ -170,9 +175,10 @@ class OrchestratorNodes:
     def cad(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("cad", state)
         diagnosis = state.get("diagnosis") or {}
+        context = state.get("context") or {}
         result = self.harnesses["cad"].execute_agent({
-            "query": diagnosis.get("fault") or diagnosis.get("summary") or state.get("user_text") or "主轴组件",
-            "device_id": diagnosis.get("device_id", ""),
+            "query": diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "主轴组件",
+            "device_id": diagnosis.get("device_id") or context.get("device_id") or "",
         })
         return self._finish("cad", state, {"cad": _serialize_agent_result(result)})
 
@@ -190,7 +196,7 @@ class OrchestratorNodes:
 
     def workorder(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("workorder", state)
-        if state.get("route") == "workorder_action" and state.get("entry") != "trigger":
+        if state.get("route") in {"workorder_action", "workorder_query"} and state.get("entry") != "trigger":
             action = dict(state.get("context") or {})
             action.setdefault("action", "query")
             result = self.workorder_service.execute_action(action)

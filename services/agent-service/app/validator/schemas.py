@@ -16,10 +16,24 @@ class AgentTask(BaseModel):
 
 
 class RouteResult(BaseModel):
-    intent: Literal["diagnosis", "knowledge", "cad", "maintenance", "quality", "report", "workorder_action", "unknown"]
+    intent: Literal[
+        "diagnosis",
+        "knowledge",
+        "cad",
+        "maintenance",
+        "quality",
+        "report",
+        "workorder_action",
+        "workorder_query",
+        "unknown",
+        "need_more_context",
+    ]
     target_agent: str
     confidence: float = Field(ge=0, le=1)
     reason: str
+    entities: Dict[str, Any] = Field(default_factory=dict)
+    target_input: Dict[str, Any] = Field(default_factory=dict)
+    validation_findings: List[str] = Field(default_factory=list)
 
 
 class KnowledgeDocument(BaseModel):

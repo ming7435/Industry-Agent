@@ -26,8 +26,10 @@ class AgentOrchestrator:
             "cad": "cad",
             "maintenance": "maintenance",
             "workorder_action": "workorder",
+            "workorder_query": "workorder",
             "quality": "quality",
             "report": "report",
+            "need_more_context": END,
             "unknown": END,
         })
         graph.add_conditional_edges("diagnosis", self._after_diagnosis, {"knowledge": "knowledge", "report": "report"})

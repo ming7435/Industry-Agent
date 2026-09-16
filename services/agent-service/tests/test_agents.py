@@ -115,6 +115,46 @@ class AllAgentTests(unittest.TestCase):
         self.assertEqual(route.intent, "maintenance")
         self.assertEqual(tool_route["intent"], "maintenance")
 
+    def test_router_extracts_entities_and_target_input(self):
+        route = RouterAgent().run({
+            "user_text": "CNC-001 的 E102 报警是什么意思",
+            "context": {"device_model": "TC820"},
+        })
+
+        self.assertEqual(route.intent, "knowledge")
+        self.assertEqual(route.target_agent, "knowledge")
+        self.assertEqual(route.entities["device_id"], "CNC-001")
+        self.assertEqual(route.entities["alarm_code"], "E102")
+        self.assertEqual(route.target_input["device_model"], "TC820")
+        self.assertFalse(route.validation_findings)
+
+    def test_router_needs_context_for_workorder_and_quality_queries(self):
+        missing_workorder = RouterAgent().run("查询工单维修状态")
+        quality = RouterAgent().run("验收工单 WO-001 是否恢复")
+
+        self.assertEqual(missing_workorder.intent, "need_more_context")
+        self.assertEqual(missing_workorder.target_agent, "router")
+        self.assertIn("workorder_id", missing_workorder.validation_findings[0])
+        self.assertEqual(quality.intent, "quality")
+        self.assertEqual(quality.target_agent, "quality")
+        self.assertEqual(quality.entities["workorder_id"], "WO-001")
+
+    def test_router_covers_all_user_target_agents(self):
+        samples = {
+            "diagnosis": "主轴异常为什么报警",
+            "knowledge": "E102 报警处理步骤",
+            "cad": "主轴温度传感器在哪里",
+            "maintenance": "主轴冷却泵怎么维修",
+            "quality": "验收工单 WO-002 是否恢复",
+            "report": "生成 CNC-001 的完整报告",
+        }
+
+        for expected, text in samples.items():
+            with self.subTest(expected=expected):
+                route = RouterAgent().run(text)
+                self.assertEqual(route.intent, expected)
+                self.assertEqual(route.target_agent, expected)
+
     def test_knowledge_agent_returns_evidence_pack(self):
         result = KnowledgeAgent(self.tools).run({"query": "700223 主轴过热", "required_sources": ["alarm"]})
 
