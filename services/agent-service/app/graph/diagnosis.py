@@ -273,7 +273,7 @@ def build_fallback_diagnosis_result(state: DiagnosisGraphState) -> Dict[str, Any
     """模型或校验失败时，根据已有事件和工具证据生成降级结果。"""
     agent = state["agent"]
     runtime = state["agent_state"]
-    result = agent._fallback(
+    result = agent._build_fallback_result(
         state=runtime,
         event_id=state["event_id"],
         device_id=state["device_id"],

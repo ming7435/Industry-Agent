@@ -162,7 +162,7 @@ class DiagnosisAgent:
                 raise RuntimeError("LangGraph 未生成诊断结果")
             return result
         except Exception as error:
-            return self._fallback(
+            return self._build_fallback_result(
                 state=state,
                 event_id=event_id,
                 device_id=device_id,
@@ -730,7 +730,7 @@ class DiagnosisAgent:
     # Fallback
     # ==========================================================
 
-    def _fallback(
+    def _build_fallback_result(
         self,
         state: DiagnosisState,
         event_id: str,

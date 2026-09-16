@@ -378,7 +378,8 @@ h2 {
   display: grid;
   justify-items: center;
   gap: 7px;
-  min-width: 220px;
+  width: min(220px, 24vw);
+  min-width: 154px;
   border: 0;
   border-radius: 7px;
   padding: 9px 16px;
@@ -386,6 +387,12 @@ h2 {
   box-shadow: 0 10px 24px rgba(24, 35, 42, .1);
   backdrop-filter: blur(7px);
   color: var(--ink);
+  cursor: pointer;
+}
+
+.scene-device-badge.active {
+  outline: 2px solid rgba(8, 127, 117, .55);
+  box-shadow: 0 12px 28px rgba(8, 127, 117, .18);
 }
 
 .scene-device-badge strong {

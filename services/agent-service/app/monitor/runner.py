@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from threading import Event, Lock, Thread, current_thread
 from time import monotonic
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from .models import DiagnosisTrigger, DeviceSample, MonitorResult
 from .monitor import DeviceMonitor
 
 
-SampleProvider = Callable[[], DeviceSample]
+SampleProvider = Callable[[], Union[DeviceSample, Iterable[DeviceSample]]]
 ResultHandler = Callable[[MonitorResult], None]
 ErrorHandler = Callable[[Exception], None]
 
@@ -113,7 +114,7 @@ class MonitorRunner:
                 self._thread = None
 
     def run_once(self) -> Optional[MonitorResult]:
-        """开关开启时读取并处理一条采样。"""
+        """开关开启时读取并处理一次采样批次。"""
 
         if not self.enabled:
             return None
@@ -150,16 +151,37 @@ class MonitorRunner:
     def _process_sample(self) -> MonitorResult:
         """执行一次采样、监控判定和回调通知。"""
 
-        sample = self.sample_provider()
-        result = self.monitor.observe(sample)
+        samples = self._read_samples()
+        if not samples:
+            raise ValueError("sample_provider returned no samples")
+        latest_result = None
+        latest_timestamp = None
+        for sample in samples:
+            result = self.monitor.observe(sample)
+            latest_result = result
+            latest_timestamp = sample.timestamp.isoformat()
+            if self.on_result:
+                self.on_result(result)
+            if result.trigger and self.on_trigger:
+                self.on_trigger(result.trigger)
         with self._state_lock:
-            self._last_sample_at = sample.timestamp.isoformat()
+            self._last_sample_at = latest_timestamp
             self._last_error = None
-        if self.on_result:
-            self.on_result(result)
-        if result.trigger and self.on_trigger:
-            self.on_trigger(result.trigger)
-        return result
+        return latest_result
+
+    def _read_samples(self) -> list[DeviceSample]:
+        """兼容单设备和多设备 provider，并统一成采样列表。"""
+
+        provided = self.sample_provider()
+        if isinstance(provided, DeviceSample):
+            return [provided]
+        if isinstance(provided, Iterable):
+            samples = list(provided)
+            invalid = [item for item in samples if not isinstance(item, DeviceSample)]
+            if invalid:
+                raise TypeError("sample_provider returned a non-DeviceSample item")
+            return samples
+        raise TypeError("sample_provider must return DeviceSample or iterable of DeviceSample")
 
     def _record_error(self, error: Exception) -> None:
         """记录采样循环中的错误，并交给外部错误回调。"""

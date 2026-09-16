@@ -44,6 +44,27 @@ class FactoryApiClient:
             raise FactoryApiError("factory snapshot must be a JSON object")
         return result
 
+    def devices(self) -> list[Dict[str, Any]]:
+        """读取工厂当前已暴露的设备清单。"""
+
+        request = Request(
+            "%s/api/devices" % self.base_url,
+            headers={"Accept": "application/json"},
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                payload = response.read().decode("utf-8")
+        except (HTTPError, URLError, TimeoutError) as error:
+            raise FactoryApiError("failed to read factory devices: %s" % error) from error
+        try:
+            result = json.loads(payload)
+        except json.JSONDecodeError as error:
+            raise FactoryApiError("factory devices response is not valid JSON") from error
+        if not isinstance(result, list):
+            raise FactoryApiError("factory devices response must be a JSON array")
+        return [item for item in result if isinstance(item, dict)]
+
+
 class FactorySnapshotProvider:
     """把工厂快照转换为监控器使用的 ``DeviceSample``。"""
 
@@ -69,9 +90,10 @@ class FactorySnapshotProvider:
         """读取一次工厂快照，并映射成统一采样结构。"""
 
         payload = self.client.snapshot(self.device_id)
-        monitor = payload.get("monitor") or {}
+        raw_monitor = payload.get("monitor") or {}
         devices = payload.get("devices") or []
-        device = devices[0] if devices else {}
+        device = self._select_device(devices, self.device_id)
+        monitor = self._select_monitor(raw_monitor, self.device_id)
         metrics = dict(monitor.get("metrics") or device.get("metrics") or {})
         metric_details = dict(
             monitor.get("metric_details") or device.get("metric_details") or {}
@@ -116,6 +138,28 @@ class FactorySnapshotProvider:
             metric_details=metric_details,
             equipment_states=equipment_states,
         )
+
+    @staticmethod
+    def _select_device(devices: Any, device_id: str) -> Mapping[str, Any]:
+        """从多设备快照中选出请求设备，避免误读第一台设备。"""
+
+        if not isinstance(devices, list):
+            return {}
+        for device in devices:
+            if isinstance(device, Mapping) and str(device.get("device_id") or "") == device_id:
+                return device
+        return {}
+
+    @staticmethod
+    def _select_monitor(monitor: Any, device_id: str) -> Mapping[str, Any]:
+        """只使用匹配当前设备的监测块。"""
+
+        if not isinstance(monitor, Mapping):
+            return {}
+        monitor_device_id = str(monitor.get("device_id") or "")
+        if monitor_device_id and monitor_device_id != device_id:
+            return {}
+        return monitor
 
     @staticmethod
     def _to_optional_number(value: Any) -> Optional[float]:

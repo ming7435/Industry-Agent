@@ -403,6 +403,35 @@ class DeviceMonitorTests(unittest.TestCase):
         self.assertIsNotNone(runner.run_once())
         self.assertEqual(len(calls), 1)
 
+    def test_runner_processes_multi_device_sample_batch(self):
+        monitor = DeviceMonitor()
+        results = []
+
+        def provider():
+            return [
+                DeviceSample(
+                    device_id="CNC-001",
+                    timestamp=self.start,
+                    temperature=50.0,
+                    vibration=1.0,
+                    rpm=6000.0,
+                ),
+                DeviceSample(
+                    device_id="ROBOT-001",
+                    timestamp=self.start,
+                    temperature=42.0,
+                    vibration=0.5,
+                    rpm=0.0,
+                ),
+            ]
+
+        runner = MonitorRunner(monitor, provider, on_result=results.append)
+        latest = runner.run_once()
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual([item.device_id for item in results], ["CNC-001", "ROBOT-001"])
+        self.assertEqual(latest.device_id, "ROBOT-001")
+
     def test_runner_automatically_reads_until_stopped(self):
         monitor = DeviceMonitor()
         calls = []
@@ -500,6 +529,34 @@ class DeviceMonitorTests(unittest.TestCase):
         self.assertIsNone(sample.vibration)
         self.assertEqual(sample.rpm, 1932.0)
         self.assertEqual(sample.metrics["spindle_load_percent"], 35.2)
+
+    def test_factory_snapshot_provider_selects_requested_device_from_multi_device_payload(self):
+        class FakeFactoryClient:
+            def snapshot(self, device_id):
+                return {
+                    "devices": [
+                        {
+                            "device_id": "TRAK-TC820LTYSI-001",
+                            "metrics": {"spindle_temperature_c": 10.0},
+                        },
+                        {
+                            "device_id": device_id,
+                            "status": "running",
+                            "metrics": {"spindle_temperature_c": 20.0},
+                        },
+                    ],
+                    "monitor": {
+                        "device_id": "TRAK-TC820LTYSI-001",
+                        "metrics": {"spindle_temperature_c": 99.0},
+                    },
+                }
+
+        sample = FactorySnapshotProvider(
+            FakeFactoryClient(), "LNS-QL-SERVO-80-S2-001"
+        ).read()
+
+        self.assertEqual(sample.device_id, "LNS-QL-SERVO-80-S2-001")
+        self.assertEqual(sample.temperature, 20.0)
 
     def test_factory_snapshot_provider_maps_health_score_and_metric_details(self):
         class FakeFactoryClient:

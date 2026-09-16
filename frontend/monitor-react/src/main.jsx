@@ -29,6 +29,44 @@ const workshopMachines = [
   },
 ];
 
+const machineFallbacks = {
+  "TRAK-TC820LTYSI-001": {
+    name: "TRAK TC820LTYsi 车削中心",
+    line: "A线 · 主加工单元",
+    type: "数控车削中心",
+    x: 42,
+    y: 58,
+    image: machineImage,
+  },
+  "LNS-QL-SERVO-80-S2-001": {
+    name: "LNS QL Servo 80 S2 棒料送料机",
+    line: "A线 · 上料单元",
+    type: "棒料送料机",
+    x: 23,
+    y: 46,
+  },
+  "ELITE-CS612-ROBOT-001": {
+    name: "ELITE ROBOTS CS612 六轴协作机器人",
+    line: "A线 · 下料协作单元",
+    type: "六轴协作机器人",
+    x: 68,
+    y: 42,
+  },
+};
+
+const deviceTypeLabels = {
+  turning_center: "数控车削中心",
+  bar_feeder: "棒料送料机",
+  industrial_robot: "工业机器人",
+};
+
+const defaultMachinePositions = [
+  { x: 42, y: 58 },
+  { x: 23, y: 46 },
+  { x: 68, y: 42 },
+  { x: 78, y: 62 },
+];
+
 const ruleLabels = {
   critical: "关键规则",
   threshold: "阈值规则",
@@ -156,6 +194,29 @@ function alertSeverity(alertLevel) {
   return "normal";
 }
 
+function buildWorkshopMachines(snapshot) {
+  const devices = snapshot?.devices?.length ? snapshot.devices : workshopMachines;
+  return devices.map((device, index) => {
+    const id = device.device_id || device.id;
+    const fallback = machineFallbacks[id] || {};
+    const position = defaultMachinePositions[index % defaultMachinePositions.length];
+    const result = device.latest_result || snapshot?.latest_results?.[id] || (id === snapshot?.device_id ? snapshot?.latest_result : null);
+    const sample = result?.current_sample || device.current_sample || null;
+    return {
+      id,
+      name: device.name || fallback.name || id,
+      line: fallback.line || device.line || "产线设备",
+      type: fallback.type || deviceTypeLabels[device.device_type || device.type] || device.device_type || device.type || "工业设备",
+      x: fallback.x ?? device.x ?? position.x,
+      y: fallback.y ?? device.y ?? position.y,
+      live: device.live !== false,
+      image: fallback.image || device.image,
+      result,
+      sample,
+    };
+  });
+}
+
 function observationLabel(item) {
   if (item.kind === "multi_metric") return kindLabels.multi_metric;
   return item.label || kindLabels[item.kind] || item.kind || "监测项";
@@ -212,12 +273,20 @@ function App() {
   const [selectedMachineId, setSelectedMachineId] = useState(workshopMachines[0].id);
   const { snapshot, error, control, resetStats } = useMonitorSnapshot();
   const runner = snapshot?.runner || {};
-  const result = snapshot?.latest_result;
+  const machines = useMemo(() => buildWorkshopMachines(snapshot), [snapshot]);
+  const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
+  const result = selectedMachine?.result || snapshot?.latest_result;
   const sample = result?.current_sample;
   const healthText = sample?.health_score === null || sample?.health_score === undefined
     ? "--"
     : `${Number(sample.health_score).toFixed(0)} / 100`;
   const connectionText = error || runner.last_error ? "接口异常" : "连接正常";
+
+  useEffect(() => {
+    if (machines.length && !machines.some((machine) => machine.id === selectedMachineId)) {
+      setSelectedMachineId(machines[0].id);
+    }
+  }, [machines, selectedMachineId]);
 
   return (
     <div className="platform-shell">
@@ -232,6 +301,7 @@ function App() {
         {activeView === "monitor" && (
           <MonitorCenter
             snapshot={snapshot}
+            machines={machines}
             result={result}
             sample={sample}
             runner={runner}
@@ -287,7 +357,8 @@ function Sidebar({ activeView, onChange, connectionText, hasError }) {
 }
 
 function Topbar({ snapshot, runner, onControl, onReset }) {
-  const deviceLabel = `数据源：${snapshot?.data_source || "设备数据源"} · ${snapshot?.device_id || "--"} · 在线监测`;
+  const deviceCount = snapshot?.device_ids?.length || snapshot?.devices?.length || (snapshot?.device_id ? 1 : 0);
+  const deviceLabel = `数据源：${snapshot?.data_source || "设备数据源"} · 接入 ${deviceCount || "--"} 台设备 · 在线监测`;
   return (
     <header className="topbar">
       <div>
@@ -334,6 +405,7 @@ function OverviewCard({ primary = false, label, value, text }) {
 
 function MonitorCenter({
   snapshot,
+  machines,
   result,
   sample,
   runner,
@@ -341,13 +413,13 @@ function MonitorCenter({
   selectedMachineId,
   onSelectMachine,
 }) {
-  const selectedMachine = workshopMachines.find((machine) => machine.id === selectedMachineId) || workshopMachines[0];
-  const isLiveMachine = selectedMachine.live;
+  const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0] || workshopMachines[0];
+  const isLiveMachine = Boolean(selectedMachine.live);
 
   return (
     <section className="workspace-view active">
       <WorkshopMap
-        machines={workshopMachines}
+        machines={machines}
         selectedMachineId={selectedMachine.id}
         result={result}
         sample={sample}
@@ -379,14 +451,18 @@ function MonitorCenter({
 }
 
 function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, onSelectMachine }) {
-  const faultCount = result?.status && result.status !== "normal" ? 1 : 0;
-  const liveMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
-  const liveStatus = machineStatus(liveMachine, result);
+  const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
+  const selectedStatus = machineStatus(selectedMachine, selectedMachine?.result || result);
+  const connectedCount = machines.filter((machine) => machine.live).length;
+  const faultCount = machines.filter((machine) => {
+    const status = machineStatus(machine, machine.result);
+    return status !== "normal" && status !== "idle";
+  }).length;
 
   return (
     <section className="panel workshop-panel">
       <div className="factory-map" aria-label="车间设备分布图">
-        <Machine3DScene status={liveStatus} onSelect={() => onSelectMachine(liveMachine.id)} />
+        <Machine3DScene status={selectedStatus} onSelect={() => selectedMachine && onSelectMachine(selectedMachine.id)} />
         <div className="scene-overlay">
           <div>
             <span className="eyebrow">车间总览</span>
@@ -398,20 +474,27 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
             <span><i className="legend-dot fault" />故障</span>
           </div>
         </div>
-        <button
-          type="button"
-          className={`scene-device-badge ${liveStatus}`}
-          onClick={() => onSelectMachine(liveMachine.id)}
-          aria-label={`${liveMachine.name} ${machineStatusLabel(liveStatus)}`}
-        >
-          <strong>{liveMachine.name}</strong>
-          <span>{machineStatusLabel(liveStatus)}</span>
-        </button>
+        {machines.map((machine) => {
+          const status = machineStatus(machine, machine.result);
+          return (
+            <button
+              key={machine.id}
+              type="button"
+              className={`scene-device-badge ${status} ${machine.id === selectedMachineId ? "active" : ""}`}
+              style={{ left: `${machine.x}%`, top: `${machine.y}%`, bottom: "auto" }}
+              onClick={() => onSelectMachine(machine.id)}
+              aria-label={`${machine.name} ${machineStatusLabel(status)}`}
+            >
+              <strong>{machine.name}</strong>
+              <span>{machineStatusLabel(status)}</span>
+            </button>
+          );
+        })}
         <div className="scene-control-hint">内部加工动画 · 拖动旋转 · 滚轮缩放</div>
       </div>
       <div className="map-summary">
-        <div><span>接入设备</span><strong>1 / 1</strong></div>
-        <div><span>当前工艺</span><strong>内部加工</strong></div>
+        <div><span>接入设备</span><strong>{connectedCount} / {machines.length}</strong></div>
+        <div><span>选中设备</span><strong>{selectedMachine?.name || "--"}</strong></div>
         <div><span>当前故障</span><strong>{faultCount}</strong></div>
         <div><span>毛坯入料</span><strong>棒料</strong></div>
         <div><span>成品出料</span><strong>轴套件</strong></div>
@@ -421,7 +504,7 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
 }
 
 function machineStatus(machine, result) {
-  if (!machine.live) return "idle";
+  if (!machine?.live) return "idle";
   if (result?.status === "fault") return "fault";
   if (result?.status === "alarm") return "alarm";
   if (result?.status === "warning") return "warning";

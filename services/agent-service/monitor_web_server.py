@@ -11,7 +11,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -41,14 +41,23 @@ class MonitorWebState:
 
     def __init__(self) -> None:
         self.base_url = os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:8000")
-        self.device_id = os.getenv("FACTORY_DEVICE_ID", "TRAK-TC820LTYSI-001")
         self.interval_seconds = float(os.getenv("MONITOR_INTERVAL_SECONDS", "0.5"))
         self.client = FactoryApiClient(self.base_url)
-        self.provider = FactorySnapshotProvider(self.client, self.device_id)
+        self.latest_error: Optional[str] = None
+        self.devices = self._load_devices()
+        self.device_ids = [str(item.get("device_id")) for item in self.devices if item.get("device_id")]
+        if not self.device_ids:
+            self.device_ids = ["TRAK-TC820LTYSI-001"]
+            self.devices = [{"device_id": self.device_ids[0], "name": self.device_ids[0]}]
+        self.device_id = self.device_ids[0]
+        self.providers = {
+            device_id: FactorySnapshotProvider(self.client, device_id)
+            for device_id in self.device_ids
+        }
         self.monitor = DeviceMonitor()
         self.lock = Lock()
         self.latest_result = None
-        self.latest_error: Optional[str] = None
+        self.latest_results: Dict[str, Any] = {}
         self.result_count = 0
         self.alarm_event_count = 0
         self.alarm_event_counts: Dict[str, int] = {}
@@ -75,12 +84,44 @@ class MonitorWebState:
         self._diagnosis_generation = 0
         self.runner = MonitorRunner(
             monitor=self.monitor,
-            sample_provider=self.provider.read,
+            sample_provider=self._read_all_samples,
             interval_seconds=self.interval_seconds,
             on_result=self._on_result,
             on_trigger=self._on_trigger,
             on_error=self._on_error,
         )
+
+    def _configured_device_ids(self) -> List[str]:
+        """读取可选设备范围配置；未配置时返回空列表，表示接入全部设备。"""
+
+        raw_ids = os.getenv("FACTORY_DEVICE_IDS", "")
+        if raw_ids.strip():
+            return [item.strip() for item in raw_ids.split(",") if item.strip()]
+        legacy_id = os.getenv("FACTORY_DEVICE_ID")
+        if legacy_id:
+            return [legacy_id.strip()]
+        return []
+
+    def _load_devices(self) -> List[Dict[str, Any]]:
+        """从工厂接口发现设备，必要时回退到配置中的设备 ID。"""
+
+        configured_ids = self._configured_device_ids()
+        try:
+            api_devices = self.client.devices()
+        except Exception as error:
+            self.latest_error = "%s: %s" % (type(error).__name__, error)
+            api_devices = []
+        if configured_ids:
+            by_id = {str(item.get("device_id")): dict(item) for item in api_devices if item.get("device_id")}
+            return [by_id.get(device_id, {"device_id": device_id, "name": device_id}) for device_id in configured_ids]
+        if api_devices:
+            return [dict(item) for item in api_devices if item.get("device_id")]
+        return []
+
+    def _read_all_samples(self):
+        """读取当前接入的全部设备采样。"""
+
+        return [self.providers[device_id].read() for device_id in self.device_ids]
 
     def start(self) -> None:
         """启动后台自动监测。"""
@@ -98,6 +139,7 @@ class MonitorWebState:
 
         with self.lock:
             self.latest_result = result
+            self.latest_results[result.device_id] = result
             self.latest_error = None
             self.result_count += 1
             alarm_code = result.current_sample.alarm_code or None
@@ -186,9 +228,12 @@ class MonitorWebState:
 
         with self.lock:
             result = self.latest_result
+            results = dict(self.latest_results)
             return {
                 "runner": self.runner.snapshot().__dict__,
                 "device_id": self.device_id,
+                "device_ids": list(self.device_ids),
+                "devices": self._device_snapshots(results),
                 "data_source": "模拟工厂",
                 "result_count": self.result_count,
                 "alarm_event_count": self.alarm_event_count,
@@ -196,9 +241,29 @@ class MonitorWebState:
                 "diagnosis_task_count": self.diagnosis_task_count,
                 "latest_error": self.latest_error,
                 "latest_result": result.to_dict() if result else None,
+                "latest_results": {
+                    device_id: item.to_dict()
+                    for device_id, item in results.items()
+                },
                 "trigger_history": list(self.trigger_history),
                 "diagnosis": self._diagnosis_snapshot(),
             }
+
+    def _device_snapshots(self, results: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """返回设备清单，并附加各自最新监测结果，供前端多设备展示。"""
+
+        devices = []
+        for item in self.devices:
+            device = dict(item)
+            device_id = str(device.get("device_id") or "")
+            result = results.get(device_id)
+            device["live"] = device_id in self.providers
+            device["latest_result"] = result.to_dict() if result else None
+            device["current_sample"] = (
+                result.current_sample.to_dict() if result else None
+            )
+            devices.append(device)
+        return devices
 
     def set_enabled(self, enabled: bool) -> Dict[str, Any]:
         """设置自动监测开关，并返回最新快照。"""
@@ -215,6 +280,7 @@ class MonitorWebState:
         with self.lock:
             self._diagnosis_generation += 1
             self.latest_result = None
+            self.latest_results.clear()
             self.latest_error = None
             self.result_count = 0
             self.alarm_event_count = 0
