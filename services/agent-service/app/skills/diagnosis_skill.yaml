@@ -1,0 +1,105 @@
+name: diagnosis_master_skill
+version: 1.0
+goal: 对已确认工业设备异常进行证据驱动诊断
+input: AbnormalEvent
+
+required_inputs:
+  - device_id
+  - abnormal_metrics
+
+optional_inputs:
+  - alarm_code
+  - realtime_snapshot
+  - trigger_reason
+  - event_revision
+
+steps:
+  - classify_event
+  - select_sub_skill
+  - collect_evidence
+  - infer_fault
+  - validate_result
+  - output_result
+
+allowed_tools:
+  - get_alarm_definition
+  - get_device_history
+  - get_device_logs
+  - search_knowledge
+  - get_device_status
+
+blocked_tools:
+  - create_workorder
+  - close_workorder
+  - query_inventory
+  - generate_report
+  - verify_repair
+
+sub_skills:
+  alarm_diagnosis_skill:
+    trigger: exists(alarm_code)
+    tools:
+      - get_alarm_definition
+      - get_device_history
+      - get_device_logs
+      - search_knowledge
+    steps:
+      - query_alarm_definition
+      - judge_alarm_evidence
+      - enrich_with_history_or_knowledge
+      - diagnose
+
+  trend_diagnosis_skill:
+    trigger: trend_or_repeated_abnormality
+    tools:
+      - get_device_history
+      - search_knowledge
+      - get_device_logs
+    steps:
+      - query_history
+      - summarize_trend
+      - infer_candidates
+      - collect_evidence
+
+  multi_metric_diagnosis_skill:
+    trigger: multiple_abnormal_metrics
+    tools:
+      - get_device_history
+      - get_device_logs
+      - search_knowledge
+    steps:
+      - correlate_metrics
+      - query_history
+      - infer_common_causes
+
+  no_alarm_diagnosis_skill:
+    trigger: no_alarm_code
+    tools:
+      - get_device_history
+      - get_device_logs
+      - search_knowledge
+      - get_device_status
+    steps:
+      - inspect_abnormal_metrics
+      - query_context_if_needed
+      - output_low_confidence_if_evidence_insufficient
+
+  evidence_enrichment_skill:
+    trigger: validator_requires_more_evidence
+    tools:
+      - get_device_history
+      - get_device_logs
+      - search_knowledge
+
+  safety_triage_skill:
+    trigger: severity == critical
+    tools:
+      - get_alarm_definition
+      - get_device_logs
+      - search_knowledge
+    steps:
+      - identify_safety_risk
+      - retrieve_safety_sop
+      - mark_human_or_safety_system_required
+
+output_schema: DiagnosisResult

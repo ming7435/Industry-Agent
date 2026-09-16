@@ -1,0 +1,10 @@
+name: knowledge
+goal: 检索SOP、维修手册、报警库和历史案例
+input: 检索问题
+steps:
+  - 调用RAG Service接口
+  - 融合关键词和向量结果
+  - 返回带来源和评分的文档
+tools:
+  - search_knowledge
+output: KnowledgeResult

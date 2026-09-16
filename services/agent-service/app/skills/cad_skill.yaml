@@ -1,0 +1,10 @@
+name: cad
+goal: 查询CAD、DWG、DXF和BOM工程数据
+input: 零件或装配查询
+steps:
+  - 查询工程数据服务
+  - 返回零件位置和装配关系
+tools:
+  - query_cad
+  - query_bom
+output: CADResult

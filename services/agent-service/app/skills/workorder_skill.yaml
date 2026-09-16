@@ -1,0 +1,13 @@
+name: workorder
+goal: 管理维修工单生命周期
+input: MaintenancePlan或工单命令
+steps:
+  - 创建或查询工单
+  - 更新执行状态
+  - 关闭已完成工单
+tools:
+  - create_workorder
+  - update_workorder
+  - query_workorder
+  - close_workorder
+output: WorkOrder

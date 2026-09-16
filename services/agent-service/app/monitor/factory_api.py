@@ -91,15 +91,15 @@ class FactorySnapshotProvider:
             or None
         )
         active_scenario = (payload.get("scenarios") or {}).get("active_scenario")
-        scenario = self._find_scenario(payload, active_scenario, alarm_code)
-        alarm_level = self._alarm_level(scenario)
+        scenario = self._find_matching_scenario(payload, active_scenario, alarm_code)
+        alarm_level = self._map_scenario_severity(scenario)
 
         return DeviceSample(
             device_id=actual_device_id,
-            timestamp=self._timestamp(payload, monitor, device),
-            temperature=self._number(metrics.get("spindle_temperature_c")),
-            vibration=self._first_number(metrics, self._VIBRATION_KEYS),
-            rpm=self._number(metrics.get("spindle_rpm")),
+            timestamp=self._extract_sample_timestamp(payload, monitor, device),
+            temperature=self._to_optional_number(metrics.get("spindle_temperature_c")),
+            vibration=self._first_available_number(metrics, self._VIBRATION_KEYS),
+            rpm=self._to_optional_number(metrics.get("spindle_rpm")),
             alarm_code=alarm_code,
             temperature_point="spindle_bearing_housing",
             vibration_point="spindle_velocity_rms",
@@ -107,7 +107,7 @@ class FactorySnapshotProvider:
             status=monitor.get("status") or device.get("status"),
             mode=monitor.get("mode") or device.get("mode"),
             cycle_state=monitor.get("cycle_state") or device.get("cycle_state"),
-            health_score=self._number(
+            health_score=self._to_optional_number(
                 monitor.get("health_score")
                 if monitor.get("health_score") is not None
                 else device.get("health_score")
@@ -118,8 +118,8 @@ class FactorySnapshotProvider:
         )
 
     @staticmethod
-    def _number(value: Any) -> Optional[float]:
-        """把外部输入安全转换为浮点数，布尔值不视为数值。"""
+    def _to_optional_number(value: Any) -> Optional[float]:
+        """将工厂侧可选数值转换为浮点数，布尔值不作为测量值。"""
 
         if value is None or isinstance(value, bool):
             return None
@@ -129,26 +129,26 @@ class FactorySnapshotProvider:
             return None
 
     @classmethod
-    def _first_number(
+    def _first_available_number(
         cls,
         metrics: Mapping[str, Any],
         keys: tuple,
     ) -> Optional[float]:
-        """按候选字段顺序返回第一个有效数值。"""
+        """按候选字段优先级返回第一个有效数值。"""
 
         for key in keys:
-            value = cls._number(metrics.get(key))
+            value = cls._to_optional_number(metrics.get(key))
             if value is not None:
                 return value
         return None
 
     @staticmethod
-    def _find_scenario(
+    def _find_matching_scenario(
         payload: Mapping[str, Any],
         active_scenario: Any,
         alarm_code: Optional[str],
     ) -> Optional[Mapping[str, Any]]:
-        """根据激活场景或报警码寻找场景定义。"""
+        """根据激活场景或报警码找到对应的工厂场景定义。"""
 
         scenarios = (payload.get("scenarios") or {}).get("scenarios") or []
         for scenario in scenarios:
@@ -164,8 +164,8 @@ class FactorySnapshotProvider:
         return None
 
     @staticmethod
-    def _alarm_level(scenario: Optional[Mapping[str, Any]]) -> Optional[AlertLevel]:
-        """把场景严重度文本映射为监控器告警等级。"""
+    def _map_scenario_severity(scenario: Optional[Mapping[str, Any]]) -> Optional[AlertLevel]:
+        """将工厂场景严重度映射为统一告警等级。"""
 
         if not scenario:
             return None
@@ -179,12 +179,12 @@ class FactorySnapshotProvider:
         return None
 
     @staticmethod
-    def _timestamp(
+    def _extract_sample_timestamp(
         payload: Mapping[str, Any],
         monitor: Mapping[str, Any],
         device: Mapping[str, Any],
     ) -> datetime:
-        """从快照中提取采样时间，当前仅支持毫秒级数值时间戳。"""
+        """从工厂快照提取采样时间，兼容毫秒级数值时间戳。"""
 
         raw = (
             monitor.get("checked_at")

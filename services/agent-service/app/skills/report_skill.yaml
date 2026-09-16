@@ -1,0 +1,10 @@
+name: report
+goal: 生成诊断、维修、质检和日报
+input: Agent流程结果
+steps:
+  - 汇总诊断和维修证据
+  - 记录工单和质量结果
+  - 输出结构化报告
+tools:
+  - generate_report
+output: ReportResult

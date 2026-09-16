@@ -7,9 +7,13 @@ import machineImage from "./assets/trak-tc820-machine-transparent.png";
 
 const navItems = [
   { id: "monitor", label: "监控中心", icon: "⌁", badge: "实时" },
+  { id: "diagnosis", label: "智能诊断", icon: "◇" },
+  { id: "maintenance", label: "维修决策", icon: "▣" },
   { id: "workorder", label: "工单系统", icon: "□" },
-  { id: "rag", label: "RAG知识问答", icon: "?" },
   { id: "quality", label: "质检系统", icon: "✓" },
+  { id: "report", label: "报告中心", icon: "≡" },
+  { id: "rag", label: "RAG知识问答", icon: "?" },
+  { id: "trace", label: "运行追踪", icon: "⋮" },
 ];
 
 const workshopMachines = [
@@ -72,6 +76,25 @@ const diagnosisStatusLabels = {
 const diagnosisEvidenceLabels = {
   get_alarm_definition: "报警定义库",
 };
+
+const workorderStatusLabels = {
+  open: "待处理",
+  in_progress: "处理中",
+  completed: "已完成",
+  closed: "已关闭",
+};
+
+const quickQuestions = [
+  "主轴温度过高怎么检查？",
+  "报警 ALM-1001 的处理步骤是什么？",
+  "振动异常时应该优先排查哪些部件？",
+];
+
+const sampleWorkorderSteps = [
+  "执行设备断电和挂牌上锁",
+  "检查冷却液液位、流量和冷却泵",
+  "空载运行并复测主轴温度",
+];
 
 const equipmentValueLabels = {
   closed: "已关闭",
@@ -217,9 +240,13 @@ function App() {
             onSelectMachine={setSelectedMachineId}
           />
         )}
-        {activeView === "workorder" && <PendingView title="工单系统" />}
-        {activeView === "rag" && <PendingView title="RAG知识问答" />}
-        {activeView === "quality" && <PendingView title="质检系统" />}
+        {activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} />}
+        {activeView === "maintenance" && <MaintenanceWorkspace snapshot={snapshot} />}
+        {activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} />}
+        {activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} />}
+        {activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
+        {activeView === "report" && <ReportWorkspace snapshot={snapshot} />}
+        {activeView === "trace" && <TraceWorkspace snapshot={snapshot} />}
         {(error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
       </main>
     </div>
@@ -1054,6 +1081,426 @@ function DiagnosisResult({ latest }) {
       {latest.error && <div className="diagnosis-error">{latest.error}</div>}
     </div>
   );
+}
+
+function PipelineData({ snapshot }) {
+  return snapshot?.diagnosis?.pipeline || {};
+}
+
+function DiagnosisWorkspace({ snapshot }) {
+  const latest = snapshot?.diagnosis?.latest || {};
+  const pipeline = PipelineData({ snapshot });
+  const knowledge = pipeline.knowledge || {};
+  const evidence = latest.tool_calls || [];
+  return (
+    <section className="workspace-view active module-board" aria-label="智能诊断中心">
+      <ModuleHero eyebrow="Diagnosis Agent" title="智能诊断中心" text="查看异常事件、诊断结论、报警定义、历史证据和知识检索结果。" />
+      <div className="module-grid">
+        <ModuleStat label="诊断状态" value={labelFor(diagnosisStatusLabels, latest.status)} text={latest.diagnosis_run_id || "等待异常任务"} />
+        <ModuleStat label="置信度" value={latest.confidence == null ? "--" : `${(Number(latest.confidence) * 100).toFixed(0)}%`} text={latest.event_id || "暂无异常事件"} />
+        <ModuleStat label="知识证据" value={(knowledge.documents || []).length} text={knowledge.source || "A2A / RAG"} />
+      </div>
+      <div className="ops-grid">
+        <section className="panel module-panel">
+          <div className="panel-heading"><div><span className="eyebrow">最终诊断</span><h2>{latest.summary || "等待异常事件"}</h2></div><span className={`severity-pill ${latest.status === "failed" ? "fault" : "normal"}`}>{labelFor(diagnosisStatusLabels, latest.status)}</span></div>
+          <div className="detail-grid">
+            <DetailCell label="设备" value={latest.device_id} />
+            <DetailCell label="异常事件" value={latest.event_id} />
+            <DetailCell label="事件轮次" value={latest.event_revision ? `第 ${latest.event_revision} 次` : "--"} />
+            <DetailCell label="触发原因" value={latest.trigger_cause} />
+          </div>
+          <div className="diagnosis-detail"><span>诊断说明</span><p>{latest.diagnosis || "暂无诊断说明"}</p></div>
+          {latest.recommendation && <div className="diagnosis-detail"><span>下一步建议</span><p>{latest.recommendation}</p></div>}
+        </section>
+        <section className="panel module-panel">
+          <div className="panel-heading"><div><span className="eyebrow">工具证据</span><h2>Reason · Act · Observe</h2></div></div>
+          <TraceList items={evidence.map((item) => ({ event: item.name, agent: "Diagnosis Agent", tool: item.name, arguments: item.arguments }))} />
+          <DocumentList documents={knowledge.documents || []} />
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function MaintenanceWorkspace({ snapshot }) {
+  const pipeline = PipelineData({ snapshot });
+  const plan = pipeline.maintenance_plan || {};
+  const diagnosis = plan.diagnosis || pipeline.diagnosis || {};
+  return (
+    <section className="workspace-view active module-board" aria-label="维修决策中心">
+      <ModuleHero eyebrow="Maintenance Agent" title="维修决策中心" text="将诊断结果、RAG知识和CAD/BOM部件信息汇总为可执行维修方案。" />
+      <div className="module-grid">
+        <ModuleStat label="方案编号" value={plan.plan_id || "--"} text={diagnosis.fault || diagnosis.summary || "等待诊断"} />
+        <ModuleStat label="预计用时" value={plan.estimated_time || "--"} text="Maintenance Agent 估算" />
+        <ModuleStat label="关联部件" value={(plan.cad_components || []).length} text="来自 CAD / BOM 查询" />
+      </div>
+      <div className="ops-grid">
+        <section className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">维修步骤</span><h2>执行清单</h2></div></div><StepList steps={plan.repair_steps || []} /></section>
+        <section className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">安全与资源</span><h2>工器具、备件和安全要求</h2></div></div><div className="detail-grid"><DetailCell label="工器具" value={(plan.tools || []).join("、")} /><DetailCell label="备件" value={(plan.parts || []).join("、")} /><DetailCell label="安全要求" value={(plan.safety || []).join("；")} /><DetailCell label="知识来源" value={(plan.source_documents || []).join("、")} /></div></section>
+      </div>
+    </section>
+  );
+}
+
+function ReportWorkspace({ snapshot }) {
+  const pipeline = PipelineData({ snapshot });
+  const report = pipeline.report || {};
+  const sections = report.sections || {};
+  return (
+    <section className="workspace-view active module-board" aria-label="报告中心">
+      <ModuleHero eyebrow="Report Agent" title="报告中心" text="汇总诊断、维修方案、工单和质检结果，形成可追溯运维报告。" />
+      <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text={report.report_type || "maintenance"} /><ModuleStat label="报告标题" value={report.title || "--"} text={report.created_at ? formatTime(report.created_at) : "等待生成"} /><ModuleStat label="质量状态" value={sections.quality?.passed == null ? "--" : sections.quality.passed ? "通过" : "未通过"} text="Quality Agent" /></div>
+      <section className="panel module-panel report-panel"><div className="panel-heading"><div><span className="eyebrow">报告摘要</span><h2>{report.title || "暂无报告"}</h2></div></div><p className="answer-summary">{report.summary || "完成一次异常闭环后，将在此展示诊断报告、维修报告和质检报告内容。"}</p><JsonBlock value={sections} /></section>
+    </section>
+  );
+}
+
+function TraceWorkspace({ snapshot }) {
+  const pipeline = PipelineData({ snapshot });
+  const trace = pipeline.trace || [];
+  return (
+    <section className="workspace-view active module-board" aria-label="AI运行追踪">
+      <ModuleHero eyebrow="Agent Runtime" title="AI运行追踪" text="观察 Router、Harness、Agent、Tool、MCP 和 Experience 的调用链。" />
+      <div className="module-grid"><ModuleStat label="Trace记录" value={trace.length} text={pipeline.trace_id || "当前异常流程"} /><ModuleStat label="Agent事件" value={trace.filter((item) => item.agent).length} text="生命周期记录" /><ModuleStat label="Tool事件" value={trace.filter((item) => item.tool).length} text="MCP工具调用记录" /></div>
+      <section className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">调用链</span><h2>Trace Timeline</h2></div></div><TraceList items={trace} /></section>
+    </section>
+  );
+}
+
+function WorkorderView({ snapshot, sample }) {
+  const [orders, setOrders] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [assignee, setAssignee] = useState("维修一组");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const latestDiagnosis = snapshot?.diagnosis?.latest || {};
+  const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
+
+  async function loadOrders() {
+    try {
+      const body = await request("/api/workorders");
+      const items = body.items || [];
+      setOrders(items);
+      if (!selectedId && items.length) setSelectedId(items[0].workorder_id);
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    loadOrders();
+  }, []);
+
+  async function createOrder() {
+    setBusy(true);
+    try {
+      const title = latestDiagnosis.summary || latestDiagnosis.fault || `${sample?.device_id || snapshot?.device_id || "unknown"} 设备维修`;
+      const order = await request("/api/workorders", {
+        method: "POST",
+        body: JSON.stringify({
+          device_id: sample?.device_id || snapshot?.device_id || "unknown",
+          title,
+          steps: latestDiagnosis.recommendation ? [latestDiagnosis.recommendation] : sampleWorkorderSteps,
+          assignee,
+        }),
+      });
+      await loadOrders();
+      setSelectedId(order.workorder_id);
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateOrder(status) {
+    if (!selectedOrder) return;
+    setBusy(true);
+    try {
+      const action = status === "closed" ? "close" : "update";
+      const order = await request(`/api/workorders/${selectedOrder.workorder_id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action, status, assignee }),
+      });
+      setOrders((items) => items.map((item) => item.workorder_id === order.workorder_id ? order : item));
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="workspace-view active module-board" aria-label="工单系统">
+      <ModuleHero eyebrow="MES 工单系统" title="维修工单闭环" text="把诊断结果转成维修任务，跟踪处理人、步骤和状态，并为质检验收提供入口。" />
+      <div className="module-grid">
+        <ModuleStat label="当前工单" value={orders.length} text="Agent Service 内存工单池" />
+        <ModuleStat label="选中状态" value={labelFor(workorderStatusLabels, selectedOrder?.status)} text={selectedOrder?.workorder_id || "暂无工单"} />
+        <ModuleStat label="关联设备" value={selectedOrder?.device_id || sample?.device_id || snapshot?.device_id || "--"} text="来自实时监测上下文" />
+      </div>
+      <div className="ops-grid">
+        <section className="panel module-panel">
+          <div className="panel-heading">
+            <div><span className="eyebrow">创建工单</span><h2>诊断转派</h2></div>
+            <span className="muted">{latestDiagnosis.summary || "可先创建演示工单"}</span>
+          </div>
+          <div className="form-row">
+            <label>处理人<input value={assignee} onChange={(event) => setAssignee(event.target.value)} /></label>
+            <button className="button primary" type="button" disabled={busy} onClick={createOrder}>{busy ? "处理中" : "创建工单"}</button>
+          </div>
+          {error && <div className="inline-error">{error}</div>}
+        </section>
+        <section className="panel module-panel">
+          <div className="panel-heading">
+            <div><span className="eyebrow">工单列表</span><h2>任务队列</h2></div>
+            <button className="button" type="button" onClick={loadOrders}>刷新</button>
+          </div>
+          <div className="order-list">
+            {!orders.length && <div className="empty-state">暂无工单，点击创建工单生成第一条任务</div>}
+            {orders.map((order) => (
+              <button key={order.workorder_id} type="button" className={`order-row ${order.workorder_id === selectedOrder?.workorder_id ? "active" : ""}`} onClick={() => setSelectedId(order.workorder_id)}>
+                <span><strong>{order.title}</strong><em>{order.workorder_id}</em></span>
+                <b>{labelFor(workorderStatusLabels, order.status)}</b>
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+      <WorkorderDetail order={selectedOrder} busy={busy} onUpdate={updateOrder} />
+    </section>
+  );
+}
+
+function WorkorderDetail({ order, busy, onUpdate }) {
+  if (!order) return <section className="panel module-panel"><div className="empty-state">暂无工单详情</div></section>;
+  return (
+    <section className="panel module-panel detail-panel">
+      <div className="panel-heading">
+        <div><span className="eyebrow">工单详情</span><h2>{order.title}</h2></div>
+        <span className={`severity-pill ${order.status === "closed" || order.status === "completed" ? "normal" : "warning"}`}>{labelFor(workorderStatusLabels, order.status)}</span>
+      </div>
+      <div className="detail-grid">
+        <DetailCell label="工单编号" value={order.workorder_id} />
+        <DetailCell label="设备" value={order.device_id} />
+        <DetailCell label="处理人" value={order.assignee || "未分配"} />
+        <DetailCell label="更新时间" value={formatTime(order.updated_at)} />
+      </div>
+      <StepList steps={order.steps} />
+      <div className="action-row">
+        <button className="button" type="button" disabled={busy} onClick={() => onUpdate("in_progress")}>标记处理中</button>
+        <button className="button" type="button" disabled={busy} onClick={() => onUpdate("completed")}>标记完成</button>
+        <button className="button primary" type="button" disabled={busy} onClick={() => onUpdate("closed")}>关闭工单</button>
+      </div>
+    </section>
+  );
+}
+
+function RagWorkspace({ snapshot, sample }) {
+  const [query, setQuery] = useState(quickQuestions[0]);
+  const [answer, setAnswer] = useState(null);
+  const [ragResult, setRagResult] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function loadStatus() {
+    try {
+      setStatus(await request("/api/rag/status"));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    loadStatus();
+  }, []);
+
+  async function askKnowledge(nextQuery = query) {
+    if (!nextQuery.trim()) return;
+    setBusy(true);
+    try {
+      const [agentBody, ragBody] = await Promise.all([
+        request("/api/agent/question", {
+          method: "POST",
+          body: JSON.stringify({ user_text: nextQuery, context: { device_id: sample?.device_id || snapshot?.device_id || "" } }),
+        }),
+        request(`/api/rag/search?query=${encodeURIComponent(nextQuery)}&limit=5`),
+      ]);
+      setAnswer(agentBody);
+      setRagResult(ragBody);
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const documents = ragResult?.documents || answer?.knowledge?.documents || [];
+  const report = answer?.report || {};
+  return (
+    <section className="workspace-view active module-board" aria-label="RAG知识问答">
+      <ModuleHero eyebrow="RAG 知识中枢" title="维修知识问答" text="统一调用 Router、Knowledge 和 RAG 检索接口，展示答案摘要、命中文档与知识库状态。" />
+      <div className="module-grid">
+        <ModuleStat label="检索后端" value={status?.backend || "--"} text="支持本地 fallback 或远程 RAG" />
+        <ModuleStat label="知识记录" value={status?.record_count ?? "--"} text="当前可检索记录数" />
+        <ModuleStat label="命中文档" value={documents.length} text="本次问答引用结果" />
+      </div>
+      <section className="qa-shell">
+        <div className="quick-row">
+          {quickQuestions.map((item) => (
+            <button key={item} className="button" type="button" onClick={() => { setQuery(item); askKnowledge(item); }}>{item}</button>
+          ))}
+        </div>
+        <textarea className="qa-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入设备维修、SOP、报警码问题" />
+        <div className="action-row">
+          <button className="button primary" type="button" disabled={busy} onClick={() => askKnowledge()}>{busy ? "检索中" : "提交问答"}</button>
+          <button className="button" type="button" onClick={loadStatus}>刷新知识库状态</button>
+        </div>
+        {error && <div className="inline-error">{error}</div>}
+      </section>
+      <section className="answer-grid">
+        <div className="panel module-panel">
+          <div className="panel-heading"><div><span className="eyebrow">Agent 回答</span><h2>{report.title || "等待提问"}</h2></div></div>
+          <p className="answer-summary">{report.summary || answer?.diagnosis?.fault || answer?.route_result?.reason || "输入问题后将展示 Router 与 Knowledge Agent 的回答。"}</p>
+          {answer?.route_result && <JsonBlock value={answer.route_result} />}
+        </div>
+        <div className="panel module-panel">
+          <div className="panel-heading"><div><span className="eyebrow">引用文档</span><h2>RAG 命中</h2></div><span className="muted">{ragResult?.source || answer?.knowledge?.source || "--"}</span></div>
+          <DocumentList documents={documents} />
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function QualityWorkspace({ snapshot, sample }) {
+  const [orders, setOrders] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [quality, setQuality] = useState(null);
+  const [trace, setTrace] = useState([]);
+  const [experiences, setExperiences] = useState([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
+
+  async function loadQualityData() {
+    try {
+      const [orderBody, traceBody, experienceBody] = await Promise.all([
+        request("/api/workorders"),
+        request("/api/trace"),
+        request("/api/experience/search", {
+          method: "POST",
+          body: JSON.stringify({ device_id: sample?.device_id || snapshot?.device_id || "", limit: 8 }),
+        }),
+      ]);
+      const items = orderBody.items || [];
+      setOrders(items);
+      setTrace(traceBody.trace || []);
+      setExperiences(experienceBody.items || []);
+      if (!selectedId && items.length) setSelectedId(items[0].workorder_id);
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => {
+    loadQualityData();
+  }, []);
+
+  async function verifyQuality() {
+    if (!selectedOrder) return;
+    setBusy(true);
+    try {
+      const body = await request(`/api/workorders/${selectedOrder.workorder_id}/quality`, { method: "POST", body: "{}" });
+      setQuality(body);
+      await loadQualityData();
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="workspace-view active module-board" aria-label="质检系统">
+      <ModuleHero eyebrow="QMS 质检系统" title="维修验收与经验沉淀" text="对已处理工单执行恢复验证，查看 Agent Trace，并展示维修经验库检索结果。" />
+      <div className="module-grid">
+        <ModuleStat label="待验工单" value={orders.length} text="来自当前工单池" />
+        <ModuleStat label="最近验收" value={quality ? (quality.passed ? "通过" : "未通过") : "未执行"} text={quality?.workorder_id || "选择工单后执行"} />
+        <ModuleStat label="经验记录" value={experiences.length} text="长期记忆/经验库结果" />
+      </div>
+      <div className="ops-grid">
+        <section className="panel module-panel">
+          <div className="panel-heading"><div><span className="eyebrow">验收对象</span><h2>选择工单</h2></div><button className="button" type="button" onClick={loadQualityData}>刷新</button></div>
+          <select className="select-input" value={selectedOrder?.workorder_id || ""} onChange={(event) => setSelectedId(event.target.value)}>
+            {!orders.length && <option value="">暂无工单</option>}
+            {orders.map((order) => <option key={order.workorder_id} value={order.workorder_id}>{order.workorder_id} · {order.title}</option>)}
+          </select>
+          <div className="action-row"><button className="button primary" type="button" disabled={busy || !selectedOrder} onClick={verifyQuality}>{busy ? "验收中" : "执行质检"}</button></div>
+          {error && <div className="inline-error">{error}</div>}
+        </section>
+        <section className="panel module-panel">
+          <div className="panel-heading"><div><span className="eyebrow">质检结果</span><h2>{quality ? (quality.passed ? "验收通过" : "验收未通过") : "等待验收"}</h2></div></div>
+          {quality ? <QualityResultView quality={quality} /> : <div className="empty-state">工单完成或关闭后，质检结果会显示恢复状态、报警清除和 SOP 合规性。</div>}
+        </section>
+      </div>
+      <section className="answer-grid">
+        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">经验库</span><h2>维修经验</h2></div></div><ExperienceList items={experiences} /></div>
+        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">Trace</span><h2>Agent 调用轨迹</h2></div></div><TraceList items={trace} /></div>
+      </section>
+    </section>
+  );
+}
+
+function ModuleHero({ eyebrow, title, text }) {
+  return <div className="module-hero"><span className="eyebrow">{eyebrow}</span><h2>{title}</h2><p>{text}</p></div>;
+}
+
+function ModuleStat({ label, value, text }) {
+  return <div className="module-card"><span>{label}</span><strong>{value}</strong><p>{text}</p></div>;
+}
+
+function DetailCell({ label, value }) {
+  return <div><span>{label}</span><strong>{value || "--"}</strong></div>;
+}
+
+function StepList({ steps = [] }) {
+  if (!steps.length) return <div className="empty-state">暂无维修步骤</div>;
+  return <ol className="step-list">{steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol>;
+}
+
+function DocumentList({ documents }) {
+  if (!documents.length) return <div className="empty-state">暂无命中文档</div>;
+  return <div className="document-list">{documents.map((doc, index) => <article key={doc.document_id || index}><strong>{doc.title || doc.document_id}</strong><p>{doc.content}</p><span>{doc.source || doc.metadata?.collection || "知识库"} · 相关度 {doc.score ?? "--"}</span></article>)}</div>;
+}
+
+function QualityResultView({ quality }) {
+  const checks = [
+    ["设备恢复", quality.device_recovered],
+    ["报警清除", quality.alarm_cleared],
+    ["SOP合规", quality.sop_compliant],
+  ];
+  return <div className="quality-result"><div className="check-grid">{checks.map(([label, passed]) => <div key={label} className={passed ? "normal" : "fault"}><span>{label}</span><strong>{passed ? "通过" : "未通过"}</strong></div>)}</div><StepList steps={quality.findings || []} /></div>;
+}
+
+function ExperienceList({ items }) {
+  if (!items.length) return <div className="empty-state">暂无经验记录；闭环通过后会自动沉淀。</div>;
+  return <div className="document-list">{items.map((item, index) => <article key={item.experience_id || index}><strong>{item.title}</strong><p>{item.content}</p><span>{item.device_id || "--"} · {item.source_workorder || "历史经验"}</span></article>)}</div>;
+}
+
+function TraceList({ items }) {
+  if (!items.length) return <div className="empty-state">暂无调用轨迹</div>;
+  return <div className="trace-list">{items.slice(0, 12).map((item, index) => <div key={`${item.event || "trace"}-${index}`}><strong>{item.event}</strong><span>{item.agent || item.tool || item.mcp_server || "runtime"}</span></div>)}</div>;
+}
+
+function JsonBlock({ value }) {
+  return <pre className="json-block">{JSON.stringify(value, null, 2)}</pre>;
 }
 
 function PendingView({ title }) {

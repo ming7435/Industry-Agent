@@ -62,6 +62,7 @@ class DeviceMonitor:
         self._validate_timestamp(state, sample.timestamp)
         state.samples.append(sample)
 
+        # 先清理过期状态，再把当前观测写回状态机，避免旧窗口影响本次触发。
         observations = self._detect_anomalies(state, sample)
         self._expire_old_anomalies(state, sample.timestamp)
         self._reset_missing_continuous_events(
@@ -72,6 +73,7 @@ class DeviceMonitor:
         self._prepare_incident(state, observations, sample.timestamp)
 
         status = self._classify_status(sample, observations)
+        # 同一事件只在首次确认或严重等级升级时再次调用诊断 Agent。
         trigger = self._build_trigger_if_ready(state, sample, status)
         result = MonitorResult(
             device_id=sample.device_id,

@@ -12,12 +12,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = SERVICE_ROOT.parent.parent
 FRONTEND_ROOT = PROJECT_ROOT / "frontend" / "monitor"
+AGENT_SERVICE_BASE_URL = os.getenv("AGENT_SERVICE_BASE_URL", "http://127.0.0.1:8010")
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
@@ -28,6 +31,8 @@ from app.monitor import (  # noqa: E402，路径注入后再导入本地应用�
     MonitorRunner,
 )
 from app.agents.diagnosis import DiagnosisAgent  # noqa: E402，路径注入后再导入本地应用包。
+from app.harness import AgentHarness  # noqa: E402，路径注入后再导入本地应用包。
+from app.graph import build_orchestrator  # noqa: E402，路径注入后再导入本地应用包。
 from app.mcp.registry import LocalMcpToolRegistry  # noqa: E402，路径注入后再导入本地应用包。
 
 
@@ -53,11 +58,18 @@ class MonitorWebState:
         self.diagnosis_agent = DiagnosisAgent(
             tools=LocalMcpToolRegistry(base_url=self.base_url)
         )
+        self.orchestrator = build_orchestrator(diagnosis_agent=self.diagnosis_agent)
+        self.diagnosis_harness = AgentHarness(
+            agent=self.diagnosis_agent,
+            timeout_seconds=float(os.getenv("AGENT_TIMEOUT_SECONDS", "45")),
+            max_retries=int(os.getenv("AGENT_MAX_RETRIES", "1")),
+        )
         self.diagnosis_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="diagnosis-agent",
         )
         self.latest_diagnosis: Optional[Dict[str, Any]] = None
+        self.latest_pipeline: Optional[Dict[str, Any]] = None
         self.diagnosis_history = deque(maxlen=30)
         self.diagnosis_pending = 0
         self._diagnosis_generation = 0
@@ -107,7 +119,10 @@ class MonitorWebState:
         with self.lock:
             generation = self._diagnosis_generation
             self.diagnosis_pending += 1
-        future = self.diagnosis_executor.submit(self.diagnosis_agent.run, event)
+        future = self.diagnosis_executor.submit(
+            self.orchestrator.run_abnormal_event,
+            event,
+        )
         future.add_done_callback(
             lambda completed: self._on_diagnosis_done(completed, generation)
         )
@@ -116,8 +131,16 @@ class MonitorWebState:
         """保存异步诊断结果；统计归零后完成的旧任务不会污染新会话。"""
 
         try:
-            diagnosis = future.result().to_dict()
+            pipeline = future.result()
+            diagnosis = dict(pipeline.get("diagnosis") or {})
+            if not diagnosis:
+                diagnosis = {
+                    "status": "failed",
+                    "summary": "诊断编排未返回结果",
+                    "diagnosis": "无法生成诊断结果。",
+                }
         except Exception as error:  # pragma: no cover，Agent 自身已有降级边界。
+            pipeline = {}
             diagnosis = {
                 "status": "failed",
                 "summary": "诊断智能体执行失败",
@@ -129,6 +152,7 @@ class MonitorWebState:
             if generation != self._diagnosis_generation:
                 return
             self.latest_diagnosis = diagnosis
+            self.latest_pipeline = pipeline
             self.diagnosis_history.appendleft(diagnosis)
 
     def _diagnosis_snapshot(self) -> Dict[str, Any]:
@@ -139,6 +163,7 @@ class MonitorWebState:
                 "pending": self.diagnosis_pending,
                 "latest": self.latest_diagnosis,
                 "history": list(self.diagnosis_history),
+                "pipeline": self.latest_pipeline or {},
             }
         return {
             "pending": self.diagnosis_pending,
@@ -147,6 +172,7 @@ class MonitorWebState:
                 "summary": "诊断智能体正在分析" if self.diagnosis_pending else "等待异常事件",
             },
             "history": [],
+            "pipeline": {},
         }
 
     def _on_error(self, error: Exception) -> None:
@@ -197,6 +223,7 @@ class MonitorWebState:
             self._last_alarm_codes.clear()
             self.trigger_history.clear()
             self.latest_diagnosis = None
+            self.latest_pipeline = None
             self.diagnosis_history.clear()
             self.diagnosis_pending = 0
         if was_running:
@@ -216,12 +243,18 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/monitor/snapshot":
             self._json(self.state.snapshot())
             return
+        if self._should_proxy(parsed.path):
+            self._proxy_to_agent_service("GET")
+            return
         self._serve_static(parsed.path)
 
     def do_POST(self) -> None:  # noqa: N802，沿用标准库处理器要求的方法名。
         """处理监控开关和统计重置请求。"""
 
         parsed = urlparse(self.path)
+        if self._should_proxy(parsed.path):
+            self._proxy_to_agent_service("POST")
+            return
         try:
             payload = self._read_json()
             if parsed.path == "/api/monitor/control":
@@ -247,6 +280,52 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         """关闭默认访问日志，保持控制台输出简洁。"""
 
         return
+
+    @staticmethod
+    def _should_proxy(path: str) -> bool:
+        """判断是否需要转发给 Agent Service。"""
+
+        return path.startswith((
+            "/api/agent/",
+            "/api/rag/",
+            "/api/trace",
+            "/api/memory/",
+            "/api/workorders",
+            "/api/experience/",
+        ))
+
+    def _proxy_to_agent_service(self, method: str) -> None:
+        """把平台 API 请求转发给 Agent Service，保持前端同源调用。"""
+
+        body = None
+        if method in {"POST", "PUT", "PATCH"}:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length) if length else b""
+        headers = {"Content-Type": self.headers.get("Content-Type", "application/json")}
+        request = Request(
+            AGENT_SERVICE_BASE_URL.rstrip("/") + self.path,
+            data=body,
+            headers=headers,
+            method=method,
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                payload = response.read()
+                self.send_response(response.status)
+                self.send_header("Content-Type", response.headers.get("Content-Type", "application/json; charset=utf-8"))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+        except HTTPError as error:
+            payload = error.read() or json.dumps({"error": str(error)}, ensure_ascii=False).encode("utf-8")
+            self.send_response(error.code)
+            self.send_header("Content-Type", error.headers.get("Content-Type", "application/json; charset=utf-8"))
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        except URLError as error:
+            self._error(HTTPStatus.BAD_GATEWAY, "Agent Service unavailable: %s" % error.reason)
 
     def _serve_static(self, path: str) -> None:
         """从前端目录安全地返回静态文件。"""

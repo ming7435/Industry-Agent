@@ -1,0 +1,9 @@
+name: router
+goal: 识别用户意图并选择目标智能体
+input: 用户文本
+steps:
+  - 提取设备运维意图
+  - 选择目标Agent
+tools:
+  - intent_classifier_tool
+output: RouteResult

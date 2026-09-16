@@ -1,0 +1,12 @@
+name: quality
+goal: 验证维修是否完成并恢复设备
+input: WorkOrder
+steps:
+  - 校验工单执行状态
+  - 检查SOP符合性
+  - 检查设备恢复和报警消失
+tools:
+  - get_device_status
+  - verify_repair
+  - check_sop
+output: QualityResult

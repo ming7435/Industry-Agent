@@ -91,11 +91,25 @@ def get_alarm_definition(alarm_code: str) -> Dict[str, Any]:
     if definition is None:
         return {
             "found": False,
+            "success": True,
             "alarm_code": normalized or None,
             "name": "未知报警",
             "severity": "unknown",
+            "severity_label": "未知",
             "description": "当前 Mock 报警字典中没有找到该报警码。",
             "recommended_action": "记录报警码，并查询设备维修手册或真实报警服务。",
             "source": "mock_alarm_dictionary",
         }
-    return {"found": True, "source": "mock_alarm_dictionary", **definition}
+    severity_labels = {
+        "warning": "初级预警",
+        "high": "高级故障",
+        "critical": "严重故障",
+        "unknown": "未知",
+    }
+    return {
+        "found": True,
+        "success": True,
+        "source": "mock_alarm_dictionary",
+        "severity_label": severity_labels.get(definition.get("severity"), "未知"),
+        **definition,
+    }

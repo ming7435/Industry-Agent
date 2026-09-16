@@ -1,0 +1,12 @@
+name: maintenance
+goal: 生成安全可执行的维修方案
+input: DiagnosisResult, KnowledgeResult, CADResult
+steps:
+  - 汇总故障证据
+  - 关联SOP和工程部件
+  - 生成维修步骤、工器具、备件和安全要求
+tools:
+  - generate_repair_plan
+  - query_spare_part
+  - create_workorder
+output: MaintenancePlan
