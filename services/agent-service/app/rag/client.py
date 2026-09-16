@@ -26,11 +26,26 @@ class RAGServiceClient:
         payload = {"query": query, "limit": limit, "filters": dict(filters or {})}
         if self.base_url:
             try:
-                return self._post("/search", payload)
-            except Exception:
+                result = self._post("/search", payload)
+                result.setdefault("backend", "remote-rag-service")
+                result.setdefault("connection_status", "connected")
+                result.setdefault("degraded", False)
+                return result
+            except Exception as error:
                 if not self.allow_fallback:
                     raise
-        return self.fallback.search(query, limit=limit, filters=filters)
+                result = self.fallback.search(query, limit=limit, filters=filters)
+                result["connection_status"] = "remote_unavailable_fallback"
+                result["degraded"] = True
+                result["remote_base_url"] = self.base_url
+                result["warning"] = "%s: %s" % (type(error).__name__, error)
+                return result
+        result = self.fallback.search(query, limit=limit, filters=filters)
+        result["connection_status"] = "local_fallback"
+        result["degraded"] = True
+        result["remote_base_url"] = ""
+        result["warning"] = "RAG_SERVICE_BASE_URL 未配置，当前使用本地演示知识索引。"
+        return result
 
     def ingest_jsonl(self, path: str, collection: str = "") -> Dict[str, Any]:
         payload = {"path": path, "collection": collection}
@@ -58,12 +73,33 @@ class RAGServiceClient:
     def status(self) -> Dict[str, Any]:
         if self.base_url:
             try:
-                return self._get("/status")
-            except Exception:
+                result = self._get("/status")
+                result.setdefault("backend", "remote-rag-service")
+                result["connected"] = True
+                result["degraded"] = False
+                result["connection_status"] = "connected"
+                result["remote_base_url"] = self.base_url
+                return result
+            except Exception as error:
                 if not self.allow_fallback:
                     raise
+                return {
+                    "backend": "local-rag-fallback",
+                    "connected": False,
+                    "degraded": True,
+                    "connection_status": "remote_unavailable_fallback",
+                    "remote_base_url": self.base_url,
+                    "warning": "%s: %s" % (type(error).__name__, error),
+                    "record_count": self.fallback.count(),
+                    "collections": self.fallback.collections(),
+                }
         return {
             "backend": "local-rag-fallback",
+            "connected": False,
+            "degraded": True,
+            "connection_status": "local_fallback",
+            "remote_base_url": "",
+            "warning": "RAG_SERVICE_BASE_URL 未配置，当前使用本地演示知识索引。",
             "record_count": self.fallback.count(),
             "collections": self.fallback.collections(),
         }

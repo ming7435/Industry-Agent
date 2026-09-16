@@ -170,13 +170,13 @@ class LocalMcpToolRegistry:
 
         server = {"get_device_status": "plc", "get_alarm_definition": "knowledge", "get_device_history": "plc", "get_device_logs": "plc", "search_knowledge": "knowledge"}.get(name, "knowledge")
         if self.trace:
-            self.trace.record(event="tool_started", tool=name, mcp_server=server, arguments=dict(arguments))
+            self.trace.record(type="tool", name=name, event="tool_started", tool=name, mcp_server=server, arguments=dict(arguments))
         try:
             result = self.mcp.call(server, name, arguments)
         except Exception as error:
             if self.trace:
-                self.trace.record(event="tool_error", tool=name, mcp_server=server, error=str(error))
+                self.trace.record(type="tool", name=name, event="tool_error", tool=name, mcp_server=server, error=str(error))
             raise
         if self.trace:
-            self.trace.record(event="tool_completed", tool=name, mcp_server=server)
+            self.trace.record(type="tool", name=name, event="tool_completed", tool=name, mcp_server=server)
         return result

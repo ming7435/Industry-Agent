@@ -1,10 +1,20 @@
-name: cad
-goal: 查询CAD、DWG、DXF和BOM工程数据
-input: 零件或装配查询
+name: cad_master_skill
+version: 1.0
+goal: 查询 CAD、BOM、零件位置和装配关系，返回可追踪工程证据包
+input: CADRequest 或零件/装配查询
 steps:
-  - 查询工程数据服务
-  - 返回零件位置和装配关系
+  - resolve_component
+  - query_drawing
+  - query_bom
+  - query_part_relation
+  - validate_engineering_evidence
+  - output_engineering_pack
 tools:
   - query_cad
   - query_bom
+  - query_part
+  - query_part_relation
+  - query_assembly_relation
+  - get_drawing_metadata
+  - get_component_location
 output: CADResult

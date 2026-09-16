@@ -109,6 +109,43 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
         assistant["tool_calls"] = calls
 
     runtime.messages.append(assistant)
+    # 自动异常诊断需要知识证据时，通过 Orchestrator 注入的 A2A 回调调用 Knowledge。
+    # 结果写回当前 Diagnosis Observation，后续模型继续基于证据判断，避免外层重复检索。
+    if not calls and getattr(agent, "knowledge_provider", None) and not agent._has_tool_call(runtime, "search_knowledge"):
+        query = agent._knowledge_query(state["event"])
+        arguments = {"query": query, "limit": 5}
+        try:
+            result = agent.request_knowledge(state["event"], query)
+        except Exception as error:
+            result = {
+                "success": False,
+                "found": False,
+                "source": "a2a-error",
+                "error": {"code": type(error).__name__, "message": str(error)},
+            }
+        record = {
+            "step": runtime.step_count,
+            "name": "search_knowledge",
+            "arguments": arguments,
+            "result": result,
+            "source": "a2a",
+        }
+        runtime.tool_calls.append(record)
+        runtime.tool_results.append(result)
+        observation = agent._observation_from_tool("search_knowledge", arguments, result, runtime.step_count)
+        runtime.observations.append(observation)
+        for item in agent._evidence_from_observation(observation):
+            if item not in runtime.evidence:
+                runtime.evidence.append(item)
+        runtime.messages.append({
+            "role": "tool",
+            "tool_call_id": "a2a-knowledge",
+            "name": "search_knowledge",
+            "content": json.dumps(result, ensure_ascii=False),
+        })
+        runtime.next_action = "基于 Knowledge Evidence 完成诊断"
+        return {"agent_state": runtime, "route": "reason"}
+
     route = "tool_guard" if calls else "validate"
     return {"agent_state": runtime, "response": response, "assistant": assistant, "route": route}
 
@@ -310,7 +347,7 @@ def build_diagnosis_graph():
     workflow.add_conditional_edges("initialize", select_next_diagnosis_route, {"load_skill": "load_skill", "fallback": "fallback"})
     workflow.add_conditional_edges("load_skill", select_next_diagnosis_route, {"reason": "reason", "fallback": "fallback"})
     # 推理结果决定是否调用工具；没有工具调用时先经过 Validator。
-    workflow.add_conditional_edges("reason", select_next_diagnosis_route, {"tool_guard": "tool_guard", "validate": "validate", "fallback": "fallback"})
+    workflow.add_conditional_edges("reason", select_next_diagnosis_route, {"reason": "reason", "tool_guard": "tool_guard", "validate": "validate", "fallback": "fallback"})
     workflow.add_conditional_edges("tool_guard", select_next_diagnosis_route, {"act": "act", "reason": "reason", "fallback": "fallback"})
     workflow.add_conditional_edges("act", select_next_diagnosis_route, {"observe": "observe", "fallback": "fallback"})
     workflow.add_edge("observe", "reason")

@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from .models import A2ARequest, A2AResponse
+from .registry import CORE_A2A_AGENT_TARGETS
 
 
 RequestT = TypeVar("RequestT", bound=A2ARequest)
@@ -23,9 +24,13 @@ class A2AClient:
         self._handlers: Dict[str, Callable[[A2ARequest], Any]] = {}
 
     def register(self, agent_name: str, handler: Callable[[A2ARequest], Any]) -> None:
+        if agent_name not in CORE_A2A_AGENT_TARGETS:
+            raise A2AError("A2A 不允许注册非核心 Agent：%s" % agent_name)
         self._handlers[agent_name] = handler
 
     def request(self, request: RequestT, response_type: Type[ResponseT]) -> ResponseT:
+        if request.from_agent not in CORE_A2A_AGENT_TARGETS or request.to_agent not in CORE_A2A_AGENT_TARGETS:
+            raise A2AError("A2A 请求包含非核心 Agent：%s -> %s" % (request.from_agent, request.to_agent))
         handler = self._handlers.get(request.to_agent)
         if handler is None:
             raise A2AError("未注册目标 Agent：%s" % request.to_agent)

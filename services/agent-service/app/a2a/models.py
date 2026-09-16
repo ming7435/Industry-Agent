@@ -42,7 +42,17 @@ class KnowledgeRequest(A2ARequest):
 
 
 class KnowledgeResponse(A2AResponse):
+    status: str = "completed"
+    summary: str = ""
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    possible_causes: List[str] = Field(default_factory=list)
+    recommended_checks: List[str] = Field(default_factory=list)
+    confidence: float = 0.0
     documents: List[Dict[str, Any]] = Field(default_factory=list)
+    sources: List[str] = Field(default_factory=list)
+    backend_status: str = "unknown"
+    degraded: bool = False
+    warning: str = ""
     source: str = ""
 
 
@@ -62,4 +72,13 @@ class CADRequest(A2ARequest):
 
 
 class CADResponse(A2AResponse):
+    status: str = "completed"
+    summary: str = ""
+    components: List[Dict[str, Any]] = Field(default_factory=list)
+    drawings: List[Dict[str, Any]] = Field(default_factory=list)
+    bom_items: List[Dict[str, Any]] = Field(default_factory=list)
+    assembly_relations: List[Dict[str, Any]] = Field(default_factory=list)
+    evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    confidence: float = 0.0
+    source: str = ""
     result: Dict[str, Any] = Field(default_factory=dict)

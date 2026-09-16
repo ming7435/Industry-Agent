@@ -499,6 +499,35 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
         <div><span>毛坯入料</span><strong>棒料</strong></div>
         <div><span>成品出料</span><strong>轴套件</strong></div>
       </div>
+      <div className="device-connection-list" aria-label="设备接入清单">
+        <div className="device-list-heading">
+          <div>
+            <span className="eyebrow">设备接入清单</span>
+            <h3>已接入设备</h3>
+          </div>
+          <strong>{connectedCount} / {machines.length} 在线</strong>
+        </div>
+        <div className="device-list-grid">
+          {machines.map((machine) => {
+            const status = machineStatus(machine, machine.result);
+            return (
+              <button
+                key={machine.id}
+                type="button"
+                className={`device-list-item ${machine.id === selectedMachineId ? "active" : ""}`}
+                onClick={() => onSelectMachine(machine.id)}
+              >
+                <span className={`device-list-status ${status}`} />
+                <span className="device-list-copy">
+                  <strong>{machine.name}</strong>
+                  <small>{machine.id}</small>
+                </span>
+                <span className={`device-list-state ${status}`}>{machineStatusLabel(status)}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </section>
   );
 }
@@ -1424,11 +1453,17 @@ function RagWorkspace({ snapshot, sample }) {
 
   const documents = ragResult?.documents || answer?.knowledge?.documents || [];
   const report = answer?.report || {};
+  const ragConnectionText = status?.connected
+    ? "已连接真实RAG"
+    : status?.connection_status === "remote_unavailable_fallback"
+      ? "远程不可用"
+      : "本地演示库";
   return (
     <section className="workspace-view active module-board" aria-label="RAG知识问答">
       <ModuleHero eyebrow="RAG 知识中枢" title="维修知识问答" text="统一调用 Router、Knowledge 和 RAG 检索接口，展示答案摘要、命中文档与知识库状态。" />
       <div className="module-grid">
         <ModuleStat label="检索后端" value={status?.backend || "--"} text="支持本地 fallback 或远程 RAG" />
+        <ModuleStat label="RAG连接" value={ragConnectionText} text={status?.warning || status?.remote_base_url || "等待配置 RAG_SERVICE_BASE_URL"} />
         <ModuleStat label="知识记录" value={status?.record_count ?? "--"} text="当前可检索记录数" />
         <ModuleStat label="命中文档" value={documents.length} text="本次问答引用结果" />
       </div>

@@ -1,10 +1,24 @@
-name: knowledge
-goal: 检索SOP、维修手册、报警库和历史案例
-input: 检索问题
+name: knowledge_master_skill
+version: 1.0
+goal: 检索、去重、融合并返回可追踪工业知识 Evidence Pack
+input: KnowledgeRequest 或检索问题
 steps:
-  - 调用RAG Service接口
-  - 融合关键词和向量结果
-  - 返回带来源和评分的文档
+  - classify_query
+  - build_filters
+  - retrieve
+  - deduplicate
+  - rank
+  - validate_sources
+  - output_evidence_pack
 tools:
   - search_knowledge
+sub_skills:
+  alarm_knowledge_skill:
+    trigger: alarm_code_or_exact_code
+  sop_retrieval_skill:
+    trigger: sop_or_repair_steps
+  fault_case_retrieval_skill:
+    trigger: case_or_history
+  hybrid_retrieval_skill:
+    trigger: default
 output: KnowledgeResult

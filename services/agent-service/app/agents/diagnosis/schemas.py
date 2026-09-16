@@ -95,6 +95,10 @@ class DiagnosisResult:
     trigger_cause: str = ""
     diagnosis_run_id: str = ""
     trace_id: str = ""
+    active_skill: str = "diagnosis_master_skill"
+    validation_errors: List[str] = field(default_factory=list)
+    stop_reason: str = ""
+    cached: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -118,4 +122,8 @@ class DiagnosisResult:
             "trigger_cause": self.trigger_cause,
             "diagnosis_run_id": self.diagnosis_run_id,
             "trace_id": self.trace_id,
+            "active_skill": self.active_skill,
+            "validation_errors": list(self.validation_errors),
+            "stop_reason": self.stop_reason,
+            "cached": self.cached,
         }

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from app.trace import TraceRecorder
 
@@ -49,7 +50,10 @@ class AgentHarness:
         for attempt in range(self.config.max_retries + 1):
             started = perf_counter()
             task_id = abnormal_event.get("task_id", "") if isinstance(abnormal_event, dict) else ""
-            self.trace.record(event="agent_started", agent=getattr(self.agent, "name", type(self.agent).__name__), task_id=task_id, attempt=attempt + 1)
+            trace_id = abnormal_event.get("trace_id", "") if isinstance(abnormal_event, dict) else ""
+            agent_run_id = "AGENT-RUN-" + uuid4().hex[:12].upper()
+            agent_name = getattr(self.agent, "name", type(self.agent).__name__)
+            self.trace.record(type="agent", name=agent_name, event="agent_started", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1)
             # 每次尝试使用独立线程池，使单次超时不会阻塞后续重试。
             executor = ThreadPoolExecutor(
                 max_workers=1,
@@ -58,7 +62,7 @@ class AgentHarness:
             future = executor.submit(self.agent.run, abnormal_event)
             try:
                 result = future.result(timeout=self.config.timeout_seconds)
-                self.trace.record(event="agent_completed", agent=getattr(self.agent, "name", type(self.agent).__name__), task_id=task_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2))
+                self.trace.record(type="agent", name=agent_name, event="agent_completed", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2))
                 return result
             except TimeoutError as error:
                 last_error = AgentExecutionError(
@@ -66,10 +70,10 @@ class AgentHarness:
                     % (self.config.timeout_seconds, attempt + 1)
                 )
                 future.cancel()
-                self.trace.record(event="agent_timeout", agent=getattr(self.agent, "name", type(self.agent).__name__), task_id=task_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2), error=str(last_error))
+                self.trace.record(type="agent", name=agent_name, event="agent_timeout", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2), error=str(last_error))
             except Exception as error:
                 last_error = error
-                self.trace.record(event="agent_error", agent=getattr(self.agent, "name", type(self.agent).__name__), task_id=task_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2), error=str(error))
+                self.trace.record(type="agent", name=agent_name, event="agent_error", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2), error=str(error))
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)
 

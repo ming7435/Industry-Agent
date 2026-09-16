@@ -1,0 +1,69 @@
+"""经验学习模块，不是 Agent。"""
+
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+from app.memory import LongMemoryStore, ShortMemoryStore
+from app.rag import RAGServiceClient
+from app.trace import TraceRecorder
+from app.validator import ExperienceResult
+
+from .extractor import ExperienceExtractor
+from .validator import ExperienceValidator
+from .writer import ExperienceWriter
+
+
+class ExperienceLearningModule:
+    name = "experience_learning"
+
+    def __init__(
+        self,
+        short_memory: Any | None = None,
+        long_memory: Any | None = None,
+        rag: RAGServiceClient | None = None,
+        trace: TraceRecorder | None = None,
+    ) -> None:
+        self.short_memory = short_memory or ShortMemoryStore()
+        self.long_memory = long_memory or LongMemoryStore()
+        self.rag = rag or RAGServiceClient()
+        self.trace = trace
+        self.extractor = ExperienceExtractor()
+        self.validator = ExperienceValidator()
+        self.writer = ExperienceWriter(self.short_memory, self.long_memory, self.rag)
+
+    def search(self, device_id: str = "", limit: int = 20) -> dict[str, Any]:
+        self._trace("module_started", action="search", device_id=device_id)
+        items = self.long_memory.search(device_id=device_id, limit=limit)
+        self._trace("module_completed", action="search", count=len(items))
+        return {"action": "search", "device_id": device_id, "items": items, "backend": self.long_memory.backend}
+
+    def learn(self, payload: Mapping[str, Any]) -> ExperienceResult:
+        workorder = dict(payload.get("workorder") or {})
+        quality = dict(payload.get("quality") or {})
+        self._trace("module_started", action="learn", workorder_id=workorder.get("workorder_id", ""))
+        if not self.validator.is_valid(workorder, quality):
+            result = ExperienceResult(
+                experience_id="",
+                device_id=str(workorder.get("device_id", "")),
+                title="未沉淀经验",
+                content="工单未关闭或质检未通过，暂不写入经验库。",
+                passed=False,
+            )
+            self._trace("module_completed", action="learn", saved=False, reason="admission_rejected")
+            return result
+        experience = self.extractor.extract(
+            workorder=workorder,
+            quality=quality,
+            diagnosis=dict(payload.get("diagnosis") or {}),
+            maintenance_plan=dict(payload.get("maintenance_plan") or {}),
+            report=dict(payload.get("report") or {}),
+        )
+        memory_saved, rag_saved, duplicate = self.writer.write(experience)
+        result = ExperienceResult(**experience, memory_saved=memory_saved, rag_saved=rag_saved)
+        self._trace("module_completed", action="learn", saved=memory_saved, rag_saved=rag_saved, duplicate=duplicate)
+        return result
+
+    def _trace(self, event: str, **payload: Any) -> None:
+        if self.trace:
+            self.trace.record(type="module", name=self.name, event=event, **payload)

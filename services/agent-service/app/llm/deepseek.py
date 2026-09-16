@@ -34,6 +34,8 @@ def _load_project_env() -> None:
 class DeepSeekClient:
     """DeepSeek Chat Completion 客户端。"""
 
+    provider = "deepseek"
+
     def __init__(self, api_key: Optional[str] = None) -> None:
         _load_project_env()
         self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY", "").strip()

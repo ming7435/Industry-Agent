@@ -39,6 +39,17 @@ class AgentHarnessTests(unittest.TestCase):
         self.assertEqual(result["event_id"], "EVT-001")
         self.assertEqual(agent.calls, 2)
 
+    def test_harness_trace_contains_agent_run_id(self):
+        from app.trace import TraceRecorder
+
+        trace = TraceRecorder()
+        AgentHarness(FakeAgent(), trace=trace).execute_agent({"event_id": "EVT-TRACE", "trace_id": "TRACE-001"})
+
+        records = trace.list()
+        self.assertTrue(records[0]["agent_run_id"])
+        self.assertEqual(records[0]["trace_id"], "TRACE-001")
+        self.assertEqual(records[0]["agent_run_id"], records[1]["agent_run_id"])
+
     def test_harness_raises_after_timeout(self):
         with self.assertRaises(AgentExecutionError):
             AgentHarness(SlowAgent(), timeout_seconds=0.05, max_retries=0).execute_agent(

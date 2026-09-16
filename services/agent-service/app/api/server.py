@@ -99,33 +99,27 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/workorders")
     def workorders() -> Dict[str, Any]:
-        return {"items": list(runtime.nodes.registry._orders.values())}
+        return {"items": runtime.nodes.workorder_service.list()}
 
     @app.post("/api/workorders")
     def workorder_create(request: WorkOrderCreateRequest) -> Dict[str, Any]:
-        order = runtime.nodes.registry.create_workorder(
+        return runtime.nodes.workorder_service.create(
             device_id=request.device_id,
             title=request.title,
             plan_id=request.plan_id,
             steps=request.steps,
+            assignee=request.assignee,
         )
-        if request.assignee:
-            order = runtime.nodes.registry.update_workorder(
-                order["workorder_id"],
-                status=order.get("status", "open"),
-                assignee=request.assignee,
-            )
-        return order
 
     @app.get("/api/workorders/{workorder_id}")
     def workorder(workorder_id: str) -> Dict[str, Any]:
-        return runtime.nodes.registry.query_workorder(workorder_id)
+        return runtime.nodes.workorder_service.get(workorder_id)
 
     @app.post("/api/workorders/{workorder_id}/action")
     def workorder_action(workorder_id: str, request: WorkOrderActionRequest) -> Dict[str, Any]:
         if request.action == "close":
-            return runtime.nodes.registry.close_workorder(workorder_id)
-        return runtime.nodes.registry.update_workorder(
+            return runtime.nodes.workorder_service.close(workorder_id)
+        return runtime.nodes.workorder_service.update(
             workorder_id,
             status=request.status,
             assignee=request.assignee,
@@ -133,27 +127,26 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.post("/api/workorders/{workorder_id}/quality")
     def workorder_quality(workorder_id: str) -> Dict[str, Any]:
-        order = runtime.nodes.registry.query_workorder(workorder_id)
+        order = runtime.nodes.workorder_service.get(workorder_id)
         quality_payload = serialize_api_response(
             runtime.nodes.harnesses["quality"].execute_agent({"workorder": order})
         )
         if quality_payload.get("passed"):
+            order = runtime.nodes.workorder_service.close(workorder_id)
             experience_payload = serialize_api_response(
-                runtime.nodes.harnesses["experience"].execute_agent({
+                runtime.nodes.experience_module.learn({
                     "workorder": order,
                     "quality": quality_payload,
                 })
             )
             quality_payload["experience"] = experience_payload
+        else:
+            quality_payload["workorder"] = runtime.nodes.workorder_service.reopen(workorder_id)
         return quality_payload
 
     @app.post("/api/experience/search")
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:
-        return serialize_api_response(runtime.nodes.harnesses["experience"].execute_agent({
-            "action": "search",
-            "device_id": request.device_id,
-            "limit": request.limit,
-        }))
+        return runtime.nodes.experience_module.search(request.device_id, request.limit)
 
     return app
 

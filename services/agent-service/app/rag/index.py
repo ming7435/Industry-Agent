@@ -241,6 +241,18 @@ def build_default_index() -> RAGIndex:
             "keywords": ["温度", "主轴", "冷却"],
         },
         {
+            "id": "ALARM-E102",
+            "title": "E102 主轴温度异常报警说明",
+            "content": "E102 表示主轴温度超过运行阈值，应检查冷却液流量、冷却泵状态、散热器堵塞、主轴负载和温度传感器。",
+            "source_file": "演示数据/报警码",
+            "alarm_code": "E102",
+            "record_category": "fault",
+            "knowledge_type": "alarm",
+            "component": "主轴冷却系统",
+            "keywords": ["E102", "温度", "主轴", "冷却"],
+            "checks": ["检查冷却液流量", "检查冷却泵状态", "检查散热器堵塞", "复核主轴负载"],
+        },
+        {
             "id": "ALARM-700223",
             "title": "主轴过热报警说明",
             "content": "700223表示主轴过热，应检查冷却系统、负载和温度传感器。",

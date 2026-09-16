@@ -1,0 +1,60 @@
+"""Maintenance Agent 输出校验。"""
+
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+
+class MaintenancePlanValidator:
+    """检查维修计划是否可以交给工单业务节点。"""
+
+    STRUCTURAL_ACTIONS = ("拆", "更换", "安装", "轴承", "传感器", "泵", "主轴")
+
+    @classmethod
+    def validate(cls, plan: Mapping[str, Any], knowledge: Mapping[str, Any], cad: Mapping[str, Any]) -> list[str]:
+        findings: list[str] = []
+        if not str(plan.get("repair_target") or "").strip():
+            findings.append("维修对象不明确")
+        if not plan.get("repair_steps"):
+            findings.append("缺少可执行维修步骤")
+        if not plan.get("safety") and not plan.get("safety_requirements"):
+            findings.append("缺少安全要求")
+
+        documents = list(knowledge.get("documents") or []) if isinstance(knowledge, Mapping) else []
+        if knowledge and not documents and not knowledge.get("evidence"):
+            findings.append("缺少 SOP 或知识库证据")
+
+        steps_text = " ".join(str(item) for item in plan.get("repair_steps") or [])
+        needs_cad = any(token in steps_text for token in cls.STRUCTURAL_ACTIONS)
+        if needs_cad and not plan.get("cad_components"):
+            findings.append("涉及拆装或部件操作但缺少 CAD/BOM 依据")
+
+        known_parts = cls._known_part_tokens(cad)
+        for part in plan.get("parts") or []:
+            part_text = str(part)
+            if any(char.isdigit() for char in part_text) and known_parts and not any(token and token in part_text for token in known_parts):
+                findings.append("备件型号缺少工程依据：%s" % part_text)
+
+        return cls._dedupe(findings)
+
+    @staticmethod
+    def workorder_ready(findings: list[str], plan: Mapping[str, Any]) -> bool:
+        return not findings and bool(plan.get("repair_steps")) and bool(plan.get("repair_target"))
+
+    @staticmethod
+    def _known_part_tokens(cad: Mapping[str, Any]) -> list[str]:
+        tokens: list[str] = []
+        for item in list(cad.get("components") or []) + list(cad.get("bom_items") or []):
+            for key in ("component_id", "part_no", "name"):
+                value = str(item.get(key) or "").strip()
+                if value:
+                    tokens.append(value)
+        return tokens
+
+    @staticmethod
+    def _dedupe(items: list[str]) -> list[str]:
+        values: list[str] = []
+        for item in items:
+            if item and item not in values:
+                values.append(item)
+        return values

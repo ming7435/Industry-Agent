@@ -9,10 +9,13 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from app.agents import CADAgent, ExperienceAgent, KnowledgeAgent, MaintenanceAgent, QualityAgent, ReportAgent, RouterAgent, WorkOrderAgent
+from app.agents import CADAgent, KnowledgeAgent, MaintenanceAgent, QualityAgent, ReportAgent, RouterAgent
 from app.agents.diagnosis import DiagnosisAgent
+from app.agents.registry import CORE_AGENT_REGISTRY
+from app.experience import ExperienceLearningModule
 from app.graph import build_orchestrator
 from app.tools.registry import ToolRegistry
+from app.tools.workorder import WorkOrderService
 from app.rag import RAGIndex
 
 
@@ -38,15 +41,22 @@ class AllAgentTests(unittest.TestCase):
             "evidence": ["温度超过阈值"],
         }
         plan = MaintenanceAgent().run({"diagnosis": diagnosis, "knowledge": knowledge.model_dump(), "cad": cad.model_dump()})
-        order_agent = WorkOrderAgent(self.tools)
-        order = order_agent.run({"plan": plan.model_dump()})
-        order_agent.update(order.workorder_id, "completed")
-        quality = QualityAgent(self.tools).run({"workorder": order.model_dump()})
-        report = ReportAgent().run({"diagnosis": diagnosis, "maintenance_plan": plan.model_dump(), "workorder": order.model_dump(), "quality": quality.model_dump()})
+        workorders = WorkOrderService(self.tools)
+        order = workorders.create_from_plan(plan)
+        workorders.mark_repair_completed(order.workorder_id)
+        quality = QualityAgent(self.tools).run({"workorder": workorders.get(order.workorder_id)})
+        report = ReportAgent().run({"diagnosis": diagnosis, "maintenance_plan": plan.model_dump(), "workorder": workorders.get(order.workorder_id), "quality": quality.model_dump()})
 
         self.assertEqual(route.intent, "knowledge")
         self.assertTrue(knowledge.documents)
+        self.assertEqual(knowledge.status, "completed")
+        self.assertTrue(knowledge.evidence)
+        self.assertTrue(knowledge.sources)
         self.assertTrue(cad.components)
+        self.assertEqual(cad.status, "completed")
+        self.assertTrue(cad.drawings)
+        self.assertTrue(cad.bom_items)
+        self.assertTrue(cad.assembly_relations)
         self.assertTrue(plan.repair_steps)
         self.assertEqual(order.status, "open")
         self.assertTrue(quality.passed)
@@ -66,16 +76,130 @@ class AllAgentTests(unittest.TestCase):
         for key in ("diagnosis", "knowledge", "cad", "maintenance_plan", "workorder", "quality", "report", "experience", "memory", "trace"):
             self.assertIn(key, result)
         self.assertEqual(result["report"]["report_type"], "maintenance")
-        self.assertEqual(result["workorder"]["status"], "completed")
+        self.assertEqual(result["workorder"]["status"], "closed")
         self.assertTrue(result["quality"]["passed"])
         self.assertTrue(result["experience"]["memory_saved"])
+        self.assertEqual(
+            set(orchestrator.nodes.harnesses),
+            {"router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"},
+        )
+        self.assertTrue({"agent", "node", "tool", "module"}.issubset({item.get("type") for item in result["trace"]}))
 
-    def test_experience_agent_writes_memory_and_rag(self):
-        agent = ExperienceAgent()
-        result = agent.run({
+    def test_workorder_intent_is_a_business_node_action(self):
+        result = self.tools.intent_classifier_tool("请查询工单 WO-001 的维修状态")
+        self.assertEqual(result["intent"], "workorder_action")
+
+    def test_router_sends_engineering_location_questions_to_cad(self):
+        route = RouterAgent().run("主轴温度传感器在哪里")
+        tool_route = self.tools.intent_classifier_tool("主轴温度传感器在哪里")
+
+        self.assertEqual(route.intent, "cad")
+        self.assertEqual(tool_route["intent"], "cad")
+
+    def test_router_sends_alarm_code_questions_to_knowledge(self):
+        route = RouterAgent().run("E102 主轴温度怎么处理")
+        tool_route = self.tools.intent_classifier_tool("E102 主轴温度怎么处理")
+
+        self.assertEqual(route.intent, "knowledge")
+        self.assertEqual(tool_route["intent"], "knowledge")
+
+    def test_router_sends_repair_questions_to_maintenance(self):
+        route = RouterAgent().run("主轴冷却泵怎么维修")
+        tool_route = self.tools.intent_classifier_tool("主轴冷却泵怎么维修")
+
+        self.assertEqual(route.intent, "maintenance")
+        self.assertEqual(tool_route["intent"], "maintenance")
+
+    def test_knowledge_agent_returns_evidence_pack(self):
+        result = KnowledgeAgent(self.tools).run({"query": "700223 主轴过热", "required_sources": ["alarm"]})
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.query_type, "alarm")
+        self.assertTrue(result.summary)
+        self.assertTrue(result.evidence)
+        self.assertTrue(result.sources)
+        self.assertGreater(result.confidence, 0)
+        self.assertTrue(result.degraded)
+        self.assertEqual(result.backend_status, "local_fallback")
+        self.assertEqual(result.documents[0].document_id, "ALARM-700223")
+
+    def test_knowledge_agent_reports_insufficient_evidence(self):
+        result = KnowledgeAgent(self.tools).run({"query": "完全不存在的故障码 X999999", "filters": {"component": "不存在部件"}})
+
+        self.assertEqual(result.status, "insufficient_evidence")
+        self.assertEqual(result.confidence, 0.0)
+        self.assertEqual(result.documents, [])
+        self.assertIn("未检索到", result.summary)
+
+    def test_cad_agent_returns_engineering_pack(self):
+        result = CADAgent(self.tools).run({"query": "主轴 温度 冷却", "device_id": "CNC-001"})
+
+        component_ids = {item.component_id for item in result.components}
+        self.assertEqual(result.status, "completed")
+        self.assertIn("TEMP-PT100", component_ids)
+        self.assertIn("COOLING-PUMP", component_ids)
+        self.assertTrue(result.drawings)
+        self.assertTrue(result.bom_items)
+        self.assertTrue(result.assembly_relations)
+        self.assertTrue(result.evidence)
+        self.assertGreater(result.confidence, 0.8)
+
+    def test_cad_agent_reports_insufficient_engineering_data(self):
+        result = CADAgent(self.tools).run({"query": "不存在的部件 XYZ-404", "device_id": "CNC-001"})
+
+        self.assertEqual(result.status, "insufficient_engineering_data")
+        self.assertEqual(result.components, [])
+        self.assertEqual(result.confidence, 0.0)
+
+    def test_maintenance_agent_builds_workorder_ready_plan(self):
+        knowledge = KnowledgeAgent(self.tools).run({"query": "E102 主轴温度 SOP", "required_sources": ["sop"]})
+        cad = CADAgent(self.tools).run({"query": "主轴 温度 冷却", "device_id": "CNC-001"})
+        result = MaintenanceAgent(self.tools).run({
+            "diagnosis": {
+                "device_id": "CNC-001",
+                "fault": "主轴温度异常",
+                "cause": "冷却系统可能异常",
+                "severity": "高级故障",
+                "confidence": 0.86,
+                "evidence": ["温度超过阈值", "E102 报警触发"],
+            },
+            "knowledge": knowledge.model_dump(),
+            "cad": cad.model_dump(),
+        })
+
+        self.assertEqual(result.repair_target, "主轴冷却系统")
+        self.assertTrue(result.workorder_ready)
+        self.assertFalse(result.validation_findings)
+        self.assertTrue(result.pre_checks)
+        self.assertTrue(result.post_checks)
+        self.assertTrue(result.required_tools)
+        self.assertTrue(result.required_parts)
+        self.assertTrue(result.safety_requirements)
+        self.assertIn("TEMP-PT100", result.cad_components)
+        self.assertTrue(any(item.get("type") == "inventory" for item in result.evidence))
+
+    def test_maintenance_agent_marks_missing_cad_as_not_ready(self):
+        result = MaintenanceAgent(self.tools).run({
+            "diagnosis": {
+                "device_id": "CNC-001",
+                "fault": "主轴温度异常",
+                "cause": "冷却系统可能异常",
+                "severity": "high",
+            },
+            "knowledge": {"documents": [{"document_id": "SOP-1"}], "evidence": [{"document_id": "SOP-1"}]},
+            "cad": {"components": [], "bom_items": [], "evidence": []},
+        })
+
+        self.assertFalse(result.workorder_ready)
+        self.assertIn("涉及拆装或部件操作但缺少 CAD/BOM 依据", result.validation_findings)
+
+    def test_core_agent_registry_and_experience_module(self):
+        self.assertEqual(set(CORE_AGENT_REGISTRY), {"router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"})
+        module = ExperienceLearningModule()
+        result = module.learn({
             "diagnosis": {"device_id": "CNC-001", "fault": "主轴温度异常"},
             "maintenance_plan": {"repair_steps": ["检查冷却泵"]},
-            "workorder": {"workorder_id": "WO-001", "device_id": "CNC-001", "title": "主轴温度维修"},
+            "workorder": {"workorder_id": "WO-001", "device_id": "CNC-001", "title": "主轴温度维修", "status": "closed"},
             "quality": {"passed": True, "findings": ["报警已清除"]},
             "report": {"report_id": "RPT-001"},
         })
@@ -83,13 +207,15 @@ class AllAgentTests(unittest.TestCase):
         self.assertEqual(result.device_id, "CNC-001")
         self.assertTrue(result.memory_saved)
         self.assertTrue(result.rag_saved)
-        found = agent.rag.search("主轴温度维修")
+        found = module.rag.search("主轴温度维修")
         self.assertTrue(found["documents"])
 
     def test_rag_search_keeps_field_design_metadata(self):
         result = self.tools.search_knowledge("700223 主轴过热")
 
         self.assertEqual(result["source"], "local-hybrid-compatible")
+        self.assertEqual(result["connection_status"], "local_fallback")
+        self.assertTrue(result["degraded"])
         self.assertTrue(result["documents"])
         document = result["documents"][0]
         self.assertEqual(document["document_id"], "ALARM-700223")

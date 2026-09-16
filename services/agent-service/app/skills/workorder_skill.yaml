@@ -1,13 +1,22 @@
-name: workorder
-goal: 管理维修工单生命周期
+name: workorder_module
+kind: business_module
+owner: WorkOrderService
+goal: 管理维修工单生命周期，不作为独立 Agent 暴露
 input: MaintenancePlan或工单命令
 steps:
-  - 创建或查询工单
-  - 更新执行状态
-  - 关闭已完成工单
+  - 通过 WorkOrder MCP 创建或查询工单
+  - 更新执行状态、负责人和维修反馈
+  - 标记维修完成并提交质检
+  - 质检通过后关闭工单，失败后重新打开工单
 tools:
   - create_workorder
   - update_workorder
+  - get_workorder
   - query_workorder
+  - list_workorders
+  - assign_workorder
+  - submit_repair_feedback
+  - mark_repair_completed
   - close_workorder
+  - reopen_workorder
 output: WorkOrder

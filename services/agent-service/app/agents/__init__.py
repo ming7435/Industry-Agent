@@ -2,22 +2,21 @@
 
 from .cad import CADAgent
 from .diagnosis import DiagnosisAgent
-from .experience import ExperienceAgent
 from .knowledge import KnowledgeAgent
 from .maintenance import MaintenanceAgent
 from .quality import QualityAgent
 from .report import ReportAgent
 from .router import RouterAgent
-from .workorder import WorkOrderAgent
+
+CORE_AGENT_NAMES = ("router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report")
 
 __all__ = [
     "CADAgent",
     "DiagnosisAgent",
-    "ExperienceAgent",
     "KnowledgeAgent",
     "MaintenanceAgent",
     "QualityAgent",
     "ReportAgent",
     "RouterAgent",
-    "WorkOrderAgent",
+    "CORE_AGENT_NAMES",
 ]

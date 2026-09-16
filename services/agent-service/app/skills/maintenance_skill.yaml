@@ -8,5 +8,4 @@ steps:
 tools:
   - generate_repair_plan
   - query_spare_part
-  - create_workorder
 output: MaintenancePlan

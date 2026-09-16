@@ -1,11 +1,17 @@
-name: experience
+name: experience_learning
+kind: learning_module
+owner: ExperienceLearningModule
 goal: 从已完成维修和质检结果中提取可复用经验
 input: WorkOrder, QualityResult, DiagnosisResult, MaintenancePlan, ReportResult
 steps:
-  - 确认维修工单和质检均已完成
+  - 确认 workorder.status == closed 且 quality.passed == true
   - 提取故障、维修步骤和验证结果
+  - 对相同设备、故障和来源工单进行去重
   - 保存短期记忆和长期记忆
   - 将通过质检的案例写入RAG经验集合
-tools:
-  - search_knowledge
+modules:
+  - ExperienceExtractor
+  - ExperienceValidator
+  - ExperienceDeduplicator
+  - ExperienceWriter
 output: ExperienceResult
