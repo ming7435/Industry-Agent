@@ -76,19 +76,35 @@ class CADComponent(BaseModel):
 
 
 class CADResult(BaseModel):
+    request_id: str = ""
+    device_id: str = ""
+    device_model: str = ""
     query: str
     status: Literal["completed", "insufficient_engineering_data", "error"] = "completed"
     query_type: str = "component"
+    component: str = ""
+    part_no: str = ""
+    drawing_refs: List[str] = Field(default_factory=list)
+    location: str = ""
     summary: str = ""
     components: List[CADComponent] = Field(default_factory=list)
     drawings: List[Dict[str, Any]] = Field(default_factory=list)
     bom_items: List[Dict[str, Any]] = Field(default_factory=list)
+    parts: List[Dict[str, Any]] = Field(default_factory=list)
+    part_relations: List[Dict[str, Any]] = Field(default_factory=list)
     assembly_relations: List[Dict[str, Any]] = Field(default_factory=list)
+    locations: List[Dict[str, Any]] = Field(default_factory=list)
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     sources: List[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0, le=1)
     total: int = 0
     source: str = "cad-mcp-compatible"
+    validation_findings: List[str] = Field(default_factory=list)
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+    stop_reason: str = ""
+    backend_status: str = "unknown"
+    degraded: bool = False
+    warning: str = ""
 
 
 class DiagnosisView(BaseModel):

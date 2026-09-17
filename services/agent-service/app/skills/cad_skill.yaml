@@ -3,18 +3,19 @@ version: 1.0
 goal: 查询 CAD、BOM、零件位置和装配关系，返回可追踪工程证据包
 input: CADRequest 或零件/装配查询
 steps:
+  - initialize
+  - load_skill
   - resolve_component
+  - plan_engineering_query
+  - query
+  - observe
+  - validate_relation
+  - final
+  - fallback
+tools:
   - query_drawing
   - query_bom
-  - query_part_relation
-  - validate_engineering_evidence
-  - output_engineering_pack
-tools:
-  - query_cad
-  - query_bom
   - query_part
-  - query_part_relation
-  - query_assembly_relation
-  - get_drawing_metadata
-  - get_component_location
+  - query_relation
+  - fetch_engineering_record
 output: CADResult

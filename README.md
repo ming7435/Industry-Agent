@@ -43,6 +43,14 @@ L:\anaconda\python.exe services\agent-service\monitor_web_server.py
 L:\anaconda\python.exe -m uvicorn app.api.server:app --app-dir services\agent-service --host 127.0.0.1 --port 8010
 ```
 
+启动 CAD 工程数据服务：
+
+```powershell
+L:\anaconda\python.exe -m uvicorn app.main:app --app-dir services\document-cad-service --host 127.0.0.1 --port 8011
+```
+
+Agent Service 配置 `MCP_CAD_URL=http://127.0.0.1:8011` 后，CAD Agent 会通过 MCP 风格的 `query_drawing`、`query_bom`、`query_part`、`query_relation` 和 `fetch_engineering_record` 访问 CAD 服务；未配置时使用本地兼容数据并在结果中标记 `degraded=true`。
+
 接口：
 
 ```text

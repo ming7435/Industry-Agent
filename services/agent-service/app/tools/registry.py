@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any, Dict, Mapping
@@ -16,8 +17,9 @@ from app.trace import TraceRecorder
 
 
 class ToolRegistry:
-    def __init__(self, base_url: str | None = None, rag_index: RAGIndex | None = None, rag_client: RAGServiceClient | None = None, trace: TraceRecorder | None = None) -> None:
+    def __init__(self, base_url: str | None = None, rag_index: RAGIndex | None = None, rag_client: RAGServiceClient | None = None, trace: TraceRecorder | None = None, cad_base_url: str | None = None) -> None:
         self.base_url = base_url
+        self.cad_base_url = (cad_base_url or os.getenv("MCP_CAD_URL") or os.getenv("CAD_SERVICE_BASE_URL") or "").rstrip("/")
         self.rag = rag_client or RAGServiceClient(fallback=rag_index)
         self.trace = trace
         self.workorder_mcp = WorkOrderMcpAdapter()
@@ -37,6 +39,9 @@ class ToolRegistry:
             "query_assembly_relation": self.query_assembly_relation,
             "get_drawing_metadata": self.get_drawing_metadata,
             "get_component_location": self.get_component_location,
+            "query_drawing": self.query_drawing,
+            "query_relation": self.query_relation,
+            "fetch_engineering_record": self.fetch_engineering_record,
             "generate_repair_plan": self.generate_repair_plan,
             "query_spare_part": self.query_spare_part,
             "create_workorder": self.workorder_mcp.create_workorder,
@@ -53,7 +58,7 @@ class ToolRegistry:
             "check_sop": self.check_sop,
             "generate_report": self.generate_report,
             "ingest_knowledge": self.ingest_knowledge,
-        })
+        }, base_urls={"cad": self.cad_base_url})
 
     def _get_device_history(self, **arguments: Any) -> Dict[str, Any]:
         """读取设备历史趋势，并把当前工厂地址注入工具调用。"""
@@ -102,25 +107,28 @@ class ToolRegistry:
     def rag_status(self, **_: Any) -> Dict[str, Any]:
         return self.rag.status()
 
-    def query_cad(self, query: str, device_id: str = "", **_: Any) -> Dict[str, Any]:
+    def query_cad(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
         components = self._engineering_components()
-        matched = self._match_components(query, components)
+        lookup = part_no or component or query
+        matched = self._match_components(lookup, components)
         return {
-            "query": query,
+            "query": lookup,
             "device_id": device_id,
             "components": matched,
             "drawings": [self._drawing_for(item) for item in matched],
             "source": "cad-mcp-compatible",
         }
 
-    def query_bom(self, query: str, device_id: str = "", **_: Any) -> Dict[str, Any]:
-        components = self._match_components(query, self._engineering_components())
+    def query_bom(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
+        lookup = part_no or component or query
+        components = self._match_components(lookup, self._engineering_components())
         items = [self._bom_for(item) for item in components]
-        return {"query": query, "device_id": device_id, "components": components, "bom_items": items, "source": "bom-mcp-compatible"}
+        return {"query": lookup, "device_id": device_id, "components": components, "bom_items": items, "source": "bom-mcp-compatible"}
 
-    def query_part(self, query: str, device_id: str = "", **_: Any) -> Dict[str, Any]:
-        components = self._match_components(query, self._engineering_components())
-        return {"query": query, "device_id": device_id, "parts": components, "source": "part-mcp-compatible"}
+    def query_part(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
+        lookup = part_no or component or query
+        components = self._match_components(lookup, self._engineering_components())
+        return {"query": lookup, "device_id": device_id, "parts": components, "source": "part-mcp-compatible"}
 
     def query_part_relation(self, part_no: str = "", component_id: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
         lookup = part_no or component_id or query
@@ -128,8 +136,8 @@ class ToolRegistry:
         relations = [self._relation_for(item) for item in components]
         return {"query": lookup, "relations": relations, "source": "cad-relation-mcp-compatible"}
 
-    def query_assembly_relation(self, component_id: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
-        lookup = component_id or query
+    def query_assembly_relation(self, component_id: str = "", component: str = "", part_no: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
+        lookup = component_id or part_no or component or query
         components = self._match_components(lookup, self._engineering_components())
         relations = [self._relation_for(item) for item in components]
         return {"query": lookup, "assembly_relations": relations, "source": "assembly-mcp-compatible"}
@@ -152,6 +160,25 @@ class ToolRegistry:
             "source": "component-location-mcp-compatible",
         }
 
+    def query_drawing(self, **arguments: Any) -> Dict[str, Any]:
+        return self.get_drawing_metadata(**arguments)
+
+    def query_relation(self, **arguments: Any) -> Dict[str, Any]:
+        result = self.query_assembly_relation(**arguments)
+        result["relations"] = list(result.get("assembly_relations") or [])
+        result["locations"] = self.get_component_location(**arguments).get("locations", [])
+        return result
+
+    def fetch_engineering_record(self, **arguments: Any) -> Dict[str, Any]:
+        query = str(arguments.get("query") or arguments.get("component") or arguments.get("part_no") or "")
+        device_id = str(arguments.get("device_id") or "")
+        raw = self.query_cad(query=query, device_id=device_id)
+        raw["bom_items"] = self.query_bom(query=query, device_id=device_id).get("bom_items", [])
+        raw["assembly_relations"] = self.query_assembly_relation(query=query).get("assembly_relations", [])
+        raw["locations"] = self.get_component_location(query=query).get("locations", [])
+        raw["source"] = "document-cad-service-local"
+        return raw
+
     @staticmethod
     def _engineering_components() -> list[Dict[str, Any]]:
         return [
@@ -166,6 +193,10 @@ class ToolRegistry:
         text = str(query or "").lower().strip()
         if not text:
             return components[:2]
+        for item in components:
+            exact_values = (item.get("component_id"), item.get("part_no"), item.get("name"), item.get("drawing_ref"))
+            if text in {str(value or "").lower().strip() for value in exact_values}:
+                return [dict(item)]
         aliases = {
             "温度": ("TEMP-PT100", "SPINDLE-ASSY", "COOLING-PUMP"),
             "过热": ("TEMP-PT100", "SPINDLE-ASSY", "COOLING-PUMP"),
@@ -314,14 +345,30 @@ class ToolRegistry:
             "document_parser": "knowledge", "ingest_knowledge": "knowledge",
             "generate_report": "mes", "generate_repair_plan": "mes",
         }.get(name, "knowledge")
+        operation = {
+            "query_cad": "fetch_engineering_record",
+            "query_part_relation": "query_relation",
+            "query_assembly_relation": "query_relation",
+            "get_drawing_metadata": "query_drawing",
+            "get_component_location": "query_relation",
+        }.get(name, name)
         if self.trace:
             self.trace.record(type="tool", name=name, event="tool_started", tool=name, mcp_server=server, arguments=dict(arguments))
         try:
-            result = self.mcp.call(server, name, arguments)
+            result = self.mcp.call(server, operation, arguments)
         except Exception as error:
-            if self.trace:
-                self.trace.record(type="tool", name=name, event="tool_error", tool=name, mcp_server=server, error=str(error))
-            raise
+            if server == "cad" and operation in {"query_drawing", "query_bom", "query_part", "query_relation", "fetch_engineering_record"}:
+                fallback = self.mcp.handlers.get(operation)
+                if fallback is not None:
+                    result = fallback(**dict(arguments))
+                    result["degraded"] = True
+                    result["warning"] = "CAD 远程服务不可用，已使用本地兼容数据：%s" % error
+                else:
+                    raise
+            else:
+                if self.trace:
+                    self.trace.record(type="tool", name=name, event="tool_error", tool=name, mcp_server=server, error=str(error))
+                raise
         if self.trace:
             self.trace.record(type="tool", name=name, event="tool_completed", tool=name, mcp_server=server)
         return result
@@ -343,6 +390,9 @@ class ToolRegistry:
             "query_assembly_relation": "查询装配关系",
             "get_drawing_metadata": "查询图纸元数据",
             "get_component_location": "查询部件安装位置",
+            "query_drawing": "从 CAD 服务查询图纸引用和定位元数据",
+            "query_relation": "从 CAD 服务查询装配关系",
+            "fetch_engineering_record": "从 CAD 服务获取完整工程记录",
             "generate_repair_plan": "生成维修计划草案",
             "query_spare_part": "查询备件库存",
             "create_workorder": "创建维修工单",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from app.a2a import A2AClient, A2AError, KnowledgeRequest, KnowledgeResponse
+from app.a2a import A2AClient, A2AError, CADRequest, CADResponse, KnowledgeRequest, KnowledgeResponse
 from app.agents.diagnosis import DiagnosisAgent
 from app.agents.registry import build_agent_registry
 from app.experience import ExperienceLearningModule
@@ -49,6 +49,7 @@ class OrchestratorNodes:
         agents = build_agent_registry(tools=registry, diagnosis=diagnosis_runtime)
         self.harnesses = {name: AgentHarness(agent, trace=self.trace) for name, agent in agents.items()}
         self.a2a.register("knowledge", self._knowledge_endpoint)
+        self.a2a.register("cad", self._cad_endpoint)
 
     def trace_records(self) -> list[Dict[str, Any]]:
         return self.trace.list()
@@ -98,6 +99,59 @@ class OrchestratorNodes:
             KnowledgeResponse,
         )
         return response.model_dump(mode="json")
+
+    def _cad_endpoint(self, request: CADRequest) -> CADResponse:
+        result = self.harnesses["cad"].execute_agent(request.model_dump(mode="json"))
+        payload = _serialize_agent_result(result)
+        return CADResponse(
+            request_id=request.request_id,
+            task_id=request.task_id,
+            from_agent="cad",
+            to_agent=request.from_agent,
+            success=payload.get("status") == "completed",
+            status=payload.get("status", "insufficient_engineering_data"),
+            device_id=payload.get("device_id", request.device_id),
+            device_model=payload.get("device_model", request.device_model),
+            component=payload.get("component", request.component),
+            part_no=payload.get("part_no", request.part_no),
+            drawing_refs=payload.get("drawing_refs", []),
+            location=payload.get("location", ""),
+            summary=payload.get("summary", ""),
+            components=payload.get("components", []),
+            drawings=payload.get("drawings", []),
+            bom_items=payload.get("bom_items", []),
+            parts=payload.get("parts", []),
+            part_relations=payload.get("part_relations", []),
+            assembly_relations=payload.get("assembly_relations", []),
+            locations=payload.get("locations", []),
+            evidence=payload.get("evidence", []),
+            confidence=payload.get("confidence", 0.0),
+            validation_findings=payload.get("validation_findings", []),
+            steps=payload.get("steps", []),
+            stop_reason=payload.get("stop_reason", ""),
+            backend_status=payload.get("backend_status", "unknown"),
+            degraded=payload.get("degraded", False),
+            source=payload.get("source", ""),
+            result=payload,
+        )
+
+    def _cad_request(self, state: AgentState, query: str, from_agent: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        values = dict(context or {})
+        response = self.a2a.request(
+            CADRequest(
+                request_id=self.a2a.new_request_id(),
+                task_id=state.get("task_id", ""),
+                from_agent=from_agent,
+                to_agent="cad",
+                device_id=str(values.get("device_id") or (state.get("context") or {}).get("device_id") or ""),
+                device_model=str(values.get("device_model") or (state.get("context") or {}).get("device_model") or ""),
+                component=str(values.get("component") or ""),
+                part_no=str(values.get("part_no") or ""),
+                query=query,
+            ),
+            CADResponse,
+        )
+        return response.result or response.model_dump(mode="json")
 
     def _diagnosis_knowledge_request(self, event: Dict[str, Any], query: str) -> Dict[str, Any]:
         """Diagnosis Agent 使用的 Knowledge A2A 入口。"""
@@ -176,21 +230,26 @@ class OrchestratorNodes:
         self._node_start("cad", state)
         diagnosis = state.get("diagnosis") or {}
         context = state.get("context") or {}
-        result = self.harnesses["cad"].execute_agent({
-            "query": diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "主轴组件",
-            "device_id": diagnosis.get("device_id") or context.get("device_id") or "",
-        })
-        return self._finish("cad", state, {"cad": _serialize_agent_result(result)})
+        query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "主轴组件")
+        from_agent = "diagnosis" if state.get("entry") == "trigger" else "router"
+        result = self._cad_request(state, query, from_agent, context={**context, "device_id": diagnosis.get("device_id") or context.get("device_id", "")})
+        return self._finish("cad", state, {"cad": result})
 
     def maintenance(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("maintenance", state)
+        cad = state.get("cad") or {}
+        if not cad:
+            diagnosis = state.get("diagnosis") or {}
+            context = state.get("context") or {}
+            query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "设备维修")
+            cad = self._cad_request(state, query, "maintenance", context=context)
         result = self.harnesses["maintenance"].execute_agent({
             "query": state.get("user_text", ""),
             "user_text": state.get("user_text", ""),
             "device_id": (state.get("context") or {}).get("device_id", ""),
             "diagnosis": state.get("diagnosis", {}),
             "knowledge": state.get("knowledge", {}),
-            "cad": state.get("cad", {}),
+            "cad": cad,
         })
         return self._finish("maintenance", state, {"maintenance_plan": _serialize_agent_result(result)})
 
