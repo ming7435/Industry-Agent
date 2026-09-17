@@ -6,8 +6,10 @@ from collections import Counter
 from typing import Any, Mapping
 from uuid import uuid4
 
+from app.tools.registry import ToolRegistry
 from app.validator import ReportResult
 
+from .graph import build_report_graph
 from .validator import ReportValidator
 
 
@@ -16,7 +18,96 @@ class ReportAgent:
 
     name = "report"
 
+    def __init__(self, tools: ToolRegistry | None = None) -> None:
+        self.tools = tools or ToolRegistry()
+        self.graph = build_report_graph()
+
     def run(self, task: Any) -> ReportResult:
+        payload = dict(task or {}) if isinstance(task, Mapping) else {}
+        output = self.graph.invoke({"agent": self, "request": payload})
+        result = output.get("result")
+        if result is None:
+            raise RuntimeError("Report LangGraph 未生成结果")
+        return result
+
+    def _safe_tool(self, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            return self.tools.execute(name, arguments)
+        except Exception as error:
+            return {"found": False, "success": False, "error": str(error), "tool": name}
+
+    @staticmethod
+    def _record(value: Mapping[str, Any] | None) -> dict[str, Any]:
+        payload = dict(value or {})
+        record = payload.get("record")
+        return dict(record) if isinstance(record, Mapping) else payload
+
+    @classmethod
+    def _completeness_findings(cls, sections: Mapping[str, Any], report_type: str) -> list[str]:
+        required = {
+            "diagnosis_report": ("diagnosis",),
+            "maintenance_report": ("diagnosis", "maintenance_plan", "workorder"),
+            "quality_report": ("workorder", "quality"),
+            "incident_report": ("event",),
+            "full_case_report": ("diagnosis", "maintenance_plan", "workorder", "quality"),
+        }.get(report_type, ("diagnosis", "maintenance_plan", "workorder", "quality"))
+        return ["报告缺少 %s 必需记录" % name for name in required if not cls._mapping(sections.get(name))]
+
+    def _compose_result(
+        self,
+        payload: Mapping[str, Any],
+        sections: Mapping[str, Any],
+        report_type: str,
+        source_refs: list[dict[str, Any]],
+        findings: list[str],
+    ) -> ReportResult:
+        diagnosis = self._mapping(sections.get("diagnosis"))
+        plan = self._mapping(sections.get("maintenance_plan"))
+        order = self._mapping(sections.get("workorder"))
+        quality = self._mapping(sections.get("quality"))
+        event = self._mapping(sections.get("event"))
+        device_id = self._device_id(payload, diagnosis, order, event)
+        status = "completed" if not findings else "incomplete"
+        return ReportResult(
+            report_id="RPT-" + uuid4().hex[:10].upper(),
+            report_type=report_type,
+            title="%s设备运维案例报告" % device_id,
+            summary=self._summary(device_id, diagnosis, plan, quality, status, findings),
+            status=status,
+            sections=dict(sections),
+            source_refs=source_refs,
+            validation_findings=list(findings),
+            stop_reason="validator_pass" if not findings else "validation_failed",
+        )
+
+    @classmethod
+    def _validate_report(
+        cls,
+        sections: Mapping[str, Any],
+        source_refs: list[Mapping[str, Any]],
+        report_type: str,
+        completeness_findings: list[str],
+    ) -> list[str]:
+        return cls._dedupe(completeness_findings + ReportValidator.validate(sections, source_refs, report_type))
+
+    def _fallback_result(self, payload: Mapping[str, Any], findings: list[str]) -> ReportResult:
+        report_type = str(payload.get("report_type") or "incident_report")
+        if report_type == "daily":
+            report_type = "incident_report"
+        event = self._mapping(payload.get("event"))
+        sections = {"event": event} if event else {}
+        refs = self._source_refs(payload, sections)
+        return self._compose_result(payload, sections, report_type, refs, findings)
+
+    @staticmethod
+    def _dedupe(items: list[str]) -> list[str]:
+        values: list[str] = []
+        for item in items:
+            if item and item not in values:
+                values.append(item)
+        return values
+
+    def _legacy_run(self, task: Any) -> ReportResult:
         payload = dict(task or {}) if isinstance(task, Mapping) else {}
         diagnosis = self._mapping(payload.get("diagnosis"))
         plan = self._mapping(payload.get("maintenance_plan") or payload.get("plan"))

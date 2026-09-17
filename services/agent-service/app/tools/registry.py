@@ -63,6 +63,14 @@ from app.tools.quality import (
     verify_alarm_clearance as verify_alarm_clearance_tool,
     verify_repair as verify_repair_tool,
 )
+from app.tools.report import (
+    generate_report_file as generate_report_file_tool,
+    get_diagnosis_record as get_diagnosis_record_tool,
+    get_maintenance_record as get_maintenance_record_tool,
+    get_quality_record as get_quality_record_tool,
+    get_trace_summary as get_trace_summary_tool,
+    persist_report as persist_report_tool,
+)
 from app.tools.report import generate_report as generate_report_tool
 from app.tools.router import intent_classifier_tool as intent_classifier_tool_fn
 from app.trace import TraceRecorder
@@ -75,6 +83,7 @@ class ToolRegistry:
         self.rag = rag_client or RAGServiceClient(fallback=rag_index)
         self.trace = trace
         self.workorder_mcp = WorkOrderMcpAdapter()
+        self.report_store: Dict[str, Dict[str, Any]] = {}
         self.mcp = McpClient({
             "get_alarm_definition": get_alarm_definition,
             "get_device_history": self._get_device_history,
@@ -126,6 +135,12 @@ class ToolRegistry:
             "verify_alarm_clearance": self.verify_alarm_clearance,
             "compare_pre_post_metrics": self.compare_pre_post_metrics,
             "generate_report": self.generate_report,
+            "get_diagnosis_record": self.get_diagnosis_record,
+            "get_maintenance_record": self.get_maintenance_record,
+            "get_quality_record": self.get_quality_record,
+            "get_trace_summary": self.get_trace_summary,
+            "persist_report": self.persist_report,
+            "generate_report_file": self.generate_report_file,
             "ingest_knowledge": self.ingest_knowledge,
         }, base_urls={"cad": self.cad_base_url})
 
@@ -248,6 +263,24 @@ class ToolRegistry:
     def generate_report(self, report_type: str = "maintenance", sections: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return generate_report_tool(report_type=report_type, sections=sections)
 
+    def get_diagnosis_record(self, **arguments: Any) -> Dict[str, Any]:
+        return get_diagnosis_record_tool(**arguments)
+
+    def get_maintenance_record(self, **arguments: Any) -> Dict[str, Any]:
+        return get_maintenance_record_tool(**arguments)
+
+    def get_quality_record(self, **arguments: Any) -> Dict[str, Any]:
+        return get_quality_record_tool(**arguments)
+
+    def get_trace_summary(self, **arguments: Any) -> Dict[str, Any]:
+        return get_trace_summary_tool(**arguments)
+
+    def persist_report(self, **arguments: Any) -> Dict[str, Any]:
+        return persist_report_tool(self.report_store, **arguments)
+
+    def generate_report_file(self, **arguments: Any) -> Dict[str, Any]:
+        return generate_report_file_tool(**arguments)
+
     def create_workorder(self, **arguments: Any) -> Dict[str, Any]:
         return create_workorder_tool(self.workorder_mcp, **arguments)
 
@@ -301,6 +334,8 @@ class ToolRegistry:
             "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
             "fetch_document": "knowledge", "fetch_chunk": "knowledge", "document_parser": "knowledge", "ingest_knowledge": "knowledge",
             "generate_report": "mes", "generate_repair_plan": "mes",
+            "get_diagnosis_record": "mes", "get_maintenance_record": "mes", "get_quality_record": "mes",
+            "get_trace_summary": "mes", "persist_report": "mes", "generate_report_file": "mes",
         }.get(name, "knowledge")
         operation = {
             "query_cad": "fetch_engineering_record",
@@ -382,5 +417,11 @@ class ToolRegistry:
             "verify_alarm_clearance": "验证报警是否清除",
             "compare_pre_post_metrics": "比较维修前后关键参数",
             "generate_report": "生成结构化运维报告",
+            "get_diagnosis_record": "获取已有诊断记录",
+            "get_maintenance_record": "获取已有维修计划记录",
+            "get_quality_record": "获取已有质检记录",
+            "get_trace_summary": "获取流程 Trace 摘要",
+            "persist_report": "持久化结构化报告",
+            "generate_report_file": "导出报告文件",
             "ingest_knowledge": "将维修手册 JSONL 入库到 RAG",
         }.items()]

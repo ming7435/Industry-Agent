@@ -58,6 +58,12 @@ def test_agent_tools_are_split_by_tool_name() -> None:
         "quality/verify_alarm_clearance.py",
         "quality/verify_repair.py",
         "report/generate_report.py",
+        "report/generate_report_file.py",
+        "report/get_diagnosis_record.py",
+        "report/get_maintenance_record.py",
+        "report/get_quality_record.py",
+        "report/get_trace_summary.py",
+        "report/persist_report.py",
         "router/intent_classifier_tool.py",
     }
 

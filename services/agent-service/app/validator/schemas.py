@@ -196,6 +196,9 @@ class ReportResult(BaseModel):
     sections: Dict[str, Any] = Field(default_factory=dict)
     source_refs: List[Dict[str, Any]] = Field(default_factory=list)
     validation_findings: List[str] = Field(default_factory=list)
+    persisted: bool = False
+    file_path: str = ""
+    stop_reason: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
