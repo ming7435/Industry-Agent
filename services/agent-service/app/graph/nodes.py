@@ -51,6 +51,7 @@ class OrchestratorNodes:
             diagnosis=diagnosis_runtime,
             maintenance_knowledge_provider=self._maintenance_knowledge_request,
             maintenance_cad_provider=self._maintenance_cad_request,
+            quality_knowledge_provider=self._quality_knowledge_request,
         )
         self.harnesses = {name: AgentHarness(agent, trace=self.trace) for name, agent in agents.items()}
         self.a2a.register("knowledge", self._knowledge_endpoint)
@@ -164,6 +165,18 @@ class OrchestratorNodes:
 
     def _maintenance_cad_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
         return self._cad_a2a(str(context.get("task_id") or ""), "maintenance", query, context)
+
+    def _quality_knowledge_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
+        return self._knowledge_a2a(
+            str(context.get("task_id") or ""),
+            "quality",
+            query,
+            {"knowledge_type": "sop"},
+            trace_id=str(context.get("trace_id") or ""),
+            device_id=str(context.get("device_id") or ""),
+            component=str(context.get("component") or ""),
+            required_sources=["sop"],
+        )
 
     def _cad_endpoint(self, request: CADRequest) -> CADResponse:
         result = self.harnesses["cad"].execute_agent(request.model_dump(mode="json"))
@@ -379,12 +392,14 @@ class OrchestratorNodes:
         order = state.get("workorder", {})
         workorder_id = str(order.get("workorder_id", ""))
         latest = self.workorder_service.get(workorder_id) if workorder_id else order
-        result = _serialize_agent_result(self.harnesses["quality"].execute_agent({"workorder": latest}))
+        result = _serialize_agent_result(self.harnesses["quality"].execute_agent({
+            "workorder": latest,
+            "task_id": state.get("task_id", ""),
+            "trace_id": state.get("trace_id", ""),
+            "manage_workorder": True,
+        }))
         if workorder_id:
-            if result.get("passed"):
-                latest = self.workorder_service.close(workorder_id)
-            else:
-                latest = self.workorder_service.reopen(workorder_id)
+            latest = self.workorder_service.get(workorder_id)
             result["workorder"] = latest
         return self._finish("quality", state, {"quality": result, "workorder": latest})
 

@@ -2,82 +2,101 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from app.tools.registry import ToolRegistry
 from app.validator import QualityResult
 
-from .validator import QualityValidator
+from .graph import build_quality_graph
 
 
 class QualityAgent:
     name = "quality"
 
-    def __init__(self, tools: ToolRegistry | None = None) -> None:
+    def __init__(
+        self,
+        tools: ToolRegistry | None = None,
+        knowledge_provider: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None,
+    ) -> None:
         self.tools = tools or ToolRegistry()
+        self.knowledge_provider = knowledge_provider
+        self.graph = build_quality_graph()
 
     def verify_repair(self, workorder_id: str, device_id: str = "") -> QualityResult:
         return self.run({"workorder_id": workorder_id, "device_id": device_id})
 
     def run(self, task: Any) -> QualityResult:
-        payload = dict(task or {})
-        workorder = self._load_workorder(payload)
-        workorder_id = str(workorder.get("workorder_id") or payload.get("workorder_id") or "")
-        device_id = str(workorder.get("device_id") or payload.get("device_id") or "")
-        repair_check = self._safe_tool("verify_repair", {"workorder_id": workorder_id, "device_id": device_id})
-        device_status = self._safe_tool("get_device_status", {"device_id": device_id}) if device_id else {}
-        parameter_check = self._verify_parameters(payload, workorder, device_status)
-        sop_check = self._safe_tool("check_sop", {"workorder_id": workorder_id, "query": self._sop_query(payload, workorder)})
-        decision = QualityValidator.validate(workorder, repair_check, device_status, sop_check, parameter_check)
+        payload = {"workorder_id": task} if isinstance(task, str) else dict(task or {})
+        output = self.graph.invoke({"agent": self, "request": payload})
+        result = output.get("result")
+        if result is None:
+            raise RuntimeError("Quality LangGraph 未生成结果")
+        return result
+
+    def request_sop(self, query: str, workorder: Mapping[str, Any], request: Mapping[str, Any]) -> dict[str, Any]:
+        if self.knowledge_provider is not None:
+            context = {
+                "task_id": request.get("task_id", ""),
+                "trace_id": request.get("trace_id", ""),
+                "device_id": workorder.get("device_id", request.get("device_id", "")),
+                "component": (request.get("diagnosis") or {}).get("component", ""),
+                "required_sources": ["sop"],
+            }
+            result = dict(self.knowledge_provider(context, query) or {})
+            return {
+                "passed": bool(result.get("documents") or result.get("evidence")),
+                "documents": list(result.get("documents") or []),
+                "evidence": list(result.get("evidence") or []),
+                "source": result.get("source", "knowledge-a2a"),
+                "a2a": True,
+            }
+        return self._safe_tool("check_sop", {"workorder_id": workorder.get("workorder_id", ""), "query": query})
+
+    def _build_result(self, state: Mapping[str, Any]) -> QualityResult:
+        decision = dict(state.get("decision") or {})
+        workorder = dict(state.get("workorder") or {})
         return QualityResult(
-            workorder_id=workorder_id,
+            workorder_id=str(workorder.get("workorder_id") or state.get("request", {}).get("workorder_id") or ""),
             recommendation=self._recommendation(decision),
-            evidence=self._evidence(workorder, repair_check, device_status, parameter_check, sop_check),
+            evidence=self._evidence(state),
+            sop_compliance=bool(decision.get("sop_compliant")),
+            stop_reason="validator_pass" if decision.get("passed") else "validator_fail",
             **decision,
         )
 
-    def _load_workorder(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        raw = payload.get("workorder") or {}
-        workorder = raw.model_dump(mode="json") if hasattr(raw, "model_dump") else dict(raw or {})
-        if workorder.get("workorder_id"):
-            return workorder
-        workorder_id = str(payload.get("workorder_id") or "")
-        if not workorder_id:
-            return dict(payload)
-        return self._safe_tool("get_workorder", {"workorder_id": workorder_id})
-
-    def _verify_parameters(self, payload: Mapping[str, Any], workorder: Mapping[str, Any], device_status: Mapping[str, Any]) -> dict[str, Any]:
-        diagnosis = dict(payload.get("diagnosis") or {})
-        plan = dict(payload.get("maintenance_plan") or {})
-        text = " ".join([
-            str(workorder.get("title") or ""),
-            " ".join(str(item) for item in workorder.get("steps") or []),
-            str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or ""),
-            str(plan.get("repair_target") or ""),
-        ])
-        metric_keys = self._metric_keys(text)
-        if not metric_keys:
-            return {"parameters_recovered": True, "reason": "无明确关键参数，按工单/QMS结果判定", "metric_keys": []}
-        history = self._safe_tool("get_device_history", {"device_id": workorder.get("device_id", ""), "metric_keys": metric_keys, "limit": 20})
-        status_metrics = dict(device_status.get("metrics") or {}) if isinstance(device_status, Mapping) else {}
-        failed: list[str] = []
-        evidence: list[dict[str, Any]] = []
-        for key in metric_keys:
-            latest = self._latest_metric(key, status_metrics, history)
-            threshold = self._recovery_threshold(key)
-            recovered = True if latest is None else latest <= threshold
-            evidence.append({"metric": key, "latest": latest, "threshold": threshold, "recovered": recovered})
-            if not recovered:
-                failed.append("%s=%s 超过恢复阈值 %s" % (key, latest, threshold))
-        if failed:
-            return {"parameters_recovered": False, "reason": "；".join(failed), "metric_keys": metric_keys, "history": history, "evidence": evidence}
-        return {"parameters_recovered": True, "reason": "关键参数已恢复或无异常采样", "metric_keys": metric_keys, "history": history, "evidence": evidence}
+    @staticmethod
+    def _fallback_result(request: Mapping[str, Any], findings: list[str]) -> QualityResult:
+        return QualityResult(
+            workorder_id=str(request.get("workorder_id") or ""),
+            passed=False,
+            status="review",
+            device_recovered=False,
+            alarm_cleared=False,
+            parameters_recovered=False,
+            workorder_compliance=False,
+            sop_compliant=False,
+            sop_compliance=False,
+            failed_checks=["quality_input_missing"],
+            findings=findings,
+            recommendation="补充工单、维修反馈和设备复测数据后重新发起质检。",
+        )
 
     def _safe_tool(self, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         try:
             return self.tools.execute(name, arguments)
         except Exception as error:
             return {"found": False, "success": False, "error": str(error), "tool": name}
+
+    @staticmethod
+    def _context_text(payload: Mapping[str, Any], workorder: Mapping[str, Any]) -> str:
+        diagnosis = dict(payload.get("diagnosis") or payload.get("diagnosis_result") or {})
+        plan = dict(payload.get("maintenance_plan") or {})
+        return " ".join([
+            str(workorder.get("title") or ""),
+            " ".join(str(item) for item in workorder.get("steps") or []),
+            str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or ""),
+            str(plan.get("repair_target") or ""),
+        ])
 
     @staticmethod
     def _metric_keys(text: str) -> list[str]:
@@ -89,59 +108,37 @@ class QualityAgent:
         return keys
 
     @staticmethod
-    def _latest_metric(key: str, status_metrics: Mapping[str, Any], history: Mapping[str, Any]) -> float | None:
-        value = status_metrics.get(key)
-        if value is None:
-            trend = (history.get("trend") or {}).get(key) or {}
-            value = trend.get("latest")
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _recovery_threshold(key: str) -> float:
-        if key == "spindle_temperature_c":
-            return 75.0
-        if key == "spindle_vibration_mm_s":
-            return 4.5
-        return float("inf")
-
-    @staticmethod
     def _sop_query(payload: Mapping[str, Any], workorder: Mapping[str, Any]) -> str:
         plan = dict(payload.get("maintenance_plan") or {})
-        parts = [
-            str(workorder.get("title") or ""),
-            " ".join(str(item) for item in workorder.get("steps") or []),
-            str(plan.get("repair_target") or ""),
-            "SOP 维修验收",
-        ]
+        parts = [str(workorder.get("title") or ""), " ".join(str(item) for item in workorder.get("steps") or []), str(plan.get("repair_target") or ""), "SOP 维修验收"]
         return " ".join(part for part in parts if part).strip() or "维修 SOP 验收"
 
     @staticmethod
-    def _evidence(
-        workorder: Mapping[str, Any],
-        repair_check: Mapping[str, Any],
-        device_status: Mapping[str, Any],
-        parameter_check: Mapping[str, Any],
-        sop_check: Mapping[str, Any],
-    ) -> list[dict[str, Any]]:
-        evidence = [
+    def _evidence(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+        workorder = dict(state.get("workorder") or {})
+        parameter_check = dict(state.get("parameter_check") or {})
+        sop_check = dict(state.get("sop_check") or {})
+        return [
             {"type": "workorder", "workorder_id": workorder.get("workorder_id", ""), "status": workorder.get("status", ""), "step_count": len(workorder.get("steps") or []), "has_feedback": bool(workorder.get("repair_feedback"))},
-            {"type": "repair_check", **dict(repair_check)},
-            {"type": "device_status", "found": device_status.get("found"), "status": device_status.get("status"), "alarm_code": device_status.get("alarm_code"), "source": device_status.get("source", "")},
-            {"type": "parameters", "parameters_recovered": parameter_check.get("parameters_recovered"), "metric_keys": parameter_check.get("metric_keys", []), "details": parameter_check.get("evidence", [])},
+            {"type": "repair_feedback", **dict(state.get("repair_feedback") or {})},
+            {"type": "workorder_compliance", **dict(state.get("workorder_check") or {})},
+            {"type": "repair_check", **dict(state.get("repair_check") or {})},
+            {"type": "device_status", **dict(state.get("device_status") or {})},
+            {"type": "alarm_clearance", **dict(state.get("alarm_check") or {})},
+            {"type": "parameters", "parameters_recovered": parameter_check.get("parameters_recovered"), "details": parameter_check.get("comparisons") or parameter_check.get("evidence") or []},
             {"type": "sop", "passed": sop_check.get("passed"), "document_count": len(sop_check.get("documents") or []), "source": sop_check.get("source", "")},
+            {"type": "workorder_action", **dict(state.get("workorder_action") or {})},
         ]
-        return evidence
 
     @staticmethod
     def _recommendation(decision: Mapping[str, Any]) -> str:
         if decision.get("passed"):
-            return "维修验收通过，可关闭工单并进入报告与经验沉淀。"
+            return "维修验收通过，工单已关闭并可进入报告与经验沉淀。"
         failed = set(decision.get("failed_checks") or [])
+        if "workorder_not_completed" in failed:
+            return "工单尚未完成，不能执行维修验收。"
         if "alarm_still_active" in failed or "parameters_not_recovered" in failed:
-            return "维修后状态未恢复，建议重新打开工单并回到 Maintenance 复修。"
+            return "维修后状态未恢复，工单已重开并应回到 Maintenance 复修。"
         if "sop_not_compliant" in failed or "repair_feedback_missing" in failed:
-            return "补充 SOP 执行证据和维修反馈后再发起质检。"
+            return "补充 SOP 执行证据和维修反馈后重新发起质检。"
         return "质检未通过，建议复核工单执行记录并安排返修。"

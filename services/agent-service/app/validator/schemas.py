@@ -168,10 +168,12 @@ class QualityResult(BaseModel):
     parameters_recovered: bool = False
     workorder_compliance: bool = False
     sop_compliant: bool
+    sop_compliance: bool = False
     failed_checks: List[str] = Field(default_factory=list)
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     recommendation: str = ""
     findings: List[str] = Field(default_factory=list)
+    stop_reason: str = ""
     checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

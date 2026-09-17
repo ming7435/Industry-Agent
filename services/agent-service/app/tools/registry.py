@@ -20,6 +20,7 @@ from app.tools.cad import (
     query_part_relation as query_part_relation_tool,
     query_relation as query_relation_tool,
 )
+from app.tools.diagnosis import get_active_alarms as get_active_alarms_tool
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
 from app.tools.diagnosis import get_production_status as get_production_status_tool
 from app.tools.maintenance import (
@@ -54,7 +55,14 @@ from app.tools.knowledge import (
     search_semantic_memory as search_semantic_memory_tool,
     search_sop as search_sop_tool,
 )
-from app.tools.quality import check_sop as check_sop_tool, verify_repair as verify_repair_tool
+from app.tools.quality import (
+    check_sop as check_sop_tool,
+    check_workorder_compliance as check_workorder_compliance_tool,
+    compare_pre_post_metrics as compare_pre_post_metrics_tool,
+    get_repair_feedback as get_repair_feedback_tool,
+    verify_alarm_clearance as verify_alarm_clearance_tool,
+    verify_repair as verify_repair_tool,
+)
 from app.tools.report import generate_report as generate_report_tool
 from app.tools.router import intent_classifier_tool as intent_classifier_tool_fn
 from app.trace import TraceRecorder
@@ -72,6 +80,7 @@ class ToolRegistry:
             "get_device_history": self._get_device_history,
             "get_device_logs": get_device_logs,
             "get_device_status": self.get_device_status,
+            "get_active_alarms": self.get_active_alarms,
             "get_production_status": get_production_status_tool,
             "intent_classifier_tool": intent_classifier_tool_fn,
             "search_knowledge": lambda **arguments: search_knowledge_tool(self.rag, **arguments),
@@ -112,6 +121,10 @@ class ToolRegistry:
             "reopen_workorder": self.reopen_workorder,
             "verify_repair": self.verify_repair,
             "check_sop": self.check_sop,
+            "get_repair_feedback": self.get_repair_feedback,
+            "check_workorder_compliance": self.check_workorder_compliance,
+            "verify_alarm_clearance": self.verify_alarm_clearance,
+            "compare_pre_post_metrics": self.compare_pre_post_metrics,
             "generate_report": self.generate_report,
             "ingest_knowledge": self.ingest_knowledge,
         }, base_urls={"cad": self.cad_base_url})
@@ -123,6 +136,9 @@ class ToolRegistry:
 
     def get_device_status(self, device_id: str, **_: Any) -> Dict[str, Any]:
         return get_device_status(device_id=device_id, base_url=self.base_url)
+
+    def get_active_alarms(self, device_id: str, **arguments: Any) -> Dict[str, Any]:
+        return get_active_alarms_tool(device_id=device_id, base_url=self.base_url, **arguments)
 
     def get_production_status(self, device_id: str = "", **_: Any) -> Dict[str, Any]:
         return get_production_status_tool(device_id=device_id)
@@ -217,6 +233,18 @@ class ToolRegistry:
     def check_sop(self, workorder_id: str = "", query: str = "维修步骤", **_: Any) -> Dict[str, Any]:
         return check_sop_tool(self.search_knowledge, workorder_id=workorder_id, query=query)
 
+    def get_repair_feedback(self, **arguments: Any) -> Dict[str, Any]:
+        return get_repair_feedback_tool(self.workorder_mcp, **arguments)
+
+    def check_workorder_compliance(self, **arguments: Any) -> Dict[str, Any]:
+        return check_workorder_compliance_tool(self.workorder_mcp, **arguments)
+
+    def verify_alarm_clearance(self, **arguments: Any) -> Dict[str, Any]:
+        return verify_alarm_clearance_tool(**arguments)
+
+    def compare_pre_post_metrics(self, **arguments: Any) -> Dict[str, Any]:
+        return compare_pre_post_metrics_tool(**arguments)
+
     def generate_report(self, report_type: str = "maintenance", sections: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return generate_report_tool(report_type=report_type, sections=sections)
 
@@ -258,7 +286,7 @@ class ToolRegistry:
 
         # 工具名称到 MCP 服务的映射保持集中管理，避免 Agent 直接依赖外部系统。
         server = {
-            "get_device_status": "plc", "get_device_history": "plc",
+            "get_device_status": "plc", "get_device_history": "plc", "get_active_alarms": "plc",
             "get_device_logs": "plc",
             "get_production_status": "mes", "query_cad": "cad", "query_bom": "cad",
             "query_part": "cad", "query_part_relation": "cad", "query_assembly_relation": "cad",
@@ -267,7 +295,8 @@ class ToolRegistry:
             "list_workorders": "mes", "assign_workorder": "mes", "submit_repair_feedback": "mes",
             "get_workorder_template": "mes", "submit_workorder_draft": "mes",
             "mark_repair_completed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
-            "verify_repair": "qms", "check_sop": "qms",
+            "verify_repair": "qms", "check_sop": "qms", "verify_alarm_clearance": "qms",
+            "get_repair_feedback": "mes", "check_workorder_compliance": "mes", "compare_pre_post_metrics": "plc",
             "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory",
             "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
             "fetch_document": "knowledge", "fetch_chunk": "knowledge", "document_parser": "knowledge", "ingest_knowledge": "knowledge",
@@ -305,6 +334,7 @@ class ToolRegistry:
         return [{"type": "function", "function": {"name": name, "description": description, "parameters": {"type": "object", "additionalProperties": True}}} for name, description in {
             "get_alarm_definition": "查询报警定义",
             "get_device_status": "查询设备状态",
+            "get_active_alarms": "查询设备当前活动报警",
             "get_production_status": "查询MES生产状态",
             "intent_classifier_tool": "识别用户意图并选择目标Agent",
             "get_device_history": "查询设备历史",
@@ -347,6 +377,10 @@ class ToolRegistry:
             "reopen_workorder": "重新打开维修工单",
             "verify_repair": "验证维修结果",
             "check_sop": "检查维修步骤是否符合SOP",
+            "get_repair_feedback": "获取维修反馈",
+            "check_workorder_compliance": "检查工单执行与反馈完整性",
+            "verify_alarm_clearance": "验证报警是否清除",
+            "compare_pre_post_metrics": "比较维修前后关键参数",
             "generate_report": "生成结构化运维报告",
             "ingest_knowledge": "将维修手册 JSONL 入库到 RAG",
         }.items()]

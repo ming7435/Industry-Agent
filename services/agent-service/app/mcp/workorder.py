@@ -85,6 +85,21 @@ class WorkOrderMcpAdapter:
         order["updated_at"] = self._now()
         return dict(order)
 
+    def get_repair_feedback(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
+        order = self._orders.get(workorder_id)
+        if order is None:
+            return {"found": False, "success": False, "workorder_id": workorder_id, "repair_feedback": "", "complete": False, "source": "mes-mcp"}
+        feedback = str(order.get("repair_feedback") or "").strip()
+        return {
+            "found": True,
+            "success": True,
+            "workorder_id": workorder_id,
+            "repair_feedback": feedback,
+            "feedback": feedback,
+            "complete": bool(feedback),
+            "source": "mes-mcp",
+        }
+
     def mark_repair_completed(self, workorder_id: str, feedback: str = "", **_: Any) -> Dict[str, Any]:
         return self.update_workorder(
             workorder_id,

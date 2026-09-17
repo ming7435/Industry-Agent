@@ -37,6 +37,9 @@ def build_agent_registry(**dependencies: Any) -> dict[str, Any]:
             knowledge_provider=dependencies.get("maintenance_knowledge_provider"),
             cad_provider=dependencies.get("maintenance_cad_provider"),
         ),
-        "quality": QualityAgent(dependencies["tools"]),
+        "quality": QualityAgent(
+            dependencies["tools"],
+            knowledge_provider=dependencies.get("quality_knowledge_provider"),
+        ),
         "report": ReportAgent(),
     }

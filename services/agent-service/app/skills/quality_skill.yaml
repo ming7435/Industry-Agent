@@ -1,12 +1,27 @@
-name: quality
-goal: 验证维修是否完成并恢复设备
-input: WorkOrder
+name: quality_master_skill
+goal: 验证维修完成、报警清除、参数恢复与SOP合规，并闭环工单
+input: QualityRequest
 steps:
-  - 校验工单执行状态
-  - 检查SOP符合性
-  - 检查设备恢复和报警消失
+  - initialize
+  - load_skill
+  - load_workorder
+  - load_repair_feedback
+  - verify_device
+  - verify_alarm
+  - verify_parameters
+  - verify_sop
+  - validate
+  - decision
+  - final/fallback
 tools:
+  - get_workorder
+  - get_repair_feedback
   - get_device_status
-  - verify_repair
-  - check_sop
+  - get_device_history
+  - get_active_alarms
+  - check_workorder_compliance
+  - verify_alarm_clearance
+  - compare_pre_post_metrics
+  - close_workorder
+  - reopen_workorder
 output: QualityResult
