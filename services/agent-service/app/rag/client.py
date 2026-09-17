@@ -70,6 +70,26 @@ class RAGServiceClient:
         loaded = self.fallback.upsert([record], collection=collection)
         return {"loaded": loaded, "backend": self.fallback.backend}
 
+    def fetch_document(self, document_id: str) -> Dict[str, Any]:
+        payload = {"document_id": str(document_id or "")}
+        if self.base_url:
+            try:
+                return self._post("/fetch_document", payload)
+            except Exception:
+                if not self.allow_fallback:
+                    raise
+        return self.fallback.fetch_document(payload["document_id"])
+
+    def fetch_chunk(self, document_id: str, chunk_id: str = "") -> Dict[str, Any]:
+        payload = {"document_id": str(document_id or ""), "chunk_id": str(chunk_id or "")}
+        if self.base_url:
+            try:
+                return self._post("/fetch_chunk", payload)
+            except Exception:
+                if not self.allow_fallback:
+                    raise
+        return self.fallback.fetch_chunk(payload["document_id"], payload["chunk_id"])
+
     def status(self) -> Dict[str, Any]:
         if self.base_url:
             try:

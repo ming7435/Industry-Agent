@@ -40,10 +40,17 @@ class KnowledgeRequest(A2ARequest):
     query: str
     limit: int = Field(default=5, ge=1, le=50)
     filters: Dict[str, Any] = Field(default_factory=dict)
+    source_agent: str = ""
+    device_id: str = ""
+    query_type: str = "hybrid"
+    alarm_code: str = ""
+    component: str = ""
+    required_sources: List[str] = Field(default_factory=list)
 
 
 class KnowledgeResponse(A2AResponse):
     status: str = "completed"
+    query_type: str = "hybrid"
     summary: str = ""
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     possible_causes: List[str] = Field(default_factory=list)
@@ -55,6 +62,10 @@ class KnowledgeResponse(A2AResponse):
     degraded: bool = False
     warning: str = ""
     source: str = ""
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    total: int = 0
+    validation_findings: List[str] = Field(default_factory=list)
+    stop_reason: str = ""
 
 
 class MaintenanceRequest(A2ARequest):

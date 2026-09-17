@@ -196,6 +196,31 @@ class RAGIndex:
             })
         return {"query": query, "documents": documents, "source": self.backend, "total": len(documents), "filters": filters}
 
+    def fetch_document(self, document_id: str) -> Dict[str, Any]:
+        """按文档 ID 获取完整知识记录，保持检索结果的溯源字段。"""
+
+        key = str(document_id or "").strip()
+        with self._lock:
+            item = dict(self._records.get(key) or {})
+        if not item:
+            return {"document_id": key, "found": False, "source": self.backend, "content": ""}
+        return {
+            "document_id": key,
+            "found": True,
+            "title": str(item.get("title") or item.get("procedure_name") or key),
+            "content": item.get("content", item.get("retrieval_text", "")),
+            "source": item.get("source_file") or item.get("source") or self.backend,
+            "metadata": {name: value for name, value in item.items() if name not in {"content", "retrieval_text"}},
+        }
+
+    def fetch_chunk(self, document_id: str, chunk_id: str = "") -> Dict[str, Any]:
+        """本地索引暂按文档粒度返回片段，预留远程 RAG 的 chunk_id。"""
+
+        result = self.fetch_document(document_id)
+        result["chunk_id"] = str(chunk_id or document_id or "")
+        result["chunk_content"] = result.get("content", "") if result.get("found") else ""
+        return result
+
     def count(self) -> int:
         """返回当前索引中的有效记录数。"""
 

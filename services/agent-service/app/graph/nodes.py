@@ -72,6 +72,13 @@ class OrchestratorNodes:
             "query": request.query,
             "limit": request.limit,
             "filters": request.filters,
+            "task_id": request.task_id,
+            "trace_id": request.trace_id,
+            "device_id": request.device_id,
+            "query_type": request.query_type,
+            "alarm_code": request.alarm_code,
+            "component": request.component,
+            "required_sources": request.required_sources,
         })
         payload = _serialize_agent_result(result)
         return KnowledgeResponse(
@@ -80,6 +87,7 @@ class OrchestratorNodes:
             from_agent="knowledge",
             to_agent=request.from_agent,
             status=payload.get("status", "completed"),
+            query_type=payload.get("query_type", request.query_type),
             summary=payload.get("summary", ""),
             evidence=payload.get("evidence", []),
             possible_causes=payload.get("possible_causes", []),
@@ -91,27 +99,68 @@ class OrchestratorNodes:
             degraded=payload.get("degraded", False),
             warning=payload.get("warning", ""),
             source=payload.get("source", ""),
+            filters=payload.get("filters", request.filters),
+            total=payload.get("total", 0),
+            validation_findings=payload.get("validation_findings", []),
+            stop_reason=payload.get("stop_reason", ""),
         )
 
     def _knowledge_request(self, state: AgentState, query: str) -> Dict[str, Any]:
-        return self._knowledge_a2a(state.get("task_id", ""), "diagnosis", query)
+        context = state.get("context") or {}
+        return self._knowledge_a2a(
+            state.get("task_id", ""),
+            "diagnosis",
+            query,
+            filters=context.get("knowledge_filters") or {},
+            trace_id=state.get("trace_id", ""),
+            device_id=str(context.get("device_id") or ""),
+            alarm_code=str(context.get("alarm_code") or ""),
+            component=str(context.get("component") or ""),
+            required_sources=list(context.get("required_sources") or []),
+        )
 
-    def _knowledge_a2a(self, task_id: str, from_agent: str, query: str, filters: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def _knowledge_a2a(
+        self,
+        task_id: str,
+        from_agent: str,
+        query: str,
+        filters: Dict[str, Any] | None = None,
+        trace_id: str = "",
+        device_id: str = "",
+        alarm_code: str = "",
+        component: str = "",
+        required_sources: list[str] | None = None,
+    ) -> Dict[str, Any]:
         response = self.a2a.request(
             KnowledgeRequest(
                 request_id=self.a2a.new_request_id(),
                 task_id=task_id,
+                trace_id=trace_id,
                 from_agent=from_agent,
                 to_agent="knowledge",
                 query=query,
                 filters=filters or {},
+                source_agent=from_agent,
+                device_id=device_id,
+                alarm_code=alarm_code,
+                component=component,
+                required_sources=list(required_sources or []),
             ),
             KnowledgeResponse,
         )
         return response.model_dump(mode="json")
 
     def _maintenance_knowledge_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
-        return self._knowledge_a2a(str(context.get("task_id") or ""), "maintenance", query, {"knowledge_type": "sop"})
+        return self._knowledge_a2a(
+            str(context.get("task_id") or ""),
+            "maintenance",
+            query,
+            {"knowledge_type": "sop"},
+            trace_id=str(context.get("trace_id") or ""),
+            device_id=str(context.get("device_id") or ""),
+            component=str(context.get("component") or ""),
+            required_sources=["sop"],
+        )
 
     def _maintenance_cad_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
         return self._cad_a2a(str(context.get("task_id") or ""), "maintenance", query, context)
@@ -214,9 +263,15 @@ class OrchestratorNodes:
             KnowledgeRequest(
                 request_id=self.a2a.new_request_id(),
                 task_id=task_id,
+                trace_id=str(event.get("trace_id") or ""),
                 from_agent="diagnosis",
                 to_agent="knowledge",
                 query=query,
+                source_agent="diagnosis",
+                device_id=str(event.get("device_id") or ""),
+                alarm_code=str(event.get("alarm_code") or ""),
+                component=str(event.get("component") or ""),
+                required_sources=list(event.get("required_sources") or []),
             ),
             KnowledgeResponse,
         )

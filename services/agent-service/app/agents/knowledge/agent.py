@@ -8,6 +8,8 @@ from typing import Any, Mapping
 from app.tools.registry import ToolRegistry
 from app.validator import KnowledgeDocument, KnowledgeResult
 
+from .graph import build_knowledge_graph
+
 
 _ALARM_CODE_RE = re.compile(r"\b[A-Z]?\d{3,6}\b", re.IGNORECASE)
 
@@ -17,6 +19,7 @@ class KnowledgeAgent:
 
     def __init__(self, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()
+        self.graph = build_knowledge_graph()
 
     def search_knowledge(
         self,
@@ -53,18 +56,12 @@ class KnowledgeAgent:
         )
 
     def run(self, task: Any) -> KnowledgeResult:
-        if isinstance(task, str):
-            query = task
-            payload = {}
-        else:
-            payload = dict(task or {})
-            query = str(payload.get("query") or payload.get("user_text") or payload.get("fault") or "工业设备维修")
-        return self.search_knowledge(
-            query,
-            int(payload.get("limit", 5)),
-            payload.get("filters"),
-            payload.get("required_sources") or payload.get("required_knowledge_types") or [],
-        )
+        payload = {"query": task} if isinstance(task, str) else dict(task or {})
+        output = self.graph.invoke({"agent": self, "request": payload})
+        result = output.get("result")
+        if result is None:
+            raise RuntimeError("Knowledge LangGraph 未生成结果")
+        return result
 
     @staticmethod
     def _classify_query(query: str, filters: Mapping[str, Any], required_sources: list[str]) -> str:
@@ -161,6 +158,14 @@ class KnowledgeAgent:
         return sources
 
     @staticmethod
+    def _dedupe(items: list[str]) -> list[str]:
+        values: list[str] = []
+        for item in items:
+            if item and item not in values:
+                values.append(item)
+        return values
+
+    @staticmethod
     def _confidence(documents: list[KnowledgeDocument], required_sources: list[str]) -> float:
         if not documents:
             return 0.0
@@ -168,3 +173,53 @@ class KnowledgeAgent:
         source_bonus = 0.05 if required_sources else 0.0
         diversity_bonus = min(0.1, 0.02 * len({doc.metadata.get("knowledge_type", "") for doc in documents}))
         return round(min(1.0, best + source_bonus + diversity_bonus), 4)
+
+    @classmethod
+    def _confidence_from_documents(cls, documents: list[Mapping[str, Any]], required_sources: list[str]) -> float:
+        normalized = cls._deduplicate_documents(documents)
+        return cls._confidence(normalized, required_sources)
+
+    def _build_result(
+        self,
+        request: Mapping[str, Any],
+        query: str,
+        query_type: str,
+        documents: list[Mapping[str, Any]],
+        evidence: list[Mapping[str, Any]],
+        status: str,
+        observations: list[Mapping[str, Any]],
+        validation_findings: list[str],
+    ) -> KnowledgeResult:
+        normalized = self._deduplicate_documents(documents)
+        required_sources = list(request.get("required_sources") or [])
+        confidence = self._confidence(normalized, required_sources)
+        raw_results = [item.get("result") or {} for item in observations if isinstance(item, Mapping)]
+        backend_status = next((str(item.get("connection_status")) for item in raw_results if item.get("connection_status")), "unknown")
+        source = next((str(item.get("source")) for item in raw_results if item.get("source")), "rag-service-compatible")
+        warning_items = [str(item.get("warning")) for item in raw_results if item.get("warning")]
+        warning_items.extend(str(item.get("error")) for item in observations if item.get("error"))
+        degraded = any(bool(item.get("degraded")) for item in raw_results)
+        summary = self._summary(query, normalized, status)
+        if validation_findings and status != "completed":
+            summary += " 当前结果不满足所需证据覆盖条件。"
+        return KnowledgeResult(
+            query=query,
+            status=status,
+            query_type=query_type,
+            summary=summary,
+            evidence=[dict(item) for item in evidence],
+            possible_causes=self._possible_causes(normalized),
+            recommended_checks=self._recommended_checks(normalized),
+            confidence=confidence,
+            documents=normalized,
+            sources=self._sources(normalized),
+            filters=dict(request.get("filters") or {}),
+            total=len(normalized),
+            backend_status=backend_status,
+            degraded=degraded,
+            warning="；".join(self._dedupe(warning_items)),
+            source=source,
+            validation_findings=list(validation_findings),
+            stop_reason="evidence_ready" if status == "completed" else "insufficient_evidence",
+            retrieval_trace=[dict(item) for item in observations],
+        )

@@ -31,6 +31,13 @@ class ToolRegistry:
             "get_production_status": self.get_production_status,
             "intent_classifier_tool": self.intent_classifier_tool,
             "search_knowledge": self.search_knowledge,
+            "search_alarm_knowledge": self.search_alarm_knowledge,
+            "search_sop": self.search_sop,
+            "search_manual": self.search_manual,
+            "search_fault_cases": self.search_fault_cases,
+            "search_semantic_memory": self.search_semantic_memory,
+            "fetch_document": self.fetch_document,
+            "fetch_chunk": self.fetch_chunk,
             "document_parser": self.document_parser,
             "query_cad": self.query_cad,
             "query_bom": self.query_bom,
@@ -105,6 +112,34 @@ class ToolRegistry:
 
     def search_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return self.rag.search(query, limit=limit, filters=filters)
+
+    def search_alarm_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, alarm_code: str = "", **_: Any) -> Dict[str, Any]:
+        values = {**dict(filters or {}), "knowledge_type": "alarm"}
+        if alarm_code:
+            values["alarm_code"] = alarm_code
+        return self.search_knowledge(query, limit=limit, filters=values)
+
+    def search_sop(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
+        selected = {key: value for key, value in dict(filters or {}).items() if key not in {"alarm_code"}}
+        return self.search_knowledge(query, limit=limit, filters={**selected, "knowledge_type": "sop"})
+
+    def search_manual(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
+        selected = {key: value for key, value in dict(filters or {}).items() if key not in {"alarm_code", "knowledge_type"}}
+        return self.search_knowledge(query, limit=limit, filters=selected)
+
+    def search_fault_cases(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
+        selected = {key: value for key, value in dict(filters or {}).items() if key not in {"alarm_code"}}
+        return self.search_knowledge(query, limit=limit, filters={**selected, "knowledge_type": "case"})
+
+    def search_semantic_memory(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
+        selected = {key: value for key, value in dict(filters or {}).items() if key not in {"alarm_code", "knowledge_type"}}
+        return self.search_knowledge(query, limit=limit, filters=selected)
+
+    def fetch_document(self, document_id: str = "", **_: Any) -> Dict[str, Any]:
+        return self.rag.fetch_document(document_id)
+
+    def fetch_chunk(self, document_id: str = "", chunk_id: str = "", **_: Any) -> Dict[str, Any]:
+        return self.rag.fetch_chunk(document_id, chunk_id)
 
     def ingest_knowledge(self, path: str, collection: str = "", **_: Any) -> Dict[str, Any]:
         return self.rag.ingest_jsonl(path, collection=collection)
@@ -365,8 +400,9 @@ class ToolRegistry:
             "get_workorder_template": "mes", "submit_workorder_draft": "mes",
             "mark_repair_completed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
             "verify_repair": "qms", "check_sop": "qms",
-            "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory", "search_knowledge": "knowledge",
-            "document_parser": "knowledge", "ingest_knowledge": "knowledge",
+            "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory",
+            "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
+            "fetch_document": "knowledge", "fetch_chunk": "knowledge", "document_parser": "knowledge", "ingest_knowledge": "knowledge",
             "generate_report": "mes", "generate_repair_plan": "mes",
         }.get(name, "knowledge")
         operation = {
@@ -406,6 +442,13 @@ class ToolRegistry:
             "get_device_history": "查询设备历史",
             "get_device_logs": "查询设备日志和PLC事件",
             "search_knowledge": "检索工业知识",
+            "search_alarm_knowledge": "检索报警知识",
+            "search_sop": "检索SOP规程",
+            "search_manual": "检索维修手册",
+            "search_fault_cases": "检索历史故障案例",
+            "search_semantic_memory": "检索语义记忆",
+            "fetch_document": "获取知识文档全文",
+            "fetch_chunk": "获取知识文档片段",
             "document_parser": "解析维修手册、SOP或工程文档",
             "query_cad": "查询CAD和BOM",
             "query_bom": "查询BOM物料清单",
