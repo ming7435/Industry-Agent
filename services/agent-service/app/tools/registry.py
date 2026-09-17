@@ -2,20 +2,36 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import json
 import os
-from pathlib import Path
-import re
 from typing import Any, Dict, Mapping
 
 from app.mcp.client import McpClient
 from app.mcp.workorder import WorkOrderMcpAdapter
 from app.rag import RAGIndex, RAGServiceClient
+from app.tools.cad import (
+    fetch_engineering_record as fetch_engineering_record_tool,
+    get_component_location as get_component_location_tool,
+    get_drawing_metadata as get_drawing_metadata_tool,
+    query_assembly_relation as query_assembly_relation_tool,
+    query_bom as query_bom_tool,
+    query_cad as query_cad_tool,
+    query_drawing as query_drawing_tool,
+    query_part as query_part_tool,
+    query_part_relation as query_part_relation_tool,
+    query_relation as query_relation_tool,
+)
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
+from app.tools.inventory import (
+    query_inventory as query_inventory_tool,
+    query_part_availability as query_part_availability_tool,
+    query_spare_part as query_spare_part_tool,
+    query_stock as query_stock_tool,
+)
 from app.tools.knowledge import (
     fetch_chunk as fetch_knowledge_chunk,
     fetch_document as fetch_knowledge_document,
+    ingest_knowledge as ingest_knowledge_tool,
+    rag_status as rag_status_tool,
     search_alarm_knowledge as search_alarm_knowledge_tool,
     search_fault_cases as search_fault_cases_tool,
     search_knowledge as search_knowledge_tool,
@@ -23,6 +39,25 @@ from app.tools.knowledge import (
     search_semantic_memory as search_semantic_memory_tool,
     search_sop as search_sop_tool,
 )
+from app.tools.maintenance import generate_repair_plan as generate_repair_plan_tool
+from app.tools.parser import document_parser as document_parser_tool
+from app.tools.production import get_production_status as get_production_status_tool
+from app.tools.quality import check_sop as check_sop_tool
+from app.tools.report import generate_report as generate_report_tool
+from app.tools.router import intent_classifier_tool as intent_classifier_tool_fn
+from app.tools.workorder.assign_workorder import assign_workorder as assign_workorder_tool
+from app.tools.workorder.close_workorder import close_workorder as close_workorder_tool
+from app.tools.workorder.create_workorder import create_workorder as create_workorder_tool
+from app.tools.workorder.get_workorder import get_workorder as get_workorder_tool
+from app.tools.workorder.get_workorder_template import get_workorder_template as get_workorder_template_tool
+from app.tools.workorder.list_workorders import list_workorders as list_workorders_tool
+from app.tools.workorder.mark_repair_completed import mark_repair_completed as mark_repair_completed_tool
+from app.tools.workorder.query_workorder import query_workorder as query_workorder_tool
+from app.tools.workorder.reopen_workorder import reopen_workorder as reopen_workorder_tool
+from app.tools.workorder.submit_repair_feedback import submit_repair_feedback as submit_repair_feedback_tool
+from app.tools.workorder.submit_workorder_draft import submit_workorder_draft as submit_workorder_draft_tool
+from app.tools.workorder.update_workorder import update_workorder as update_workorder_tool
+from app.tools.workorder.verify_repair import verify_repair as verify_repair_tool
 from app.trace import TraceRecorder
 
 
@@ -38,8 +73,8 @@ class ToolRegistry:
             "get_device_history": self._get_device_history,
             "get_device_logs": get_device_logs,
             "get_device_status": self.get_device_status,
-            "get_production_status": self.get_production_status,
-            "intent_classifier_tool": self.intent_classifier_tool,
+            "get_production_status": get_production_status_tool,
+            "intent_classifier_tool": intent_classifier_tool_fn,
             "search_knowledge": lambda **arguments: search_knowledge_tool(self.rag, **arguments),
             "search_alarm_knowledge": lambda **arguments: search_alarm_knowledge_tool(self.rag, **arguments),
             "search_sop": lambda **arguments: search_sop_tool(self.rag, **arguments),
@@ -62,21 +97,21 @@ class ToolRegistry:
             "generate_repair_plan": self.generate_repair_plan,
             "query_spare_part": self.query_spare_part,
             "query_inventory": self.query_inventory,
-            "query_stock": self.query_inventory,
+            "query_stock": self.query_stock,
             "query_part_availability": self.query_part_availability,
             "get_workorder_template": self.get_workorder_template,
             "submit_workorder_draft": self.submit_workorder_draft,
-            "create_workorder": self.workorder_mcp.create_workorder,
-            "update_workorder": self.workorder_mcp.update_workorder,
-            "get_workorder": self.workorder_mcp.get_workorder,
-            "query_workorder": self.workorder_mcp.get_workorder,
-            "list_workorders": self.workorder_mcp.list_workorders,
-            "assign_workorder": self.workorder_mcp.assign_workorder,
-            "submit_repair_feedback": self.workorder_mcp.submit_repair_feedback,
-            "mark_repair_completed": self.workorder_mcp.mark_repair_completed,
-            "close_workorder": self.workorder_mcp.close_workorder,
-            "reopen_workorder": self.workorder_mcp.reopen_workorder,
-            "verify_repair": self.workorder_mcp.verify_repair,
+            "create_workorder": self.create_workorder,
+            "update_workorder": self.update_workorder,
+            "get_workorder": self.get_workorder,
+            "query_workorder": self.query_workorder,
+            "list_workorders": self.list_workorders,
+            "assign_workorder": self.assign_workorder,
+            "submit_repair_feedback": self.submit_repair_feedback,
+            "mark_repair_completed": self.mark_repair_completed,
+            "close_workorder": self.close_workorder,
+            "reopen_workorder": self.reopen_workorder,
+            "verify_repair": self.verify_repair,
             "check_sop": self.check_sop,
             "generate_report": self.generate_report,
             "ingest_knowledge": self.ingest_knowledge,
@@ -91,34 +126,10 @@ class ToolRegistry:
         return get_device_status(device_id=device_id, base_url=self.base_url)
 
     def get_production_status(self, device_id: str = "", **_: Any) -> Dict[str, Any]:
-        return {
-            "device_id": device_id,
-            "line": "A线",
-            "status": "running",
-            "cycle_state": "processing",
-            "source": "MES-MCP-compatible",
-            "checked_at": datetime.now(timezone.utc).isoformat(),
-        }
+        return get_production_status_tool(device_id=device_id)
 
     def intent_classifier_tool(self, user_text: str, **_: Any) -> Dict[str, Any]:
-        text = str(user_text or "").lower()
-        if re.search(r"\b(?:e|alm)[-]?\d{2,6}\b", text) and any(keyword in text for keyword in ("什么", "含义", "处理", "步骤", "说明")):
-            return {"intent": "knowledge", "confidence": 0.92, "source": "local-intent-classifier"}
-        candidates = {
-            "diagnosis": ("诊断", "故障", "报警", "异常"),
-            "knowledge": ("手册", "sop", "规范", "案例", "怎么检查"),
-            "quality": ("验收", "质检", "是否恢复"),
-            "report": ("报告", "日报", "维修记录"),
-            "workorder_action": ("工单", "派工", "创建工单", "查询工单", "关闭工单"),
-            "maintenance": ("维修方案", "怎么修", "怎么维修", "维修步骤", "检修", "维修", "修理", "维护", "保养"),
-            "cad": ("cad", "bom", "图纸", "结构", "零件", "物料", "位置", "在哪里", "部件", "组件", "传感器", "装配", "关系"),
-        }
-        intent = "unknown"
-        for name, keywords in candidates.items():
-            if any(keyword.lower() in text for keyword in keywords):
-                intent = name
-                break
-        return {"intent": intent, "confidence": 0.92 if intent != "unknown" else 0.2, "source": "local-intent-classifier"}
+        return intent_classifier_tool_fn(user_text=user_text)
 
     def search_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return search_knowledge_tool(self.rag, query, limit=limit, filters=filters)
@@ -145,248 +156,103 @@ class ToolRegistry:
         return fetch_knowledge_chunk(self.rag, document_id, chunk_id)
 
     def ingest_knowledge(self, path: str, collection: str = "", **_: Any) -> Dict[str, Any]:
-        return self.rag.ingest_jsonl(path, collection=collection)
+        return ingest_knowledge_tool(self.rag, path=path, collection=collection)
 
     def rag_status(self, **_: Any) -> Dict[str, Any]:
-        return self.rag.status()
+        return rag_status_tool(self.rag)
 
     def query_cad(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
-        components = self._engineering_components()
-        lookup = part_no or component or query
-        matched = self._match_components(lookup, components)
-        return {
-            "query": lookup,
-            "device_id": device_id,
-            "components": matched,
-            "drawings": [self._drawing_for(item) for item in matched],
-            "source": "cad-mcp-compatible",
-        }
+        return query_cad_tool(query=query, device_id=device_id, component=component, part_no=part_no)
 
     def query_bom(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
-        lookup = part_no or component or query
-        components = self._match_components(lookup, self._engineering_components())
-        items = [self._bom_for(item) for item in components]
-        return {"query": lookup, "device_id": device_id, "components": components, "bom_items": items, "source": "bom-mcp-compatible"}
+        return query_bom_tool(query=query, device_id=device_id, component=component, part_no=part_no)
 
     def query_part(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
-        lookup = part_no or component or query
-        components = self._match_components(lookup, self._engineering_components())
-        return {"query": lookup, "device_id": device_id, "parts": components, "source": "part-mcp-compatible"}
+        return query_part_tool(query=query, device_id=device_id, component=component, part_no=part_no)
 
     def query_part_relation(self, part_no: str = "", component_id: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
-        lookup = part_no or component_id or query
-        components = self._match_components(lookup, self._engineering_components())
-        relations = [self._relation_for(item) for item in components]
-        return {"query": lookup, "relations": relations, "source": "cad-relation-mcp-compatible"}
+        return query_part_relation_tool(part_no=part_no, component_id=component_id, query=query)
 
     def query_assembly_relation(self, component_id: str = "", component: str = "", part_no: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
-        lookup = component_id or part_no or component or query
-        components = self._match_components(lookup, self._engineering_components())
-        relations = [self._relation_for(item) for item in components]
-        return {"query": lookup, "assembly_relations": relations, "source": "assembly-mcp-compatible"}
+        return query_assembly_relation_tool(component_id=component_id, component=component, part_no=part_no, query=query)
 
     def get_drawing_metadata(self, component_id: str = "", part_no: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
-        lookup = component_id or part_no or query
-        components = self._match_components(lookup, self._engineering_components())
-        drawings = [self._drawing_for(item) for item in components]
-        return {"query": lookup, "drawings": drawings, "source": "drawing-metadata-mcp-compatible"}
+        return get_drawing_metadata_tool(component_id=component_id, part_no=part_no, query=query)
 
     def get_component_location(self, component_id: str = "", part_no: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
-        lookup = component_id or part_no or query
-        components = self._match_components(lookup, self._engineering_components())
-        return {
-            "query": lookup,
-            "locations": [
-                {"component_id": item["component_id"], "part_no": item["part_no"], "location": item["position"], "drawing_ref": item["drawing_ref"]}
-                for item in components
-            ],
-            "source": "component-location-mcp-compatible",
-        }
+        return get_component_location_tool(component_id=component_id, part_no=part_no, query=query)
 
     def query_drawing(self, **arguments: Any) -> Dict[str, Any]:
-        return self.get_drawing_metadata(**arguments)
+        return query_drawing_tool(**arguments)
 
     def query_relation(self, **arguments: Any) -> Dict[str, Any]:
-        result = self.query_assembly_relation(**arguments)
-        result["relations"] = list(result.get("assembly_relations") or [])
-        result["locations"] = self.get_component_location(**arguments).get("locations", [])
-        return result
+        return query_relation_tool(**arguments)
 
     def fetch_engineering_record(self, **arguments: Any) -> Dict[str, Any]:
-        query = str(arguments.get("query") or arguments.get("component") or arguments.get("part_no") or "")
-        device_id = str(arguments.get("device_id") or "")
-        raw = self.query_cad(query=query, device_id=device_id)
-        raw["bom_items"] = self.query_bom(query=query, device_id=device_id).get("bom_items", [])
-        raw["assembly_relations"] = self.query_assembly_relation(query=query).get("assembly_relations", [])
-        raw["locations"] = self.get_component_location(query=query).get("locations", [])
-        raw["source"] = "document-cad-service-local"
-        return raw
-
-    @staticmethod
-    def _engineering_components() -> list[Dict[str, Any]]:
-        return [
-            {"component_id": "SPINDLE-ASSY", "part_no": "SP-ASSY-TC820-001", "name": "主轴电机组件", "position": "Z轴上方主轴箱", "assembly_relation": "上级为主轴箱总成，下接主轴轴承、温度传感器与冷却回路", "drawing_ref": "DWG-TC820-SPINDLE-001", "quantity": 1, "material": "装配件"},
-            {"component_id": "COOLING-PUMP", "part_no": "CP-TC820-015", "name": "冷却泵", "position": "机床后侧冷却单元", "assembly_relation": "向主轴冷却回路供液，连接冷却箱、过滤器和主轴夹套", "drawing_ref": "DWG-TC820-COOLING-002", "quantity": 1, "material": "外购件"},
-            {"component_id": "TEMP-PT100", "part_no": "TS-PT100-008", "name": "主轴温度传感器", "position": "主轴电机壳体测温孔", "assembly_relation": "采集主轴温度，信号接入PLC模拟量模块", "drawing_ref": "DWG-TC820-SENSOR-003", "quantity": 1, "material": "传感器"},
-            {"component_id": "VIB-SENSOR", "part_no": "VS-RMS-004", "name": "主轴振动传感器", "position": "主轴箱体右侧安装座", "assembly_relation": "采集主轴振动RMS，关联刀具、夹具和主轴轴承", "drawing_ref": "DWG-TC820-SENSOR-004", "quantity": 1, "material": "传感器"},
-        ]
-
-    @classmethod
-    def _match_components(cls, query: str, components: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
-        text = str(query or "").lower().strip()
-        if not text:
-            return components[:2]
-        for item in components:
-            exact_values = (item.get("component_id"), item.get("part_no"), item.get("name"), item.get("drawing_ref"))
-            if text in {str(value or "").lower().strip() for value in exact_values}:
-                return [dict(item)]
-        aliases = {
-            "温度": ("TEMP-PT100", "SPINDLE-ASSY", "COOLING-PUMP"),
-            "过热": ("TEMP-PT100", "SPINDLE-ASSY", "COOLING-PUMP"),
-            "冷却": ("COOLING-PUMP", "SPINDLE-ASSY"),
-            "主轴": ("SPINDLE-ASSY", "TEMP-PT100", "VIB-SENSOR", "COOLING-PUMP"),
-            "振动": ("VIB-SENSOR", "SPINDLE-ASSY"),
-        }
-        ids: list[str] = []
-        for token, component_ids in aliases.items():
-            if token.lower() in text:
-                ids.extend(component_id for component_id in component_ids if component_id not in ids)
-        for item in components:
-            haystack = " ".join(str(item.get(key, "")) for key in ("component_id", "part_no", "name", "position", "drawing_ref")).lower()
-            if any(term and term in haystack for term in text.replace("/", " ").replace("-", " ").split()):
-                if item["component_id"] not in ids:
-                    ids.append(item["component_id"])
-            elif text in haystack and item["component_id"] not in ids:
-                ids.append(item["component_id"])
-        by_id = {item["component_id"]: item for item in components}
-        return [dict(by_id[component_id]) for component_id in ids if component_id in by_id]
-
-    @staticmethod
-    def _bom_for(item: Mapping[str, Any]) -> Dict[str, Any]:
-        return {
-            "component_id": item.get("component_id", ""),
-            "part_no": item.get("part_no", ""),
-            "name": item.get("name", ""),
-            "quantity": item.get("quantity", 1),
-            "material": item.get("material", ""),
-            "drawing_ref": item.get("drawing_ref", ""),
-        }
-
-    @staticmethod
-    def _drawing_for(item: Mapping[str, Any]) -> Dict[str, Any]:
-        return {
-            "drawing_id": item.get("drawing_ref", ""),
-            "component_id": item.get("component_id", ""),
-            "title": "%s 工程图" % item.get("name", "部件"),
-            "format": "DXF/DWG-compatible",
-            "sheet": "A3",
-            "source": "document-cad-service-demo",
-        }
-
-    @staticmethod
-    def _relation_for(item: Mapping[str, Any]) -> Dict[str, Any]:
-        return {
-            "component_id": item.get("component_id", ""),
-            "part_no": item.get("part_no", ""),
-            "relation": item.get("assembly_relation", ""),
-            "location": item.get("position", ""),
-            "drawing_ref": item.get("drawing_ref", ""),
-        }
+        return fetch_engineering_record_tool(**arguments)
 
     def document_parser(self, path: str, **_: Any) -> Dict[str, Any]:
-        source = Path(path)
-        if not source.is_file():
-            raise FileNotFoundError("文档不存在：%s" % source)
-        suffix = source.suffix.lower()
-        if suffix in {".json", ".jsonl"}:
-            if suffix == ".jsonl":
-                records = []
-                with source.open("r", encoding="utf-8-sig") as stream:
-                    for line in stream:
-                        if line.strip():
-                            records.append(json.loads(line))
-                return {"path": str(source), "format": "jsonl", "records": records, "count": len(records)}
-            value = json.loads(source.read_text(encoding="utf-8-sig"))
-            return {"path": str(source), "format": "json", "content": value}
-        text = source.read_text(encoding="utf-8-sig")
-        return {"path": str(source), "format": suffix.lstrip(".") or "text", "content": text, "count": len(text)}
+        return document_parser_tool(path=path)
 
     def generate_repair_plan(self, diagnosis: Mapping[str, Any], **_: Any) -> Dict[str, Any]:
-        fault = str(diagnosis.get("fault") or diagnosis.get("diagnosis") or "设备异常")
-        if "温度" in fault or "过热" in fault:
-            steps = ["执行断电和挂牌上锁", "检查冷却液、冷却泵和散热回路", "复测温度并空载试运行"]
-        elif "振动" in fault:
-            steps = ["停止设备并确认刀具安全", "检查刀具、夹具和主轴轴承", "低速试运行并复测振动"]
-        else:
-            steps = ["执行安全隔离", "根据报警定义检查相关部件", "复测指标并确认设备恢复"]
-        return {"fault": fault, "repair_steps": steps, "safety": ["执行LOTO断电挂牌", "佩戴必要防护用品"]}
+        return generate_repair_plan_tool(diagnosis=diagnosis)
 
     def query_spare_part(self, query: str, device_id: str = "", **_: Any) -> Dict[str, Any]:
-        parts = [
-            {"part_id": "TEMP-PT100", "part_no": "TS-PT100-008", "name": "PT100温度传感器", "stock": 3, "available": True, "device_id": device_id},
-            {"part_id": "COOLANT-PUMP", "part_no": "CP-TC820-015", "name": "主轴冷却泵", "stock": 2, "available": True, "device_id": device_id},
-            {"part_id": "SPINDLE-BEARING", "part_no": "SP-BEARING-6208", "name": "主轴轴承", "stock": 1, "available": True, "device_id": device_id},
-        ]
-        matched = [item for item in parts if any(term in item["name"] or term in item["part_id"] for term in str(query).split())]
-        return {"query": query, "parts": matched or parts, "source": "inventory-mcp-compatible"}
+        return query_spare_part_tool(query=query, device_id=device_id)
 
     def query_inventory(self, query: str, device_id: str = "", **arguments: Any) -> Dict[str, Any]:
-        result = self.query_spare_part(query=query, device_id=device_id, **arguments)
-        result["stock"] = list(result.get("parts") or [])
-        return result
+        return query_inventory_tool(query=query, device_id=device_id, **arguments)
+
+    def query_stock(self, query: str, device_id: str = "", **arguments: Any) -> Dict[str, Any]:
+        return query_stock_tool(query=query, device_id=device_id, **arguments)
 
     def query_part_availability(self, query: str, device_id: str = "", part_no: str = "", **arguments: Any) -> Dict[str, Any]:
-        lookup = part_no or query
-        result = self.query_spare_part(query=lookup, device_id=device_id, **arguments)
-        parts = list(result.get("parts") or [])
-        return {"query": lookup, "device_id": device_id, "available": any(int(item.get("stock") or 0) > 0 for item in parts), "parts": parts, "source": "inventory-mcp-compatible"}
+        return query_part_availability_tool(query=query, device_id=device_id, part_no=part_no, **arguments)
 
     def get_workorder_template(self, device_id: str = "", plan: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        payload = dict(plan or {})
-        return {"template_id": "WO-TPL-MAINT-001", "device_id": device_id, "title": "设备维修工单", "steps": list(payload.get("repair_steps") or []), "source": "workorder-template-local"}
+        return get_workorder_template_tool(device_id=device_id, plan=plan)
 
     def submit_workorder_draft(self, **arguments: Any) -> Dict[str, Any]:
-        return {"draft_id": "WOD-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"), "submitted": True, "source": "workorder-draft-local", **dict(arguments)}
+        return submit_workorder_draft_tool(**arguments)
 
     def check_sop(self, workorder_id: str = "", query: str = "维修步骤", **_: Any) -> Dict[str, Any]:
-        result = self.search_knowledge(query, limit=3, filters={"knowledge_type": "sop"})
-        return {"workorder_id": workorder_id, "passed": bool(result.get("documents")), "documents": result.get("documents", []), "source": result.get("source", "")}
+        return check_sop_tool(self.search_knowledge, workorder_id=workorder_id, query=query)
 
     def generate_report(self, report_type: str = "maintenance", sections: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        return {"report_type": report_type, "sections": dict(sections or {}), "generated_at": datetime.now(timezone.utc).isoformat(), "source": "report-tool"}
+        return generate_report_tool(report_type=report_type, sections=sections)
 
     def create_workorder(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.create_workorder(**arguments)
+        return create_workorder_tool(self.workorder_mcp, **arguments)
 
     def update_workorder(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.update_workorder(**arguments)
+        return update_workorder_tool(self.workorder_mcp, **arguments)
 
     def get_workorder(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.get_workorder(**arguments)
+        return get_workorder_tool(self.workorder_mcp, **arguments)
 
     def query_workorder(self, **arguments: Any) -> Dict[str, Any]:
-        return self.get_workorder(**arguments)
+        return query_workorder_tool(self.workorder_mcp, **arguments)
 
     def list_workorders(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.list_workorders(**arguments)
+        return list_workorders_tool(self.workorder_mcp, **arguments)
 
     def assign_workorder(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.assign_workorder(**arguments)
+        return assign_workorder_tool(self.workorder_mcp, **arguments)
 
     def submit_repair_feedback(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.submit_repair_feedback(**arguments)
+        return submit_repair_feedback_tool(self.workorder_mcp, **arguments)
 
     def mark_repair_completed(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.mark_repair_completed(**arguments)
+        return mark_repair_completed_tool(self.workorder_mcp, **arguments)
 
     def close_workorder(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.close_workorder(**arguments)
+        return close_workorder_tool(self.workorder_mcp, **arguments)
 
     def reopen_workorder(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.reopen_workorder(**arguments)
+        return reopen_workorder_tool(self.workorder_mcp, **arguments)
 
     def verify_repair(self, **arguments: Any) -> Dict[str, Any]:
-        return self.workorder_mcp.verify_repair(**arguments)
+        return verify_repair_tool(self.workorder_mcp, **arguments)
 
     def execute(self, name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
         """通过 MCP 客户端分派工具，并记录开始、失败和完成轨迹。"""

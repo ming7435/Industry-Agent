@@ -239,7 +239,7 @@ class DiagnosisAgentTests(unittest.TestCase):
             def read(self):
                 return json.dumps(payload).encode("utf-8")
 
-        with patch("app.tools.diagnosis.status.urlopen", return_value=FakeResponse()):
+        with patch("app.tools.diagnosis.get_device_status.urlopen", return_value=FakeResponse()):
             result = get_device_status("CNC-001", base_url="http://factory.test")
 
         self.assertTrue(result["found"])
@@ -267,7 +267,7 @@ class DiagnosisAgentTests(unittest.TestCase):
             def read(self):
                 return json.dumps(payload).encode("utf-8")
 
-        with patch("app.tools.diagnosis.history.urlopen", return_value=FakeResponse()):
+        with patch("app.tools.diagnosis.get_device_history.urlopen", return_value=FakeResponse()):
             result = get_device_history(
                 "CNC-001",
                 metric_keys=["temperature"],
