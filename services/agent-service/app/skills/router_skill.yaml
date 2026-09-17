@@ -4,7 +4,7 @@ input: 用户文本和可选上下文
 steps:
   - classify_intent: 判断 diagnosis / knowledge / cad / maintenance / quality / report / workorder_action / unknown
   - extract_entities: 抽取 device_id、device_model、alarm_code、part_no、workorder_id、component、report_type
-  - target_agent_selection: 选择目标 Agent；工单动作进入 workorder_node 业务节点
+  - target_agent_selection: 只选择七个核心 Agent；工单动作交给 WorkOrder System/API/Tool 层处理
   - context_completion: 合并用户上下文和抽取实体，生成 target_input
   - validate_route: 校验 target_agent 是否有效、必要实体是否满足
 tools:

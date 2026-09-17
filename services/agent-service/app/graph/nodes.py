@@ -352,18 +352,10 @@ class OrchestratorNodes:
             query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "设备维修")
             cad = self._cad_request(state, query, "maintenance", context=context)
         plan = self._maintenance_request(state, state.get("diagnosis", {}), state.get("knowledge", {}), cad)
-        return self._finish("maintenance", state, {"maintenance_plan": plan})
-
-    def workorder(self, state: AgentState) -> Dict[str, Any]:
-        self._node_start("workorder", state)
-        if state.get("route") in {"workorder_action", "workorder_query"} and state.get("entry") != "trigger":
-            action = dict(state.get("context") or {})
-            action.setdefault("action", "query")
-            result = self.workorder_service.execute_action(action)
-            order = _serialize_agent_result(result) if result is not None else {}
-        else:
+        payload = {"maintenance_plan": plan}
+        if state.get("entry") == "trigger":
             existing = state.get("workorder") or {}
-            if state.get("entry") == "trigger" and existing.get("workorder_id"):
+            if existing.get("workorder_id"):
                 workorder_id = str(existing["workorder_id"])
                 self.workorder_service.update(workorder_id, status="in_progress")
                 order = self.workorder_service.mark_repair_completed(
@@ -371,11 +363,16 @@ class OrchestratorNodes:
                     feedback="自动异常流程已完成现场维修模拟",
                 )
             else:
-                result = self.workorder_service.create_from_plan(state.get("maintenance_plan", {}))
-                order = _serialize_agent_result(result)
-            if state.get("entry") == "trigger" and order.get("workorder_id"):
+                order = _serialize_agent_result(self.workorder_service.create_from_plan(plan))
+                if order.get("workorder_id"):
+                    order = self.workorder_service.mark_repair_completed(
+                        str(order["workorder_id"]),
+                        feedback="自动异常流程已完成现场维修模拟",
+                    )
+            if order.get("workorder_id"):
                 order = self.workorder_service.get(order["workorder_id"])
-        return self._finish("workorder", state, {"workorder": order})
+            payload["workorder"] = order
+        return self._finish("maintenance", state, payload)
 
     def quality(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("quality", state)
@@ -394,25 +391,22 @@ class OrchestratorNodes:
     def report(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("report", state)
         result = self.harnesses["report"].execute_agent(state)
-        return self._finish("report", state, {"report": _serialize_agent_result(result)})
-
-    def experience(self, state: AgentState) -> Dict[str, Any]:
-        self._node_start("experience", state)
-        result = self.experience_module.learn({
-            "event": state.get("event", {}),
-            "diagnosis": state.get("diagnosis", {}),
-            "maintenance_plan": state.get("maintenance_plan", {}),
-            "workorder": state.get("quality", {}).get("workorder") or state.get("workorder", {}),
-            "quality": state.get("quality", {}),
-            "report": state.get("report", {}),
-        })
-        payload = _serialize_agent_result(result)
-        return self._finish("experience", state, {
-            "experience": payload,
-            "memory": {
-                "saved": bool(payload.get("memory_saved")),
-                "rag_saved": bool(payload.get("rag_saved")),
+        report = _serialize_agent_result(result)
+        payload = {"report": report}
+        if state.get("entry") == "trigger":
+            experience = _serialize_agent_result(self.experience_module.learn({
+                "event": state.get("event", {}),
+                "diagnosis": state.get("diagnosis", {}),
+                "maintenance_plan": state.get("maintenance_plan", {}),
+                "workorder": state.get("quality", {}).get("workorder") or state.get("workorder", {}),
+                "quality": state.get("quality", {}),
+                "report": report,
+            }))
+            payload["experience"] = experience
+            payload["memory"] = {
+                "saved": bool(experience.get("memory_saved")),
+                "rag_saved": bool(experience.get("rag_saved")),
                 "short_backend": self.short_memory.backend,
                 "long_backend": self.long_memory.backend,
-            },
-        })
+            }
+        return self._finish("report", state, payload)

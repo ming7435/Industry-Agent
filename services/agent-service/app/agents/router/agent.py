@@ -111,7 +111,7 @@ class RouterAgent:
     @staticmethod
     def _target_agent(intent: str) -> str:
         if intent in {"workorder_action", "workorder_query"}:
-            return "workorder_node"
+            return "router"
         if intent in {"diagnosis", "knowledge", "cad", "maintenance", "quality", "report"}:
             return intent
         return "router"

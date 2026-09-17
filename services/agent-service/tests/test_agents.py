@@ -88,6 +88,8 @@ class AllAgentTests(unittest.TestCase):
             set(orchestrator.nodes.harnesses),
             {"router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"},
         )
+        node_names = {item.get("name") for item in result["trace"] if item.get("type") == "node"}
+        self.assertEqual(node_names, {"route", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"})
         self.assertTrue({"agent", "node", "tool", "module"}.issubset({item.get("type") for item in result["trace"]}))
 
     def test_workorder_intent_is_a_business_node_action(self):
@@ -319,6 +321,16 @@ class AllAgentTests(unittest.TestCase):
 
     def test_core_agent_registry_and_experience_module(self):
         self.assertEqual(set(CORE_AGENT_REGISTRY), {"router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"})
+        skill_files = {path.name for path in (SERVICE_ROOT / "app" / "skills").glob("*_skill.yaml")}
+        self.assertEqual(skill_files, {
+            "router_skill.yaml",
+            "diagnosis_skill.yaml",
+            "knowledge_skill.yaml",
+            "cad_skill.yaml",
+            "maintenance_skill.yaml",
+            "quality_skill.yaml",
+            "report_skill.yaml",
+        })
         module = ExperienceLearningModule()
         result = module.learn({
             "diagnosis": {"device_id": "CNC-001", "fault": "主轴温度异常"},

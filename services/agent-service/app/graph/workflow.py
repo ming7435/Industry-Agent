@@ -17,7 +17,7 @@ class AgentOrchestrator:
     def __init__(self, diagnosis_agent: DiagnosisAgent | None = None, tools: ToolRegistry | None = None) -> None:
         self.nodes = OrchestratorNodes(diagnosis_agent=diagnosis_agent, tools=tools)
         graph = StateGraph(AgentState)
-        for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "experience"):
+        for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"):
             graph.add_node(name, getattr(self.nodes, name))
         graph.add_edge(START, "route")
         graph.add_conditional_edges("route", lambda state: state.get("route", "unknown"), {
@@ -25,21 +25,19 @@ class AgentOrchestrator:
             "knowledge": "knowledge",
             "cad": "cad",
             "maintenance": "maintenance",
-            "workorder_action": "workorder",
-            "workorder_query": "workorder",
             "quality": "quality",
             "report": "report",
+            "workorder_action": END,
+            "workorder_query": END,
             "need_more_context": END,
             "unknown": END,
         })
         graph.add_conditional_edges("diagnosis", self._after_diagnosis, {"knowledge": "knowledge", "report": "report"})
         graph.add_conditional_edges("knowledge", self._after_knowledge, {"cad": "cad", "report": "report"})
         graph.add_conditional_edges("cad", self._after_cad, {"maintenance": "maintenance", "report": "report"})
-        graph.add_conditional_edges("maintenance", self._after_maintenance, {"workorder": "workorder", "report": "report"})
-        graph.add_conditional_edges("workorder", self._after_workorder, {"quality": "quality", "end": END})
+        graph.add_conditional_edges("maintenance", self._after_maintenance, {"quality": "quality", "report": "report"})
         graph.add_conditional_edges("quality", self._after_quality, {"report": "report", "maintenance": "maintenance"})
-        graph.add_conditional_edges("report", self._after_report, {"experience": "experience", "end": END})
-        graph.add_edge("experience", END)
+        graph.add_edge("report", END)
         self.graph = graph.compile()
 
     @staticmethod
@@ -56,21 +54,13 @@ class AgentOrchestrator:
 
     @staticmethod
     def _after_maintenance(state: AgentState) -> str:
-        return "workorder" if state.get("entry") == "trigger" else "report"
-
-    @staticmethod
-    def _after_workorder(state: AgentState) -> str:
-        return "quality" if state.get("entry") == "trigger" else "end"
+        return "quality" if state.get("entry") == "trigger" else "report"
 
     @staticmethod
     def _after_quality(state: AgentState) -> str:
         if state.get("entry") != "trigger":
             return "report"
         return "report" if (state.get("quality") or {}).get("passed") else "maintenance"
-
-    @staticmethod
-    def _after_report(state: AgentState) -> str:
-        return "experience" if state.get("entry") == "trigger" else "end"
 
     def run_user(self, user_text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         return self._execute_graph({"entry": "user", "user_text": user_text, "context": context or {}})
