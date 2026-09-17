@@ -32,7 +32,11 @@ def build_agent_registry(**dependencies: Any) -> dict[str, Any]:
         "diagnosis": dependencies.get("diagnosis") or DiagnosisAgent(),
         "knowledge": KnowledgeAgent(dependencies["tools"]),
         "cad": CADAgent(dependencies["tools"]),
-        "maintenance": MaintenanceAgent(dependencies["tools"]),
+        "maintenance": MaintenanceAgent(
+            dependencies["tools"],
+            knowledge_provider=dependencies.get("maintenance_knowledge_provider"),
+            cad_provider=dependencies.get("maintenance_cad_provider"),
+        ),
         "quality": QualityAgent(dependencies["tools"]),
         "report": ReportAgent(),
     }

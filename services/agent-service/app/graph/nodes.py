@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
-from app.a2a import A2AClient, A2AError, CADRequest, CADResponse, KnowledgeRequest, KnowledgeResponse
+from app.a2a import A2AClient, A2AError, CADRequest, CADResponse, KnowledgeRequest, KnowledgeResponse, MaintenanceRequest, MaintenanceResponse
 from app.agents.diagnosis import DiagnosisAgent
 from app.agents.registry import build_agent_registry
 from app.experience import ExperienceLearningModule
@@ -46,10 +46,16 @@ class OrchestratorNodes:
             diagnosis_runtime.knowledge_provider = self._diagnosis_knowledge_request
         if hasattr(diagnosis_runtime.tools, "trace"):
             diagnosis_runtime.tools.trace = self.trace
-        agents = build_agent_registry(tools=registry, diagnosis=diagnosis_runtime)
+        agents = build_agent_registry(
+            tools=registry,
+            diagnosis=diagnosis_runtime,
+            maintenance_knowledge_provider=self._maintenance_knowledge_request,
+            maintenance_cad_provider=self._maintenance_cad_request,
+        )
         self.harnesses = {name: AgentHarness(agent, trace=self.trace) for name, agent in agents.items()}
         self.a2a.register("knowledge", self._knowledge_endpoint)
         self.a2a.register("cad", self._cad_endpoint)
+        self.a2a.register("maintenance", self._maintenance_endpoint)
 
     def trace_records(self) -> list[Dict[str, Any]]:
         return self.trace.list()
@@ -88,17 +94,27 @@ class OrchestratorNodes:
         )
 
     def _knowledge_request(self, state: AgentState, query: str) -> Dict[str, Any]:
+        return self._knowledge_a2a(state.get("task_id", ""), "diagnosis", query)
+
+    def _knowledge_a2a(self, task_id: str, from_agent: str, query: str, filters: Dict[str, Any] | None = None) -> Dict[str, Any]:
         response = self.a2a.request(
             KnowledgeRequest(
                 request_id=self.a2a.new_request_id(),
-                task_id=state.get("task_id", ""),
-                from_agent="diagnosis",
+                task_id=task_id,
+                from_agent=from_agent,
                 to_agent="knowledge",
                 query=query,
+                filters=filters or {},
             ),
             KnowledgeResponse,
         )
         return response.model_dump(mode="json")
+
+    def _maintenance_knowledge_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
+        return self._knowledge_a2a(str(context.get("task_id") or ""), "maintenance", query, {"knowledge_type": "sop"})
+
+    def _maintenance_cad_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
+        return self._cad_a2a(str(context.get("task_id") or ""), "maintenance", query, context)
 
     def _cad_endpoint(self, request: CADRequest) -> CADResponse:
         result = self.harnesses["cad"].execute_agent(request.model_dump(mode="json"))
@@ -136,15 +152,18 @@ class OrchestratorNodes:
         )
 
     def _cad_request(self, state: AgentState, query: str, from_agent: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        return self._cad_a2a(state.get("task_id", ""), from_agent, query, context or state.get("context") or {})
+
+    def _cad_a2a(self, task_id: str, from_agent: str, query: str, context: Mapping[str, Any] | None = None) -> Dict[str, Any]:
         values = dict(context or {})
         response = self.a2a.request(
             CADRequest(
                 request_id=self.a2a.new_request_id(),
-                task_id=state.get("task_id", ""),
+                task_id=task_id,
                 from_agent=from_agent,
                 to_agent="cad",
-                device_id=str(values.get("device_id") or (state.get("context") or {}).get("device_id") or ""),
-                device_model=str(values.get("device_model") or (state.get("context") or {}).get("device_model") or ""),
+                device_id=str(values.get("device_id") or ""),
+                device_model=str(values.get("device_model") or ""),
                 component=str(values.get("component") or ""),
                 part_no=str(values.get("part_no") or ""),
                 query=query,
@@ -152,6 +171,40 @@ class OrchestratorNodes:
             CADResponse,
         )
         return response.result or response.model_dump(mode="json")
+
+    def _maintenance_endpoint(self, request: MaintenanceRequest) -> MaintenanceResponse:
+        result = self.harnesses["maintenance"].execute_agent(request.model_dump(mode="json"))
+        payload = _serialize_agent_result(result)
+        return MaintenanceResponse(
+            request_id=request.request_id,
+            task_id=request.task_id,
+            from_agent="maintenance",
+            to_agent=request.from_agent,
+            success=bool(payload.get("workorder_ready")),
+            maintenance_plan=payload,
+            workorder_draft=payload.get("workorder_draft", {}),
+        )
+
+    def _maintenance_request(self, state: AgentState, diagnosis: Dict[str, Any], knowledge: Dict[str, Any], cad: Dict[str, Any]) -> Dict[str, Any]:
+        context = state.get("context") or {}
+        response = self.a2a.request(
+            MaintenanceRequest(
+                request_id=self.a2a.new_request_id(),
+                task_id=state.get("task_id", ""),
+                trace_id=state.get("trace_id", ""),
+                from_agent="diagnosis" if state.get("entry") == "trigger" else "router",
+                to_agent="maintenance",
+                device_id=str(context.get("device_id") or diagnosis.get("device_id") or ""),
+                user_text=state.get("user_text", ""),
+                diagnosis_result=diagnosis,
+                constraints={"need_workorder": state.get("entry") == "trigger"},
+                diagnosis=diagnosis,
+                knowledge=knowledge,
+                cad=cad,
+            ),
+            MaintenanceResponse,
+        )
+        return response.maintenance_plan
 
     def _diagnosis_knowledge_request(self, event: Dict[str, Any], query: str) -> Dict[str, Any]:
         """Diagnosis Agent 使用的 Knowledge A2A 入口。"""
@@ -243,15 +296,8 @@ class OrchestratorNodes:
             context = state.get("context") or {}
             query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "设备维修")
             cad = self._cad_request(state, query, "maintenance", context=context)
-        result = self.harnesses["maintenance"].execute_agent({
-            "query": state.get("user_text", ""),
-            "user_text": state.get("user_text", ""),
-            "device_id": (state.get("context") or {}).get("device_id", ""),
-            "diagnosis": state.get("diagnosis", {}),
-            "knowledge": state.get("knowledge", {}),
-            "cad": cad,
-        })
-        return self._finish("maintenance", state, {"maintenance_plan": _serialize_agent_result(result)})
+        plan = self._maintenance_request(state, state.get("diagnosis", {}), state.get("knowledge", {}), cad)
+        return self._finish("maintenance", state, {"maintenance_plan": plan})
 
     def workorder(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("workorder", state)

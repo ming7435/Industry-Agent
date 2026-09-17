@@ -135,10 +135,13 @@ class MaintenancePlan(BaseModel):
     estimated_duration: int = 0
     source_documents: List[str] = Field(default_factory=list)
     cad_components: List[str] = Field(default_factory=list)
+    inventory_status: Dict[str, Any] = Field(default_factory=dict)
+    part_availability: Dict[str, Any] = Field(default_factory=dict)
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     validation_findings: List[str] = Field(default_factory=list)
     risk_level: str = "medium"
     workorder_ready: bool = False
+    workorder_draft: Dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkOrder(BaseModel):

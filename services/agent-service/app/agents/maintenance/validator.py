@@ -11,7 +11,7 @@ class MaintenancePlanValidator:
     STRUCTURAL_ACTIONS = ("拆", "更换", "安装", "轴承", "传感器", "泵", "主轴")
 
     @classmethod
-    def validate(cls, plan: Mapping[str, Any], knowledge: Mapping[str, Any], cad: Mapping[str, Any]) -> list[str]:
+    def validate(cls, plan: Mapping[str, Any], knowledge: Mapping[str, Any], cad: Mapping[str, Any], inventory: Mapping[str, Any] | None = None) -> list[str]:
         findings: list[str] = []
         if not str(plan.get("repair_target") or "").strip():
             findings.append("维修对象不明确")
@@ -21,7 +21,8 @@ class MaintenancePlanValidator:
             findings.append("缺少安全要求")
 
         documents = list(knowledge.get("documents") or []) if isinstance(knowledge, Mapping) else []
-        if knowledge and not documents and not knowledge.get("evidence"):
+        knowledge_evidence = list(knowledge.get("evidence") or []) if isinstance(knowledge, Mapping) else []
+        if not documents and not knowledge_evidence:
             findings.append("缺少 SOP 或知识库证据")
 
         steps_text = " ".join(str(item) for item in plan.get("repair_steps") or [])
@@ -30,10 +31,18 @@ class MaintenancePlanValidator:
             findings.append("涉及拆装或部件操作但缺少 CAD/BOM 依据")
 
         known_parts = cls._known_part_tokens(cad)
+        inventory = inventory or {}
+        inventory_tokens = cls._inventory_part_tokens(inventory)
         for part in plan.get("parts") or []:
             part_text = str(part)
-            if any(char.isdigit() for char in part_text) and known_parts and not any(token and token in part_text for token in known_parts):
+            evidence_tokens = known_parts + inventory_tokens
+            if any(char.isdigit() for char in part_text) and evidence_tokens and not any(token and token in part_text for token in evidence_tokens):
                 findings.append("备件型号缺少工程依据：%s" % part_text)
+            if any(char.isdigit() for char in part_text) and not evidence_tokens:
+                findings.append("备件型号缺少工程依据：%s" % part_text)
+
+        if plan.get("required_parts") and inventory and not any(item.get("available", True) for item in inventory.get("parts") or inventory.get("stock") or []):
+            findings.append("所需备件库存不可用")
 
         return cls._dedupe(findings)
 
@@ -46,6 +55,16 @@ class MaintenancePlanValidator:
         tokens: list[str] = []
         for item in list(cad.get("components") or []) + list(cad.get("bom_items") or []):
             for key in ("component_id", "part_no", "name"):
+                value = str(item.get(key) or "").strip()
+                if value:
+                    tokens.append(value)
+        return tokens
+
+    @staticmethod
+    def _inventory_part_tokens(inventory: Mapping[str, Any]) -> list[str]:
+        tokens: list[str] = []
+        for item in list(inventory.get("parts") or []) + list(inventory.get("stock") or []):
+            for key in ("part_id", "part_no", "name"):
                 value = str(item.get(key) or "").strip()
                 if value:
                     tokens.append(value)

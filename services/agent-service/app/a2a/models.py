@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 class A2ARequest(BaseModel):
     request_id: str
     task_id: str = ""
+    trace_id: str = ""
     from_agent: str
     to_agent: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -57,6 +58,10 @@ class KnowledgeResponse(A2AResponse):
 
 
 class MaintenanceRequest(A2ARequest):
+    device_id: str = ""
+    diagnosis_result: Dict[str, Any] = Field(default_factory=dict)
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    user_text: str = ""
     diagnosis: Dict[str, Any] = Field(default_factory=dict)
     knowledge: Dict[str, Any] = Field(default_factory=dict)
     cad: Dict[str, Any] = Field(default_factory=dict)
@@ -64,6 +69,7 @@ class MaintenanceRequest(A2ARequest):
 
 class MaintenanceResponse(A2AResponse):
     maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
+    workorder_draft: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CADRequest(A2ARequest):

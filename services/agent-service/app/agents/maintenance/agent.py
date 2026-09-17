@@ -2,39 +2,69 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from app.tools.registry import ToolRegistry
 from app.validator import DiagnosisView, MaintenancePlan
 
+from .graph import build_maintenance_graph
 from .validator import MaintenancePlanValidator
 
 
 class MaintenanceAgent:
     name = "maintenance"
 
-    def __init__(self, tools: ToolRegistry | None = None) -> None:
+    def __init__(
+        self,
+        tools: ToolRegistry | None = None,
+        knowledge_provider: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None,
+        cad_provider: Callable[[Mapping[str, Any], str], Mapping[str, Any]] | None = None,
+    ) -> None:
         self.tools = tools or ToolRegistry()
+        self.knowledge_provider = knowledge_provider
+        self.cad_provider = cad_provider
+        self.graph = build_maintenance_graph()
 
     def run(self, task: Any) -> MaintenancePlan:
         payload = {"query": task} if isinstance(task, str) else dict(task or {})
-        diagnosis = self._normalize_diagnosis(payload.get("diagnosis") or payload)
-        knowledge = self._ensure_mapping(payload.get("knowledge"))
-        cad = self._ensure_mapping(payload.get("cad"))
-        query = self._query(payload, diagnosis)
-        if not knowledge:
-            knowledge = self._safe_tool("search_knowledge", {"query": query, "limit": 5, "filters": {"knowledge_type": "sop"}})
-            if not knowledge.get("documents") and not knowledge.get("evidence"):
-                knowledge = self._safe_tool("search_knowledge", {"query": query, "limit": 5, "filters": {}})
-        if not cad:
-            cad = self._safe_tool("query_cad", {"query": query, "device_id": diagnosis.device_id})
+        output = self.graph.invoke({"agent": self, "request": payload})
+        result = output.get("result")
+        if result is None:
+            raise RuntimeError("Maintenance LangGraph 未生成结果")
+        return result
 
+    def request_knowledge(self, query: str, diagnosis: DiagnosisView) -> dict[str, Any]:
+        context = {"diagnosis": diagnosis.model_dump(mode="json"), "device_id": diagnosis.device_id}
+        if self.knowledge_provider is not None:
+            return dict(self.knowledge_provider(context, query) or {})
+        knowledge = self._safe_tool("search_knowledge", {"query": query, "limit": 5, "filters": {"knowledge_type": "sop"}})
+        if not knowledge.get("documents") and not knowledge.get("evidence"):
+            knowledge = self._safe_tool("search_knowledge", {"query": query, "limit": 5, "filters": {}})
+        return knowledge
+
+    def request_cad(self, query: str, diagnosis: DiagnosisView) -> dict[str, Any]:
+        context = {"diagnosis": diagnosis.model_dump(mode="json"), "device_id": diagnosis.device_id}
+        if self.cad_provider is not None:
+            return dict(self.cad_provider(context, query) or {})
+        return self._safe_tool("query_cad", {"query": query, "device_id": diagnosis.device_id})
+
+    def _build_plan_payload(
+        self,
+        payload: Mapping[str, Any],
+        diagnosis: DiagnosisView,
+        knowledge: Mapping[str, Any],
+        cad: Mapping[str, Any],
+        inventory: Mapping[str, Any] | None = None,
+        part_availability: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        query = self._query(payload, diagnosis)
         tool_plan = self._safe_tool("generate_repair_plan", {"diagnosis": diagnosis.model_dump(mode="json")})
         documents = list(knowledge.get("documents") or [])
         components = list(cad.get("components") or [])
         bom_items = list(cad.get("bom_items") or [])
-        spare_parts = self._safe_tool("query_spare_part", {"query": query, "device_id": diagnosis.device_id})
+        spare_parts = dict(inventory or {})
+        availability = dict(part_availability or {})
         profile = self._profile(diagnosis, components)
 
         pre_checks = self._pre_checks(diagnosis, knowledge, components)
@@ -45,6 +75,7 @@ class MaintenanceAgent:
         safety = self._safety(profile, diagnosis.severity)
         evidence = self._evidence(diagnosis, knowledge, cad, spare_parts, profile)
         plan_payload = {
+            "plan_id": "PLAN-" + uuid4().hex[:10].upper(),
             "repair_target": profile["target"],
             "repair_steps": repair_steps,
             "tools": tools,
@@ -60,16 +91,17 @@ class MaintenanceAgent:
             "source_documents": self._document_ids(documents),
             "cad_components": self._component_ids(components, bom_items),
             "evidence": evidence,
+            "inventory_status": spare_parts,
+            "part_availability": availability,
             "risk_level": self._risk_level(diagnosis.severity),
         }
-        findings = MaintenancePlanValidator.validate(plan_payload, knowledge, cad)
-        plan_payload["validation_findings"] = findings
-        plan_payload["workorder_ready"] = MaintenancePlanValidator.workorder_ready(findings, plan_payload)
-        return MaintenancePlan(
-            plan_id="PLAN-" + uuid4().hex[:10].upper(),
-            diagnosis=diagnosis,
-            **plan_payload,
-        )
+        return plan_payload
+
+    @staticmethod
+    def _plan_result(plan_payload: Mapping[str, Any], diagnosis: DiagnosisView) -> MaintenancePlan:
+        payload = dict(plan_payload or {})
+        plan_id = str(payload.pop("plan_id", "") or "PLAN-" + uuid4().hex[:10].upper())
+        return MaintenancePlan(plan_id=plan_id, diagnosis=diagnosis, **payload)
 
     @staticmethod
     def _query(payload: Mapping[str, Any], diagnosis: DiagnosisView) -> str:

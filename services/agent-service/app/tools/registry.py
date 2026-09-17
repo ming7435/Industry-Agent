@@ -44,6 +44,11 @@ class ToolRegistry:
             "fetch_engineering_record": self.fetch_engineering_record,
             "generate_repair_plan": self.generate_repair_plan,
             "query_spare_part": self.query_spare_part,
+            "query_inventory": self.query_inventory,
+            "query_stock": self.query_inventory,
+            "query_part_availability": self.query_part_availability,
+            "get_workorder_template": self.get_workorder_template,
+            "submit_workorder_draft": self.submit_workorder_draft,
             "create_workorder": self.workorder_mcp.create_workorder,
             "update_workorder": self.workorder_mcp.update_workorder,
             "get_workorder": self.workorder_mcp.get_workorder,
@@ -280,12 +285,30 @@ class ToolRegistry:
 
     def query_spare_part(self, query: str, device_id: str = "", **_: Any) -> Dict[str, Any]:
         parts = [
-            {"part_id": "TEMP-PT100", "name": "PT100温度传感器", "stock": 3, "device_id": device_id},
-            {"part_id": "COOLANT-PUMP", "name": "主轴冷却泵", "stock": 2, "device_id": device_id},
-            {"part_id": "SPINDLE-BEARING", "name": "主轴轴承", "stock": 1, "device_id": device_id},
+            {"part_id": "TEMP-PT100", "part_no": "TS-PT100-008", "name": "PT100温度传感器", "stock": 3, "available": True, "device_id": device_id},
+            {"part_id": "COOLANT-PUMP", "part_no": "CP-TC820-015", "name": "主轴冷却泵", "stock": 2, "available": True, "device_id": device_id},
+            {"part_id": "SPINDLE-BEARING", "part_no": "SP-BEARING-6208", "name": "主轴轴承", "stock": 1, "available": True, "device_id": device_id},
         ]
         matched = [item for item in parts if any(term in item["name"] or term in item["part_id"] for term in str(query).split())]
         return {"query": query, "parts": matched or parts, "source": "inventory-mcp-compatible"}
+
+    def query_inventory(self, query: str, device_id: str = "", **arguments: Any) -> Dict[str, Any]:
+        result = self.query_spare_part(query=query, device_id=device_id, **arguments)
+        result["stock"] = list(result.get("parts") or [])
+        return result
+
+    def query_part_availability(self, query: str, device_id: str = "", part_no: str = "", **arguments: Any) -> Dict[str, Any]:
+        lookup = part_no or query
+        result = self.query_spare_part(query=lookup, device_id=device_id, **arguments)
+        parts = list(result.get("parts") or [])
+        return {"query": lookup, "device_id": device_id, "available": any(int(item.get("stock") or 0) > 0 for item in parts), "parts": parts, "source": "inventory-mcp-compatible"}
+
+    def get_workorder_template(self, device_id: str = "", plan: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
+        payload = dict(plan or {})
+        return {"template_id": "WO-TPL-MAINT-001", "device_id": device_id, "title": "设备维修工单", "steps": list(payload.get("repair_steps") or []), "source": "workorder-template-local"}
+
+    def submit_workorder_draft(self, **arguments: Any) -> Dict[str, Any]:
+        return {"draft_id": "WOD-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"), "submitted": True, "source": "workorder-draft-local", **dict(arguments)}
 
     def check_sop(self, workorder_id: str = "", query: str = "维修步骤", **_: Any) -> Dict[str, Any]:
         result = self.search_knowledge(query, limit=3, filters={"knowledge_type": "sop"})
@@ -339,9 +362,10 @@ class ToolRegistry:
             "get_drawing_metadata": "cad", "get_component_location": "cad",
             "create_workorder": "mes", "update_workorder": "mes", "get_workorder": "mes", "query_workorder": "mes",
             "list_workorders": "mes", "assign_workorder": "mes", "submit_repair_feedback": "mes",
+            "get_workorder_template": "mes", "submit_workorder_draft": "mes",
             "mark_repair_completed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
             "verify_repair": "qms", "check_sop": "qms",
-            "query_spare_part": "inventory", "search_knowledge": "knowledge",
+            "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory", "search_knowledge": "knowledge",
             "document_parser": "knowledge", "ingest_knowledge": "knowledge",
             "generate_report": "mes", "generate_repair_plan": "mes",
         }.get(name, "knowledge")
@@ -395,6 +419,11 @@ class ToolRegistry:
             "fetch_engineering_record": "从 CAD 服务获取完整工程记录",
             "generate_repair_plan": "生成维修计划草案",
             "query_spare_part": "查询备件库存",
+            "query_inventory": "查询库存",
+            "query_stock": "查询库存余量",
+            "query_part_availability": "查询备件可用性",
+            "get_workorder_template": "获取工单草案模板",
+            "submit_workorder_draft": "提交工单草案",
             "create_workorder": "创建维修工单",
             "update_workorder": "更新维修工单",
             "get_workorder": "获取单个维修工单",
