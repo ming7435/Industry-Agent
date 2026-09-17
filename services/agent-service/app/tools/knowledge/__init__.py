@@ -1,14 +1,21 @@
-"""Knowledge Agent 的领域工具。"""
+"""Knowledge Agent 的领域工具，每个工具独立一个 Python 文件。"""
 
-from .documents import KnowledgeDocumentTools
-from .retrieval import KnowledgeRetrievalTools
+from .fetch_chunk import fetch_chunk
+from .fetch_document import fetch_document
+from .search_alarm_knowledge import search_alarm_knowledge
+from .search_fault_cases import search_fault_cases
+from .search_knowledge import search_knowledge
+from .search_manual import search_manual
+from .search_semantic_memory import search_semantic_memory
+from .search_sop import search_sop
 
-
-class KnowledgeToolset(KnowledgeRetrievalTools, KnowledgeDocumentTools):
-    """将知识检索和文档溯源工具组合成统一 MCP 工具集。"""
-
-    def __init__(self, rag) -> None:
-        self.rag = rag
-
-
-__all__ = ["KnowledgeDocumentTools", "KnowledgeRetrievalTools", "KnowledgeToolset"]
+__all__ = [
+    "fetch_chunk",
+    "fetch_document",
+    "search_alarm_knowledge",
+    "search_fault_cases",
+    "search_knowledge",
+    "search_manual",
+    "search_semantic_memory",
+    "search_sop",
+]
