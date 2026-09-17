@@ -13,6 +13,7 @@ from app.mcp.client import McpClient
 from app.mcp.workorder import WorkOrderMcpAdapter
 from app.rag import RAGIndex, RAGServiceClient
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
+from app.tools.knowledge import KnowledgeToolset
 from app.trace import TraceRecorder
 
 
@@ -21,6 +22,7 @@ class ToolRegistry:
         self.base_url = base_url
         self.cad_base_url = (cad_base_url or os.getenv("MCP_CAD_URL") or os.getenv("CAD_SERVICE_BASE_URL") or "").rstrip("/")
         self.rag = rag_client or RAGServiceClient(fallback=rag_index)
+        self.knowledge_tools = KnowledgeToolset(self.rag)
         self.trace = trace
         self.workorder_mcp = WorkOrderMcpAdapter()
         self.mcp = McpClient({
@@ -30,14 +32,14 @@ class ToolRegistry:
             "get_device_status": self.get_device_status,
             "get_production_status": self.get_production_status,
             "intent_classifier_tool": self.intent_classifier_tool,
-            "search_knowledge": self.search_knowledge,
-            "search_alarm_knowledge": self.search_alarm_knowledge,
-            "search_sop": self.search_sop,
-            "search_manual": self.search_manual,
-            "search_fault_cases": self.search_fault_cases,
-            "search_semantic_memory": self.search_semantic_memory,
-            "fetch_document": self.fetch_document,
-            "fetch_chunk": self.fetch_chunk,
+            "search_knowledge": self.knowledge_tools.search_knowledge,
+            "search_alarm_knowledge": self.knowledge_tools.search_alarm_knowledge,
+            "search_sop": self.knowledge_tools.search_sop,
+            "search_manual": self.knowledge_tools.search_manual,
+            "search_fault_cases": self.knowledge_tools.search_fault_cases,
+            "search_semantic_memory": self.knowledge_tools.search_semantic_memory,
+            "fetch_document": self.knowledge_tools.fetch_document,
+            "fetch_chunk": self.knowledge_tools.fetch_chunk,
             "document_parser": self.document_parser,
             "query_cad": self.query_cad,
             "query_bom": self.query_bom,
@@ -111,35 +113,28 @@ class ToolRegistry:
         return {"intent": intent, "confidence": 0.92 if intent != "unknown" else 0.2, "source": "local-intent-classifier"}
 
     def search_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        return self.rag.search(query, limit=limit, filters=filters)
+        return self.knowledge_tools.search_knowledge(query, limit=limit, filters=filters)
 
     def search_alarm_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, alarm_code: str = "", **_: Any) -> Dict[str, Any]:
-        values = {**dict(filters or {}), "knowledge_type": "alarm"}
-        if alarm_code:
-            values["alarm_code"] = alarm_code
-        return self.search_knowledge(query, limit=limit, filters=values)
+        return self.knowledge_tools.search_alarm_knowledge(query, limit=limit, filters=filters, alarm_code=alarm_code)
 
     def search_sop(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        selected = {key: value for key, value in dict(filters or {}).items() if key not in {"alarm_code"}}
-        return self.search_knowledge(query, limit=limit, filters={**selected, "knowledge_type": "sop"})
+        return self.knowledge_tools.search_sop(query, limit=limit, filters=filters)
 
     def search_manual(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        selected = {key: value for key, value in dict(filters or {}).items() if key not in {"alarm_code", "knowledge_type"}}
-        return self.search_knowledge(query, limit=limit, filters=selected)
+        return self.knowledge_tools.search_manual(query, limit=limit, filters=filters)
 
     def search_fault_cases(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        selected = {key: value for key, value in dict(filters or {}).items() if key not in {"alarm_code"}}
-        return self.search_knowledge(query, limit=limit, filters={**selected, "knowledge_type": "case"})
+        return self.knowledge_tools.search_fault_cases(query, limit=limit, filters=filters)
 
     def search_semantic_memory(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        selected = {key: value for key, value in dict(filters or {}).items() if key not in {"alarm_code", "knowledge_type"}}
-        return self.search_knowledge(query, limit=limit, filters=selected)
+        return self.knowledge_tools.search_semantic_memory(query, limit=limit, filters=filters)
 
     def fetch_document(self, document_id: str = "", **_: Any) -> Dict[str, Any]:
-        return self.rag.fetch_document(document_id)
+        return self.knowledge_tools.fetch_document(document_id)
 
     def fetch_chunk(self, document_id: str = "", chunk_id: str = "", **_: Any) -> Dict[str, Any]:
-        return self.rag.fetch_chunk(document_id, chunk_id)
+        return self.knowledge_tools.fetch_chunk(document_id, chunk_id)
 
     def ingest_knowledge(self, path: str, collection: str = "", **_: Any) -> Dict[str, Any]:
         return self.rag.ingest_jsonl(path, collection=collection)
