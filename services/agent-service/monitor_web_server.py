@@ -458,7 +458,6 @@ def main() -> None:
     MonitorRequestHandler.state = state
     server = ThreadingHTTPServer((host, port), MonitorRequestHandler)
     state.start()
-    print("Monitor dashboard: http://%s:%s" % (host, port), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
