@@ -546,102 +546,6 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.device-connection-list {
-  margin-top: 12px;
-  padding: 16px;
-  border-top: 1px solid var(--line);
-  background: #fbfcfc;
-}
-
-.device-list-heading {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
-}
-
-.device-list-heading h3 {
-  margin-top: 5px;
-  font-size: 16px;
-}
-
-.device-list-heading > strong {
-  color: var(--teal);
-  font-size: 13px;
-}
-
-.device-list-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.device-list-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-
-.device-list-item:hover,
-.device-list-item.active {
-  border-color: rgba(8, 127, 117, .55);
-  box-shadow: 0 5px 15px rgba(8, 127, 117, .1);
-}
-
-.device-list-status {
-  flex: 0 0 9px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--teal);
-}
-
-.device-list-status.warning,
-.device-list-status.alarm { background: var(--amber); }
-.device-list-status.fault { background: var(--red); }
-.device-list-status.idle { background: #8b9aa2; }
-
-.device-list-copy {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.device-list-copy strong,
-.device-list-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-list-copy strong { font-size: 13px; }
-.device-list-copy small { color: var(--muted); font-size: 11px; }
-
-.device-list-state {
-  margin-left: auto;
-  padding: 4px 7px;
-  border-radius: 4px;
-  background: var(--teal-soft);
-  color: var(--teal);
-  font-size: 11px;
-  font-weight: 900;
-  white-space: nowrap;
-}
-
-.device-list-state.warning,
-.device-list-state.alarm { background: var(--amber-soft); color: var(--amber); }
-.device-list-state.fault { background: var(--red-soft); color: var(--red); }
-.device-list-state.idle { background: #edf0f1; color: #66767d; }
-
 .machine-detail-header {
   display: flex;
   justify-content: space-between;
@@ -1359,10 +1263,20 @@ h2 {
   .sidebar {
     position: static;
     height: auto;
-    padding: 14px;
+    gap: 8px;
+    padding: 10px 14px;
   }
+  .brand-block { padding: 2px 4px 9px; }
   .side-nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .side-nav .nav-item {
+    flex: none;
+    width: auto;
+    min-width: max-content;
   }
   .sidebar-card { display: none; }
   .app-shell { padding: 16px; }
@@ -1373,7 +1287,6 @@ h2 {
   h1 { font-size: 26px; }
   .platform-overview,
   .module-grid { grid-template-columns: 1fr; }
-  .device-list-grid { grid-template-columns: 1fr; }
   .status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metrics-grid,
   .equipment-grid,
@@ -1386,7 +1299,7 @@ h2 {
 }
 
 @media (max-width: 520px) {
-  .side-nav { grid-template-columns: 1fr; }
+  .app-shell { padding: 12px; }
   .status-strip,
   .metrics-grid,
   .equipment-grid,
