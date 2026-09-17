@@ -2,6 +2,7 @@
 
 from .fetch_chunk import fetch_chunk
 from .fetch_document import fetch_document
+from .document_parser import document_parser
 from .ingest_knowledge import ingest_knowledge
 from .rag_status import rag_status
 from .search_alarm_knowledge import search_alarm_knowledge
@@ -14,6 +15,7 @@ from .search_sop import search_sop
 __all__ = [
     "fetch_chunk",
     "fetch_document",
+    "document_parser",
     "ingest_knowledge",
     "rag_status",
     "search_alarm_knowledge",

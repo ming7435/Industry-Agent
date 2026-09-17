@@ -15,7 +15,7 @@ from app.agents.registry import CORE_AGENT_REGISTRY
 from app.experience import ExperienceLearningModule
 from app.graph import build_orchestrator
 from app.tools.registry import ToolRegistry
-from app.tools.workorder import WorkOrderService
+from app.workorder import WorkOrderService
 from app.rag import RAGIndex
 
 

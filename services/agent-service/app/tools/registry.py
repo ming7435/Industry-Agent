@@ -21,13 +21,28 @@ from app.tools.cad import (
     query_relation as query_relation_tool,
 )
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
-from app.tools.inventory import (
+from app.tools.diagnosis import get_production_status as get_production_status_tool
+from app.tools.maintenance import (
+    assign_workorder as assign_workorder_tool,
+    close_workorder as close_workorder_tool,
+    create_workorder as create_workorder_tool,
+    generate_repair_plan as generate_repair_plan_tool,
+    get_workorder as get_workorder_tool,
+    get_workorder_template as get_workorder_template_tool,
+    list_workorders as list_workorders_tool,
+    mark_repair_completed as mark_repair_completed_tool,
     query_inventory as query_inventory_tool,
     query_part_availability as query_part_availability_tool,
     query_spare_part as query_spare_part_tool,
     query_stock as query_stock_tool,
+    query_workorder as query_workorder_tool,
+    reopen_workorder as reopen_workorder_tool,
+    submit_repair_feedback as submit_repair_feedback_tool,
+    submit_workorder_draft as submit_workorder_draft_tool,
+    update_workorder as update_workorder_tool,
 )
 from app.tools.knowledge import (
+    document_parser as document_parser_tool,
     fetch_chunk as fetch_knowledge_chunk,
     fetch_document as fetch_knowledge_document,
     ingest_knowledge as ingest_knowledge_tool,
@@ -39,25 +54,9 @@ from app.tools.knowledge import (
     search_semantic_memory as search_semantic_memory_tool,
     search_sop as search_sop_tool,
 )
-from app.tools.maintenance import generate_repair_plan as generate_repair_plan_tool
-from app.tools.parser import document_parser as document_parser_tool
-from app.tools.production import get_production_status as get_production_status_tool
-from app.tools.quality import check_sop as check_sop_tool
+from app.tools.quality import check_sop as check_sop_tool, verify_repair as verify_repair_tool
 from app.tools.report import generate_report as generate_report_tool
 from app.tools.router import intent_classifier_tool as intent_classifier_tool_fn
-from app.tools.workorder.assign_workorder import assign_workorder as assign_workorder_tool
-from app.tools.workorder.close_workorder import close_workorder as close_workorder_tool
-from app.tools.workorder.create_workorder import create_workorder as create_workorder_tool
-from app.tools.workorder.get_workorder import get_workorder as get_workorder_tool
-from app.tools.workorder.get_workorder_template import get_workorder_template as get_workorder_template_tool
-from app.tools.workorder.list_workorders import list_workorders as list_workorders_tool
-from app.tools.workorder.mark_repair_completed import mark_repair_completed as mark_repair_completed_tool
-from app.tools.workorder.query_workorder import query_workorder as query_workorder_tool
-from app.tools.workorder.reopen_workorder import reopen_workorder as reopen_workorder_tool
-from app.tools.workorder.submit_repair_feedback import submit_repair_feedback as submit_repair_feedback_tool
-from app.tools.workorder.submit_workorder_draft import submit_workorder_draft as submit_workorder_draft_tool
-from app.tools.workorder.update_workorder import update_workorder as update_workorder_tool
-from app.tools.workorder.verify_repair import verify_repair as verify_repair_tool
 from app.trace import TraceRecorder
 
 

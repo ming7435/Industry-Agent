@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from app.tools.workorder.validator import WorkOrderValidator
+from app.workorder import WorkOrderValidator
 
 
 class ExperienceValidator:

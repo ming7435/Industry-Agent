@@ -12,8 +12,8 @@ from app.graph.state import AgentState
 from app.harness import AgentHarness
 from app.memory import build_memory_stores
 from app.tools.registry import ToolRegistry
-from app.tools.workorder import WorkOrderService
 from app.trace import TraceRecorder
+from app.workorder import WorkOrderService
 
 
 def _serialize_agent_result(value: Any) -> Dict[str, Any]:
