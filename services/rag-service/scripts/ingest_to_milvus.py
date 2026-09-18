@@ -37,7 +37,7 @@ from app.storage import ObjectStorageClient, ObjectStorageConfig, ObjectStorageE
 # 默认读取项目 data/ 目录（递归扫描其分类子目录：alarms / sop / manuals / cases / index 等）。
 # 之后新增数据只需丢进对应的分类子目录，直接运行本脚本即可入库。
 DEFAULT_DATA_DIR = Path("data")
-DEFAULT_COLLECTION = "industry_rag_chunks"
+ADMIN_COLLECTION = "industry_rag_chunks"
 LOGGER = logging.getLogger("rag_offline_ingest")
 COLLECTION_NAME_BY_KEYWORD = {
     "BOM": "industry_rag_bom",
@@ -100,12 +100,10 @@ def _supported_files(data_dir: Path, extensions: Iterable[str] | None = None) ->
 def ingest_directory(
     data_dir: Path = DEFAULT_DATA_DIR,
     *,
-    collection_name: str = DEFAULT_COLLECTION,
     milvus_uri: str = "http://localhost:19530",
+    milvus_database: str = "industry_rag_documents",
     extensions: Sequence[str] | None = None,
     drop_all_collections: bool = False,
-    collection_per_document: bool = False,
-    collection_per_pdf: bool | None = None,
     use_vision: bool = False,
     use_local_ocr: bool = False,
     embedding_model: str = "BAAI/bge-m3",
@@ -126,8 +124,6 @@ def ingest_directory(
 ) -> dict[str, int]:
     """Ingest supported files into Milvus and MySQL metadata tables."""
 
-    if collection_per_pdf is not None:
-        collection_per_document = collection_per_pdf
     paths = _supported_files(data_dir, extensions)
     if not paths:
         supported = ", ".join(sorted(_normalize_extensions(extensions) or SUPPORTED_EXTENSIONS))
@@ -154,10 +150,10 @@ def ingest_directory(
         overlap_characters=chunk_overlap_characters,
     )
     embed_client = BGEM3EmbeddingClient(embed_config)
-    admin_writer = MilvusVectorWriter(
-        MilvusConfig(uri=milvus_uri, collection_name=collection_name)
-    )
     if drop_all_collections:
+        admin_writer = MilvusVectorWriter(
+            MilvusConfig(uri=milvus_uri, database=milvus_database, collection_name=ADMIN_COLLECTION)
+        )
         dropped = admin_writer.drop_all_collections()
         LOGGER.warning("Dropped collections: %s", dropped)
 
@@ -190,12 +186,10 @@ def ingest_directory(
 
     try:
         for path in paths:
-            target_collection = (
-                collection_name_for_document(path)
-                if collection_per_document
-                else collection_name
+            target_collection = collection_name_for_document(path)
+            writer = MilvusVectorWriter(
+                MilvusConfig(uri=milvus_uri, database=milvus_database, collection_name=target_collection)
             )
-            writer = MilvusVectorWriter(MilvusConfig(uri=milvus_uri, collection_name=target_collection))
             LOGGER.info("Parsing: %s", path)
             LOGGER.info("Target collection: %s", target_collection)
             document_id: str | None = None
@@ -374,8 +368,8 @@ def ingest_directory(
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ingest industrial documents into Milvus.")
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--collection", default=DEFAULT_COLLECTION)
     parser.add_argument("--milvus-uri", default="http://localhost:19530")
+    parser.add_argument("--milvus-database", default="industry_rag_documents")
     parser.add_argument(
         "--extensions",
         default=None,
@@ -385,13 +379,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--drop-all-collections",
         action="store_true",
         help="Drop every existing Milvus collection before inserting.",
-    )
-    parser.add_argument(
-        "--collection-per-document",
-        "--collection-per-pdf",
-        dest="collection_per_document",
-        action="store_true",
-        help="Create one Milvus collection for each supported document.",
     )
     parser.add_argument(
         "--vision",
@@ -463,11 +450,10 @@ def main() -> int:
     )
     result = ingest_directory(
         args.data_dir,
-        collection_name=args.collection,
         milvus_uri=args.milvus_uri,
+        milvus_database=args.milvus_database,
         extensions=extensions,
         drop_all_collections=args.drop_all_collections,
-        collection_per_document=args.collection_per_document,
         use_vision=args.vision,
         use_local_ocr=args.local_ocr,
         embedding_model=args.embedding_model,

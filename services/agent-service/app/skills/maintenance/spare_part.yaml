@@ -1,0 +1,13 @@
+name: spare_part_skill
+version: 1.0
+goal: Determine spare parts, inventory, and availability for a repair.
+trigger: part_or_component
+steps:
+  - resolve_target_part
+  - query_inventory
+  - query_part_availability
+  - validate_parts
+tools:
+  - query_inventory
+  - query_part_availability
+

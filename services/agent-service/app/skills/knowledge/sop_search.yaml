@@ -1,0 +1,14 @@
+name: sop_search_skill
+version: 1.0
+goal: Find standard operating procedures and repair steps.
+trigger: sop_or_repair_steps
+steps:
+  - classify_sop_query
+  - search_sop
+  - fetch_document_or_chunk
+  - validate_evidence
+tools:
+  - search_sop
+  - fetch_document
+  - fetch_chunk
+

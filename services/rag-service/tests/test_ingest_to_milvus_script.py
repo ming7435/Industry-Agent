@@ -3,6 +3,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from app.embedding import VectorRecord
+from app.ingestion.models import PdfType, StructuredDocument
 from scripts.ingest_to_milvus import (
     build_argument_parser,
     collection_name_for_pdf,
@@ -34,6 +36,15 @@ class FakeMySQLWriter:
         return FakeMySQLWriter.complete_document
 
     def mark_failed(self, document_id: str, error: str) -> None:
+        pass
+
+    def replace_cad_document(self, document) -> None:
+        pass
+
+    def replace_chunks(self, document_id: str, records, *, collection_name: str) -> None:
+        pass
+
+    def mark_complete(self, document_id: str, *, chunk_count: int, vector_count: int) -> None:
         pass
 
     def close(self) -> None:
@@ -70,11 +81,30 @@ class FakeEmbeddingClient:
 
 
 class FakeMilvusWriter:
-    def __init__(self, *args, **kwargs) -> None:
-        pass
+    configs = []
+
+    def __init__(self, config=None, *args, **kwargs) -> None:
+        self.config = config
+        self.recreated_dimensions = []
+        self.inserted_records = []
+        FakeMilvusWriter.configs.append(config)
 
     def drop_all_collections(self) -> list[str]:
         return []
+
+    def recreate_collection(self, dimension: int) -> None:
+        self.recreated_dimensions.append(dimension)
+
+    def insert_records(self, records) -> int:
+        records = list(records)
+        self.inserted_records.extend(records)
+        return len(records)
+
+    def has_collection(self) -> bool:
+        return True
+
+    def delete_records(self, record_ids) -> int:
+        return len(list(record_ids))
 
 
 class IngestToMilvusScriptTests(unittest.TestCase):
@@ -131,6 +161,51 @@ class IngestToMilvusScriptTests(unittest.TestCase):
         self.assertTrue(args.object_storage)
         self.assertFalse(args.cad_metadata)
         self.assertEqual(args.log_level, "DEBUG")
+
+    def test_ingest_always_uses_derived_document_collection(self) -> None:
+        FakeMilvusWriter.configs = []
+        FakeMySQLWriter.instances = []
+        FakeMySQLWriter.complete_document = None
+        with TemporaryDirectory() as directory:
+            data_dir = Path(directory)
+            source_path = data_dir / "维修手册_TC820LTYsi_BOM数据.txt"
+            source_path.write_text("主轴维护步骤。", encoding="utf-8")
+            document = StructuredDocument(
+                source_name=source_path.name,
+                source_path=source_path,
+                pdf_type=PdfType.TEXT,
+                pages=[],
+                blocks=[],
+                assets=[],
+                metadata={
+                    "document_id": "doc-bom",
+                    "content_hash": "hash-bom",
+                    "file_size": source_path.stat().st_size,
+                    "source_format": "txt",
+                },
+            )
+            record = VectorRecord(
+                id="chunk-1",
+                chunk_id="chunk-1",
+                text="主轴维护步骤。",
+                vector=[0.1, 0.2],
+                source_name=source_path.name,
+                source_path=str(source_path),
+                source_format="txt",
+            )
+
+            with patch("scripts.ingest_to_milvus.MySQLRagWriter", FakeMySQLWriter), \
+                patch("scripts.ingest_to_milvus.BGEM3EmbeddingClient", return_value=FakeEmbeddingClient()), \
+                patch("scripts.ingest_to_milvus.MilvusVectorWriter", FakeMilvusWriter), \
+                patch("scripts.ingest_to_milvus.parse_document", return_value=document), \
+                patch("scripts.ingest_to_milvus.build_chunks", return_value=[]), \
+                patch("scripts.ingest_to_milvus.embed_chunks", return_value=[record]):
+                result = ingest_directory(data_dir, mysql_enabled=True)
+
+        collection_names = [config.collection_name for config in FakeMilvusWriter.configs]
+        self.assertEqual(collection_names, ["industry_rag_bom"])
+        self.assertEqual(result["collections"], 1)
+        self.assertEqual(result["inserted"], 1)
 
     def test_vision_and_local_ocr_are_mutually_exclusive(self) -> None:
         with TemporaryDirectory() as directory:

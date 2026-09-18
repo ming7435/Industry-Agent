@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.diagnosis.schemas import AgentStatus, DiagnosisResult, DiagnosisState
+from app.skills import get_skill_registry
 
 
 class DiagnosisGraphState(TypedDict, total=False):
@@ -23,6 +24,7 @@ class DiagnosisGraphState(TypedDict, total=False):
     task_id: str
     triggered_at: Any
     diagnosis_run_id: str
+    active_skills: List[str]
     response: Dict[str, Any]
     assistant: Dict[str, Any]
     guarded_calls: List[Dict[str, Any]]
@@ -54,8 +56,18 @@ def load_diagnosis_skill(state: DiagnosisGraphState) -> Dict[str, Any]:
     agent = state["agent"]
     runtime = state["agent_state"]
     skill = agent._select_skill(state["event"])
-    runtime.active_skill = skill["name"]
+    selected_names = list(skill.get("skills") or [skill["name"]])
+    definitions = [
+        definition
+        for name in selected_names
+        if (definition := get_skill_registry().get("diagnosis", name)) is not None
+    ]
+    runtime.active_skills = [definition.name for definition in definitions] or selected_names
+    runtime.active_skill = "+".join(runtime.active_skills)
     runtime.allowed_tools = list(skill["allowed_tools"])
+    for tool in get_skill_registry().merge_tools(definitions):
+        if tool not in runtime.allowed_tools:
+            runtime.allowed_tools.append(tool)
     runtime.current_agent = "diagnosis.load_skill"
     runtime.messages.append({
         "role": "system",
@@ -64,7 +76,7 @@ def load_diagnosis_skill(state: DiagnosisGraphState) -> Dict[str, Any]:
             % (runtime.active_skill, ",".join(runtime.allowed_tools))
         ),
     })
-    return {"agent_state": runtime, "route": "reason"}
+    return {"agent_state": runtime, "active_skills": list(runtime.active_skills), "route": "reason"}
 
 
 def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
@@ -396,7 +408,17 @@ def build_diagnosis_graph():
     workflow.add_conditional_edges("initialize", select_next_diagnosis_route, {"load_skill": "load_skill", "fallback": "fallback"})
     workflow.add_conditional_edges("load_skill", select_next_diagnosis_route, {"reason": "reason", "fallback": "fallback"})
     # 推理结果决定是否调用工具；没有工具调用时先经过 Validator。
-    workflow.add_conditional_edges("reason", select_next_diagnosis_route, {"reason": "reason", "tool_guard": "tool_guard", "validate": "validate", "fallback": "fallback"})
+    workflow.add_conditional_edges(
+        "reason",
+        select_next_diagnosis_route,
+        {
+            "reason": "reason",
+            "tool_guard": "tool_guard",
+            "loop_guard": "loop_guard",
+            "validate": "validate",
+            "fallback": "fallback",
+        },
+    )
     workflow.add_conditional_edges("tool_guard", select_next_diagnosis_route, {"act": "act", "reason": "reason", "fallback": "fallback"})
     workflow.add_conditional_edges("act", select_next_diagnosis_route, {"observe": "observe", "fallback": "fallback"})
     workflow.add_edge("observe", "loop_guard")

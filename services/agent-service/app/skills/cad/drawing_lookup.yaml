@@ -1,0 +1,15 @@
+name: drawing_lookup_skill
+version: 1.0
+goal: Locate engineering drawings and connect them to a component.
+trigger: part_or_component
+steps:
+  - resolve_component
+  - query_part
+  - query_drawing
+  - validate_relation
+tools:
+  - query_part
+  - query_drawing
+  - query_relation
+  - fetch_engineering_record
+

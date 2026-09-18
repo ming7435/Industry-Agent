@@ -187,6 +187,9 @@ class Settings(BaseSettings):
     milvus_uri: str = "http://localhost:19530"
     """Milvus connection URI."""
 
+    milvus_database: str = "industry_rag_documents"
+    """Dedicated Milvus database used by the industrial-maintenance RAG service."""
+
     milvus_host: str = "localhost"
     """Milvus host, used by clients configured with host/port instead of a URI."""
 
@@ -194,12 +197,11 @@ class Settings(BaseSettings):
     """Milvus port."""
 
     milvus_collection: str = "industry_rag_chunks"
-    """Collection holding the bge-m3 chunk vectors.
+    """Primary collection used when ``MILVUS_COLLECTIONS`` is not configured.
 
-    The value matches the default of the offline writer
-    (``app.milvus.schema.DEFAULT_COLLECTION_NAME``), so the online dense route
-    reads what ingestion wrote without any extra wiring. Override with
-    ``MILVUS_COLLECTION`` when ingesting into a differently named collection.
+    Offline ingestion now writes each document to its derived collection, so
+    production deployments should set ``MILVUS_COLLECTIONS`` to the collection
+    list that online dense retrieval should fan out across.
     """
 
     milvus_collections: str = ""

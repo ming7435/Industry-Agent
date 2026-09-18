@@ -84,10 +84,10 @@ def check_mysql(config: MySQLConfig) -> dict[str, Any]:
     return report
 
 
-def check_milvus(uri: str, collection_name: str) -> dict[str, Any]:
+def check_milvus(uri: str, database: str, collection_name: str) -> dict[str, Any]:
     from pymilvus import MilvusClient
 
-    client = MilvusClient(uri=uri)
+    client = MilvusClient(uri=uri, db_name=database)
     collections = client.list_collections()
     report: dict[str, Any] = {"collections": collections, "collection_count": len(collections)}
     if collection_name not in collections:
@@ -159,7 +159,7 @@ def render(report: dict[str, Any]) -> None:
         print(f"    {row}")
 
     milvus = report["milvus"]
-    print("\n[Milvus] uri=%s" % report["milvus_uri"])
+    print("\n[Milvus] uri=%s database=%s" % (report["milvus_uri"], report["milvus_database"]))
     print(f"  collections ({milvus['collection_count']}): {milvus['collections']}")
     print(f"  entities in '{report['milvus_collection']}': {milvus.get('entities')}")
     for row in milvus.get("sample", []):
@@ -175,13 +175,15 @@ def main() -> int:
     load_service_env()
     config = MySQLConfig.from_env()
     milvus_uri = os.getenv("MILVUS_URI", "http://127.0.0.1:19530")
+    milvus_database = os.getenv("MILVUS_DATABASE", "industry_rag_documents")
     collection_name = os.getenv("MILVUS_COLLECTION", "cad_semantic_chunks")
     report = {
         "mysql_database": config.database,
         "mysql": check_mysql(config),
         "milvus_uri": milvus_uri,
+        "milvus_database": milvus_database,
         "milvus_collection": collection_name,
-        "milvus": check_milvus(milvus_uri, collection_name),
+        "milvus": check_milvus(milvus_uri, milvus_database, collection_name),
         "object_storage": check_object_storage(),
     }
     render(report)

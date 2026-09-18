@@ -16,7 +16,10 @@ class LocalMcpToolRegistry:
 
     def __init__(self, base_url: str | None = None, rag_index: RAGIndex | None = None, rag_client: RAGServiceClient | None = None, trace: TraceRecorder | None = None) -> None:
         self.base_url = base_url
-        self.rag = rag_client or RAGServiceClient(fallback=rag_index)
+        # This registry is the local MCP adapter used by isolated Diagnosis
+        # tests and standalone runs; the orchestrator injects the shared
+        # production ToolRegistry when remote RAG is required.
+        self.rag = rag_client or RAGServiceClient(base_url=base_url or "", fallback=rag_index)
         self.trace = trace
         self._handlers: Dict[str, Callable[..., Dict[str, Any]]] = {
             "get_device_status": self._get_device_status,

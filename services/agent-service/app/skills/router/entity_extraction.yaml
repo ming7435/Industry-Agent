@@ -1,0 +1,11 @@
+name: entity_extraction_skill
+version: 1.0
+goal: Extract device, alarm, component, work order, and report entities.
+trigger: default
+steps:
+  - extract_entities
+  - validate_entities
+tools: []
+optional_inputs:
+  - context
+

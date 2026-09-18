@@ -1,0 +1,19 @@
+name: repair_verify_skill
+version: 1.0
+goal: Verify that a repair was performed and the alarm condition is cleared.
+trigger: repair
+steps:
+  - load_workorder
+  - load_repair_feedback
+  - verify_device
+  - verify_alarm
+  - validate_result
+tools:
+  - get_workorder
+  - get_repair_feedback
+  - get_device_status
+  - get_active_alarms
+  - verify_alarm_clearance
+  - close_workorder
+  - reopen_workorder
+

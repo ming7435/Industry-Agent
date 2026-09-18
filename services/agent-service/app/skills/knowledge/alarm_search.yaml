@@ -1,0 +1,14 @@
+name: alarm_search_skill
+version: 1.0
+goal: Search alarm definitions and alarm-related technical knowledge.
+trigger: exists(alarm_code)
+steps:
+  - normalize_alarm_code
+  - search_alarm_knowledge
+  - fetch_document_or_chunk
+  - validate_evidence
+tools:
+  - search_alarm_knowledge
+  - fetch_document
+  - fetch_chunk
+

@@ -6,6 +6,7 @@ from typing import Any, Dict, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.skills import get_skill_registry
 from app.validator import RouteResult
 
 from .validator import RouterValidator
@@ -19,6 +20,7 @@ class RouterGraphState(TypedDict, total=False):
     text: str
     context: Dict[str, Any]
     active_skill: str
+    active_skills: list[str]
     intent: str
     reason: str
     entities: Dict[str, Any]
@@ -38,8 +40,10 @@ def initialize(state: RouterGraphState) -> Dict[str, Any]:
     }
 
 
-def load_skill(_: RouterGraphState) -> Dict[str, Any]:
-    return {"active_skill": "router_master_skill", "route": "classify_intent"}
+def load_skill(state: RouterGraphState) -> Dict[str, Any]:
+    skills = get_skill_registry().select("router", {**(state.get("task") or {}), "user_text": state.get("text", "")})
+    names = [skill.name for skill in skills] or ["router_master_skill"]
+    return {"active_skill": "+".join(names), "active_skills": names, "route": "classify_intent"}
 
 
 def classify_intent(state: RouterGraphState) -> Dict[str, Any]:

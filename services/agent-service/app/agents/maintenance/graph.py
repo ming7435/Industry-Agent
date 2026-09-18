@@ -6,6 +6,7 @@ from typing import Any, Dict, List, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.skills import get_skill_registry
 from app.validator import DiagnosisView, MaintenancePlan
 
 from .schemas import MaintenanceQuery
@@ -16,6 +17,7 @@ class MaintenanceGraphState(TypedDict, total=False):
     agent: Any
     request: Dict[str, Any]
     active_skill: str
+    active_skills: List[str]
     allowed_tools: List[str]
     diagnosis: DiagnosisView
     query: str
@@ -38,9 +40,13 @@ def initialize(state: MaintenanceGraphState) -> Dict[str, Any]:
 
 
 def load_skill(state: MaintenanceGraphState) -> Dict[str, Any]:
+    skills = get_skill_registry().select("maintenance", state.get("request") or {})
+    names = [skill.name for skill in skills] or ["maintenance_master_skill"]
+    default_tools = ["query_inventory", "query_part_availability", "get_workorder_template", "submit_workorder_draft"]
     return {
-        "active_skill": "maintenance_master_skill",
-        "allowed_tools": ["query_inventory", "query_part_availability", "get_workorder_template", "submit_workorder_draft"],
+        "active_skill": "+".join(names),
+        "active_skills": names,
+        "allowed_tools": get_skill_registry().merge_tools(skills) or default_tools,
         "route": "assess_diagnosis",
     }
 

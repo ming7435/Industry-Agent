@@ -1,0 +1,13 @@
+name: safety_triage_skill
+version: 1.0
+goal: Triage critical events and identify immediate safety controls.
+trigger: severity == critical
+steps:
+  - identify_safety_risk
+  - retrieve_safety_sop
+  - mark_human_or_safety_system_required
+tools:
+  - get_alarm_definition
+  - get_device_logs
+  - search_knowledge
+

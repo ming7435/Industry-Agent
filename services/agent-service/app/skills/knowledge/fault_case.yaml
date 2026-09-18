@@ -1,0 +1,15 @@
+name: fault_case_skill
+version: 1.0
+goal: Search historical fault cases and semantic maintenance memory.
+trigger: case_or_history
+steps:
+  - search_fault_cases
+  - search_semantic_memory
+  - rerank_evidence
+  - validate_evidence
+tools:
+  - search_fault_cases
+  - search_semantic_memory
+  - fetch_document
+  - fetch_chunk
+

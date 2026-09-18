@@ -246,7 +246,7 @@ class MilvusVectorWriter:
             from pymilvus import MilvusClient
         except ImportError as exc:
             raise MilvusWriteError("pymilvus is required to write vector records.") from exc
-        return MilvusClient(uri=self.config.uri)
+        return MilvusClient(uri=self.config.uri, db_name=self.config.database)
 
     @staticmethod
     def _data_type() -> Any:

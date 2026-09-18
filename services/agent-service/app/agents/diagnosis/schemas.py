@@ -31,6 +31,7 @@ class DiagnosisState:
     tool_results: List[Dict[str, Any]] = field(default_factory=list)
     observations: List[Dict[str, Any]] = field(default_factory=list)
     active_skill: str = "diagnosis_master_skill"
+    active_skills: List[str] = field(default_factory=lambda: ["diagnosis_master_skill"])
     allowed_tools: List[str] = field(default_factory=list)
     evidence: List[str] = field(default_factory=list)
     evidence_records: List[Dict[str, Any]] = field(default_factory=list)
@@ -57,6 +58,7 @@ class DiagnosisState:
             "tool_results": list(self.tool_results),
             "observations": list(self.observations),
             "active_skill": self.active_skill,
+            "active_skills": list(self.active_skills),
             "allowed_tools": list(self.allowed_tools),
             "evidence": list(self.evidence),
             "evidence_records": list(self.evidence_records),
@@ -100,6 +102,7 @@ class DiagnosisResult:
     diagnosis_run_id: str = ""
     trace_id: str = ""
     active_skill: str = "diagnosis_master_skill"
+    active_skills: List[str] = field(default_factory=list)
     validation_errors: List[str] = field(default_factory=list)
     stop_reason: str = ""
     cached: bool = False
@@ -128,6 +131,7 @@ class DiagnosisResult:
             "diagnosis_run_id": self.diagnosis_run_id,
             "trace_id": self.trace_id,
             "active_skill": self.active_skill,
+            "active_skills": list(self.active_skills),
             "validation_errors": list(self.validation_errors),
             "stop_reason": self.stop_reason,
             "cached": self.cached,

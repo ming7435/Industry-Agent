@@ -60,6 +60,54 @@ const deviceTypeLabels = {
   industrial_robot: "工业机器人",
 };
 
+const deviceProfiles = {
+  turning_center: {
+    area: "A01 主加工单元",
+    flow: "棒料 → 车削 → 成品缓存",
+    focus: "主轴、液压、冷却与刀塔",
+    metrics: [
+      ["spindle_rpm", "主轴转速", "主轴", "rpm"],
+      ["spindle_load_percent", "主轴负载", "主轴", "%"],
+      ["spindle_temperature_c", "主轴温度", "主轴", "°C"],
+      ["spindle_vibration_mm_s", "主轴振动", "主轴", "mm/s"],
+      ["hydraulic_pressure_psi", "液压压力", "液压", "psi"],
+      ["coolant_pressure_psi", "冷却压力", "冷却", "psi"],
+      ["lubrication_pressure_psi", "润滑压力", "润滑", "psi"],
+      ["turret_servo_load_percent", "刀塔负载", "刀塔", "%"],
+    ],
+  },
+  bar_feeder: {
+    area: "A02 棒料上料单元",
+    flow: "棒料检测 → 推料 → 车床联动",
+    focus: "棒料、伺服、推料与安全门",
+    metrics: [
+      ["bar_diameter_mm", "棒料直径", "棒料", "mm"],
+      ["bar_length_mm", "剩余长度", "棒料", "mm"],
+      ["pusher_position_mm", "推料位置", "送料", "mm"],
+      ["feed_speed_m_min", "送料速度", "送料", "m/min"],
+      ["pushing_torque_nm", "推送扭矩", "伺服", "N·m"],
+      ["loading_cycle_seconds", "上料周期", "节拍", "s"],
+      ["servo_battery_voltage_v", "伺服电池", "电气", "V"],
+      ["dc_24v_supply_v", "24V电源", "电气", "V"],
+    ],
+  },
+  industrial_robot: {
+    area: "A03 下料协作单元",
+    flow: "取件 → 搬运 → 装箱缓存",
+    focus: "关节、末端力、控制器与安全 IO",
+    metrics: [
+      ["joint_comm_quality_percent", "关节通讯", "通讯", "%"],
+      ["tool_speed_mm_s", "TCP速度", "运动", "mm/s"],
+      ["tcp_force_n", "TCP力", "末端", "N"],
+      ["joint_temperature_c", "关节温度", "关节", "°C"],
+      ["robot_power_w", "机器人功率", "电气", "W"],
+      ["robot_48v_power_v", "48V母线", "电气", "V"],
+      ["controller_performance_pct", "控制器负载", "控制器", "%"],
+      ["memory_free_mb", "剩余内存", "控制器", "MB"],
+    ],
+  },
+};
+
 const defaultMachinePositions = [
   { x: 42, y: 58 },
   { x: 23, y: 46 },
@@ -206,7 +254,11 @@ function buildWorkshopMachines(snapshot) {
       id,
       name: device.name || fallback.name || id,
       line: fallback.line || device.line || "产线设备",
+      deviceType: device.device_type || device.type || fallback.deviceType || "industrial_device",
       type: fallback.type || deviceTypeLabels[device.device_type || device.type] || device.device_type || device.type || "工业设备",
+      area: deviceProfiles[device.device_type || device.type]?.area || fallback.line || device.line || "产线设备",
+      flow: deviceProfiles[device.device_type || device.type]?.flow || "实时采集 → 规则判定 → Agent诊断",
+      focus: deviceProfiles[device.device_type || device.type]?.focus || "关键指标与告警状态",
       x: fallback.x ?? device.x ?? position.x,
       y: fallback.y ?? device.y ?? position.y,
       live: device.live !== false,
@@ -268,12 +320,39 @@ function useMonitorSnapshot() {
   return { snapshot, error, control, resetStats };
 }
 
+function useMetricHistory(machines) {
+  const [history, setHistory] = useState({});
+
+  useEffect(() => {
+    if (!machines.length) return;
+    const timestamp = Date.now();
+    setHistory((current) => {
+      const next = { ...current };
+      machines.forEach((machine) => {
+        const sample = machine.sample;
+        if (!sample) return;
+        const metrics = sample.metrics || {};
+        const profile = deviceProfiles[machine.deviceType];
+        const metricKeys = (profile?.metrics || []).slice(0, 3).map(([key]) => key);
+        const points = metricKeys.map((key) => ({ key, value: metrics[key] })).filter((item) => item.value !== null && item.value !== undefined);
+        if (!points.length) return;
+        next[machine.id] = [...(next[machine.id] || []), { timestamp, points }].slice(-30);
+      });
+      return next;
+    });
+  }, [machines]);
+
+  return history;
+}
+
 function App() {
   const [activeView, setActiveView] = useState("monitor");
   const [selectedMachineId, setSelectedMachineId] = useState(workshopMachines[0].id);
+  const [bigScreen, setBigScreen] = useState(false);
   const { snapshot, error, control, resetStats } = useMonitorSnapshot();
   const runner = snapshot?.runner || {};
   const machines = useMemo(() => buildWorkshopMachines(snapshot), [snapshot]);
+  const metricHistory = useMetricHistory(machines);
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
   const result = selectedMachine?.result || snapshot?.latest_result;
   const sample = result?.current_sample;
@@ -289,16 +368,18 @@ function App() {
   }, [machines, selectedMachineId]);
 
   return (
-    <div className="platform-shell">
-      <Sidebar activeView={activeView} onChange={setActiveView} connectionText={connectionText} hasError={Boolean(error || runner.last_error)} />
+    <div className={`platform-shell ${bigScreen ? "big-screen" : ""}`}>
+      {!bigScreen && <Sidebar activeView={activeView} onChange={setActiveView} connectionText={connectionText} hasError={Boolean(error || runner.last_error)} />}
       <main className="app-shell">
         <Topbar
           snapshot={snapshot}
           runner={runner}
           onControl={control}
           onReset={resetStats}
+          bigScreen={bigScreen}
+          onToggleBigScreen={() => setBigScreen((value) => !value)}
         />
-        {activeView === "monitor" && (
+        {(activeView === "monitor" || bigScreen) && (
           <MonitorCenter
             snapshot={snapshot}
             machines={machines}
@@ -306,17 +387,18 @@ function App() {
             sample={sample}
             runner={runner}
             healthText={healthText}
+            metricHistory={metricHistory}
             selectedMachineId={selectedMachineId}
             onSelectMachine={setSelectedMachineId}
           />
         )}
-        {activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} />}
-        {activeView === "maintenance" && <MaintenanceWorkspace snapshot={snapshot} />}
-        {activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} />}
-        {activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} />}
-        {activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
-        {activeView === "report" && <ReportWorkspace snapshot={snapshot} />}
-        {activeView === "trace" && <TraceWorkspace snapshot={snapshot} />}
+        {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} />}
+        {!bigScreen && activeView === "maintenance" && <MaintenanceWorkspace snapshot={snapshot} />}
+        {!bigScreen && activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} />}
+        {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} />}
+        {!bigScreen && activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
+        {!bigScreen && activeView === "report" && <ReportWorkspace snapshot={snapshot} />}
+        {!bigScreen && activeView === "trace" && <TraceWorkspace snapshot={snapshot} />}
         {(error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
       </main>
     </div>
@@ -356,7 +438,7 @@ function Sidebar({ activeView, onChange, connectionText, hasError }) {
   );
 }
 
-function Topbar({ snapshot, runner, onControl, onReset }) {
+function Topbar({ snapshot, runner, onControl, onReset, bigScreen, onToggleBigScreen }) {
   const deviceCount = snapshot?.device_ids?.length || snapshot?.devices?.length || (snapshot?.device_id ? 1 : 0);
   const deviceLabel = `数据源：${snapshot?.data_source || "设备数据源"} · 接入 ${deviceCount || "--"} 台设备 · 在线监测`;
   return (
@@ -377,6 +459,7 @@ function Topbar({ snapshot, runner, onControl, onReset }) {
           <span>{runner.enabled ? "监测开启" : "监测暂停"}</span>
         </label>
         <button className="button" type="button" onClick={onReset}>归零统计</button>
+        <button className="button primary" type="button" onClick={onToggleBigScreen}>{bigScreen ? "退出大屏" : "进入大屏"}</button>
       </div>
     </header>
   );
@@ -386,9 +469,9 @@ function PlatformOverview() {
   return (
     <section className="platform-overview" aria-label="平台总览">
       <OverviewCard primary label="当前主线" value="监控中心" text="设备快照、异常判定和智能诊断实时联动。" />
-      <OverviewCard label="工单闭环" value="待接入" text="异常转派、维修跟踪、备件消耗。" />
-      <OverviewCard label="知识中枢" value="待接入" text="手册、历史案例和SOP问答。" />
-      <OverviewCard label="质检协同" value="待接入" text="缺陷记录、抽检任务、质量追溯。" />
+      <OverviewCard label="工单闭环" value="已联动" text="异常诊断可转派维修工单，支持处理和验收流转。" />
+      <OverviewCard label="知识中枢" value="已接入" text="手册、历史案例、报警码和SOP统一检索。" />
+      <OverviewCard label="质检协同" value="已接入" text="工单恢复验证、经验沉淀和质量追溯联动。" />
     </section>
   );
 }
@@ -410,11 +493,13 @@ function MonitorCenter({
   sample,
   runner,
   healthText,
+  metricHistory,
   selectedMachineId,
   onSelectMachine,
 }) {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0] || workshopMachines[0];
   const isLiveMachine = Boolean(selectedMachine.live);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   return (
     <section className="workspace-view active">
@@ -426,14 +511,17 @@ function MonitorCenter({
         healthText={healthText}
         onSelectMachine={onSelectMachine}
       />
-      <MachineDetailHeader machine={selectedMachine} isLiveMachine={isLiveMachine} sample={sample} result={result} healthText={healthText} />
+      <MachineDetailHeader machine={selectedMachine} isLiveMachine={isLiveMachine} sample={sample} result={result} healthText={healthText} onOpenDetail={() => setDetailOpen(true)} />
+      {detailOpen && <MachineDetailDrawer machine={selectedMachine} result={result} sample={sample} history={metricHistory[selectedMachine.id] || []} onClose={() => setDetailOpen(false)} />}
       {isLiveMachine ? (
         <>
           <StatusStrip snapshot={snapshot} sample={sample} runner={runner} healthText={healthText} />
           <section className="main-grid">
-            <MetricsPanel result={result} sample={sample} />
+            <MetricsPanel result={result} sample={sample} machine={selectedMachine} />
             <DecisionPanel snapshot={snapshot} result={result} />
           </section>
+          <TrendPanel machine={selectedMachine} history={metricHistory[selectedMachine.id] || []} />
+          <AlarmTimeline snapshot={snapshot} machines={machines} />
           <section className="lower-grid">
             <TriggerPanel snapshot={snapshot} />
             <DiagnosisPanel snapshot={snapshot} />
@@ -451,9 +539,12 @@ function MonitorCenter({
 }
 
 function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, onSelectMachine }) {
+  const [viewMode, setViewMode] = useState("iso");
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
   const selectedStatus = machineStatus(selectedMachine, selectedMachine?.result || result);
   const connectedCount = machines.filter((machine) => machine.live).length;
+  const onlineCount = connectedCount;
+  const normalCount = machines.filter((machine) => machineStatus(machine, machine.result) === "normal").length;
   const faultCount = machines.filter((machine) => {
     const status = machineStatus(machine, machine.result);
     return status !== "normal" && status !== "idle";
@@ -466,6 +557,7 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
           machines={machines}
           selectedMachineId={selectedMachineId}
           status={selectedStatus}
+          viewMode={viewMode}
           onSelect={(machineId) => onSelectMachine(machineId || selectedMachine?.id)}
         />
         <div className="scene-overlay">
@@ -478,15 +570,40 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
             <span><i className="legend-dot warning" />预警</span>
             <span><i className="legend-dot fault" />故障</span>
           </div>
+          <div className="scene-view-toggle" aria-label="视角切换">
+            {[["iso", "等轴"], ["top", "俯视"], ["line", "产线"]].map(([id, label]) => (
+              <button key={id} type="button" className={viewMode === id ? "active" : ""} onClick={() => setViewMode(id)}>{label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="scene-device-strip" aria-label="设备工位状态">
+          {machines.map((machine) => {
+            const localStatus = machineStatus(machine, machine.result);
+            const health = formatHealthValue(machine.sample?.health_score);
+            const leadMetric = leadMetricForMachine(machine);
+            return (
+              <button
+                key={machine.id}
+                type="button"
+                className={`scene-device-chip ${localStatus} ${machine.id === selectedMachineId ? "active" : ""}`}
+                onClick={() => onSelectMachine(machine.id)}
+              >
+                <span>{machine.area || machine.line}</span>
+                <strong>{machine.name}</strong>
+                <small>{leadMetric}</small>
+                <em>{machineStatusLabel(localStatus)} · 健康度 {health}</em>
+              </button>
+            );
+          })}
         </div>
         <div className="scene-control-hint">内部加工动画 · 拖动旋转 · 滚轮缩放</div>
       </div>
       <div className="map-summary">
-        <div><span>接入设备</span><strong>{connectedCount} / {machines.length}</strong></div>
-        <div><span>选中设备</span><strong>{selectedMachine?.name || "--"}</strong></div>
-        <div><span>当前故障</span><strong>{faultCount}</strong></div>
-        <div><span>毛坯入料</span><strong>棒料</strong></div>
-        <div><span>成品出料</span><strong>轴套件</strong></div>
+        <div><span>接入设备</span><strong>{onlineCount} / {machines.length}</strong></div>
+        <div><span>正常设备</span><strong>{normalCount}</strong></div>
+        <div><span>异常设备</span><strong>{faultCount}</strong></div>
+        <div><span>当前工位</span><strong>{selectedMachine?.area || "--"}</strong></div>
+        <div><span>工艺流向</span><strong>{selectedMachine?.flow || "--"}</strong></div>
       </div>
     </section>
   );
@@ -508,7 +625,22 @@ function machineStatusLabel(status) {
   return "正常";
 }
 
-function Machine3DScene({ machines = [], selectedMachineId, status, onSelect }) {
+function formatHealthValue(value) {
+  if (value === null || value === undefined) return "--";
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? `${numericValue.toFixed(0)}/100` : String(value);
+}
+
+function leadMetricForMachine(machine) {
+  const metrics = machine?.sample?.metrics || {};
+  const profile = deviceProfiles[machine?.deviceType];
+  const preferred = profile?.metrics?.find(([key]) => metrics[key] !== null && metrics[key] !== undefined);
+  if (!preferred) return machine?.focus || "等待实时采样";
+  const [key, name, , unit] = preferred;
+  return `${name} ${formatMetricValue(metrics[key])}${unit ? ` ${unit}` : ""}`;
+}
+
+function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, onSelect }) {
   const mountRef = useRef(null);
   const onSelectRef = useRef(onSelect);
   const machinesRef = useRef(machines);
@@ -516,9 +648,10 @@ function Machine3DScene({ machines = [], selectedMachineId, status, onSelect }) 
   const hoveredMachineRef = useRef(null);
   const [hoveredLabel, setHoveredLabel] = useState(null);
   const sceneMachineState = useMemo(
-    () => machines.map((machine) => `${machine.id}:${machine.live ? 1 : 0}`).join("|"),
-    [machines],
+    () => machines.map((machine) => `${machine.id}:${machine.live ? 1 : 0}:${machineStatus(machine, machine.result)}:${machine.id === selectedMachineId ? 1 : 0}`).join("|"),
+    [machines, selectedMachineId],
   );
+  const sceneViewState = viewMode || "iso";
 
   useEffect(() => {
     onSelectRef.current = onSelect;
@@ -563,7 +696,24 @@ function Machine3DScene({ machines = [], selectedMachineId, status, onSelect }) 
     controls.panSpeed = .55;
     controls.rotateSpeed = .55;
     controls.zoomSpeed = .72;
-    controls.update();
+    const applyCameraView = (mode) => {
+      if (mode === "top") {
+        camera.position.set(0, compactScene ? 18 : 13, .1);
+        controls.target.set(.2, 0, -.2);
+        controls.enableRotate = false;
+      } else if (mode === "line") {
+        camera.position.set(compactScene ? 4 : 2.8, compactScene ? 5.6 : 3.8, compactScene ? 18 : 13.5);
+        controls.target.set(.2, .55, .2);
+        controls.enableRotate = true;
+      } else {
+        camera.position.set(compactScene ? 12 : 8.2, compactScene ? 7 : 4.9, compactScene ? 22 : 9.6);
+        controls.target.set(.4, .75, 0);
+        controls.enableRotate = true;
+      }
+      camera.lookAt(controls.target);
+      controls.update();
+    };
+    applyCameraView(sceneViewState);
 
     const machineById = new Map(machinesRef.current.map((machine) => [machine.id, machine]));
     const getCurrentMachine = (id) => machinesRef.current.find((machine) => machine.id === id);
@@ -1564,7 +1714,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, onSelect }) 
       renderer.dispose();
       renderer.forceContextLoss();
     };
-  }, [sceneMachineState]);
+  }, [sceneMachineState, sceneViewState]);
 
   return (
     <div ref={mountRef} className="machine-3d-canvas" aria-hidden="true">
@@ -1589,14 +1739,19 @@ function statusColor(status) {
   return 0x087f75;
 }
 
-function MachineDetailHeader({ machine, isLiveMachine, sample, result, healthText }) {
+function MachineDetailHeader({ machine, isLiveMachine, sample, result, healthText, onOpenDetail }) {
   const status = isLiveMachine ? machineStatus(machine, result) : "idle";
   return (
     <section className="machine-detail-header">
       <div>
         <span className="eyebrow">设备详情</span>
         <h2>{machine.name} · {machine.type}</h2>
-        <p>{machine.line} · {isLiveMachine ? (sample?.device_id || machine.id) : machine.id}</p>
+        <p>{machine.area || machine.line} · {isLiveMachine ? (sample?.device_id || machine.id) : machine.id}</p>
+        <div className="machine-context">
+          <span>{machine.flow || "实时采集 → 规则判定 → Agent诊断"}</span>
+          <span>{machine.focus || "关键指标与告警状态"}</span>
+        </div>
+        <button className="button detail-button" type="button" onClick={onOpenDetail}>查看设备详情</button>
       </div>
       <div className="machine-detail-stats">
         <div><span>状态</span><strong className={status}>{machineStatusLabel(status)}</strong></div>
@@ -1630,19 +1785,149 @@ function StatusStrip({ snapshot, sample, runner, healthText }) {
   );
 }
 
-function MetricsPanel({ result, sample }) {
-  const items = useMemo(() => buildMetricItems(result, sample), [result, sample]);
+function AlarmTimeline({ snapshot, machines }) {
+  const triggerEvents = (snapshot?.trigger_history || []).map((item) => ({
+    id: item.event_id || item.task_id || item.triggered_at,
+    time: item.triggered_at,
+    deviceId: item.device_id,
+    title: item.trigger_cause || "诊断触发",
+    detail: (item.rule_types || []).map((rule) => ruleLabels[rule] || rule).join("、") || item.event_id || "异常事件",
+    level: severityClass(item.status),
+  }));
+  const liveEvents = machines.flatMap((machine) => {
+    const result = machine.result;
+    return (result?.observations || []).map((item, index) => ({
+      id: `${machine.id}-${item.key || index}`,
+      time: result.current_sample?.timestamp,
+      deviceId: machine.id,
+      title: observationLabel(item),
+      detail: item.message || `${item.value ?? "--"} ${item.unit || ""}`,
+      level: alertSeverity(item.alert_level),
+    }));
+  });
+  const events = [...liveEvents, ...triggerEvents].slice(0, 8);
+
+  return (
+    <section className="panel alarm-timeline-panel">
+      <div className="panel-heading">
+        <div><span className="eyebrow">报警时间线</span><h2>最新异常与诊断移交</h2></div>
+        <span className="muted">实时观测 + 触发记录</span>
+      </div>
+      <div className="alarm-timeline">
+        {!events.length && <div className="empty-state">当前没有异常或报警事件</div>}
+        {events.map((event) => (
+          <div className={`alarm-event ${event.level}`} key={event.id}>
+            <span className="alarm-time">{formatTime(event.time)}</span>
+            <span className="alarm-device">{event.deviceId}</span>
+            <strong>{event.title}</strong>
+            <p>{event.detail}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TrendPanel({ machine, history }) {
+  const profileMetrics = (deviceProfiles[machine?.deviceType]?.metrics || []).slice(0, 3);
+  const latest = history[history.length - 1]?.points || [];
+  const series = profileMetrics.map(([key, name, , unit], index) => {
+    const values = history.map((item) => item.points.find((point) => point.key === key)?.value).filter((value) => value !== undefined);
+    return { key, name, unit, values, color: ["#087f75", "#235a8f", "#b66a00"][index] };
+  }).filter((item) => item.values.length);
+
+  return (
+    <section className="panel trend-panel">
+      <div className="panel-heading">
+        <div><span className="eyebrow">实时趋势</span><h2>关键指标最近 30 秒</h2></div>
+        <span className="muted">{history.length ? `${history.length} 个采样点` : "等待采样"}</span>
+      </div>
+      <div className="trend-grid">
+        {series.map((item) => <MiniTrend key={item.key} item={item} />)}
+        {!series.length && <div className="empty-state">等待实时采样后生成趋势曲线</div>}
+      </div>
+      <div className="trend-latest">
+        {latest.map((point) => {
+          const config = profileMetrics.find(([key]) => key === point.key);
+          return <span key={point.key}>{config?.[1] || point.key}：{formatMetricValue(point.value)} {config?.[3] || ""}</span>;
+        })}
+      </div>
+    </section>
+  );
+}
+
+function MiniTrend({ item }) {
+  const width = 220;
+  const height = 72;
+  const min = Math.min(...item.values);
+  const max = Math.max(...item.values);
+  const range = max - min || 1;
+  const points = item.values.map((value, index) => {
+    const x = item.values.length === 1 ? width : (index / (item.values.length - 1)) * width;
+    const y = height - ((Number(value) - min) / range) * (height - 12) - 6;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const latest = item.values[item.values.length - 1];
+  return (
+    <div className="mini-trend">
+      <div><span>{item.name}</span><strong>{formatMetricValue(latest)} {item.unit}</strong></div>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${item.name}趋势`}>
+        <polyline points={points} fill="none" stroke={item.color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
+function MachineDetailDrawer({ machine, result, sample, history, onClose }) {
+  const items = buildMetricItems(result, sample, machine).slice(0, 12);
+  const status = machineStatus(machine, result);
+  return (
+    <div className="drawer-backdrop" role="presentation" onClick={onClose}>
+      <aside className="machine-drawer" role="dialog" aria-label="设备详情" onClick={(event) => event.stopPropagation()}>
+        <div className="drawer-heading">
+          <div>
+            <span className="eyebrow">{machine.area || machine.line}</span>
+            <h2>{machine.name}</h2>
+            <p>{machine.type} · {machine.flow}</p>
+          </div>
+          <button className="button" type="button" onClick={onClose}>关闭</button>
+        </div>
+        <div className="drawer-status">
+          <div><span>状态</span><strong className={status}>{machineStatusLabel(status)}</strong></div>
+          <div><span>健康度</span><strong>{formatHealthValue(sample?.health_score)}</strong></div>
+          <div><span>报警</span><strong>{sample?.alarm_code || "无"}</strong></div>
+        </div>
+        <div className="drawer-section">
+          <span className="eyebrow">设备关注点</span>
+          <p>{machine.focus || "关键指标与告警状态"}</p>
+        </div>
+        <div className="drawer-metrics">
+          {items.map((item) => <MetricCard key={item.key} item={item} result={result} />)}
+        </div>
+        <TrendPanel machine={machine} history={history} />
+      </aside>
+    </div>
+  );
+}
+
+function MetricsPanel({ result, sample, machine }) {
+  const [showAll, setShowAll] = useState(false);
+  const items = useMemo(() => buildMetricItems(result, sample, machine), [result, sample, machine]);
+  const visibleItems = showAll ? items : items.slice(0, 12);
   return (
     <section className="panel metrics-panel">
       <div className="panel-heading">
         <div><span className="eyebrow">实时快照</span><h2>实时指标</h2></div>
-        <span className="muted">{sample ? `最近采样 ${formatTime(sample.timestamp)}` : "等待采样"}</span>
+        <div className="panel-actions">
+          <span className="muted">{sample ? `最近采样 ${formatTime(sample.timestamp)}` : "等待采样"}</span>
+          {items.length > 12 && <button className="link-button" type="button" onClick={() => setShowAll((value) => !value)}>{showAll ? "收起重点" : `显示全部 ${items.length} 项`}</button>}
+        </div>
       </div>
       <div className="metrics-grid">
-        {items.map((item) => <MetricCard key={item.key} item={item} result={result} />)}
+        {visibleItems.map((item) => <MetricCard key={item.key} item={item} result={result} />)}
       </div>
-      {(sample?.vibration === null || sample?.vibration === undefined) && (
-        <div className="notice">当前设备数据源没有提供振动字段，振动不会被其他指标替代；其他设备指标仍会继续监测。</div>
+      {machine?.deviceType === "turning_center" && (sample?.vibration === null || sample?.vibration === undefined) && (
+        <div className="notice">当前车削中心数据源没有提供振动字段，振动不会被其他指标替代；其他设备指标仍会继续监测。</div>
       )}
       <div className="subsection-heading"><span className="eyebrow">设备联锁与执行部件</span><strong>整机状态</strong></div>
       <EquipmentStates sample={sample} />
@@ -1650,23 +1935,63 @@ function MetricsPanel({ result, sample }) {
   );
 }
 
-function buildMetricItems(result, sample) {
+function buildMetricItems(result, sample, machine) {
   const metrics = sample?.metrics || {};
   const details = sample?.metric_details || {};
-  const items = Object.entries(details).map(([key, detail]) => ({
-    key,
-    name: detail.label || key,
-    group: detail.group || "整机",
-    value: metrics[key],
-    unit: detail.unit || "",
-    normalRange: detail.normal_range,
-  }));
+  const profile = deviceProfiles[machine?.deviceType];
+  const usedKeys = new Set();
+  const preferredItems = (profile?.metrics || [])
+    .filter(([key]) => metrics[key] !== null && metrics[key] !== undefined || details[key])
+    .map(([key, name, group, unit]) => {
+      const detail = details[key] || {};
+      usedKeys.add(key);
+      return {
+        key,
+        name: detail.label || name,
+        group: detail.group || group,
+        value: metrics[key],
+        unit: detail.unit || unit,
+        normalRange: detail.normal_range,
+      };
+    });
+  const detailItems = Object.entries(details)
+    .filter(([key]) => !usedKeys.has(key))
+    .map(([key, detail]) => {
+      usedKeys.add(key);
+      return {
+        key,
+        name: detail.label || key,
+        group: detail.group || "整机",
+        value: metrics[key],
+        unit: detail.unit || "",
+        normalRange: detail.normal_range,
+      };
+    });
+  const rawItems = Object.entries(metrics)
+    .filter(([key]) => !usedKeys.has(key))
+    .map(([key, value]) => ({
+      key,
+      name: key,
+      group: "实时数据",
+      value,
+      unit: "",
+    }));
+  const items = [...preferredItems, ...detailItems, ...rawItems];
   if (items.length) return items;
   return [
-    { key: "temperature", name: "温度", group: "主轴", value: sample?.temperature, unit: "C" },
+    { key: "temperature", name: "温度", group: "主轴", value: sample?.temperature, unit: "°C" },
     { key: "vibration", name: "振动", group: "主轴", value: sample?.vibration, unit: "mm/s" },
     { key: "rpm", name: "转速", group: "主轴", value: sample?.rpm, unit: "rpm" },
   ];
+}
+
+function formatMetricValue(value) {
+  if (value === null || value === undefined) return "未提供";
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return String(value);
+  if (Math.abs(numericValue) >= 100) return numericValue.toFixed(0);
+  if (Number.isInteger(numericValue)) return String(numericValue);
+  return numericValue.toFixed(1);
 }
 
 function MetricCard({ item, result }) {
@@ -1677,7 +2002,7 @@ function MetricCard({ item, result }) {
     || (item.key === "spindle_vibration_rms" && observation.key === "vibration")
   ));
   const level = alertSeverity(anomaly?.alert_level);
-  const display = item.value === null || item.value === undefined ? "未提供" : `${Number(item.value).toFixed(1)}`;
+  const display = formatMetricValue(item.value);
   const range = item.normalRange ? `正常 ${item.normalRange[0]} - ${item.normalRange[1]}` : "";
   return (
     <div className={`metric ${level}`}>

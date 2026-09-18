@@ -1,0 +1,14 @@
+name: manual_search_skill
+version: 1.0
+goal: Search equipment manuals and operating instructions.
+trigger: manual
+steps:
+  - normalize_manual_query
+  - search_manual
+  - fetch_document_or_chunk
+  - validate_evidence
+tools:
+  - search_manual
+  - fetch_document
+  - fetch_chunk
+

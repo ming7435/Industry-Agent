@@ -6,6 +6,7 @@ from typing import Any, Dict, List, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.skills import get_skill_registry
 from app.validator import ReportResult
 
 from .schemas import ReportQuery
@@ -15,6 +16,7 @@ class ReportWorkflowState(TypedDict, total=False):
     agent: Any
     request: Dict[str, Any]
     active_skill: str
+    active_skills: List[str]
     allowed_tools: List[str]
     diagnosis: Dict[str, Any]
     maintenance_plan: Dict[str, Any]
@@ -40,13 +42,17 @@ def initialize(state: ReportWorkflowState) -> Dict[str, Any]:
     return {"request": request, "completeness_findings": [], "validation_findings": [], "route": "load_skill"}
 
 
-def load_skill(_: ReportWorkflowState) -> Dict[str, Any]:
+def load_skill(state: ReportWorkflowState) -> Dict[str, Any]:
+    skills = get_skill_registry().select("report", state.get("request") or {})
+    names = [skill.name for skill in skills] or ["report_master_skill"]
+    default_tools = [
+        "get_diagnosis_record", "get_maintenance_record", "get_workorder", "get_quality_record",
+        "get_trace_summary", "persist_report", "generate_report_file",
+    ]
     return {
-        "active_skill": "report_master_skill",
-        "allowed_tools": [
-            "get_diagnosis_record", "get_maintenance_record", "get_workorder", "get_quality_record",
-            "get_trace_summary", "persist_report", "generate_report_file",
-        ],
+        "active_skill": "+".join(names),
+        "active_skills": names,
+        "allowed_tools": get_skill_registry().merge_tools(skills) or default_tools,
         "route": "collect_sources",
     }
 

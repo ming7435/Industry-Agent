@@ -1,0 +1,13 @@
+name: workorder_skill
+version: 1.0
+goal: Prepare a work order draft with repair and engineering context.
+trigger: workorder
+steps:
+  - build_workorder_draft
+  - attach_repair_target
+  - attach_drawing_context
+  - submit_workorder_draft
+tools:
+  - get_workorder_template
+  - submit_workorder_draft
+

@@ -1,0 +1,16 @@
+name: alarm_diagnosis_skill
+version: 1.0
+goal: Diagnose an event with an alarm code using alarm definitions and runtime evidence.
+trigger: exists(alarm_code)
+steps:
+  - query_alarm_definition
+  - judge_alarm_evidence
+  - enrich_with_history_or_knowledge
+  - diagnose
+  - validate_result
+tools:
+  - get_alarm_definition
+  - get_device_history
+  - get_device_logs
+  - search_knowledge
+

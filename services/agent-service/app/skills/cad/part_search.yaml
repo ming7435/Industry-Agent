@@ -1,0 +1,14 @@
+name: part_search_skill
+version: 1.0
+goal: Find a part or component and its installation location.
+trigger: part_or_component
+steps:
+  - normalize_part_query
+  - query_part
+  - query_relation
+  - resolve_location
+tools:
+  - query_part
+  - query_relation
+  - fetch_engineering_record
+

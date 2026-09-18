@@ -78,10 +78,13 @@ from app.trace import TraceRecorder
 
 
 class ToolRegistry:
-    def __init__(self, base_url: str | None = None, rag_index: RAGIndex | None = None, rag_client: RAGServiceClient | None = None, trace: TraceRecorder | None = None, cad_base_url: str | None = None) -> None:
+    def __init__(self, base_url: str | None = None, rag_index: RAGIndex | None = None, rag_client: RAGServiceClient | None = None, trace: TraceRecorder | None = None, cad_base_url: str | None = None, rag_base_url: str | None = None) -> None:
         self.base_url = base_url
         self.cad_base_url = (cad_base_url or os.getenv("MCP_CAD_URL") or os.getenv("CAD_SERVICE_BASE_URL") or "").rstrip("/")
-        self.rag = rag_client or RAGServiceClient(fallback=rag_index)
+        # A bare registry remains deterministic and local for agent tests and
+        # library callers. The running orchestrator injects the configured
+        # remote RAG URL explicitly.
+        self.rag = rag_client or RAGServiceClient(base_url=rag_base_url or "", fallback=rag_index)
         self.trace = trace
         self.workorder_mcp = WorkOrderMcpAdapter()
         self.report_store: Dict[str, Dict[str, Any]] = {}

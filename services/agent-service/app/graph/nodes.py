@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from time import perf_counter
+import os
 from typing import Any, Dict, Mapping
 from uuid import uuid4
 
@@ -34,7 +35,7 @@ class OrchestratorNodes:
     """为七个核心 Agent 创建 Harness，并暴露业务模块节点。"""
 
     def __init__(self, diagnosis_agent: DiagnosisAgent | None = None, tools: ToolRegistry | None = None) -> None:
-        registry = tools or ToolRegistry()
+        registry = tools or ToolRegistry(rag_base_url=os.getenv("RAG_SERVICE_BASE_URL", ""))
         self.registry = registry
         self.trace = TraceRecorder()
         self._node_started_at: dict[tuple[str, str], float] = {}
@@ -49,7 +50,12 @@ class OrchestratorNodes:
             registry.rag,
             trace=self.trace,
         )
-        diagnosis_runtime = diagnosis_agent or DiagnosisAgent(knowledge_provider=self._diagnosis_knowledge_request)
+        # Diagnosis must share the orchestrator's registry so its tool calls
+        # use the same remote RAG, PLC/MCP adapters, and trace recorder.
+        diagnosis_runtime = diagnosis_agent or DiagnosisAgent(
+            tools=registry,
+            knowledge_provider=self._diagnosis_knowledge_request,
+        )
         if getattr(diagnosis_runtime, "knowledge_provider", None) is None:
             diagnosis_runtime.knowledge_provider = self._diagnosis_knowledge_request
         if hasattr(diagnosis_runtime.tools, "trace"):

@@ -1,0 +1,13 @@
+name: no_alarm_diagnosis_skill
+version: 1.0
+goal: Diagnose metric abnormalities when no alarm code is available.
+trigger: no_alarm_code
+steps:
+  - inspect_abnormal_metrics
+  - query_context_if_needed
+  - output_low_confidence_if_evidence_insufficient
+tools:
+  - get_device_history
+  - get_device_logs
+  - search_knowledge
+  - get_device_status

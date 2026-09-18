@@ -454,6 +454,7 @@ class DiagnosisAgent:
             diagnosis_run_id=diagnosis_run_id,
             trace_id=state.trace_id,
             active_skill=state.active_skill,
+            active_skills=list(state.active_skills or [state.active_skill]),
             validation_errors=list(state.validation_errors),
             stop_reason=state.stop_reason,
         )
@@ -639,6 +640,7 @@ class DiagnosisAgent:
             diagnosis_run_id=diagnosis_run_id,
             trace_id=state.trace_id,
             active_skill=state.active_skill,
+            active_skills=list(state.active_skills or [state.active_skill]),
             validation_errors=list(state.validation_errors),
             stop_reason=state.stop_reason,
         )

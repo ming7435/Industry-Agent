@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from threading import Lock
 from typing import Any, Protocol
 
@@ -187,6 +188,10 @@ class BGEM3EmbeddingClient:
         return normalized_vectors
 
     def _load_model(self) -> Any:
+        model_name = self.config.model_path or self.config.model_name
+        if self.config.model_path and (Path(self.config.model_path) / "onnx" / "model.onnx").is_file():
+            return _OnnxEmbeddingModel(self.config.model_path)
+
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
@@ -196,13 +201,11 @@ class BGEM3EmbeddingClient:
             ) from exc
 
         try:
-            model_name = self.config.model_path or self.config.model_name
             return SentenceTransformer(model_name, local_files_only=bool(self.config.model_path))
         except TypeError:
             # Older sentence-transformers versions do not expose local_files_only.
             # A local path is still passed directly, so no model name resolution is needed.
             try:
-                model_name = self.config.model_path or self.config.model_name
                 return SentenceTransformer(model_name)
             except Exception as exc:
                 raise EmbeddingError(
@@ -215,6 +218,72 @@ class BGEM3EmbeddingClient:
             ) from exc
 
 
+class _OnnxEmbeddingModel:
+    """Small SentenceTransformer-compatible wrapper for local BGE ONNX exports.
+
+    The project normally uses the PyTorch SentenceTransformer checkpoint. Some
+    Windows deployments already have the official ONNX export, however, and it
+    produces the same 1024-dimensional sentence embeddings. Keeping this
+    adapter behind ``BGEM3EmbeddingClient`` preserves the existing ingestion and
+    retrieval contracts while allowing those deployments to run offline.
+    """
+
+    def __init__(self, model_path: str) -> None:
+        try:
+            import numpy as np
+            import onnxruntime as ort
+            from transformers import AutoTokenizer
+        except ImportError as exc:
+            raise EmbeddingError(
+                "Local BGE ONNX models require onnxruntime and transformers."
+            ) from exc
+
+        self._np = np
+        self._session = ort.InferenceSession(
+            str(Path(model_path) / "onnx" / "model.onnx"),
+            providers=["CPUExecutionProvider"],
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            local_files_only=True,
+        )
+        self._input_names = {item.name for item in self._session.get_inputs()}
+
+    def encode(
+        self,
+        texts: list[str],
+        *,
+        normalize_embeddings: bool = True,
+        convert_to_numpy: bool = False,
+        show_progress_bar: bool = False,
+        **_: Any,
+    ) -> list[Any]:
+        del convert_to_numpy, show_progress_bar
+        if not texts:
+            return []
+
+        encoded = self._tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            # Ingestion chunks are capped at 1200 characters. Keeping the
+            # ONNX sequence length bounded avoids quadratic CPU work from the
+            # model's native 8192-token context window.
+            max_length=512,
+            return_tensors="np",
+        )
+        feed = {
+            name: encoded[name].astype("int64")
+            for name in self._input_names
+            if name in encoded
+        }
+        vectors = self._session.run(["sentence_embedding"], feed)[0].astype("float32")
+        if normalize_embeddings:
+            norms = self._np.linalg.norm(vectors, axis=1, keepdims=True)
+            vectors = vectors / self._np.where(norms == 0, 1, norms)
+        return list(vectors)
+
+
 class QueryEmbedder:
     """Thin, synchronous wrapper turning any embedding client into a query encoder."""
 
@@ -223,7 +292,7 @@ class QueryEmbedder:
         if client is None:
             client = BGEM3EmbeddingClient(
                 EmbeddingConfig(
-                    model_name=settings.embedding_model_path,
+                    model_path=settings.embedding_model_path,
                     batch_size=settings.embedding_batch_size,
                     min_characters=settings.embedding_min_characters,
                     normalize_embeddings=settings.embedding_normalize,

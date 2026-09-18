@@ -6,6 +6,7 @@ from typing import Any, Dict, List, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.skills import get_skill_registry
 from app.validator import CADComponent, CADResult
 
 from .schemas import CADQuery
@@ -19,6 +20,7 @@ class CADGraphState(TypedDict, total=False):
     agent: Any
     request: Dict[str, Any]
     active_skill: str
+    active_skills: List[str]
     allowed_tools: List[str]
     pending_tools: List[str]
     query_type: str
@@ -44,7 +46,10 @@ def initialize(state: CADGraphState) -> Dict[str, Any]:
 
 
 def load_skill(state: CADGraphState) -> Dict[str, Any]:
-    return {"active_skill": "cad_master_skill", "allowed_tools": list(CAD_TOOLS), "route": "resolve_component"}
+    skills = get_skill_registry().select("cad", state.get("request") or {})
+    names = [skill.name for skill in skills] or ["cad_master_skill"]
+    allowed_tools = get_skill_registry().merge_tools(skills)
+    return {"active_skill": "+".join(names), "active_skills": names, "allowed_tools": allowed_tools or list(CAD_TOOLS), "route": "resolve_component"}
 
 
 def resolve_component(state: CADGraphState) -> Dict[str, Any]:

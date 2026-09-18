@@ -1,0 +1,12 @@
+name: intent_routing_skill
+version: 1.0
+goal: Classify an industrial operation request and select the target agent.
+trigger: default
+steps:
+  - normalize_request
+  - classify_intent
+  - select_target_agent
+tools: []
+required_inputs:
+  - user_text
+

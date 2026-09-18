@@ -1,0 +1,12 @@
+name: trace_report_skill
+version: 1.0
+goal: Summarize agent execution traces and tool evidence in a report.
+trigger: trace
+steps:
+  - collect_trace
+  - summarize_trace
+  - attach_source_refs
+tools:
+  - get_trace_summary
+  - persist_report
+

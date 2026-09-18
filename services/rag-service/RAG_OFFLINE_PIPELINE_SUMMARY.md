@@ -542,12 +542,7 @@ BGE-M3 适合本项目的原因：
 
 Milvus 入库层负责创建 collection、写入向量记录、flush 数据，并支持删除旧 collection 后重建。
 
-当前支持两种入库方式：
-
-1. 所有 PDF 写入一个 collection
-2. 每个 PDF 写入一个独立 collection
-
-可以通过 `--collection-per-document` 选择第二种；不加该参数时写入统一 collection：
+当前固定按文档写入独立 collection：文件名命中业务关键词时路由到对应业务 collection，其他文件生成带格式和路径摘要的独立 collection。
 
 ```text
 六个 PDF -> 六个 Milvus collection
@@ -580,7 +575,7 @@ schema 字段包括：
 
 ### 10.4 六个 collection 对应关系
 
-启用 `--collection-per-document` 后，collection 数量由实际文件数量决定。文件名中包含
+固定按文档分 collection 后，collection 数量由实际文件数量决定。文件名中包含
 BOM、SOP、保养维护、安全规程、报警码、故障诊断时，会路由到对应业务 collection；
 其他文件会生成带格式和路径摘要的独立 collection。
 
@@ -679,8 +674,7 @@ MySQL processing
 python scripts/ingest_to_milvus.py \
   --data-dir data/SHUJU \
   --milvus-uri http://localhost:19530 \
-  --drop-all-collections \
-  --collection-per-pdf
+  --drop-all-collections
 ```
 
 如果需要启用 Qwen-VL 视觉识别：
@@ -690,7 +684,6 @@ python scripts/ingest_to_milvus.py \
   --data-dir data/SHUJU \
   --milvus-uri http://localhost:19530 \
   --drop-all-collections \
-  --collection-per-pdf \
   --vision
 ```
 
@@ -699,7 +692,7 @@ python scripts/ingest_to_milvus.py \
 - 一条命令完成完整离线入库
 - 可以重复执行，方便重建知识库
 - 可以选择是否启用视觉识别
-- 可以选择单 collection 或每 PDF 一个 collection
+- 固定按文档类型拆分 Milvus collection
 - 适合后续接入定时任务或离线批处理任务
 
 ## 13. 测试与验证

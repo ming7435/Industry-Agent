@@ -11,8 +11,8 @@ One service, two halves that share a single configuration file
 The online half adapts to the data the offline half already produces -- no
 schema change, no re-ingestion:
 
-* the same Milvus collection (`settings.milvus_collection`, default
-  `industry_rag_chunks`, the offline writer's default);
+* the same Milvus collections derived by the offline writer (for example
+  `industry_rag_bom`, `industry_rag_sop`, `industry_rag_alarm_codes`);
 * the same embedder factory (`app.embedding.model.get_embedder`), so documents and
   queries share one set of weights;
 * the corpus label (`alarms` / `cases` / `manuals` / `sop`) is **derived at read
@@ -23,7 +23,7 @@ schema change, no re-ingestion:
 ```
 documents (PDF/DOCX/XLSX/CSV/TXT/MD/images/CAD)
         │  app.ingestion → app.clean → app.chunk → app.embedding
-        ├──────────────► Milvus  collection  ──► dense route  (app.milvus.retriever)
+        ├──────────────► Milvus  collections ─► dense route  (app.milvus.retriever)
         ├──────────────► Whoosh  index       ──► BM25  route  (app.whoosh.retriever)
         └──────────────► MySQL   metadata    ──► ingestion bookkeeping
                                                   │
@@ -73,8 +73,11 @@ python scripts/build_whoosh_index.py
 python scripts/ingest_to_milvus.py --vision            # Qwen-VL for images / scanned pages
 python scripts/ingest_to_milvus.py --no-mysql          # skip MySQL bookkeeping
 python scripts/ingest_to_milvus.py --drop-all-collections
-python scripts/ingest_to_milvus.py --collection-per-document   # one collection per file
 ```
+
+Offline ingestion always writes each document to its derived Milvus collection. Set
+`MILVUS_COLLECTIONS=<name1>,<name2>,...` on the online side to query multiple
+collections in one dense search.
 
 ### How the online side reads the offline data
 
@@ -86,9 +89,6 @@ then the parent directory of `source_path`, then a keyword in `source_name`
 Filters follow the same split: `source_name` / `source_format` / `chunk_type` /
 `quality` are real Milvus columns and are pushed down, `corpus` /
 `device_model` / `error_code` are applied in Python on the metadata.
-
-Ingesting into a different collection is just `MILVUS_COLLECTION=<name>` plus
-`--collection <name>`; nothing else needs to change.
 
 ## Online: run the API
 

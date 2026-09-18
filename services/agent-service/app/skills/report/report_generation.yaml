@@ -1,0 +1,19 @@
+name: report_generation_skill
+version: 1.0
+goal: Generate a complete industrial incident or maintenance report.
+trigger: default
+steps:
+  - collect_sources
+  - check_completeness
+  - compose_report
+  - validate_report
+  - persist_report
+tools:
+  - get_diagnosis_record
+  - get_maintenance_record
+  - get_workorder
+  - get_quality_record
+  - get_trace_summary
+  - persist_report
+  - generate_report_file
+

@@ -44,7 +44,11 @@ _PAGE_SIZE = 1000
 """Number of rows fetched per Milvus ``query`` call."""
 
 
-def iter_collection_rows(collection_name: str, uri: str | None = None) -> list[dict]:
+def iter_collection_rows(
+    collection_name: str,
+    uri: str | None = None,
+    database: str | None = None,
+) -> list[dict]:
     """Fetch every chunk row of a collection.
 
     Args:
@@ -62,7 +66,10 @@ def iter_collection_rows(collection_name: str, uri: str | None = None) -> list[d
     except (ImportError, ModuleNotFoundError) as exc:
         raise RuntimeError("pymilvus is not installed") from exc
 
-    client = MilvusClient(uri=uri or settings.milvus_uri)
+    client = MilvusClient(
+        uri=uri or settings.milvus_uri,
+        db_name=database or settings.milvus_database,
+    )
     if not client.has_collection(collection_name):
         raise RuntimeError(f"collection {collection_name!r} does not exist at {uri or settings.milvus_uri}")
 
@@ -107,6 +114,7 @@ def rebuild(
     collection_name: str | None = None,
     index_dir: str | None = None,
     uri: str | None = None,
+    database: str | None = None,
 ) -> int:
     """Rebuild the BM25 index from Milvus.
 
@@ -121,7 +129,7 @@ def rebuild(
         The number of indexed documents.
     """
     target_collection = collection_name or settings.milvus_collection
-    rows = iter_collection_rows(target_collection, uri)
+    rows = iter_collection_rows(target_collection, uri, database)
     if not rows:
         logger.warning("collection={} is empty, nothing to index", target_collection)
         return 0
@@ -140,9 +148,10 @@ def main() -> int:
     parser.add_argument("--collection", default=settings.milvus_collection)
     parser.add_argument("--index-dir", default=settings.whoosh_index_dir)
     parser.add_argument("--milvus-uri", default=settings.milvus_uri)
+    parser.add_argument("--milvus-database", default=settings.milvus_database)
     args = parser.parse_args()
 
-    written = rebuild(args.collection, args.index_dir, args.milvus_uri)
+    written = rebuild(args.collection, args.index_dir, args.milvus_uri, args.milvus_database)
     print(f"Whoosh index rebuilt: documents={written} total={count_documents(args.index_dir)}")
     return 0
 

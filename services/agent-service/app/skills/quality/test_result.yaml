@@ -1,0 +1,15 @@
+name: test_result_skill
+version: 1.0
+goal: Compare pre-repair and post-repair metrics and validate test results.
+trigger: test
+steps:
+  - collect_pre_post_metrics
+  - compare_metrics
+  - verify_sop
+  - validate_result
+tools:
+  - get_device_history
+  - compare_pre_post_metrics
+  - get_repair_feedback
+  - check_workorder_compliance
+

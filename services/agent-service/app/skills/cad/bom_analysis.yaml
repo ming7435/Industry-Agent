@@ -1,0 +1,17 @@
+name: bom_analysis_skill
+version: 1.0
+goal: Analyze BOM entries and component relationships.
+trigger: bom
+steps:
+  - query_part
+  - query_bom
+  - query_relation
+  - query_drawing
+  - validate_relation
+tools:
+  - query_part
+  - query_bom
+  - query_relation
+  - query_drawing
+  - fetch_engineering_record
+

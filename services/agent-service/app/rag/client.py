@@ -17,16 +17,26 @@ class RAGServiceClient:
     backend = "rag-service"
 
     def __init__(self, base_url: str | None = None, fallback: RAGIndex | None = None) -> None:
-        self.base_url = (base_url or os.getenv("RAG_SERVICE_BASE_URL", "")).strip().rstrip("/")
+        # Remote access is an explicit application-wiring decision. Keeping a
+        # bare client local prevents a previously loaded project .env from
+        # changing isolated agent/library behavior; the orchestrator injects
+        # RAG_SERVICE_BASE_URL when it builds the running service graph.
+        configured_base_url = "" if base_url is None else base_url
+        self.base_url = str(configured_base_url).strip().rstrip("/")
         self.timeout = float(os.getenv("RAG_SERVICE_TIMEOUT_SECONDS", "15"))
         self.allow_fallback = os.getenv("RAG_ALLOW_LOCAL_FALLBACK", "true").lower() in {"1", "true", "yes"}
         self.fallback = fallback or build_default_index()
 
     def search(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None) -> Dict[str, Any]:
-        payload = {"query": query, "limit": limit, "filters": dict(filters or {})}
+        selected_filters = dict(filters or {})
+        payload = {
+            "query": query,
+            "top_n": limit,
+            "filters": self._normalize_remote_filters(selected_filters),
+        }
         if self.base_url:
             try:
-                result = self._post("/search", payload)
+                result = self._normalize_remote_search(self._post("/search", payload), query, selected_filters)
                 result.setdefault("backend", "remote-rag-service")
                 result.setdefault("connection_status", "connected")
                 result.setdefault("degraded", False)
@@ -46,6 +56,76 @@ class RAGServiceClient:
         result["remote_base_url"] = ""
         result["warning"] = "RAG_SERVICE_BASE_URL 未配置，当前使用本地演示知识索引。"
         return result
+
+    @staticmethod
+    def _normalize_remote_filters(filters: Mapping[str, Any]) -> Dict[str, Any]:
+        """Map Agent knowledge filters to fields indexed by the RAG service."""
+
+        corpus_by_type = {
+            "alarm": "alarms",
+            "case": "cases",
+            "sop": "sop",
+            "manual": "manuals",
+            "bom": "bom",
+        }
+        result: Dict[str, Any] = {}
+        knowledge_type = str(filters.get("knowledge_type") or "").strip().lower()
+        if knowledge_type in corpus_by_type:
+            result["corpus"] = corpus_by_type[knowledge_type]
+        for key in ("corpus", "source_format", "source_name", "project_id", "tenant_id"):
+            value = filters.get(key)
+            if value not in (None, "", [], {}):
+                result[key] = value
+        # alarm_code, component and device_id remain in the natural-language
+        # query because the current chunk metadata does not index them as
+        # top-level filter fields.
+        return result
+
+    @staticmethod
+    def _normalize_remote_search(
+        result: Mapping[str, Any],
+        query: str,
+        filters: Mapping[str, Any] | None,
+    ) -> Dict[str, Any]:
+        """Adapt the standalone RAG ``hits`` contract to Agent ``documents``.
+
+        The retrieval service intentionally exposes chunk-oriented fields while
+        the Agent tools expose document-oriented fields. Keeping this adapter at
+        the HTTP boundary lets both services retain their native contracts.
+        """
+
+        payload = dict(result)
+        documents = []
+        for hit in result.get("hits") or []:
+            if not isinstance(hit, Mapping):
+                continue
+            metadata = dict(hit.get("metadata") or {})
+            chunk_id = str(hit.get("chunk_id") or hit.get("id") or "")
+            source = str(
+                metadata.get("source_name")
+                or metadata.get("source_path")
+                or hit.get("source")
+                or "remote-rag-service"
+            )
+            documents.append(
+                {
+                    "document_id": chunk_id,
+                    "chunk_id": chunk_id,
+                    "title": source,
+                    "content": str(hit.get("text") or ""),
+                    "source": source,
+                    "score": hit.get("score", 0.0),
+                    "metadata": metadata,
+                }
+            )
+        payload["query"] = str(result.get("query") or query)
+        payload["filters"] = dict(filters or {})
+        payload["documents"] = documents
+        payload["total"] = len(documents)
+        payload["found"] = bool(documents)
+        payload["success"] = True
+        payload["source"] = "remote-rag-service"
+        return payload
 
     def ingest_jsonl(self, path: str, collection: str = "") -> Dict[str, Any]:
         payload = {"path": path, "collection": collection}
@@ -93,7 +173,10 @@ class RAGServiceClient:
     def status(self) -> Dict[str, Any]:
         if self.base_url:
             try:
-                result = self._get("/status")
+                # The standalone RAG service exposes readiness as /health.
+                # Keep the agent-facing status shape while using that public
+                # contract instead of relying on a non-existent /status route.
+                result = self._get("/health")
                 result.setdefault("backend", "remote-rag-service")
                 result["connected"] = True
                 result["degraded"] = False

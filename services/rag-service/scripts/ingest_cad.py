@@ -2,7 +2,7 @@
 
 Pipeline for CAD drawings:
     DXF -> ezdxf parse -> CAD semantic blocks -> industrial chunks ->
-    BGE-M3 vectors -> single Milvus collection
+    BGE-M3 vectors -> Milvus collections by document type
                     -> MinIO/S3 original file upload
                     -> MySQL drawing/version/layer/entity/annotation/relation rows
 """
@@ -33,7 +33,6 @@ from ingest_to_milvus import ingest_directory  # noqa: E402
 LOGGER = logging.getLogger("rag_cad_ingest")
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "SHUJU"
 DEFAULT_EXTENSIONS = ("dxf", "dwg")
-DEFAULT_COLLECTION = "cad_semantic_chunks"
 
 
 def _env(name: str, fallback: str) -> str:
@@ -71,10 +70,19 @@ def reset_mysql_database(config: MySQLConfig) -> str:
     return config.database
 
 
-def reset_milvus_collections(milvus_uri: str) -> list[str]:
-    """Drop every existing Milvus collection so only the CAD one remains."""
+def reset_milvus_collections(
+    milvus_uri: str,
+    milvus_database: str = "industry_rag_documents",
+) -> list[str]:
+    """Drop every existing Milvus collection before rebuilding CAD collections."""
 
-    writer = MilvusVectorWriter(MilvusConfig(uri=milvus_uri, collection_name="__cad_reset__"))
+    writer = MilvusVectorWriter(
+        MilvusConfig(
+            uri=milvus_uri,
+            database=milvus_database,
+            collection_name="__cad_reset__",
+        )
+    )
     dropped = writer.drop_all_collections()
     if dropped:
         LOGGER.warning("Dropped %s Milvus collections: %s", len(dropped), dropped)
@@ -93,8 +101,8 @@ def ensure_object_bucket() -> str:
 def run_ingestion(
     data_dir: Path = DEFAULT_DATA_DIR,
     *,
-    collection_name: str = DEFAULT_COLLECTION,
     milvus_uri: str = "http://127.0.0.1:19530",
+    milvus_database: str = "industry_rag_documents",
     extensions: tuple[str, ...] = DEFAULT_EXTENSIONS,
     embedding_model: str = "BAAI/bge-m3",
     embedding_model_path: str | None = None,
@@ -112,14 +120,14 @@ def run_ingestion(
     if reset_mysql:
         reset_mysql_database(mysql_config)
     if reset_milvus:
-        reset_milvus_collections(milvus_uri)
+        reset_milvus_collections(milvus_uri, milvus_database)
     if upload_originals:
         ensure_object_bucket()
 
     result = ingest_directory(
         data_dir,
-        collection_name=collection_name,
         milvus_uri=milvus_uri,
+        milvus_database=milvus_database,
         extensions=list(extensions),
         embedding_model=embedding_model,
         embedding_model_path=embedding_model_path,
@@ -135,7 +143,7 @@ def run_ingestion(
         continue_on_error=False,
     )
     result["mysql_database"] = mysql_config.database
-    result["milvus_collection"] = collection_name
+    result["milvus_database"] = milvus_database
     result["extensions"] = ",".join(extensions)
     return result
 
@@ -143,8 +151,8 @@ def run_ingestion(
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ingest DXF/DWG drawings into MySQL, MinIO, and Milvus.")
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--collection", default=None, help="Milvus collection for CAD semantic chunks.")
     parser.add_argument("--milvus-uri", default=None)
+    parser.add_argument("--milvus-database", default=None)
     parser.add_argument(
         "--extensions",
         default=",".join(DEFAULT_EXTENSIONS),
@@ -170,7 +178,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--reset-milvus",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Drop every existing Milvus collection so only the CAD collection remains.",
+        help="Drop every existing Milvus collection before rebuilding CAD collections.",
     )
     parser.add_argument(
         "--upload-originals",
@@ -194,14 +202,14 @@ def main() -> int:
     )
     load_service_env()
     extensions = tuple(item.strip() for item in args.extensions.split(",") if item.strip())
-    collection_name = args.collection or _env("MILVUS_COLLECTION", DEFAULT_COLLECTION)
     milvus_uri = args.milvus_uri or _env("MILVUS_URI", "http://127.0.0.1:19530")
+    milvus_database = args.milvus_database or _env("MILVUS_DATABASE", "industry_rag_documents")
     embedding_model_path = args.embedding_model_path or os.getenv("EMBEDDING_MODEL_PATH") or None
 
     result = run_ingestion(
         args.data_dir,
-        collection_name=collection_name,
         milvus_uri=milvus_uri,
+        milvus_database=milvus_database,
         extensions=extensions,
         embedding_model=args.embedding_model,
         embedding_model_path=embedding_model_path,

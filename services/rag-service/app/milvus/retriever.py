@@ -210,6 +210,7 @@ class DenseRetriever:
     def __init__(
         self,
         uri: str | None = None,
+        database: str | None = None,
         host: str | None = None,
         port: int | None = None,
         collection_name: str | None = None,
@@ -224,6 +225,7 @@ class DenseRetriever:
 
         Args:
             uri: Milvus URI; defaults to ``settings.milvus_uri``.
+            database: Milvus database; defaults to ``settings.milvus_database``.
             host: Milvus host (alternative to ``uri``).
             port: Milvus port (alternative to ``uri``).
             collection_name: Primary collection to query; defaults to
@@ -243,6 +245,7 @@ class DenseRetriever:
             client: Pre-built Milvus client, mainly for tests.
         """
         self.uri = uri or settings.milvus_uri
+        self.database = database or settings.milvus_database
         self.host = host or settings.milvus_host
         self.port = int(port or settings.milvus_port)
         primary = collection_name or collection or settings.milvus_collection
@@ -273,10 +276,11 @@ class DenseRetriever:
                 from pymilvus import MilvusClient
             except (ImportError, ModuleNotFoundError) as exc:
                 raise RuntimeError("pymilvus is not installed") from exc
-            self._client = MilvusClient(uri=self.uri)
+            self._client = MilvusClient(uri=self.uri, db_name=self.database)
             logger.info(
-                "milvus client created uri={} collection={}",
+                "milvus client created uri={} database={} collection={}",
                 self.uri,
+                self.database,
                 self.collection_name,
             )
         return self._client

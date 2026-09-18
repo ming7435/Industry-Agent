@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Mapping, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.skills import get_skill_registry
 from app.validator import QualityResult
 
 from .schemas import QualityQuery
@@ -16,6 +17,7 @@ class QualityWorkflowState(TypedDict, total=False):
     agent: Any
     request: Dict[str, Any]
     active_skill: str
+    active_skills: List[str]
     allowed_tools: List[str]
     workorder: Dict[str, Any]
     repair_feedback: Dict[str, Any]
@@ -39,14 +41,18 @@ def initialize(state: QualityWorkflowState) -> Dict[str, Any]:
     return {"request": request, "validation_findings": [], "route": "load_skill"}
 
 
-def load_skill(_: QualityWorkflowState) -> Dict[str, Any]:
+def load_skill(state: QualityWorkflowState) -> Dict[str, Any]:
+    skills = get_skill_registry().select("quality", state.get("request") or {})
+    names = [skill.name for skill in skills] or ["quality_master_skill"]
+    default_tools = [
+        "get_workorder", "get_repair_feedback", "get_device_status", "get_device_history",
+        "get_active_alarms", "check_workorder_compliance", "verify_alarm_clearance",
+        "compare_pre_post_metrics", "close_workorder", "reopen_workorder",
+    ]
     return {
-        "active_skill": "quality_master_skill",
-        "allowed_tools": [
-            "get_workorder", "get_repair_feedback", "get_device_status", "get_device_history",
-            "get_active_alarms", "check_workorder_compliance", "verify_alarm_clearance",
-            "compare_pre_post_metrics", "close_workorder", "reopen_workorder",
-        ],
+        "active_skill": "+".join(names),
+        "active_skills": names,
+        "allowed_tools": get_skill_registry().merge_tools(skills) or default_tools,
         "route": "load_workorder",
     }
 

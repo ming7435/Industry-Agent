@@ -17,6 +17,7 @@ class MilvusConfig:
     """Milvus connection and collection settings."""
 
     uri: str = "http://localhost:19530"
+    database: str = "industry_rag_documents"
     collection_name: str = DEFAULT_COLLECTION_NAME
     vector_field: str = DEFAULT_VECTOR_FIELD
     primary_field: str = DEFAULT_PRIMARY_FIELD
@@ -28,6 +29,8 @@ class MilvusConfig:
     def __post_init__(self) -> None:
         if not self.uri.strip():
             raise ValueError("uri must not be empty.")
+        if not self.database.strip():
+            raise ValueError("database must not be empty.")
         if not self.collection_name.strip():
             raise ValueError("collection_name must not be empty.")
         if self.batch_size <= 0:

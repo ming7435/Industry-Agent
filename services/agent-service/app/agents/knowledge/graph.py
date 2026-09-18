@@ -6,6 +6,7 @@ from typing import Any, Dict, List, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.skills import get_skill_registry
 from app.validator import KnowledgeResult
 
 from .schemas import KnowledgeQuery
@@ -28,6 +29,7 @@ class KnowledgeGraphState(TypedDict, total=False):
     agent: Any
     request: Dict[str, Any]
     active_skill: str
+    active_skills: List[str]
     allowed_tools: List[str]
     query_type: str
     retrieval_plan: List[str]
@@ -61,9 +63,13 @@ def initialize(state: KnowledgeGraphState) -> Dict[str, Any]:
 
 
 def load_skill(state: KnowledgeGraphState) -> Dict[str, Any]:
+    skills = get_skill_registry().select("knowledge", state.get("request") or {})
+    names = [skill.name for skill in skills] or ["knowledge_master_skill"]
+    allowed_tools = get_skill_registry().merge_tools(skills)
     return {
-        "active_skill": "knowledge_master_skill",
-        "allowed_tools": list(KNOWLEDGE_TOOLS),
+        "active_skill": "+".join(names),
+        "active_skills": names,
+        "allowed_tools": allowed_tools or list(KNOWLEDGE_TOOLS),
         "route": "classify_query",
     }
 

@@ -1,0 +1,15 @@
+name: closure_report_skill
+version: 1.0
+goal: Produce a repair closure report with diagnosis, work order, and quality results.
+trigger: closure
+steps:
+  - collect_sources
+  - validate_closure
+  - compose_report
+  - persist_report
+tools:
+  - get_diagnosis_record
+  - get_maintenance_record
+  - get_workorder
+  - get_quality_record
+  - persist_report
