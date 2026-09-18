@@ -161,6 +161,16 @@ const diagnosisStatusLabels = {
 
 const diagnosisEvidenceLabels = {
   get_alarm_definition: "报警定义库",
+  get_device_history: "历史趋势查询",
+  get_device_logs: "设备日志查询",
+  get_device_status: "实时设备状态",
+  get_production_status: "生产状态查询",
+  search_knowledge: "维修知识检索",
+  search_alarm_knowledge: "报警知识检索",
+  search_sop: "维修 SOP 检索",
+  search_manual: "维修手册检索",
+  search_fault_cases: "历史故障案例检索",
+  search_semantic_memory: "历史经验检索",
 };
 
 const workorderStatusLabels = {
@@ -205,7 +215,43 @@ const equipmentValueLabels = {
   overload: "过载",
   high_pressure_low: "高压不足",
   vibration_high: "振动过高",
+  fault_injection: "故障模拟中",
+  processing: "加工中",
+  fault: "故障停机",
+  emergency_stop: "急停状态",
+  paused: "已暂停",
 };
+
+const cycleStateLabels = {
+  idle: "待机",
+  ready: "准备就绪",
+  running: "运行中",
+  processing: "加工中",
+  paused: "已暂停",
+  stopped: "已停止",
+  completed: "加工完成",
+  fault: "故障停机",
+  fault_injection: "故障模拟中",
+  emergency_stop: "急停状态",
+  offline: "离线",
+};
+
+function displayCycleState(sample) {
+  return sample?.cycle_state_label || labelFor(cycleStateLabels, sample?.cycle_state) || "未知状态";
+}
+
+function displayToolName(item) {
+  return labelFor(diagnosisEvidenceLabels, item?.name || item?.tool) || "诊断工具";
+}
+
+function displayToolSummary(item) {
+  const result = item?.result || {};
+  if (item?.name === "get_alarm_definition") return result.name || "已查询报警定义";
+  if (item?.name === "get_device_history") return result.trend ? "已获取历史趋势" : "已获取历史采样";
+  if (item?.name === "get_device_logs") return result.logs?.length ? `已获取 ${result.logs.length} 条设备日志` : "未发现可用设备日志";
+  if (item?.name?.startsWith("search_")) return result.documents?.length ? `命中 ${result.documents.length} 条知识证据` : "未命中知识证据";
+  return item?.success === false ? "工具执行失败" : "已完成取证";
+}
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -1755,6 +1801,7 @@ function MachineDetailHeader({ machine, isLiveMachine, sample, result, healthTex
       </div>
       <div className="machine-detail-stats">
         <div><span>状态</span><strong className={status}>{machineStatusLabel(status)}</strong></div>
+        <div><span>运行阶段</span><strong>{isLiveMachine ? displayCycleState(sample) : "--"}</strong></div>
         <div><span>告警</span><strong>{isLiveMachine ? (sample?.alarm_code || "无") : "--"}</strong></div>
         <div><span>健康度</span><strong>{isLiveMachine ? healthText : "--"}</strong></div>
       </div>
@@ -1766,6 +1813,7 @@ function StatusStrip({ snapshot, sample, runner, healthText }) {
   const items = [
     ["监测状态", runner.enabled ? "开启" : "暂停"],
     ["设备状态", labelFor(statusLabels, sample?.status)],
+    ["运行阶段", displayCycleState(sample)],
     ["当前告警", sample?.alarm_code || "无"],
     ["采样次数", snapshot?.result_count ?? "--"],
     ["告警事件次数", snapshot?.alarm_event_count ?? "--"],
@@ -2113,7 +2161,7 @@ function DiagnosisResult({ latest }) {
     ? "--"
     : `${(Number(latest.confidence) * 100).toFixed(0)}%`;
   const definition = latest.alarm_definition || {};
-  const evidence = (latest.tool_calls || []).map((item) => labelFor(diagnosisEvidenceLabels, item.name)).join("、") || "等待诊断依据";
+  const evidence = (latest.tool_calls || []).map(displayToolName).join("、") || "等待诊断依据";
   const cells = [
     ["设备", latest.device_id || "--"],
     ["诊断任务", latest.task_id || "--"],
@@ -2169,7 +2217,7 @@ function DiagnosisWorkspace({ snapshot }) {
         </section>
         <section className="panel module-panel">
           <div className="panel-heading"><div><span className="eyebrow">工具证据</span><h2>Reason · Act · Observe</h2></div></div>
-          <TraceList items={evidence.map((item) => ({ event: item.name, agent: "Diagnosis Agent", tool: item.name, arguments: item.arguments }))} />
+          <TraceList items={evidence.map((item) => ({ event: displayToolName(item), summary: displayToolSummary(item), agent: "Diagnosis Agent", tool: item.name }))} />
           <DocumentList documents={knowledge.documents || []} />
         </section>
       </div>
@@ -2551,7 +2599,7 @@ function ExperienceList({ items }) {
 
 function TraceList({ items }) {
   if (!items.length) return <div className="empty-state">暂无调用轨迹</div>;
-  return <div className="trace-list">{items.slice(0, 12).map((item, index) => <div key={`${item.event || "trace"}-${index}`}><strong>{item.event}</strong><span>{item.agent || item.tool || item.mcp_server || "runtime"}</span></div>)}</div>;
+  return <div className="trace-list">{items.slice(0, 12).map((item, index) => <div key={`${item.event || "trace"}-${index}`}><strong>{item.event}</strong><span>{item.summary || item.agent || item.tool || item.mcp_server || "runtime"}</span></div>)}</div>;
 }
 
 function JsonBlock({ value }) {

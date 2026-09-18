@@ -100,6 +100,13 @@ def chinese_text(text: str) -> str:
     """清理模型输出中的内部英文枚举。"""
 
     replacements = {
+        "Pointer with value zero is freed: {hex}": "控制器检测到空指针被释放（底层软件指针异常）",
+        "Wrong memory pointer is freed: {hex}": "控制器检测到错误内存指针被释放（底层软件内存异常）",
+        "The pointer value is 0": "控制器检测到指针值为 0（底层软件指针异常）",
+        "An error occurred in controller software.": "控制器软件发生错误。",
+        "fault_injection": "故障模拟中",
+        "processing": "加工中",
+        "emergency_stop": "急停状态",
         "high severity": "高级故障等级",
         "intermediate": "中级报警",
         "critical": "严重故障",

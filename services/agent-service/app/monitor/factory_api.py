@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .models import AlertLevel, DeviceSample
+from .presentation import cycle_state_label
 
 
 class FactoryApiError(RuntimeError):
@@ -116,6 +117,7 @@ class FactorySnapshotProvider:
         scenario = self._find_matching_scenario(payload, active_scenario, alarm_code)
         alarm_level = self._map_scenario_severity(scenario)
 
+        cycle_state = monitor.get("cycle_state") or device.get("cycle_state")
         return DeviceSample(
             device_id=actual_device_id,
             timestamp=self._extract_sample_timestamp(payload, monitor, device),
@@ -128,7 +130,8 @@ class FactorySnapshotProvider:
             alarm_level=alarm_level,
             status=monitor.get("status") or device.get("status"),
             mode=monitor.get("mode") or device.get("mode"),
-            cycle_state=monitor.get("cycle_state") or device.get("cycle_state"),
+            cycle_state=cycle_state,
+            cycle_state_label=cycle_state_label(cycle_state),
             health_score=self._to_optional_number(
                 monitor.get("health_score")
                 if monitor.get("health_score") is not None

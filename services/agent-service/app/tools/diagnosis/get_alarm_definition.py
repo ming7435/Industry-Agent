@@ -80,6 +80,27 @@ ALARM_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "description": "主轴振动进入高风险区，可能存在轴承、刀具、夹持或对中问题。",
         "recommended_action": "降低转速并检查刀具、夹具、轴承、皮带和主轴对中状态。",
     },
+    "E11S2": {
+        "alarm_code": "E11S2",
+        "name": "控制器内存指针异常",
+        "severity": "high",
+        "description": "控制器检测到错误的内存指针被释放，属于控制器软件或内存管理异常。",
+        "recommended_action": "先停止危险动作并重启控制器；若重复出现，升级控制器软件并联系设备厂家检查。",
+    },
+    "E11S3": {
+        "alarm_code": "E11S3",
+        "name": "控制器空指针异常",
+        "severity": "high",
+        "description": "控制器检测到空指针被释放，属于控制器软件或内存管理异常。原始底层信息已隐藏。",
+        "recommended_action": "先停止危险动作并重启控制器；若重复出现，升级控制器软件并联系设备厂家检查。",
+    },
+    "E11S4": {
+        "alarm_code": "E11S4",
+        "name": "控制器指针值异常",
+        "severity": "high",
+        "description": "控制器检测到指针值异常，属于控制器软件或内存管理异常。",
+        "recommended_action": "先停止危险动作并重启控制器；若重复出现，升级控制器软件并联系设备厂家检查。",
+    },
 }
 
 

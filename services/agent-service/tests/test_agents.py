@@ -172,6 +172,12 @@ class AllAgentTests(unittest.TestCase):
                 self.assertEqual(route.intent, expected)
                 self.assertEqual(route.target_agent, expected)
 
+    def test_router_extracts_robot_section_alarm_code(self):
+        route = RouterAgent().run("E11S3 报警是什么意思，怎么处理？")
+
+        self.assertEqual(route.intent, "knowledge")
+        self.assertEqual(route.entities["alarm_code"], "E11S3")
+
     def test_knowledge_agent_returns_evidence_pack(self):
         result = KnowledgeAgent(self.tools).run({"query": "700223 主轴过热", "required_sources": ["alarm"]})
 

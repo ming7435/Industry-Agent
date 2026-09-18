@@ -15,6 +15,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from app.monitor.presentation import cycle_state_label
+
 
 def get_device_status(
     device_id: str,
@@ -99,6 +101,7 @@ def get_device_status(
         or summary.get("updated_at")
     ) if isinstance(summary, Mapping) else device.get("checked_at")
 
+    raw_cycle_state = device.get("cycle_state", "")
     return {
         "found": True,
         "success": True,
@@ -107,7 +110,8 @@ def get_device_status(
         "device_type": device.get("device_type", ""),
         "status": device.get("status", "unknown"),
         "mode": device.get("mode", ""),
-        "cycle_state": device.get("cycle_state", ""),
+        "cycle_state": raw_cycle_state,
+        "cycle_state_label": cycle_state_label(raw_cycle_state),
         "alarm_code": device.get("alarm_code"),
         "health_score": device.get("health_score"),
         "metrics": dict(device.get("metrics") or {}),

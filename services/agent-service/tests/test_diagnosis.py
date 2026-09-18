@@ -13,6 +13,7 @@ from app.agents.diagnosis import DiagnosisAgent, DiagnosisRunCache, build_diagno
 from app.agents.diagnosis.tool_policy import requires_history, select_skill
 from app.mcp.registry import LocalMcpToolRegistry
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
+from app.monitor.presentation import cycle_state_label
 
 
 class FakeLLMClient:
@@ -214,6 +215,16 @@ class DiagnosisAgentTests(unittest.TestCase):
         self.assertFalse(result["found"])
         self.assertEqual(result["severity_label"], "未知")
         self.assertIn("没有找到", result["description"])
+
+    def test_controller_alarm_definition_is_readable_for_operators(self):
+        result = get_alarm_definition("E11S3")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["name"], "控制器空指针异常")
+        self.assertNotIn("Pointer with value zero", result["description"])
+
+    def test_internal_cycle_state_has_operator_label(self):
+        self.assertEqual(cycle_state_label("fault_injection"), "故障模拟中")
 
     def test_device_status_normalizes_factory_snapshot(self):
         payload = {

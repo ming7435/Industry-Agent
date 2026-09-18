@@ -53,6 +53,7 @@ class DeviceSample:
     status: Optional[str] = None
     mode: Optional[str] = None
     cycle_state: Optional[str] = None
+    cycle_state_label: Optional[str] = None
     health_score: Optional[float] = None
     metrics: Dict[str, Any] = field(default_factory=dict)
     metric_details: Dict[str, Any] = field(default_factory=dict)
@@ -74,6 +75,7 @@ class DeviceSample:
             "status": self.status,
             "mode": self.mode,
             "cycle_state": self.cycle_state,
+            "cycle_state_label": self.cycle_state_label,
             "health_score": self.health_score,
             "metrics": dict(self.metrics),
             "metric_details": dict(self.metric_details),

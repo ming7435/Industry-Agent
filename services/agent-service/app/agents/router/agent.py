@@ -10,7 +10,7 @@ from app.validator import RouteResult
 from .graph import build_router_graph
 
 
-_ALARM_CODE_RE = re.compile(r"\b(?:e|alm)[-]?\d{2,6}\b", re.IGNORECASE)
+_ALARM_CODE_RE = re.compile(r"\b(?:e\d{2,6}(?:s\d+)?|alm[-]?\d{2,6})\b", re.IGNORECASE)
 _DEVICE_RE = re.compile(r"\b(?:CNC|TC|PLC|MACHINE|EQP)[-_]?[A-Z0-9]{2,}\b", re.IGNORECASE)
 _WORKORDER_RE = re.compile(r"\bWO[-_]?[A-Z0-9]{2,}\b", re.IGNORECASE)
 _PART_RE = re.compile(r"\b(?:PN|PART)[-_]?[A-Z0-9]{2,}\b", re.IGNORECASE)

@@ -13,6 +13,26 @@ from urllib.request import Request, urlopen
 from .index import RAGIndex, build_default_index
 
 
+_KNOWN_CONTROLLER_TRANSLATIONS = (
+    ("Pointer with value zero is freed: {hex}", "控制器检测到空指针被释放（底层软件指针异常）"),
+    ("Wrong memory pointer is freed: {hex}", "控制器检测到错误内存指针被释放（底层软件内存异常）"),
+    ("The pointer value is 0", "控制器检测到指针值为 0（底层软件指针异常）"),
+    ("An error occurred in controller software.", "控制器软件发生错误。"),
+    ("Power off and restart the controller.", "关闭并重新启动控制器。"),
+    ("Update the controller software.", "升级控制器软件。"),
+    ("Contact ELITE ROBOTS after-sales service for assistance.", "联系设备厂家售后服务。"),
+)
+
+
+def _operator_text(value: Any) -> str:
+    """Translate known low-level controller messages at the read boundary."""
+
+    text = str(value or "")
+    for source, target in _KNOWN_CONTROLLER_TRANSLATIONS:
+        text = text.replace(source, target)
+    return text
+
+
 class RAGServiceClient:
     backend = "rag-service"
 
@@ -44,18 +64,33 @@ class RAGServiceClient:
             except Exception as error:
                 if not self.allow_fallback:
                     raise
-                result = self.fallback.search(query, limit=limit, filters=filters)
+                result = self._humanize_result(self.fallback.search(query, limit=limit, filters=filters))
                 result["connection_status"] = "remote_unavailable_fallback"
                 result["degraded"] = True
                 result["remote_base_url"] = self.base_url
                 result["warning"] = "%s: %s" % (type(error).__name__, error)
                 return result
-        result = self.fallback.search(query, limit=limit, filters=filters)
+        result = self._humanize_result(self.fallback.search(query, limit=limit, filters=filters))
         result["connection_status"] = "local_fallback"
         result["degraded"] = True
         result["remote_base_url"] = ""
         result["warning"] = "RAG_SERVICE_BASE_URL 未配置，当前使用本地演示知识索引。"
         return result
+
+    @staticmethod
+    def _humanize_result(result: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep legacy/local indexed documents readable without re-ingestion."""
+
+        payload = dict(result or {})
+        documents = []
+        for item in payload.get("documents") or []:
+            document = dict(item)
+            raw_content = str(document.get("content") or "")
+            document.setdefault("raw_content", raw_content)
+            document["content"] = _operator_text(raw_content)
+            documents.append(document)
+        payload["documents"] = documents
+        return payload
 
     @staticmethod
     def _build_remote_query(query: str, filters: Mapping[str, Any]) -> str:
@@ -137,7 +172,8 @@ class RAGServiceClient:
                     "document_id": chunk_id,
                     "chunk_id": chunk_id,
                     "title": source,
-                    "content": str(hit.get("text") or ""),
+                    "content": _operator_text(hit.get("text") or ""),
+                    "raw_content": str(hit.get("text") or ""),
                     "source": source,
                     "score": hit.get("score", 0.0),
                     "metadata": metadata,

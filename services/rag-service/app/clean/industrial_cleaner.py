@@ -101,6 +101,7 @@ class IndustrialCleaner:
         if block.kind is BlockType.TEXT:
             text = _repair_broken_text_lines(text)
             text = _normalize_industrial_units(text)
+            text = _translate_known_controller_messages(text)
 
         warnings = _block_warnings(block, text, document_format=document_format)
         if block.kind is BlockType.TABLE:
@@ -261,6 +262,24 @@ def _normalize_industrial_units(text: str) -> str:
     text = re.sub(rf"(?<=\d)\s*({units})\b", r" \1", text, flags=re.IGNORECASE)
     text = re.sub(r"°\s*C", "°C", text, flags=re.IGNORECASE)
     text = re.sub(r"(?<=\d)\s+(℃|°C)", r"\1", text, flags=re.IGNORECASE)
+    return text
+
+
+def _translate_known_controller_messages(text: str) -> str:
+    """把报警手册中的底层英文指针错误转换成可读中文。"""
+
+    replacements = {
+        r"Pointer with value zero is freed:\s*\{hex\}": "控制器检测到空指针被释放（底层软件指针异常）",
+        r"Wrong memory pointer is freed:\s*\{hex\}": "控制器检测到错误内存指针被释放（底层软件内存异常）",
+        r"The pointer value is 0": "控制器检测到指针值为 0（底层软件指针异常）",
+        r"An error occurred in controller software\.": "控制器软件发生错误。",
+        r"Try the following in turn:\s*": "建议依次执行以下处理：",
+        r"Power off and restart the controller\.": "关闭并重新启动控制器。",
+        r"Update the controller software\.": "升级控制器软件。",
+        r"Contact ELITE ROBOTS after-sales service for assistance\.": "联系设备厂家售后服务。",
+    }
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     return text
 
 
