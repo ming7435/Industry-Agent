@@ -34,6 +34,7 @@ from .deps import (
     get_pipeline,
     get_reranker,
 )
+from app.reranker import reranker_error
 from .models import ErrorResponse, HealthResponse, SearchRequest, SearchResponse
 from .pipeline import SearchPipeline
 
@@ -199,6 +200,7 @@ async def health() -> HealthResponse:
         embedding=embedding,
         reranker=reranker,
         llm=llm,
+        reranker_error=reranker_error() if not reranker else "",
     )
     logger.info(
         "health milvus={} whoosh={} embedding={} reranker={} llm={}",

@@ -21,6 +21,7 @@ from __future__ import annotations
 import inspect
 from copy import copy
 from numbers import Real
+from pathlib import Path
 from typing import Any
 
 from app.retrieval import Hit
@@ -32,6 +33,41 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover
 
 STAGE_RERANK = "rerank"
 """Value written to ``Hit.metadata["stage"]`` for reranked hits."""
+
+_REQUIRED_LOCAL_FILES = (
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "sentencepiece.bpe.model",
+)
+_EXPECTED_LOCAL_FILE_SIZES = {
+    # Sizes published by the BAAI/bge-reranker-v2-m3 model repository. These
+    # checks catch interrupted downloads that leave a seemingly valid file.
+    "model.safetensors": 2_271_071_852,
+    "tokenizer.json": 17_098_273,
+    "sentencepiece.bpe.model": 5_069_051,
+}
+
+
+def _validate_local_model_path(model_path: str) -> None:
+    """Fail early with the exact files missing from a local model checkout."""
+
+    path = Path(model_path)
+    if not path.is_dir():
+        return
+
+    missing = [name for name in _REQUIRED_LOCAL_FILES if not (path / name).is_file()]
+    invalid = [
+        f"{name} (expected {_EXPECTED_LOCAL_FILE_SIZES[name]} bytes, got {(path / name).stat().st_size} bytes)"
+        for name, expected_size in _EXPECTED_LOCAL_FILE_SIZES.items()
+        if (path / name).is_file() and (path / name).stat().st_size != expected_size
+    ]
+    if missing or invalid:
+        raise RuntimeError(
+            "reranker model directory is incomplete; "
+            + ("missing files: " + ", ".join(missing) if missing else "")
+            + ("; invalid files: " + ", ".join(invalid) if invalid else "")
+        )
 
 
 def _resolve_device(device: str) -> str:
@@ -112,6 +148,8 @@ class Reranker:
         self.model_path = model_path
         self.device = _resolve_device(device)
         self.batch_size = batch_size
+
+        _validate_local_model_path(model_path)
 
         if FlagReranker is None:
             raise RuntimeError("FlagEmbedding is not installed")

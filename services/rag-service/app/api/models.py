@@ -166,6 +166,10 @@ class HealthResponse(BaseModel):
     embedding: bool = Field(..., description="bge-m3 embedder availability.")
     reranker: bool = Field(..., description="bge-reranker availability.")
     llm: bool = Field(..., description="DeepSeek client configuration state.")
+    reranker_error: str = Field(
+        default="",
+        description="Detailed reranker load failure when reranker is unavailable.",
+    )
 
 
 class ErrorResponse(BaseModel):
