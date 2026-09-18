@@ -138,3 +138,26 @@ def test_quality_response_has_structured_result_fields() -> None:
     )
     assert response.rework_required is True
     assert response.validation_findings == ["报警仍然存在"]
+
+
+def test_api_quality_entry_uses_quality_a2a_and_updates_workorder() -> None:
+    orchestrator = build_orchestrator(tools=ToolRegistry())
+    order = orchestrator.nodes.workorder_service.create(
+        device_id="CNC-001",
+        title="主轴温度异常维修",
+        steps=["检查冷却回路"],
+    )
+    orchestrator.nodes.workorder_service.mark_repair_completed(
+        order["workorder_id"],
+        feedback="已完成维修并提交复测",
+    )
+
+    result = orchestrator.nodes.quality_workorder(order["workorder_id"])
+
+    assert result["workorder"]["workorder_id"] == order["workorder_id"]
+    assert any(
+        item.get("type") == "a2a"
+        and item.get("from_agent") == "router"
+        and item.get("to_agent") == "quality"
+        for item in orchestrator.nodes.trace_records()
+    )

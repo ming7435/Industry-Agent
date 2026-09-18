@@ -127,22 +127,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.post("/api/workorders/{workorder_id}/quality")
     def workorder_quality(workorder_id: str) -> Dict[str, Any]:
-        order = runtime.nodes.workorder_service.get(workorder_id)
-        quality_payload = serialize_api_response(
-            runtime.nodes.harnesses["quality"].execute_agent({"workorder": order})
-        )
-        if quality_payload.get("passed"):
-            order = runtime.nodes.workorder_service.close(workorder_id)
-            experience_payload = serialize_api_response(
-                runtime.nodes.experience_module.learn({
-                    "workorder": order,
-                    "quality": quality_payload,
-                })
-            )
-            quality_payload["experience"] = experience_payload
-        else:
-            quality_payload["workorder"] = runtime.nodes.workorder_service.reopen(workorder_id)
-        return quality_payload
+        return runtime.nodes.quality_workorder(workorder_id)
 
     @app.post("/api/experience/search")
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping
+from uuid import uuid4
 
 from app.a2a import (
     A2AClient, A2AError, CADRequest, CADResponse, DiagnosisRequest, DiagnosisResponse,
@@ -507,6 +508,29 @@ class OrchestratorNodes:
             latest = self.workorder_service.get(workorder_id)
             result["workorder"] = latest
         return self._finish("quality", state, {"quality": result, "workorder": latest})
+
+    def quality_workorder(self, workorder_id: str) -> Dict[str, Any]:
+        """通过统一 A2A 入口对独立工单执行质检，并沉淀通过后的经验。"""
+
+        order = self.workorder_service.get(workorder_id)
+        state: AgentState = {
+            "entry": "user",
+            "task_id": "TASK-QUALITY-" + uuid4().hex[:12].upper(),
+            "trace_id": "TRACE-QUALITY-" + uuid4().hex[:12].upper(),
+            "context": {"device_id": str(order.get("device_id") or "")},
+            "diagnosis": {},
+            "maintenance_plan": {},
+        }
+        quality = self._quality_request(state, order)
+        latest = self.workorder_service.get(workorder_id)
+        quality["workorder"] = latest
+        if quality.get("passed"):
+            experience = _serialize_agent_result(self.experience_module.learn({
+                "workorder": latest,
+                "quality": quality,
+            }))
+            quality["experience"] = experience
+        return quality
 
     def quality_rework(self, state: AgentState) -> Dict[str, Any]:
         """质量校验不通过时，通过 Quality -> Maintenance A2A 生成返工方案。"""
