@@ -25,19 +25,35 @@ class WorkOrderService:
             "title": "设备维修：%s" % (diagnosis.get("fault") or "设备异常"),
             "plan_id": payload.get("plan_id", ""),
             "steps": payload.get("repair_steps", []),
+            "repair_target": dict(payload.get("target_part") or payload.get("repair_target_detail") or {}),
+            "drawing_context": self._drawing_context(payload.get("engineering_context") or {}),
         })
         return WorkOrder(**raw)
 
-    def create(self, device_id: str, title: str, plan_id: str = "", steps: list[str] | None = None, assignee: str = "") -> dict[str, Any]:
+    def create(self, device_id: str, title: str, plan_id: str = "", steps: list[str] | None = None, assignee: str = "", repair_target: Mapping[str, Any] | None = None, drawing_context: Mapping[str, Any] | None = None) -> dict[str, Any]:
         order = self.tools.execute("create_workorder", {
             "device_id": device_id,
             "title": title,
             "plan_id": plan_id,
             "steps": steps or [],
+            "repair_target": dict(repair_target or {}),
+            "drawing_context": dict(drawing_context or {}),
         })
         if assignee:
             order = self.assign(str(order["workorder_id"]), assignee)
         return order
+
+    @staticmethod
+    def _drawing_context(engineering_context: Mapping[str, Any]) -> dict[str, str]:
+        viewer = dict(engineering_context.get("viewer_context") or {})
+        refs = list(engineering_context.get("drawing_refs") or [])
+        first = refs[0] if refs else {}
+        return {
+            "drawing_url": str(first.get("drawing_url") or "") if isinstance(first, Mapping) else "",
+            "model_url": str(viewer.get("model_url") or ""),
+            "mesh_name": str(viewer.get("mesh_name") or ""),
+            "location": str(viewer.get("location") or ""),
+        }
 
     def update(self, workorder_id: str, status: str = "in_progress", **fields: Any) -> dict[str, Any]:
         return self.tools.execute("update_workorder", {

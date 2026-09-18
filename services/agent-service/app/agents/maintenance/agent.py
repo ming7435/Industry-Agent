@@ -43,11 +43,39 @@ class MaintenanceAgent:
             knowledge = self._safe_tool("search_knowledge", {"query": query, "limit": 5, "filters": {}})
         return knowledge
 
-    def request_cad(self, query: str, diagnosis: DiagnosisView) -> dict[str, Any]:
+    def request_cad(self, query: str, diagnosis: DiagnosisView, required: bool = True) -> dict[str, Any]:
         context = {"diagnosis": diagnosis.model_dump(mode="json"), "device_id": diagnosis.device_id}
+        if not required:
+            return {}
         if self.cad_provider is not None:
-            return dict(self.cad_provider(context, query) or {})
-        return self._safe_tool("query_cad", {"query": query, "device_id": diagnosis.device_id})
+            return dict(self.cad_provider(context, "%s 零件 BOM 安装位置 图纸" % query) or {})
+        merged: dict[str, Any] = {}
+        arguments = {"query": query, "device_id": diagnosis.device_id, "component": "", "part_no": ""}
+        for tool_name in ("query_part", "query_bom", "get_component_location"):
+            result = self._safe_tool(tool_name, arguments)
+            self._merge_cad_result(merged, result)
+        return merged or self._safe_tool("query_cad", arguments)
+
+    @staticmethod
+    def _requires_cad(diagnosis: DiagnosisView) -> bool:
+        text = "%s %s" % (diagnosis.fault, diagnosis.cause)
+        return any(token in text for token in ("轴承", "主轴", "冷却", "泵", "振动", "温度", "传感器", "零件", "部件", "拆装", "BOM"))
+
+    @staticmethod
+    def _merge_cad_result(target: dict[str, Any], result: Mapping[str, Any]) -> None:
+        if not isinstance(result, Mapping):
+            return
+        for key in ("components", "drawings", "bom_items", "parts", "part_relations", "assembly_relations", "locations", "evidence", "sources"):
+            values = result.get(key)
+            if not isinstance(values, list):
+                continue
+            target.setdefault(key, [])
+            for item in values:
+                if item not in target[key]:
+                    target[key].append(item)
+        for key in ("viewer_context", "location", "component", "part_no", "summary", "status"):
+            if result.get(key) and not target.get(key):
+                target[key] = result[key]
 
     def _build_plan_payload(
         self,
@@ -74,6 +102,11 @@ class MaintenanceAgent:
         parts = self._parts(profile, spare_parts, components, bom_items)
         safety = self._safety(profile, diagnosis.severity)
         evidence = self._evidence(diagnosis, knowledge, cad, spare_parts, profile)
+        target_part = self._target_part(diagnosis, profile, components, bom_items)
+        engineering_context = {
+            "drawing_refs": list(cad.get("drawing_refs") or self._drawing_refs(cad, components)),
+            "viewer_context": dict(cad.get("viewer_context") or self._viewer_context(cad, components, diagnosis)),
+        }
         plan_payload = {
             "plan_id": "PLAN-" + uuid4().hex[:10].upper(),
             "repair_target": profile["target"],
@@ -94,6 +127,8 @@ class MaintenanceAgent:
             "inventory_status": spare_parts,
             "part_availability": availability,
             "risk_level": self._risk_level(diagnosis.severity),
+            "target_part": target_part,
+            "engineering_context": engineering_context,
         }
         return plan_payload
 
@@ -255,6 +290,36 @@ class MaintenanceAgent:
         for item in components + bom_items:
             values.append(str(item.get("component_id") or item.get("part_no") or ""))
         return MaintenanceAgent._dedupe([item for item in values if item])
+
+    @staticmethod
+    def _target_part(diagnosis: DiagnosisView, profile: Mapping[str, Any], components: list[Mapping[str, Any]], bom_items: list[Mapping[str, Any]]) -> dict[str, str]:
+        item = next((value for value in bom_items + components if value.get("part_no") or value.get("name")), {})
+        raw = diagnosis.raw
+        return {
+            "part_no": str(raw.get("part_no") or item.get("part_no") or ""),
+            "part_name": str(raw.get("part_name") or item.get("name") or profile.get("target") or ""),
+            "component": str(raw.get("component") or item.get("component_id") or ""),
+        }
+
+    @staticmethod
+    def _drawing_refs(cad: Mapping[str, Any], components: list[Mapping[str, Any]]) -> list[Any]:
+        values = list(cad.get("drawing_refs") or [])
+        for item in list(cad.get("drawings") or []) + components:
+            value = item.get("drawing_id") or item.get("drawing_ref")
+            if value and value not in values:
+                values.append(value)
+        return values
+
+    @staticmethod
+    def _viewer_context(cad: Mapping[str, Any], components: list[Mapping[str, Any]], diagnosis: DiagnosisView) -> dict[str, str]:
+        item = components[0] if components else {}
+        return {
+            "model_url": str(cad.get("model_url") or ""),
+            "mesh_id": str(cad.get("mesh_id") or item.get("component_id") or ""),
+            "mesh_name": str(cad.get("mesh_name") or item.get("name") or ""),
+            "location": str(cad.get("location") or item.get("position") or ""),
+            "default_view": str((cad.get("default_view") or "component") if item else ""),
+        }
 
     @staticmethod
     def _risk_level(severity: str) -> str:

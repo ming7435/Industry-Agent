@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from time import perf_counter
 from typing import Any, Dict, Mapping
 
 from app.mcp.client import McpClient
@@ -344,8 +345,14 @@ class ToolRegistry:
             "get_drawing_metadata": "query_drawing",
             "get_component_location": "query_relation",
         }.get(name, name)
+        started = perf_counter()
+        input_payload = dict(arguments)
         if self.trace:
-            self.trace.record(type="tool", name=name, event="tool_started", tool=name, mcp_server=server, arguments=dict(arguments))
+            self.trace.record(
+                type="tool", name=name, event="tool_started", tool=name, tool_name=name,
+                mcp_server=server, arguments=input_payload, input=input_payload,
+                output=None, execution_time=0.0, error="",
+            )
         try:
             result = self.mcp.call(server, operation, arguments)
         except Exception as error:
@@ -359,10 +366,18 @@ class ToolRegistry:
                     raise
             else:
                 if self.trace:
-                    self.trace.record(type="tool", name=name, event="tool_error", tool=name, mcp_server=server, error=str(error))
+                    self.trace.record(
+                        type="tool", name=name, event="tool_error", tool=name, tool_name=name,
+                        mcp_server=server, arguments=input_payload, input=input_payload,
+                        output=None, execution_time=perf_counter() - started, error=str(error),
+                    )
                 raise
         if self.trace:
-            self.trace.record(type="tool", name=name, event="tool_completed", tool=name, mcp_server=server)
+            self.trace.record(
+                type="tool", name=name, event="tool_completed", tool=name, tool_name=name,
+                mcp_server=server, arguments=input_payload, input=input_payload,
+                output=result, execution_time=perf_counter() - started, error="",
+            )
         return result
 
     def tool_schemas(self) -> list[Dict[str, Any]]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from time import perf_counter
 from typing import Any, Dict, List, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -78,11 +79,6 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
         runtime.stop_reason = "max_steps"
         return {"agent_state": runtime, "route": "fallback", "error": error}
 
-    if runtime.repeated_observation_count >= 1:
-        runtime.error = "连续没有新的 Observation"
-        runtime.stop_reason = "no_new_observation"
-        return {"agent_state": runtime, "route": "validate", "error": runtime.error}
-
     runtime.step_count += 1
     alarm_code = state.get("alarm_code")
     tool_choice = None
@@ -144,7 +140,13 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
             "content": json.dumps(result, ensure_ascii=False),
         })
         runtime.next_action = "基于 Knowledge Evidence 完成诊断"
-        return {"agent_state": runtime, "route": "reason"}
+        fingerprint = agent._observation_hash([observation])
+        if fingerprint and fingerprint == runtime.last_observation_hash:
+            runtime.repeated_observation_count += 1
+        else:
+            runtime.repeated_observation_count = 0
+        runtime.last_observation_hash = fingerprint
+        return {"agent_state": runtime, "route": "loop_guard"}
 
     route = "tool_guard" if calls else "validate"
     return {"agent_state": runtime, "response": response, "assistant": assistant, "route": route}
@@ -179,7 +181,18 @@ def guard_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
             "data": None,
             "error": {"code": decision["code"], "message": decision["message"]},
         }
-        runtime.tool_calls.append({"step": runtime.step_count, "name": name, "arguments": arguments, "result": result, "guard": "deny"})
+        runtime.tool_calls.append({
+            "step": runtime.step_count,
+            "name": name,
+            "tool_name": name,
+            "arguments": arguments,
+            "input": arguments,
+            "result": result,
+            "output": result,
+            "execution_time": 0.0,
+            "error": decision["message"],
+            "guard": "deny",
+        })
         runtime.tool_results.append(result)
         runtime.messages.append({
             "role": "tool",
@@ -205,8 +218,10 @@ def execute_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
         function = call.get("function") or {}
         name = function.get("name") or ""
         arguments = agent._json_arguments(function.get("arguments"))
+        execution_started = perf_counter()
         try:
             result = agent.tools.execute(name, arguments)
+            execution_error = ""
         except Exception as error:
             result = {
                 "success": False,
@@ -216,8 +231,19 @@ def execute_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
                 "data": None,
                 "error": {"code": type(error).__name__, "message": str(error)},
             }
+            execution_error = str(error)
 
-        call_record = {"step": runtime.step_count, "name": name, "arguments": arguments, "result": result}
+        call_record = {
+            "step": runtime.step_count,
+            "name": name,
+            "tool_name": name,
+            "arguments": arguments,
+            "input": arguments,
+            "result": result,
+            "output": result,
+            "execution_time": perf_counter() - execution_started,
+            "error": execution_error,
+        }
         runtime.tool_calls.append(call_record)
         runtime.tool_results.append(result)
         pending.append({"call": call, "record": call_record, "result": result})
@@ -256,6 +282,22 @@ def record_tool_observations(state: DiagnosisGraphState) -> Dict[str, Any]:
         runtime.repeated_observation_count = 0
     runtime.last_observation_hash = fingerprint
     runtime.next_action = "判断是否需要更多诊断依据"
+    return {"agent_state": runtime, "route": "loop_guard"}
+
+
+def loop_guard(state: DiagnosisGraphState) -> Dict[str, Any]:
+    """在再次推理前统一阻断超限或重复 Observation。"""
+
+    runtime = state["agent_state"]
+    runtime.current_agent = "diagnosis.loop_guard"
+    if runtime.step_count >= runtime.max_steps:
+        runtime.error = "诊断工具调用超过最大轮次：%s" % runtime.max_steps
+        runtime.stop_reason = "max_steps"
+        return {"agent_state": runtime, "route": "fallback", "error": runtime.error}
+    if runtime.repeated_observation_count >= 1:
+        runtime.error = "连续没有新的 Observation"
+        runtime.stop_reason = "no_new_observation"
+        return {"agent_state": runtime, "route": "fallback", "error": runtime.error}
     return {"agent_state": runtime, "route": "reason"}
 
 
@@ -338,6 +380,7 @@ def build_diagnosis_graph():
     workflow.add_node("tool_guard", guard_tool_calls)
     workflow.add_node("act", execute_tool_calls)
     workflow.add_node("observe", record_tool_observations)
+    workflow.add_node("loop_guard", loop_guard)
     workflow.add_node("validate", validate_diagnosis_candidate)
     workflow.add_node("final", build_final_diagnosis_result)
     workflow.add_node("fallback", build_fallback_diagnosis_result)
@@ -350,7 +393,8 @@ def build_diagnosis_graph():
     workflow.add_conditional_edges("reason", select_next_diagnosis_route, {"reason": "reason", "tool_guard": "tool_guard", "validate": "validate", "fallback": "fallback"})
     workflow.add_conditional_edges("tool_guard", select_next_diagnosis_route, {"act": "act", "reason": "reason", "fallback": "fallback"})
     workflow.add_conditional_edges("act", select_next_diagnosis_route, {"observe": "observe", "fallback": "fallback"})
-    workflow.add_edge("observe", "reason")
+    workflow.add_edge("observe", "loop_guard")
+    workflow.add_conditional_edges("loop_guard", select_next_diagnosis_route, {"reason": "reason", "fallback": "fallback"})
     workflow.add_conditional_edges("validate", select_next_diagnosis_route, {"final": "final", "reason": "reason", "fallback": "fallback"})
     workflow.add_edge("final", END)
     workflow.add_edge("fallback", END)

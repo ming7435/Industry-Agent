@@ -87,7 +87,15 @@ class CADResult(BaseModel):
     query_type: str = "component"
     component: str = ""
     part_no: str = ""
-    drawing_refs: List[str] = Field(default_factory=list)
+    # 兼容旧版字符串图纸编号，同时允许新的结构化图纸引用。
+    drawing_refs: List[Any] = Field(default_factory=list)
+    viewer_context: Dict[str, Any] = Field(default_factory=lambda: {
+        "model_url": "",
+        "mesh_id": "",
+        "mesh_name": "",
+        "location": "",
+        "default_view": "",
+    })
     location: str = ""
     summary: str = ""
     components: List[CADComponent] = Field(default_factory=list)
@@ -125,6 +133,15 @@ class MaintenancePlan(BaseModel):
     plan_id: str
     diagnosis: DiagnosisView
     repair_target: str = ""
+    target_part: Dict[str, Any] = Field(default_factory=lambda: {
+        "part_no": "",
+        "part_name": "",
+        "component": "",
+    })
+    engineering_context: Dict[str, Any] = Field(default_factory=lambda: {
+        "drawing_refs": [],
+        "viewer_context": {},
+    })
     repair_steps: List[str] = Field(default_factory=list)
     tools: List[str] = Field(default_factory=list)
     parts: List[str] = Field(default_factory=list)
@@ -154,6 +171,17 @@ class WorkOrder(BaseModel):
     title: str
     plan_id: str = ""
     steps: List[str] = Field(default_factory=list)
+    repair_target: Dict[str, Any] = Field(default_factory=lambda: {
+        "part_no": "",
+        "part_name": "",
+        "component": "",
+    })
+    drawing_context: Dict[str, Any] = Field(default_factory=lambda: {
+        "drawing_url": "",
+        "model_url": "",
+        "mesh_name": "",
+        "location": "",
+    })
     assignee: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

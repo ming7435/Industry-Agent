@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any, Dict, Mapping
 from uuid import uuid4
 
@@ -36,6 +37,8 @@ class OrchestratorNodes:
         registry = tools or ToolRegistry()
         self.registry = registry
         self.trace = TraceRecorder()
+        self._node_started_at: dict[tuple[str, str], float] = {}
+        self._node_snapshots: dict[tuple[str, str], dict[str, Any]] = {}
         self.registry.trace = self.trace
         self.a2a = A2AClient(trace=self.trace)
         self.short_memory, self.long_memory = build_memory_stores()
@@ -69,11 +72,42 @@ class OrchestratorNodes:
         return self.trace.list()
 
     def _node_start(self, name: str, state: AgentState) -> None:
-        self.trace.record(type="node", name=name, event="node_started", task_id=state.get("task_id", ""))
+        task_id = str(state.get("task_id", ""))
+        key = (task_id, name)
+        self._node_started_at[key] = perf_counter()
+        self._node_snapshots[key] = dict(state)
+        self.trace.record(
+            type="node", name=name, node=name, agent=self._node_agent(name),
+            event="node_started", task_id=task_id, state_change={},
+            tool_name="", latency=0.0, error="",
+        )
 
     def _finish(self, name: str, state: AgentState, payload: Dict[str, Any]) -> Dict[str, Any]:
-        self.trace.record(type="node", name=name, event="node_completed", task_id=state.get("task_id", ""), keys=list(payload))
+        task_id = str(state.get("task_id", ""))
+        key = (task_id, name)
+        started = self._node_started_at.pop(key, perf_counter())
+        before = self._node_snapshots.pop(key, {})
+        changed = [field for field in set(before) | set(payload) if before.get(field) != payload.get(field)]
+        self.trace.record(
+            type="node", name=name, node=name, agent=self._node_agent(name),
+            event="node_completed", task_id=task_id, keys=list(payload),
+            state_change={"changed_keys": sorted(changed), "output_keys": list(payload)},
+            tool_name="", latency=perf_counter() - started, error="",
+        )
         return payload
+
+    @staticmethod
+    def _node_agent(name: str) -> str:
+        return {
+            "route": "router",
+            "diagnosis": "diagnosis",
+            "knowledge": "knowledge",
+            "cad": "cad",
+            "maintenance": "maintenance",
+            "quality": "quality",
+            "quality_rework": "maintenance",
+            "report": "report",
+        }.get(name, name)
 
     def _diagnosis_endpoint(self, request: DiagnosisRequest) -> DiagnosisResponse:
         event = dict(request.event)
@@ -225,6 +259,7 @@ class OrchestratorNodes:
             component=payload.get("component", request.component),
             part_no=payload.get("part_no", request.part_no),
             drawing_refs=payload.get("drawing_refs", []),
+            viewer_context=payload.get("viewer_context", {}),
             location=payload.get("location", ""),
             summary=payload.get("summary", ""),
             components=payload.get("components", []),

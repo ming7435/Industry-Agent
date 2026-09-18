@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any, Callable, Dict, Mapping
 
 from app.rag import RAGIndex, RAGServiceClient
@@ -169,14 +170,28 @@ class LocalMcpToolRegistry:
         """执行已注册的本地 MCP 工具，并统一记录调用轨迹。"""
 
         server = {"get_device_status": "plc", "get_alarm_definition": "knowledge", "get_device_history": "plc", "get_device_logs": "plc", "search_knowledge": "knowledge"}.get(name, "knowledge")
+        started = perf_counter()
+        input_payload = dict(arguments)
         if self.trace:
-            self.trace.record(type="tool", name=name, event="tool_started", tool=name, mcp_server=server, arguments=dict(arguments))
+            self.trace.record(
+                type="tool", name=name, event="tool_started", tool=name, tool_name=name,
+                mcp_server=server, arguments=input_payload, input=input_payload,
+                output=None, execution_time=0.0, error="",
+            )
         try:
             result = self.mcp.call(server, name, arguments)
         except Exception as error:
             if self.trace:
-                self.trace.record(type="tool", name=name, event="tool_error", tool=name, mcp_server=server, error=str(error))
+                self.trace.record(
+                    type="tool", name=name, event="tool_error", tool=name, tool_name=name,
+                    mcp_server=server, arguments=input_payload, input=input_payload,
+                    output=None, execution_time=perf_counter() - started, error=str(error),
+                )
             raise
         if self.trace:
-            self.trace.record(type="tool", name=name, event="tool_completed", tool=name, mcp_server=server)
+            self.trace.record(
+                type="tool", name=name, event="tool_completed", tool=name, tool_name=name,
+                mcp_server=server, arguments=input_payload, input=input_payload,
+                output=result, execution_time=perf_counter() - started, error="",
+            )
         return result

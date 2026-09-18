@@ -19,6 +19,7 @@ class MaintenanceGraphState(TypedDict, total=False):
     allowed_tools: List[str]
     diagnosis: DiagnosisView
     query: str
+    cad_required: bool
     knowledge: Dict[str, Any]
     cad: Dict[str, Any]
     inventory: Dict[str, Any]
@@ -51,7 +52,12 @@ def assess_diagnosis(state: MaintenanceGraphState) -> Dict[str, Any]:
     if request.get("device_id") and diagnosis.device_id == "unknown":
         diagnosis = diagnosis.model_copy(update={"device_id": request["device_id"]})
     query = agent._query(request, diagnosis)
-    return {"diagnosis": diagnosis, "query": query, "route": "request_knowledge"}
+    return {
+        "diagnosis": diagnosis,
+        "query": query,
+        "cad_required": agent._requires_cad(diagnosis),
+        "route": "request_knowledge",
+    }
 
 
 def request_knowledge(state: MaintenanceGraphState) -> Dict[str, Any]:
@@ -65,8 +71,8 @@ def request_knowledge(state: MaintenanceGraphState) -> Dict[str, Any]:
 def request_cad(state: MaintenanceGraphState) -> Dict[str, Any]:
     request = state["request"]
     cad = dict(request.get("cad") or {})
-    if not cad:
-        cad = state["agent"].request_cad(state["query"], state["diagnosis"])
+    if not cad and state.get("cad_required", True):
+        cad = state["agent"].request_cad(state["query"], state["diagnosis"], required=True)
     return {"cad": cad, "route": "plan_repair"}
 
 
@@ -131,6 +137,8 @@ def prepare_workorder(state: MaintenanceGraphState) -> Dict[str, Any]:
         "plan_id": plan.get("plan_id", ""),
         "steps": list(plan.get("repair_steps") or []),
         "ready": bool(plan.get("workorder_ready")),
+        "repair_target": dict(plan.get("target_part") or {}),
+        "drawing_context": _drawing_context(plan.get("engineering_context") or {}),
     })
     if plan.get("workorder_ready") and (state["request"].get("constraints") or {}).get("need_workorder"):
         draft = state["agent"]._safe_tool("submit_workorder_draft", draft) or draft
@@ -150,6 +158,22 @@ def fallback(state: MaintenanceGraphState) -> Dict[str, Any]:
     diagnosis = state.get("diagnosis") or agent._normalize_diagnosis(state.get("request") or {})
     plan = {"repair_target": diagnosis.fault or "设备异常", "validation_findings": ["维修计划流程未完成"], "workorder_ready": False}
     return {"result": agent._plan_result(plan, diagnosis), "stop_reason": "fallback"}
+
+
+def _drawing_context(engineering_context: Dict[str, Any]) -> Dict[str, str]:
+    viewer = dict(engineering_context.get("viewer_context") or {})
+    refs = list(engineering_context.get("drawing_refs") or [])
+    first = refs[0] if refs else {}
+    if isinstance(first, str):
+        drawing_url = ""
+    else:
+        drawing_url = str(first.get("drawing_url") or "")
+    return {
+        "drawing_url": drawing_url,
+        "model_url": str(viewer.get("model_url") or ""),
+        "mesh_name": str(viewer.get("mesh_name") or ""),
+        "location": str(viewer.get("location") or ""),
+    }
 
 
 def build_maintenance_graph():

@@ -197,8 +197,9 @@ def _result(state: CADGraphState, status: str) -> CADResult:
     locations = list(state.get("locations") or [])
     component = request.component or (components[0].component_id if components else "")
     part_no = request.part_no or (components[0].part_no if components else "")
-    drawing_refs = _unique([str(item.get("drawing_id") or item.get("drawing_ref") or "") for item in drawings] + [item.drawing_ref for item in components])
+    drawing_refs = _drawing_refs(drawings, components)
     location = str((locations[0] if locations else {}).get("location") or (components[0].position if components else ""))
+    viewer_context = _viewer_context(drawings, components, location)
     evidence = [{"type": "component", "component_id": item.component_id, "part_no": item.part_no, "name": item.name, "position": item.position, "drawing_ref": item.drawing_ref} for item in components]
     evidence.extend({"type": "bom", **item} for item in bom_items)
     evidence.extend({"type": "drawing", **item} for item in drawings)
@@ -209,12 +210,39 @@ def _result(state: CADGraphState, status: str) -> CADResult:
         confidence = 0.75 + (0.08 if bom_items else 0) + (0.07 if drawings else 0) + (0.07 if relations else 0) + (0.03 if all(item.part_no for item in components) else 0)
     summary = ("定位到 %s 个工程部件、%s 份图纸、%s 条 BOM 和 %s 条装配关系。" % (len(components), len(drawings), len(bom_items), len(relations))) if status == "completed" else ("未查询到与“%s”直接相关的工程 CAD/BOM 数据。" % request.query)
     remote = any("document-cad-service" in source for source in state.get("sources", []))
-    return CADResult(request_id=request.request_id, device_id=request.device_id, device_model=request.device_model, query=request.query, status=status, query_type=_query_type(request.query), component=component, part_no=part_no, drawing_refs=drawing_refs, location=location, summary=summary, components=components, parts=[dict(item) for item in components], drawings=drawings, bom_items=bom_items, part_relations=relations, assembly_relations=relations, locations=locations, evidence=evidence, sources=list(state.get("sources") or []), confidence=round(min(1.0, confidence), 4), total=len(components), source=(state.get("sources") or ["document-cad-service"])[0], validation_findings=list((state.get("validation") or {}).get("errors") or []), steps=list(state.get("observations") or []), stop_reason=state.get("stop_reason", ""), backend_status="remote" if remote else "local_fallback", degraded=not remote, warning="当前使用本地 CAD 兼容数据" if not remote else "")
+    return CADResult(request_id=request.request_id, device_id=request.device_id, device_model=request.device_model, query=request.query, status=status, query_type=_query_type(request.query), component=component, part_no=part_no, drawing_refs=drawing_refs, viewer_context=viewer_context, location=location, summary=summary, components=components, parts=[dict(item) for item in components], drawings=drawings, bom_items=bom_items, part_relations=relations, assembly_relations=relations, locations=locations, evidence=evidence, sources=list(state.get("sources") or []), confidence=round(min(1.0, confidence), 4), total=len(components), source=(state.get("sources") or ["document-cad-service"])[0], validation_findings=list((state.get("validation") or {}).get("errors") or []), steps=list(state.get("observations") or []), stop_reason=state.get("stop_reason", ""), backend_status="remote" if remote else "local_fallback", degraded=not remote, warning="当前使用本地 CAD 兼容数据" if not remote else "")
 
 
-def _unique(items: list[str]) -> list[str]:
-    output: list[str] = []
-    for item in items:
-        if item and item not in output:
-            output.append(item)
+def _drawing_refs(drawings: list[dict[str, Any]], components: list[CADComponent]) -> list[Any]:
+    output: list[Any] = []
+    for item in drawings:
+        drawing_id = str(item.get("drawing_id") or item.get("drawing_ref") or "")
+        if not drawing_id:
+            continue
+        # 远程 CAD 返回 URL/类型时输出结构化引用；本地兼容数据继续返回旧字符串。
+        if item.get("drawing_url") or item.get("drawing_type"):
+            value: Any = {
+                "drawing_id": drawing_id,
+                "drawing_url": str(item.get("drawing_url") or ""),
+                "drawing_type": str(item.get("drawing_type") or item.get("format") or ""),
+            }
+        else:
+            value = drawing_id
+        if value not in output:
+            output.append(value)
+    for component in components:
+        if component.drawing_ref and component.drawing_ref not in output:
+            output.append(component.drawing_ref)
     return output
+
+
+def _viewer_context(drawings: list[dict[str, Any]], components: list[CADComponent], location: str) -> dict[str, str]:
+    drawing = next((item for item in drawings if isinstance(item, dict)), {})
+    component = components[0] if components else None
+    return {
+        "model_url": str(drawing.get("model_url") or drawing.get("viewer_url") or ""),
+        "mesh_id": str(drawing.get("mesh_id") or (component.component_id if component else "")),
+        "mesh_name": str(drawing.get("mesh_name") or (component.name if component else "")),
+        "location": location,
+        "default_view": str((drawing.get("default_view") or "component") if component else ""),
+    }

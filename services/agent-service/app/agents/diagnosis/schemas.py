@@ -60,6 +60,7 @@ class DiagnosisState:
             "evidence": list(self.evidence),
             "validation_errors": list(self.validation_errors),
             "stop_reason": self.stop_reason,
+            "last_observation_hash": self.last_observation_hash,
             "repeated_observation_count": self.repeated_observation_count,
             "step_count": self.step_count,
             "max_steps": self.max_steps,
