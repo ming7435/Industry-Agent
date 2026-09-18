@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 from typing import Any, Mapping
+
 from app.validator import RouteResult
 
-from .validator import RouterValidator
+from .graph import build_router_graph
 
 
 _ALARM_CODE_RE = re.compile(r"\b(?:e|alm)[-]?\d{2,6}\b", re.IGNORECASE)
@@ -40,29 +41,16 @@ _COMPONENT_KEYWORDS = (
 class RouterAgent:
     name = "router"
 
+    def __init__(self) -> None:
+        self.graph = build_router_graph()
+
     def run(self, task: Any) -> RouteResult:
         payload = task if isinstance(task, Mapping) else {"user_text": str(task or "")}
-        text = str(payload.get("user_text", ""))
-        context = dict(payload.get("context") or {})
-        entities = self._extract_entities(text, context)
-        lowered = text.lower()
-        intent, reason = self._classify_intent(lowered, entities)
-        target_agent = self._target_agent(intent)
-        findings = RouterValidator.validate(intent, target_agent, entities)
-        if findings:
-            intent = "need_more_context"
-            target_agent = "router"
-            reason = "路由目标已识别，但缺少必要实体：%s" % "；".join(findings)
-        confidence = self._confidence(intent, entities, findings)
-        return RouteResult(
-            intent=intent,
-            target_agent=target_agent,
-            confidence=confidence,
-            reason=reason,
-            entities=entities,
-            target_input=self._target_input(text, context, entities, intent),
-            validation_findings=findings,
-        )
+        output = self.graph.invoke({"agent": self, "task": dict(payload)})
+        result = output.get("result")
+        if result is None:
+            raise RuntimeError("Router LangGraph 未生成结果")
+        return result
 
     @staticmethod
     def _classify_intent(text: str, entities: Mapping[str, Any]) -> tuple[str, str]:

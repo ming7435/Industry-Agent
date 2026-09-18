@@ -76,6 +76,7 @@ class DiagnosisAgent:
         )
         self.knowledge_provider = knowledge_provider
         self.run_cache = run_cache if run_cache is not None else DiagnosisRunCache()
+        self.graph = build_diagnosis_graph()
 
     def run(
         self,
@@ -149,8 +150,7 @@ class DiagnosisAgent:
         )
 
         try:
-            graph = build_diagnosis_graph()
-            output = graph.invoke({
+            output = self.graph.invoke({
                 "agent": self,
                 "event": event,
                 "agent_state": state,
