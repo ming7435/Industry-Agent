@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
-from app.a2a import A2AClient, A2AError, CADRequest, CADResponse, KnowledgeRequest, KnowledgeResponse, MaintenanceRequest, MaintenanceResponse
+from app.a2a import (
+    A2AClient, A2AError, CADRequest, CADResponse, DiagnosisRequest, DiagnosisResponse,
+    KnowledgeRequest, KnowledgeResponse, MaintenanceRequest, MaintenanceResponse,
+    QualityRequest, QualityResponse,
+)
 from app.agents.diagnosis import DiagnosisAgent
 from app.agents.registry import build_agent_registry
 from app.experience import ExperienceLearningModule
@@ -32,7 +36,7 @@ class OrchestratorNodes:
         self.registry = registry
         self.trace = TraceRecorder()
         self.registry.trace = self.trace
-        self.a2a = A2AClient()
+        self.a2a = A2AClient(trace=self.trace)
         self.short_memory, self.long_memory = build_memory_stores()
         self.workorder_service = WorkOrderService(registry)
         self.experience_module = ExperienceLearningModule(
@@ -54,9 +58,11 @@ class OrchestratorNodes:
             quality_knowledge_provider=self._quality_knowledge_request,
         )
         self.harnesses = {name: AgentHarness(agent, trace=self.trace) for name, agent in agents.items()}
+        self.a2a.register("diagnosis", self._diagnosis_endpoint)
         self.a2a.register("knowledge", self._knowledge_endpoint)
         self.a2a.register("cad", self._cad_endpoint)
         self.a2a.register("maintenance", self._maintenance_endpoint)
+        self.a2a.register("quality", self._quality_endpoint)
 
     def trace_records(self) -> list[Dict[str, Any]]:
         return self.trace.list()
@@ -67,6 +73,25 @@ class OrchestratorNodes:
     def _finish(self, name: str, state: AgentState, payload: Dict[str, Any]) -> Dict[str, Any]:
         self.trace.record(type="node", name=name, event="node_completed", task_id=state.get("task_id", ""), keys=list(payload))
         return payload
+
+    def _diagnosis_endpoint(self, request: DiagnosisRequest) -> DiagnosisResponse:
+        event = dict(request.event)
+        event.setdefault("task_id", request.task_id)
+        event.setdefault("trace_id", request.trace_id)
+        result = self.harnesses["diagnosis"].execute_agent(event)
+        payload = _serialize_agent_result(result)
+        return DiagnosisResponse(
+            request_id=request.request_id,
+            reply_to=request.message_id,
+            task_id=request.task_id,
+            trace_id=request.trace_id,
+            from_agent="diagnosis",
+            to_agent=request.from_agent,
+            status="completed",
+            success=True,
+            diagnosis=payload,
+            payload=payload,
+        )
 
     def _knowledge_endpoint(self, request: KnowledgeRequest) -> KnowledgeResponse:
         result = self.harnesses["knowledge"].execute_agent({
@@ -85,6 +110,8 @@ class OrchestratorNodes:
         return KnowledgeResponse(
             request_id=request.request_id,
             task_id=request.task_id,
+            trace_id=request.trace_id,
+            reply_to=request.message_id,
             from_agent="knowledge",
             to_agent=request.from_agent,
             status=payload.get("status", "completed"),
@@ -104,13 +131,14 @@ class OrchestratorNodes:
             total=payload.get("total", 0),
             validation_findings=payload.get("validation_findings", []),
             stop_reason=payload.get("stop_reason", ""),
+            payload=payload,
         )
 
     def _knowledge_request(self, state: AgentState, query: str) -> Dict[str, Any]:
         context = state.get("context") or {}
         return self._knowledge_a2a(
             state.get("task_id", ""),
-            "diagnosis",
+            "diagnosis" if state.get("entry") == "trigger" else "router",
             query,
             filters=context.get("knowledge_filters") or {},
             trace_id=state.get("trace_id", ""),
@@ -139,6 +167,7 @@ class OrchestratorNodes:
                 trace_id=trace_id,
                 from_agent=from_agent,
                 to_agent="knowledge",
+                action="retrieve_evidence",
                 query=query,
                 filters=filters or {},
                 source_agent=from_agent,
@@ -184,6 +213,8 @@ class OrchestratorNodes:
         return CADResponse(
             request_id=request.request_id,
             task_id=request.task_id,
+            trace_id=request.trace_id,
+            reply_to=request.message_id,
             from_agent="cad",
             to_agent=request.from_agent,
             success=payload.get("status") == "completed",
@@ -211,6 +242,7 @@ class OrchestratorNodes:
             degraded=payload.get("degraded", False),
             source=payload.get("source", ""),
             result=payload,
+            payload=payload,
         )
 
     def _cad_request(self, state: AgentState, query: str, from_agent: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -224,6 +256,8 @@ class OrchestratorNodes:
                 task_id=task_id,
                 from_agent=from_agent,
                 to_agent="cad",
+                trace_id=str(values.get("trace_id") or ""),
+                action="retrieve_engineering_context",
                 device_id=str(values.get("device_id") or ""),
                 device_model=str(values.get("device_model") or ""),
                 component=str(values.get("component") or ""),
@@ -240,33 +274,104 @@ class OrchestratorNodes:
         return MaintenanceResponse(
             request_id=request.request_id,
             task_id=request.task_id,
+            trace_id=request.trace_id,
+            reply_to=request.message_id,
             from_agent="maintenance",
             to_agent=request.from_agent,
             success=bool(payload.get("workorder_ready")),
             maintenance_plan=payload,
             workorder_draft=payload.get("workorder_draft", {}),
+            payload=payload,
         )
 
-    def _maintenance_request(self, state: AgentState, diagnosis: Dict[str, Any], knowledge: Dict[str, Any], cad: Dict[str, Any]) -> Dict[str, Any]:
+    def _maintenance_request(
+        self,
+        state: AgentState,
+        diagnosis: Dict[str, Any],
+        knowledge: Dict[str, Any],
+        cad: Dict[str, Any],
+        quality: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         context = state.get("context") or {}
+        quality_result = dict(quality or {})
+        is_rework = bool(quality_result) and not bool(quality_result.get("passed"))
+        source_agent = "quality" if is_rework else ("diagnosis" if state.get("entry") == "trigger" else "router")
         response = self.a2a.request(
             MaintenanceRequest(
                 request_id=self.a2a.new_request_id(),
                 task_id=state.get("task_id", ""),
                 trace_id=state.get("trace_id", ""),
-                from_agent="diagnosis" if state.get("entry") == "trigger" else "router",
+                from_agent=source_agent,
                 to_agent="maintenance",
+                action="create_repair_plan" if not is_rework else "rework_repair_plan",
                 device_id=str(context.get("device_id") or diagnosis.get("device_id") or ""),
                 user_text=state.get("user_text", ""),
                 diagnosis_result=diagnosis,
-                constraints={"need_workorder": state.get("entry") == "trigger"},
+                constraints={"need_workorder": state.get("entry") == "trigger", "rework": is_rework},
                 diagnosis=diagnosis,
                 knowledge=knowledge,
                 cad=cad,
+                quality_result=quality_result,
             ),
             MaintenanceResponse,
         )
         return response.maintenance_plan
+
+    def _quality_endpoint(self, request: QualityRequest) -> QualityResponse:
+        result = self.harnesses["quality"].execute_agent(request.model_dump(mode="json"))
+        payload = _serialize_agent_result(result)
+        passed = bool(payload.get("passed"))
+        return QualityResponse(
+            request_id=request.request_id,
+            reply_to=request.message_id,
+            task_id=request.task_id,
+            trace_id=request.trace_id,
+            from_agent="quality",
+            to_agent=request.from_agent,
+            status="completed",
+            success=True,
+            quality_result=payload,
+            passed=passed,
+            rework_required=not passed,
+            validation_findings=list(payload.get("findings") or payload.get("validation_findings") or []),
+            stop_reason=str(payload.get("stop_reason") or ""),
+            payload=payload,
+        )
+
+    def _quality_request(self, state: AgentState, workorder: Dict[str, Any]) -> Dict[str, Any]:
+        context = state.get("context") or {}
+        response = self.a2a.request(
+            QualityRequest(
+                request_id=self.a2a.new_request_id(),
+                task_id=state.get("task_id", ""),
+                trace_id=state.get("trace_id", ""),
+                from_agent="router",
+                to_agent="quality",
+                action="verify_repair",
+                workorder_id=str(workorder.get("workorder_id") or ""),
+                device_id=str(workorder.get("device_id") or context.get("device_id") or ""),
+                diagnosis_result=state.get("diagnosis") or {},
+                diagnosis=state.get("diagnosis") or {},
+                maintenance_plan=state.get("maintenance_plan") or {},
+                workorder=workorder,
+                manage_workorder=True,
+            ),
+            QualityResponse,
+        )
+        return response.quality_result
+
+    def _diagnosis_request(self, state: AgentState, event: Dict[str, Any]) -> Dict[str, Any]:
+        request = DiagnosisRequest(
+            request_id=self.a2a.new_request_id(),
+            task_id=state.get("task_id", ""),
+            trace_id=state.get("trace_id", ""),
+            from_agent="router",
+            to_agent="diagnosis",
+            action="diagnose_event",
+            event={**event, "task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
+        )
+        response = self.a2a.request(request, DiagnosisResponse)
+        return response.diagnosis
 
     def _diagnosis_knowledge_request(self, event: Dict[str, Any], query: str) -> Dict[str, Any]:
         """Diagnosis Agent 使用的 Knowledge A2A 入口。"""
@@ -317,8 +422,7 @@ class OrchestratorNodes:
                 "realtime_snapshot": {},
                 "timestamp": state.get("task_id", ""),
             }
-        result = self.harnesses["diagnosis"].execute_agent(event)
-        output = {"diagnosis": _serialize_agent_result(result)}
+        output = {"diagnosis": self._diagnosis_request(state, event)}
         if state.get("entry") == "trigger":
             diagnosis = output["diagnosis"]
             a2a_tool = next(
@@ -364,7 +468,13 @@ class OrchestratorNodes:
             context = state.get("context") or {}
             query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "设备维修")
             cad = self._cad_request(state, query, "maintenance", context=context)
-        plan = self._maintenance_request(state, state.get("diagnosis", {}), state.get("knowledge", {}), cad)
+        plan = self._maintenance_request(
+            state,
+            state.get("diagnosis", {}),
+            state.get("knowledge", {}),
+            cad,
+            quality=state.get("quality") or {},
+        )
         payload = {"maintenance_plan": plan}
         if state.get("entry") == "trigger":
             existing = state.get("workorder") or {}
@@ -392,16 +502,28 @@ class OrchestratorNodes:
         order = state.get("workorder", {})
         workorder_id = str(order.get("workorder_id", ""))
         latest = self.workorder_service.get(workorder_id) if workorder_id else order
-        result = _serialize_agent_result(self.harnesses["quality"].execute_agent({
-            "workorder": latest,
-            "task_id": state.get("task_id", ""),
-            "trace_id": state.get("trace_id", ""),
-            "manage_workorder": True,
-        }))
+        result = self._quality_request(state, latest)
         if workorder_id:
             latest = self.workorder_service.get(workorder_id)
             result["workorder"] = latest
         return self._finish("quality", state, {"quality": result, "workorder": latest})
+
+    def quality_rework(self, state: AgentState) -> Dict[str, Any]:
+        """质量校验不通过时，通过 Quality -> Maintenance A2A 生成返工方案。"""
+
+        self._node_start("quality_rework", state)
+        plan = self._maintenance_request(
+            state,
+            state.get("diagnosis") or {},
+            state.get("knowledge") or {},
+            state.get("cad") or {},
+            quality=state.get("quality") or {},
+        )
+        return self._finish(
+            "quality_rework",
+            state,
+            {"maintenance_plan": plan, "rework_via": "quality->maintenance"},
+        )
 
     def report(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("report", state)

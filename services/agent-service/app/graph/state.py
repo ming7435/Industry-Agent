@@ -20,6 +20,7 @@ class AgentState(TypedDict, total=False):
     maintenance_plan: Dict[str, Any]
     workorder: Dict[str, Any]
     quality: Dict[str, Any]
+    rework_via: str
     report: Dict[str, Any]
     experience: Dict[str, Any]
     memory: Dict[str, Any]
