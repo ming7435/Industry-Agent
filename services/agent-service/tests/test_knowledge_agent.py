@@ -63,6 +63,29 @@ class KnowledgeAgentTests(unittest.TestCase):
         self.assertTrue(alarm["documents"])
         self.assertTrue(all(item["metadata"]["knowledge_type"] == "alarm" for item in alarm["documents"]))
 
+    def test_confidence_is_evidence_quality_not_raw_rrf_score(self):
+        result = self.agent.run({
+            "query": "E102 主轴温度处理步骤",
+            "alarm_code": "E102",
+            "required_sources": ["alarm", "sop"],
+        })
+
+        self.assertGreaterEqual(result.confidence, 0.5)
+        self.assertEqual(result.confidence, result.confidence_details["overall"])
+        self.assertIn("query_coverage", result.confidence_details)
+        self.assertIn("source_coverage", result.confidence_details)
+
+    def test_graph_retrieves_complementary_sources_before_reranking(self):
+        result = self.agent.run({
+            "query": "E102 主轴温度处理步骤",
+            "alarm_code": "E102",
+            "required_sources": ["alarm", "sop"],
+        })
+
+        tools = [item["tool"] for item in result.retrieval_trace]
+        self.assertIn("search_alarm_knowledge", tools)
+        self.assertIn("search_sop", tools)
+
 
 if __name__ == "__main__":
     unittest.main()

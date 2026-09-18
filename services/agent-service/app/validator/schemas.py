@@ -54,6 +54,7 @@ class KnowledgeResult(BaseModel):
     possible_causes: List[str] = Field(default_factory=list)
     recommended_checks: List[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0, le=1)
+    confidence_details: Dict[str, Any] = Field(default_factory=dict)
     documents: List[KnowledgeDocument] = Field(default_factory=list)
     sources: List[str] = Field(default_factory=list)
     filters: Dict[str, Any] = Field(default_factory=dict)

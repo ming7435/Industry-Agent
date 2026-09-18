@@ -30,7 +30,7 @@ class RAGServiceClient:
     def search(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None) -> Dict[str, Any]:
         selected_filters = dict(filters or {})
         payload = {
-            "query": query,
+            "query": self._build_remote_query(query, selected_filters),
             "top_n": limit,
             "filters": self._normalize_remote_filters(selected_filters),
         }
@@ -56,6 +56,22 @@ class RAGServiceClient:
         result["remote_base_url"] = ""
         result["warning"] = "RAG_SERVICE_BASE_URL 未配置，当前使用本地演示知识索引。"
         return result
+
+    @staticmethod
+    def _build_remote_query(query: str, filters: Mapping[str, Any]) -> str:
+        """Put structured identifiers into the remote natural-language query.
+
+        The standalone RAG API filters by corpus, while alarm/component fields
+        are carried in chunk metadata. Including them in the query preserves
+        exact-code recall without changing the RAG service contract.
+        """
+        text = str(query or "").strip()
+        additions = []
+        for key, label in (("alarm_code", "报警码"), ("error_code", "故障码"), ("component", "部件"), ("device_id", "设备")):
+            value = str(filters.get(key) or "").strip()
+            if value and value.lower() not in text.lower():
+                additions.append(f"{label} {value}")
+        return " ".join([text, *additions]).strip()
 
     @staticmethod
     def _normalize_remote_filters(filters: Mapping[str, Any]) -> Dict[str, Any]:
@@ -100,6 +116,15 @@ class RAGServiceClient:
             if not isinstance(hit, Mapping):
                 continue
             metadata = dict(hit.get("metadata") or {})
+            corpus_to_type = {
+                "alarms": "alarm",
+                "cases": "case",
+                "manuals": "manual",
+                "sop": "sop",
+                "bom": "bom",
+            }
+            if not metadata.get("knowledge_type") and metadata.get("corpus") in corpus_to_type:
+                metadata["knowledge_type"] = corpus_to_type[metadata["corpus"]]
             chunk_id = str(hit.get("chunk_id") or hit.get("id") or "")
             source = str(
                 metadata.get("source_name")

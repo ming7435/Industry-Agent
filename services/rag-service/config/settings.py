@@ -97,16 +97,16 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Retrieval fan-out and fusion
     # ------------------------------------------------------------------
-    bm25_top_k: int = 5
+    bm25_top_k: int = 20
     """Number of candidates requested from the Whoosh (BM25) route."""
 
-    dense_top_k: int = 5
+    dense_top_k: int = 20
     """Number of candidates requested from the Milvus (dense) route."""
 
     rrf_k: int = 60
     """Smoothing constant of the reciprocal rank fusion."""
 
-    fusion_top_m: int = 5
+    fusion_top_m: int = 30
     """Number of fused candidates kept for the reranking stage."""
 
     rerank_top_n: int = 5

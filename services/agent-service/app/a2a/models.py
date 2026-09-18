@@ -131,6 +131,7 @@ class KnowledgeResponse(A2AResponse):
     possible_causes: List[str] = Field(default_factory=list)
     recommended_checks: List[str] = Field(default_factory=list)
     confidence: float = 0.0
+    confidence_details: Dict[str, Any] = Field(default_factory=dict)
     documents: List[Dict[str, Any]] = Field(default_factory=list)
     sources: List[str] = Field(default_factory=list)
     backend_status: str = "unknown"

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Mapping, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -44,6 +44,7 @@ class KnowledgeGraphState(TypedDict, total=False):
     status: str
     stop_reason: str
     route: str
+    query_refined: bool
     result: KnowledgeResult
 
 
@@ -58,6 +59,7 @@ def initialize(state: KnowledgeGraphState) -> Dict[str, Any]:
         "documents": [],
         "evidence": [],
         "validation_findings": [],
+        "query_refined": False,
         "route": "load_skill",
     }
 
@@ -90,7 +92,7 @@ def plan_retrieval(state: KnowledgeGraphState) -> Dict[str, Any]:
         "manual": ["search_manual", "search_knowledge"],
         "case": ["search_fault_cases", "search_semantic_memory"],
         "engineering": ["search_manual", "search_knowledge"],
-        "hybrid": ["search_knowledge", "search_sop", "search_fault_cases"],
+        "hybrid": ["search_knowledge", "search_sop", "search_manual", "search_fault_cases"],
     }
     planned = list(plans.get(query_type, plans["hybrid"]))
     required = [str(item).lower() for item in request.get("required_sources") or []]
@@ -164,11 +166,17 @@ def observe(state: KnowledgeGraphState) -> Dict[str, Any]:
     required = [str(item).lower() for item in state["request"].get("required_sources") or []]
     found_types = {normalize_source(item.get("metadata", {}).get("knowledge_type")) for item in documents}
     covered = not required or all(normalize_source(item) in found_types for item in required)
-    if documents and covered:
+    requested_lookup = bool(state["request"].get("document_id") or state["request"].get("chunk_id"))
+    # Do not stop after the first hit.  Complementary sources (alarm + SOP or
+    # manual + historical case) are part of the evidence quality calculation.
+    # Exact document/chunk fetches are the exception: they already identify the
+    # requested evidence and should not fan out into broad retrieval.
+    should_complete = requested_lookup or (covered and not pending)
+    if should_complete:
         route = "rerank"
     elif pending and state.get("step_count", 0) < state.get("max_steps", 4):
         route = "retrieve"
-    elif not documents and state.get("step_count", 0) < state.get("max_steps", 4):
+    elif not documents and not state.get("query_refined", False) and state.get("step_count", 0) < state.get("max_steps", 4):
         route = "refine_query"
     else:
         route = "rerank"
@@ -179,8 +187,15 @@ def refine_query(state: KnowledgeGraphState) -> Dict[str, Any]:
     query = state["query"]
     query_type = state.get("query_type") or "hybrid"
     suffix = {"alarm": " 报警定义 含义 检查", "sop": " SOP 维修步骤", "case": " 历史案例 故障经验", "engineering": " 手册 部件", "hybrid": " 工业设备维修"}.get(query_type, " 工业设备维修")
-    refined = query if suffix.strip() in query else query + suffix
-    return {"query": refined, "pending_tools": ["search_knowledge"], "route": "retrieve"}
+    alarm_code = str(state["request"].get("alarm_code") or "").strip()
+    component = str(state["request"].get("component") or "").strip()
+    additions = [suffix.strip()]
+    if alarm_code and alarm_code.lower() not in query.lower():
+        additions.insert(0, "报警码 " + alarm_code)
+    if component and component.lower() not in query.lower():
+        additions.append("部件 " + component)
+    refined = query + " " + " ".join(item for item in additions if item and item.lower() not in query.lower())
+    return {"query": refined.strip(), "query_refined": True, "pending_tools": ["search_knowledge"], "route": "retrieve"}
 
 
 def rerank(state: KnowledgeGraphState) -> Dict[str, Any]:
@@ -192,7 +207,14 @@ def rerank(state: KnowledgeGraphState) -> Dict[str, Any]:
 def validate(state: KnowledgeGraphState) -> Dict[str, Any]:
     documents = list(state.get("documents") or [])
     evidence = list(state.get("evidence") or [])
-    confidence = state["agent"]._confidence_from_documents(documents, state["request"].get("required_sources") or [])
+    raw_results = [item.get("result") or {} for item in state.get("observations") or [] if isinstance(item, Mapping)]
+    degraded = any(bool(item.get("degraded")) for item in raw_results)
+    confidence = state["agent"]._confidence_details(
+        state["agent"]._deduplicate_documents(documents),
+        state["request"].get("required_sources") or [],
+        query=state.get("query", ""),
+        degraded=degraded,
+    )["overall"]
     findings = KnowledgeEvidenceValidator.validate(
         documents,
         evidence,

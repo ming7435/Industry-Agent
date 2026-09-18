@@ -9,6 +9,7 @@ from app.tools.registry import ToolRegistry
 from app.validator import KnowledgeDocument, KnowledgeResult
 
 from .graph import build_knowledge_graph
+from .confidence import calculate_confidence
 
 
 _ALARM_CODE_RE = re.compile(r"\b[A-Z]?\d{3,6}\b", re.IGNORECASE)
@@ -35,7 +36,10 @@ class KnowledgeAgent:
         documents = self._deduplicate_documents(raw.get("documents", []))
         status = "completed" if documents else "insufficient_evidence"
         evidence = self._evidence_from_documents(documents)
-        confidence = self._confidence(documents, required_sources or [])
+        confidence_details = self._confidence_details(
+            documents, required_sources or [], query=query, degraded=bool(raw.get("degraded", False))
+        )
+        confidence = confidence_details["overall"]
         return KnowledgeResult(
             query=query,
             status=status,
@@ -53,6 +57,7 @@ class KnowledgeAgent:
             degraded=bool(raw.get("degraded", False)),
             warning=str(raw.get("warning") or ""),
             source=raw.get("source", "rag-service-compatible"),
+            confidence_details=confidence_details,
         )
 
     def run(self, task: Any) -> KnowledgeResult:
@@ -171,18 +176,27 @@ class KnowledgeAgent:
         return values
 
     @staticmethod
+    def _confidence_details(
+        documents: list[KnowledgeDocument],
+        required_sources: list[str],
+        query: str = "",
+        degraded: bool = False,
+    ) -> dict[str, Any]:
+        return calculate_confidence(
+            [item.model_dump(mode="json") for item in documents],
+            required_sources,
+            query=query,
+            degraded=degraded,
+        )
+
+    @classmethod
     def _confidence(documents: list[KnowledgeDocument], required_sources: list[str]) -> float:
-        if not documents:
-            return 0.0
-        best = max(doc.score for doc in documents)
-        source_bonus = 0.05 if required_sources else 0.0
-        diversity_bonus = min(0.1, 0.02 * len({doc.metadata.get("knowledge_type", "") for doc in documents}))
-        return round(min(1.0, best + source_bonus + diversity_bonus), 4)
+        return cls._confidence_details(documents, required_sources)["overall"]
 
     @classmethod
     def _confidence_from_documents(cls, documents: list[Mapping[str, Any]], required_sources: list[str]) -> float:
         normalized = cls._deduplicate_documents(documents)
-        return cls._confidence(normalized, required_sources)
+        return cls._confidence_details(normalized, required_sources)["overall"]
 
     def _build_result(
         self,
@@ -197,8 +211,15 @@ class KnowledgeAgent:
     ) -> KnowledgeResult:
         normalized = self._deduplicate_documents(documents)
         required_sources = list(request.get("required_sources") or [])
-        confidence = self._confidence(normalized, required_sources)
         raw_results = [item.get("result") or {} for item in observations if isinstance(item, Mapping)]
+        degraded = any(bool(item.get("degraded")) for item in raw_results)
+        confidence_details = self._confidence_details(
+            normalized,
+            required_sources,
+            query=query,
+            degraded=degraded,
+        )
+        confidence = confidence_details["overall"]
         backend_status = next((str(item.get("connection_status")) for item in raw_results if item.get("connection_status")), "unknown")
         source = next((str(item.get("source")) for item in raw_results if item.get("source")), "rag-service-compatible")
         warning_items = [str(item.get("warning")) for item in raw_results if item.get("warning")]
@@ -227,4 +248,5 @@ class KnowledgeAgent:
             validation_findings=list(validation_findings),
             stop_reason="evidence_ready" if status == "completed" else "insufficient_evidence",
             retrieval_trace=[dict(item) for item in observations],
+            confidence_details=confidence_details,
         )

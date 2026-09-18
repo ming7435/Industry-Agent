@@ -165,6 +165,7 @@ class OrchestratorNodes:
             possible_causes=payload.get("possible_causes", []),
             recommended_checks=payload.get("recommended_checks", []),
             confidence=payload.get("confidence", 0.0),
+            confidence_details=payload.get("confidence_details", {}),
             documents=payload.get("documents", []),
             sources=payload.get("sources", []),
             backend_status=payload.get("backend_status", "unknown"),
