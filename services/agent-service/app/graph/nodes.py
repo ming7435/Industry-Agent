@@ -92,7 +92,8 @@ class OrchestratorNodes:
             type="node", name=name, node=name, agent=self._node_agent(name),
             event="node_completed", task_id=task_id, keys=list(payload),
             state_change={"changed_keys": sorted(changed), "output_keys": list(payload)},
-            tool_name="", latency=perf_counter() - started, error="",
+            tool_name="", latency=perf_counter() - started,
+            error="; ".join(str(item) for item in payload.get("errors", []) if item),
         )
         return payload
 
@@ -106,6 +107,8 @@ class OrchestratorNodes:
             "maintenance": "maintenance",
             "quality": "quality",
             "quality_rework": "maintenance",
+            "workorder_action": "workorder",
+            "workorder_query": "workorder",
             "report": "report",
         }.get(name, name)
 
@@ -259,6 +262,7 @@ class OrchestratorNodes:
             component=payload.get("component", request.component),
             part_no=payload.get("part_no", request.part_no),
             drawing_refs=payload.get("drawing_refs", []),
+            drawing_ref_details=payload.get("drawing_ref_details", []),
             viewer_context=payload.get("viewer_context", {}),
             location=payload.get("location", ""),
             summary=payload.get("summary", ""),
@@ -532,6 +536,73 @@ class OrchestratorNodes:
                 order = self.workorder_service.get(order["workorder_id"])
             payload["workorder"] = order
         return self._finish("maintenance", state, payload)
+
+    def workorder_action(self, state: AgentState) -> Dict[str, Any]:
+        """执行 Router 已确认的工单业务动作，保持工单不属于 Agent。"""
+
+        self._node_start("workorder_action", state)
+        route = state.get("route_result") or {}
+        target_input = dict(route.get("target_input") or state.get("context") or {})
+        action = str(target_input.get("action") or "update").lower()
+        workorder_id = str(target_input.get("workorder_id") or "")
+        try:
+            if action == "create":
+                order = self.workorder_service.create(
+                    device_id=str(target_input.get("device_id") or "unknown"),
+                    title=str(target_input.get("title") or "设备维修工单"),
+                    plan_id=str(target_input.get("plan_id") or ""),
+                    steps=list(target_input.get("steps") or []),
+                    assignee=str(target_input.get("assignee") or ""),
+                    repair_target=target_input.get("repair_target") or target_input.get("target_part") or {},
+                    drawing_context=target_input.get("drawing_context") or target_input.get("engineering_context") or {},
+                )
+            elif action == "assign":
+                order = self.workorder_service.assign(workorder_id, str(target_input.get("assignee") or ""))
+            elif action == "close":
+                order = self.workorder_service.close(workorder_id)
+            elif action == "reopen":
+                order = self.workorder_service.reopen(workorder_id)
+            else:
+                order = self.workorder_service.update(
+                    workorder_id,
+                    status=str(target_input.get("status") or "in_progress"),
+                    assignee=str(target_input.get("assignee") or ""),
+                )
+            return self._finish("workorder_action", state, {
+                "workorder": _serialize_agent_result(order),
+                "status": "completed",
+            })
+        except Exception as error:
+            return self._finish("workorder_action", state, {
+                "status": "error",
+                "errors": [str(error)],
+                "workorder": {"workorder_id": workorder_id, "action": action},
+            })
+
+    def workorder_query(self, state: AgentState) -> Dict[str, Any]:
+        """查询工单业务结果并写回共享 AgentState。"""
+
+        self._node_start("workorder_query", state)
+        route = state.get("route_result") or {}
+        target_input = dict(route.get("target_input") or state.get("context") or {})
+        workorder_id = str(target_input.get("workorder_id") or "")
+        try:
+            order = self.workorder_service.get(workorder_id) if workorder_id else {
+                "items": self.workorder_service.list(
+                    device_id=str(target_input.get("device_id") or ""),
+                    status=str(target_input.get("status") or ""),
+                ),
+            }
+            return self._finish("workorder_query", state, {
+                "workorder": _serialize_agent_result(order),
+                "status": "completed" if order.get("found", True) else "not_found",
+            })
+        except Exception as error:
+            return self._finish("workorder_query", state, {
+                "status": "error",
+                "errors": [str(error)],
+                "workorder": {"workorder_id": workorder_id},
+            })
 
     def quality(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("quality", state)

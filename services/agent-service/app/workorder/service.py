@@ -45,14 +45,21 @@ class WorkOrderService:
 
     @staticmethod
     def _drawing_context(engineering_context: Mapping[str, Any]) -> dict[str, str]:
-        viewer = dict(engineering_context.get("viewer_context") or {})
-        refs = list(engineering_context.get("drawing_refs") or [])
+        context = dict(engineering_context or {})
+        nested_context = context.get("drawing_context")
+        if isinstance(nested_context, Mapping):
+            context = {**dict(nested_context), **context}
+        viewer = dict(context.get("viewer_context") or {})
+        refs = list(context.get("drawing_ref_details") or context.get("drawing_refs") or [])
         first = refs[0] if refs else {}
+        drawing_url = str(context.get("drawing_url") or "")
+        if not drawing_url and isinstance(first, Mapping):
+            drawing_url = str(first.get("drawing_url") or "")
         return {
-            "drawing_url": str(first.get("drawing_url") or "") if isinstance(first, Mapping) else "",
-            "model_url": str(viewer.get("model_url") or ""),
-            "mesh_name": str(viewer.get("mesh_name") or ""),
-            "location": str(viewer.get("location") or ""),
+            "drawing_url": drawing_url,
+            "model_url": str(context.get("model_url") or viewer.get("model_url") or ""),
+            "mesh_name": str(context.get("mesh_name") or viewer.get("mesh_name") or ""),
+            "location": str(context.get("location") or viewer.get("location") or ""),
         }
 
     def update(self, workorder_id: str, status: str = "in_progress", **fields: Any) -> dict[str, Any]:

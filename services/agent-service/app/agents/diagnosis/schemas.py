@@ -33,6 +33,7 @@ class DiagnosisState:
     active_skill: str = "diagnosis_master_skill"
     allowed_tools: List[str] = field(default_factory=list)
     evidence: List[str] = field(default_factory=list)
+    evidence_records: List[Dict[str, Any]] = field(default_factory=list)
     validation_errors: List[str] = field(default_factory=list)
     stop_reason: str = ""
     last_observation_hash: str = ""
@@ -58,6 +59,7 @@ class DiagnosisState:
             "active_skill": self.active_skill,
             "allowed_tools": list(self.allowed_tools),
             "evidence": list(self.evidence),
+            "evidence_records": list(self.evidence_records),
             "validation_errors": list(self.validation_errors),
             "stop_reason": self.stop_reason,
             "last_observation_hash": self.last_observation_hash,
@@ -88,6 +90,7 @@ class DiagnosisResult:
     source: str
     created_at: datetime
     evidence: List[str] = field(default_factory=list)
+    evidence_records: List[Dict[str, Any]] = field(default_factory=list)
     recommendation: str = ""
     task_id: str = ""
     triggered_at: Optional[datetime] = None
@@ -110,6 +113,7 @@ class DiagnosisResult:
             "diagnosis": self.diagnosis,
             "confidence": self.confidence,
             "evidence": list(self.evidence),
+            "evidence_records": list(self.evidence_records),
             "recommendation": self.recommendation,
             "alarm_definition": dict(self.alarm_definition),
             "tool_calls": list(self.tool_calls),

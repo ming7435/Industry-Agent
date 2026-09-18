@@ -10,11 +10,13 @@ VALID_TARGETS = frozenset({"diagnosis", "knowledge", "cad", "maintenance", "qual
 
 class RouterValidator:
     @staticmethod
-    def validate(intent: str, target_agent: str, entities: Mapping[str, Any]) -> list[str]:
+    def validate(intent: str, target_agent: str, entities: Mapping[str, Any], action: str = "") -> list[str]:
         findings: list[str] = []
         if target_agent not in VALID_TARGETS:
             findings.append("target_agent 无效：%s" % target_agent)
-        if intent in {"workorder_action", "workorder_query"} and not entities.get("workorder_id"):
+        if intent == "workorder_query" and not entities.get("workorder_id"):
+            findings.append("工单查询/操作缺少 workorder_id")
+        if intent == "workorder_action" and action not in {"create"} and not entities.get("workorder_id"):
             findings.append("工单查询/操作缺少 workorder_id")
         if intent == "quality" and not entities.get("workorder_id"):
             findings.append("质检/验收查询缺少 workorder_id")

@@ -133,6 +133,9 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
         for item in agent._evidence_from_observation(observation):
             if item not in runtime.evidence:
                 runtime.evidence.append(item)
+        for item in agent._evidence_records_from_observation(observation):
+            if not any(existing.get("source") == item.get("source") and existing.get("content") == item.get("content") for existing in runtime.evidence_records):
+                runtime.evidence_records.append(item)
         runtime.messages.append({
             "role": "tool",
             "tool_call_id": "a2a-knowledge",
@@ -268,6 +271,9 @@ def record_tool_observations(state: DiagnosisGraphState) -> Dict[str, Any]:
         for evidence in agent._evidence_from_observation(observation):
             if evidence not in runtime.evidence:
                 runtime.evidence.append(evidence)
+        for item in agent._evidence_records_from_observation(observation):
+            if not any(existing.get("source") == item.get("source") and existing.get("content") == item.get("content") for existing in runtime.evidence_records):
+                runtime.evidence_records.append(item)
         runtime.messages.append({
             "role": "tool",
             "tool_call_id": call.get("id") or "tool_call",

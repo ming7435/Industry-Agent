@@ -61,7 +61,8 @@ def validate_route(state: RouterGraphState) -> Dict[str, Any]:
     # 实体提取后重新判断一次，使 E102 这类报警码问题进入 Knowledge。
     intent, reason = agent._classify_intent(text, entities)
     target_agent = agent._target_agent(intent)
-    findings = RouterValidator.validate(intent, target_agent, entities)
+    target_input = agent._target_input(text, state.get("context") or {}, entities, intent)
+    findings = RouterValidator.validate(intent, target_agent, entities, str(target_input.get("action") or ""))
     if findings:
         intent = "need_more_context"
         target_agent = "router"

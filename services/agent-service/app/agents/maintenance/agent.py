@@ -65,7 +65,7 @@ class MaintenanceAgent:
     def _merge_cad_result(target: dict[str, Any], result: Mapping[str, Any]) -> None:
         if not isinstance(result, Mapping):
             return
-        for key in ("components", "drawings", "bom_items", "parts", "part_relations", "assembly_relations", "locations", "evidence", "sources"):
+        for key in ("components", "drawings", "bom_items", "parts", "part_relations", "assembly_relations", "locations", "evidence", "sources", "drawing_ref_details"):
             values = result.get(key)
             if not isinstance(values, list):
                 continue
@@ -105,6 +105,7 @@ class MaintenanceAgent:
         target_part = self._target_part(diagnosis, profile, components, bom_items)
         engineering_context = {
             "drawing_refs": list(cad.get("drawing_refs") or self._drawing_refs(cad, components)),
+            "drawing_ref_details": list(cad.get("drawing_ref_details") or []),
             "viewer_context": dict(cad.get("viewer_context") or self._viewer_context(cad, components, diagnosis)),
         }
         plan_payload = {

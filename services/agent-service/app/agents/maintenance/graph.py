@@ -162,7 +162,7 @@ def fallback(state: MaintenanceGraphState) -> Dict[str, Any]:
 
 def _drawing_context(engineering_context: Dict[str, Any]) -> Dict[str, str]:
     viewer = dict(engineering_context.get("viewer_context") or {})
-    refs = list(engineering_context.get("drawing_refs") or [])
+    refs = list(engineering_context.get("drawing_ref_details") or engineering_context.get("drawing_refs") or [])
     first = refs[0] if refs else {}
     if isinstance(first, str):
         drawing_url = ""

@@ -68,6 +68,8 @@ class KnowledgeAgent:
         text = " ".join([query, " ".join(str(item) for item in required_sources), " ".join(str(value) for value in filters.values())]).lower()
         if filters.get("alarm_code") or _ALARM_CODE_RE.search(query):
             return "alarm"
+        if any(token in text for token in ("manual", "手册", "维修手册")):
+            return "manual"
         if any(token in text for token in ("sop", "步骤", "规程", "作业指导", "怎么检查")):
             return "sop"
         if any(token in text for token in ("案例", "历史", "经验", "case")):
@@ -85,6 +87,8 @@ class KnowledgeAgent:
                 selected["alarm_code"] = match.group(0).upper()
         if query_type == "sop" and not selected.get("knowledge_type"):
             selected["knowledge_type"] = "sop"
+        if query_type == "manual" and not selected.get("knowledge_type"):
+            selected["knowledge_type"] = "manual"
         if query_type == "case" and not selected.get("knowledge_type"):
             selected["knowledge_type"] = "case"
         return selected
@@ -112,6 +116,7 @@ class KnowledgeAgent:
                 "collection": doc.metadata.get("collection", ""),
                 "knowledge_type": doc.metadata.get("knowledge_type", ""),
                 "component": doc.metadata.get("component", ""),
+                "content": doc.content,
             })
         return evidence
 

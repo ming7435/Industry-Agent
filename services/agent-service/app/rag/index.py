@@ -308,6 +308,16 @@ def build_default_index() -> RAGIndex:
             "component": "主轴",
             "keywords": ["振动", "轴承", "刀具"],
         },
+        {
+            "id": "MANUAL-SPINDLE-001",
+            "title": "主轴系统维修手册",
+            "content": "主轴系统维修前执行断电挂牌；检查冷却、润滑、轴承和温度传感器，维修后复测温度与振动参数。",
+            "source_file": "演示数据/维修手册",
+            "record_category": "manual",
+            "knowledge_type": "manual",
+            "component": "主轴",
+            "keywords": ["主轴", "维修手册", "轴承", "温度传感器"],
+        },
     ])
     data_dir = os.getenv("RAG_DATA_DIR", "").strip()
     if data_dir and Path(data_dir).is_dir():

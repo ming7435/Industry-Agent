@@ -195,6 +195,7 @@ class CADResponse(A2AResponse):
     component: str = ""
     part_no: str = ""
     drawing_refs: List[Any] = Field(default_factory=list)
+    drawing_ref_details: List[Dict[str, Any]] = Field(default_factory=list)
     viewer_context: Dict[str, Any] = Field(default_factory=dict)
     location: str = ""
     summary: str = ""

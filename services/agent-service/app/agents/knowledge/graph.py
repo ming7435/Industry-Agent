@@ -9,7 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from app.validator import KnowledgeResult
 
 from .schemas import KnowledgeQuery
-from .validator import KnowledgeEvidenceValidator
+from .validator import KnowledgeEvidenceValidator, normalize_source
 
 
 KNOWLEDGE_TOOLS = (
@@ -81,6 +81,7 @@ def plan_retrieval(state: KnowledgeGraphState) -> Dict[str, Any]:
     plans = {
         "alarm": ["search_alarm_knowledge", "search_knowledge"],
         "sop": ["search_sop", "search_manual"],
+        "manual": ["search_manual", "search_knowledge"],
         "case": ["search_fault_cases", "search_semantic_memory"],
         "engineering": ["search_manual", "search_knowledge"],
         "hybrid": ["search_knowledge", "search_sop", "search_fault_cases"],
@@ -92,8 +93,14 @@ def plan_retrieval(state: KnowledgeGraphState) -> Dict[str, Any]:
             planned.insert(0, "search_alarm_knowledge")
         if "sop" in required and "search_sop" not in planned:
             planned.append("search_sop")
-        if "case" in required and "search_fault_cases" not in planned:
+        if normalize_source("manual") in {normalize_source(item) for item in required} and "search_manual" not in planned:
+            planned.append("search_manual")
+        if any(normalize_source(item) == "case" for item in required) and "search_fault_cases" not in planned:
             planned.append("search_fault_cases")
+    if request.get("chunk_id"):
+        planned = ["fetch_chunk"] + [item for item in planned if item != "fetch_chunk"]
+    elif request.get("document_id"):
+        planned = ["fetch_document"] + [item for item in planned if item != "fetch_document"]
     return {"retrieval_plan": planned, "pending_tools": list(planned), "route": "retrieve"}
 
 
@@ -110,6 +117,8 @@ def retrieve(state: KnowledgeGraphState) -> Dict[str, Any]:
         "alarm_code": request.get("alarm_code", ""),
         "component": request.get("component", ""),
         "device_id": request.get("device_id", ""),
+        "document_id": request.get("document_id", ""),
+        "chunk_id": request.get("chunk_id", ""),
     }
     try:
         raw = state["agent"].tools.execute(operation, arguments)
@@ -119,7 +128,21 @@ def retrieve(state: KnowledgeGraphState) -> Dict[str, Any]:
         error = str(exc)
     observations = list(state.get("observations") or [])
     observations.append({"tool": operation, "result": raw, "error": error})
-    documents = list(state.get("documents") or []) + list(raw.get("documents") or [])
+    new_documents = list(raw.get("documents") or [])
+    if not new_documents and raw.get("found") and raw.get("document_id"):
+        new_documents = [{
+            "document_id": raw.get("document_id"),
+            "title": raw.get("title") or raw.get("document_id"),
+            "content": raw.get("chunk_content") or raw.get("content") or "",
+            "source": raw.get("source") or "rag-service-compatible",
+            "score": 1.0,
+            "metadata": {
+                **dict(raw.get("metadata") or {}),
+                "knowledge_type": (raw.get("metadata") or {}).get("knowledge_type", "manual"),
+                "chunk_id": raw.get("chunk_id", ""),
+            },
+        }]
+    documents = list(state.get("documents") or []) + new_documents
     return {
         "pending_tools": pending,
         "observations": observations,
@@ -133,8 +156,8 @@ def observe(state: KnowledgeGraphState) -> Dict[str, Any]:
     documents = list(state.get("documents") or [])
     pending = list(state.get("pending_tools") or [])
     required = [str(item).lower() for item in state["request"].get("required_sources") or []]
-    found_types = {str(item.get("metadata", {}).get("knowledge_type") or "").lower() for item in documents}
-    covered = not required or all(item in found_types for item in required)
+    found_types = {normalize_source(item.get("metadata", {}).get("knowledge_type")) for item in documents}
+    covered = not required or all(normalize_source(item) in found_types for item in required)
     if documents and covered:
         route = "rerank"
     elif pending and state.get("step_count", 0) < state.get("max_steps", 4):

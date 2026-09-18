@@ -58,12 +58,35 @@ def evidence_from_observation(observation: Mapping[str, Any]) -> List[str]:
     if tool == "get_device_logs":
         logs = result.get("logs") or []
         return ["设备日志：%s" % "；".join(str(item.get("message")) for item in logs[:3] if isinstance(item, Mapping))]
-    if tool == "search_knowledge":
+    if tool in {
+        "search_knowledge",
+        "search_alarm_knowledge",
+        "search_sop",
+        "search_manual",
+        "search_fault_cases",
+        "search_semantic_memory",
+    }:
         docs = result.get("documents") or []
         return ["知识库证据：%s" % "；".join(str(item.get("title")) for item in docs[:3] if isinstance(item, Mapping))]
     if tool == "get_device_status":
         return ["设备状态：%s，模式=%s，健康度=%s" % (result.get("status"), result.get("mode"), result.get("health_score"))]
     return []
+
+
+def evidence_records_from_observation(observation: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """将 Observation 转为可供后续 RAG/报告复用的结构化证据。"""
+
+    result = observation.get("result") or {}
+    records: List[Dict[str, Any]] = []
+    for content in evidence_from_observation(observation):
+        records.append({
+            "source": str(observation.get("source") or observation.get("tool") or "diagnosis_observation"),
+            "tool": str(observation.get("tool") or ""),
+            "step": observation.get("step", 0),
+            "content": content,
+            "result": dict(result) if isinstance(result, Mapping) else result,
+        })
+    return records
 
 
 def event_evidence(event: Mapping[str, Any]) -> List[str]:

@@ -54,13 +54,23 @@ class RouterAgent:
 
     @staticmethod
     def _classify_intent(text: str, entities: Mapping[str, Any]) -> tuple[str, str]:
+        context_hint = str(
+            entities.get("route_hint")
+            or entities.get("intent")
+            or entities.get("task_type")
+            or entities.get("target_agent")
+            or ""
+        ).strip().lower()
+        if context_hint in {"diagnosis", "knowledge", "cad", "maintenance", "quality", "report", "workorder_action", "workorder_query"}:
+            return context_hint, "根据上游上下文 route_hint 完成路由：%s" % context_hint
         if entities.get("alarm_code") and any(keyword in text for keyword in ("什么", "含义", "处理", "步骤", "说明", "手册", "sop")):
             return "knowledge", "识别到报警码知识问答，路由到 Knowledge Agent"
         rules = [
             ("cad", ("cad", "bom", "图纸", "结构", "零件", "物料", "位置", "在哪里", "部件", "组件", "传感器", "装配", "关系")),
             ("quality", ("验收", "质检", "是否恢复", "复测")),
             ("report", ("报告", "日报", "维修记录")),
-            ("workorder_action", ("工单", "派工", "创建工单", "查询工单", "关闭工单")),
+            ("workorder_query", ("查询工单", "工单状态", "维修状态", "查看工单", "获取工单")),
+            ("workorder_action", ("创建工单", "新建工单", "生成工单", "派工", "关闭工单", "更新工单", "重新打开工单")),
             ("maintenance", ("维修方案", "怎么修", "怎么维修", "维修步骤", "检修", "维修", "修理", "维护", "保养")),
             ("knowledge", ("手册", "sop", "规范", "案例", "怎么检查")),
             ("diagnosis", ("诊断", "故障", "报警", "异常", "为什么")),
@@ -72,7 +82,14 @@ class RouterAgent:
 
     @staticmethod
     def _extract_entities(text: str, context: Mapping[str, Any]) -> dict[str, Any]:
-        entities = {key: value for key, value in context.items() if key in {"device_id", "device_model", "alarm_code", "part_no", "workorder_id", "component", "report_type"} and value}
+        entities = {
+            key: value
+            for key, value in context.items()
+            if key in {
+                "device_id", "device_model", "alarm_code", "part_no", "workorder_id", "component", "report_type",
+                "route_hint", "intent", "task_type", "target_agent",
+            } and value
+        }
         alarm = _ALARM_CODE_RE.search(text)
         if alarm:
             entities["alarm_code"] = alarm.group(0).upper().replace("-", "")
@@ -107,8 +124,20 @@ class RouterAgent:
     @staticmethod
     def _target_input(text: str, context: Mapping[str, Any], entities: Mapping[str, Any], intent: str) -> dict[str, Any]:
         target_input = {**context, **entities, "user_text": text, "query": text}
-        if intent in {"workorder_action", "workorder_query"}:
-            target_input.setdefault("action", "query")
+        if intent == "workorder_query":
+            target_input["action"] = "query"
+        elif intent == "workorder_action":
+            if any(keyword in text for keyword in ("创建工单", "新建工单", "生成工单")):
+                action = "create"
+            elif "关闭工单" in text:
+                action = "close"
+            elif "重新打开工单" in text or "重开工单" in text:
+                action = "reopen"
+            elif "派工" in text:
+                action = "assign"
+            else:
+                action = "update"
+            target_input["action"] = action
         if intent == "report" and entities.get("report_type"):
             target_input["report_type"] = entities["report_type"]
         return target_input

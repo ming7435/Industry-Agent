@@ -19,4 +19,5 @@ def search_manual(
         for key, value in dict(filters or {}).items()
         if key not in {"alarm_code", "knowledge_type"}
     }
+    selected["knowledge_type"] = "manual"
     return _search_knowledge(rag, query, limit=limit, filters=selected)

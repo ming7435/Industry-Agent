@@ -89,6 +89,7 @@ class CADResult(BaseModel):
     part_no: str = ""
     # 兼容旧版字符串图纸编号，同时允许新的结构化图纸引用。
     drawing_refs: List[Any] = Field(default_factory=list)
+    drawing_ref_details: List[Dict[str, Any]] = Field(default_factory=list)
     viewer_context: Dict[str, Any] = Field(default_factory=lambda: {
         "model_url": "",
         "mesh_id": "",
@@ -140,6 +141,7 @@ class MaintenancePlan(BaseModel):
     })
     engineering_context: Dict[str, Any] = Field(default_factory=lambda: {
         "drawing_refs": [],
+        "drawing_ref_details": [],
         "viewer_context": {},
     })
     repair_steps: List[str] = Field(default_factory=list)

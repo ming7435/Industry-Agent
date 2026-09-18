@@ -292,6 +292,10 @@ class DiagnosisAgent:
     def _evidence_from_observation(self, observation: Mapping[str, Any]) -> List[str]:
         return evidence.evidence_from_observation(observation)
 
+    @staticmethod
+    def _evidence_records_from_observation(observation: Mapping[str, Any]) -> List[Dict[str, Any]]:
+        return evidence.evidence_records_from_observation(observation)
+
     def _validate_candidate(
         self,
         state: DiagnosisState,
@@ -423,6 +427,7 @@ class DiagnosisAgent:
         }
 
         evidence = self._result_evidence(state, state.abnormal_event)
+        evidence_records = list(state.evidence_records)
         recommendation = self._chinese_text(
             str(parsed.get("recommendation") or parsed.get("next_action") or state.next_action or "根据诊断结果安排现场检查")
         )
@@ -440,6 +445,7 @@ class DiagnosisAgent:
             source=self._model_source(),
             created_at=self._now(),
             evidence=evidence,
+            evidence_records=evidence_records,
             recommendation=recommendation,
             task_id=task_id,
             triggered_at=triggered_at,
@@ -576,6 +582,7 @@ class DiagnosisAgent:
         }
 
         evidence = self._result_evidence(state, event)
+        evidence_records = list(state.evidence_records)
         recommendation = (
             definition.get("recommended_action")
             or "补充历史趋势、设备日志和维修手册证据后，由维修人员现场确认。"
@@ -622,6 +629,7 @@ class DiagnosisAgent:
             source="local_fallback",
             created_at=self._now(),
             evidence=evidence,
+            evidence_records=evidence_records,
             recommendation=recommendation,
             task_id=task_id,
             triggered_at=triggered_at,

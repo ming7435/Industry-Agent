@@ -17,7 +17,7 @@ class AgentOrchestrator:
     def __init__(self, diagnosis_agent: DiagnosisAgent | None = None, tools: ToolRegistry | None = None) -> None:
         self.nodes = OrchestratorNodes(diagnosis_agent=diagnosis_agent, tools=tools)
         graph = StateGraph(AgentState)
-        for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "quality", "quality_rework", "report"):
+        for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "quality", "quality_rework", "workorder_action", "workorder_query", "report"):
             graph.add_node(name, getattr(self.nodes, name))
         graph.add_edge(START, "route")
         graph.add_conditional_edges("route", lambda state: state.get("route", "unknown"), {
@@ -27,8 +27,8 @@ class AgentOrchestrator:
             "maintenance": "maintenance",
             "quality": "quality",
             "report": "report",
-            "workorder_action": END,
-            "workorder_query": END,
+            "workorder_action": "workorder_action",
+            "workorder_query": "workorder_query",
             "need_more_context": END,
             "unknown": END,
         })
@@ -38,6 +38,8 @@ class AgentOrchestrator:
         graph.add_conditional_edges("maintenance", self._after_maintenance, {"quality": "quality", "report": "report"})
         graph.add_conditional_edges("quality", self._after_quality, {"report": "report", "quality_rework": "quality_rework"})
         graph.add_edge("quality_rework", "report")
+        graph.add_edge("workorder_action", END)
+        graph.add_edge("workorder_query", END)
         graph.add_edge("report", END)
         self.graph = graph.compile()
 
