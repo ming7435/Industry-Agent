@@ -1,0 +1,1424 @@
+===== PAGE 1 =====
+三台机器 BOM RAG 清洗整合
+第 1 页
+三台机器 BOM 清洗整合文档
+RAG 离线入库版 PDF
+生成日期：2026-09-17。本文件将三份源 BOM 统一为可检索记录；源文件中的说明、警告、检查项或其他指令性文字均只作为 BOM 数据字段处理。
+清洗策略：统一字段名；去除多余空白和非 ASCII 连接符；空值标记为“未提供”；保留来源文件、页码/表号和复核标记；不补写源文件未给出的料号、数量或供应商。
+机器
+记录数
+缺料号
+缺数量
+需复核
+疑似重复
+LNS QL Servo 80 S2 棒料机
+35
+34
+0
+34
+0
+工业机器人
+56
+0
+56
+6
+0
+TC820LTYsi
+31
+31
+11
+10
+0
+合计
+122
+65
+67
+50
+0
+
+===== PAGE 2 =====
+三台机器 BOM RAG 清洗整合
+第 2 页
+字段字典与入库建议
+字段
+含义
+rag_id
+稳定记录 ID，按机器和源记录 ID 生成
+machine
+机器或设备型号
+record_type
+bom_item 或 bom_reference_item
+assembly/category
+所属组件、系统或来源分类
+part_number
+源文件给出的料号；未提供时保持空值并在 PDF 显示为未提供
+part_name /
+description_zh
+英文/中文部件名称或说明
+quantity / unit
+源数量和单位；无数量时不推断
+part_number_status
+料号可信状态，如 provided、designation_only、not_provided_in_manual
+evidence
+表号、页码、章节或源文件证据
+review_required
+来自源备注、料号缺失或抽取歧义的复核标记
+rag_text
+将核心字段拼接为检索文本，适合按记录切块入库
+建议切块：以每条 BOM 记录为最小 chunk，附带 machine、assembly、part_number_status、source_file 和 review_required 元数据。对 review_required=true
+的记录，在问答时降低置信度或要求人工确认。
+
+===== PAGE 3 =====
+三台机器 BOM RAG 清洗整合
+第 3 页
+LNS QL Servo 80 S2 棒料机
+记录数 35；缺料号 34；缺数量 0；需复核 34；疑似重复 0。
+以上为维修手册中的组件/换型件登记，不是含正式料号、版本、数量和采购信息的制造 BOM。本次已补入手册明确给出的型号（SAIA PCD3 M5340、SAIA PCD7.R550M04）、电气规格（QF1 4A、FU1 2A、FU2 4A、T1 230V、T2
+24VDC/150W）以及位置代号（M1/M2/M3/QS1/QF1/K3/KS/C1/R1-R5）。其余 part_no 仍为空，正式 BOM 必须以 PDM/PLM 当前版本为准；不得用本表直接下单。
+记录ID
+组件
+类别
+料号
+名称
+描述/规格
+数量
+单位
+来源证据
+复核
+ql80s2_component
+_pcd3
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Programmable controller (PLC)
+PCD3 M5340；Firmware 1.24.25 or
+later；Software Version 020.200；Software
+Number 0.02 or later
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_m1
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+PCD7.R550M04
+Memory module
+PCD7.R550M04；slot
+M1；用于存储零件库文件（Parts
+Library）；File System: SAIA SFS；最大零件数
+500
+1
+set
+棒料机维修手册.pdf / page 51
+否
+ql80s2_component
+_aj1
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Servo amplifier
+AJ1；400 W
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_fu1
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Fuse 2 A for 24 Vdc (motor M3)
+2 A / 24 Vdc；FU1
+1
+pc
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_fu2
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Fuse 4 A for 24 Vdc (motor M2)
+4 A / 24 Vdc；FU2
+1
+pc
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_k3
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Main contactor
+K3；与 O52 SON 关联
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_ks
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Start relay
+KS；与 O55 KS 关联
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_c1
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Capacitor
+C1
+1
+pc
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_qf1
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Circuit breaker 4 A
+QF1；4 A；保护给变压器供电的两相
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_qs1
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Main disconnect switch
+QS1；切断控制柜三相输入
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_r1_r5
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Interface relay
+R1-R5；分别对应 bar feed alarm / loading
+cycle finish / end of bar / automatic mode /
+auxiliary end of bar
+5
+pc
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_t1
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Transformer 1ph
+T1；输出 230 V；一次侧 200 V-480 V, 50/60 Hz
+±15%；二次侧 230 V；输出保险丝 3.15
+A；为伺服放大器供电
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_t2
+electrical_contro
+l_cabinet
+electrical_compo
+nent
+Transformer + 24 VDC Power
+supply 150 W
+T2；输出 24 VDC / 150
+W；为棒料机其余部分供电；输出由 FU1 保护
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_m1_servo
+carrier_unit
+electrical_compo
+nent
+Carrier servo motor
+M1；AC
+三菱电机，内置绝对编码器；由伺服放大器 AJ1
+(400W) 驱动；带电池保持绝对位置（寿命 2-3
+年）
+1
+set
+棒料机维修手册.pdf / page 56
+是
+ql80s2_component
+_m2
+loading_table
+electrical_compo
+nent
+Loading table motor
+M2；上料台升降电机；由 O48 KA1(升)/O49
+KA2(降) 控制；24Vdc 回路由 FU2 (4A) 保护
+1
+set
+棒料机维修手册.pdf / page 51
+是
+
+===== PAGE 4 =====
+三台机器 BOM RAG 清洗整合
+第 4 页
+记录ID
+组件
+类别
+料号
+名称
+描述/规格
+数量
+单位
+来源证据
+复核
+ql80s2_component
+_m3
+loading_table
+electrical_compo
+nent
+Diameter adjustment motor
+M3；直径调整电机；由 O50 M3-1(参考)/O51
+M3-2(动作) 控制；原点开关 SQ4；24Vdc 回路由
+FU1 (2A) 保护
+1
+set
+棒料机维修手册.pdf / page 51
+是
+ql80s2_component
+_sq1
+safety_circuit
+safety_component
+Loading table lower position
+switch
+SQ1；对应输入 I24
+1
+pc
+棒料机维修手册.pdf / page 49
+是
+ql80s2_component
+_sq3
+safety_circuit
+safety_component
+Measuring cell
+SQ3；对应输入 I25；棒料检测/长度测量
+1
+pc
+棒料机维修手册.pdf / page 49
+是
+ql80s2_component
+_sq4
+safety_circuit
+safety_component
+Diameter adjustment motor origin
+(M3) switch
+SQ4；对应输入 I26
+1
+pc
+棒料机维修手册.pdf / page 49
+是
+ql80s2_component
+_sq5
+safety_circuit
+safety_component
+Servo motor origin switch
+SQ5；对应输入 I27；载车原点接近开关
+1
+pc
+棒料机维修手册.pdf / page 49
+是
+ql80s2_component
+_sq10
+safety_circuit
+safety_component
+Protection cover safety switch
+SQ10；对应输入 I17；主检修盖安全开关
+1
+pc
+棒料机维修手册.pdf / page 49
+是
+ql80s2_component
+_sq11
+safety_circuit
+safety_component
+Loading magazine cover safety
+switch
+SQ11；对应输入 I18；上料料仓防护栅安全开关
+1
+pc
+棒料机维修手册.pdf / page 49
+是
+ql80s2_component
+_sq12
+safety_circuit
+safety_component
+Retraction system in position
+switch
+SQ12；对应输入 I19；退让机构工作位置开关
+1
+pc
+棒料机维修手册.pdf / page 49
+是
+ql80s2_component
+_pusher_6
+feeding_pusher
+changeover_part
+Feeding pusher 6 mm
+推料器杆径 6 mm (1/4")；适用棒料直径 6 mm -
+15 mm (1/4" - 1/2")；含 2
+个额外滚轮支撑（用于小直径棒料）
+1
+pc
+棒料机维修手册.pdf / page 41
+是
+ql80s2_component
+_pusher_12
+feeding_pusher
+changeover_part
+Feeding pusher 12 mm
+推料器杆径 12 mm (1/2")；适用棒料直径 16 mm
+- 27 mm (>2/3" - 1")
+1
+pc
+棒料机维修手册.pdf / page 41
+是
+ql80s2_component
+_pusher_20
+feeding_pusher
+changeover_part
+Feeding pusher 20 mm
+推料器杆径 20 mm (3/4")；适用棒料直径 28 mm
+- 80 mm (>1" - 3")
+1
+pc
+棒料机维修手册.pdf / page 41
+是
+ql80s2_component
+_carrier
+carrier_unit
+mechanical_compo
+nent
+Carrier
+载车；编号 1（P41 机械要素表）
+1
+set
+棒料机维修手册.pdf / page 41
+是
+ql80s2_component
+_loading_pusher
+carrier_unit
+mechanical_compo
+nent
+Loading pusher
+上料推料器；不随棒料直径更换；可由选配的加长
+型替代以支持等长棒料直接上料
+1
+pc
+棒料机维修手册.pdf / page 41
+是
+ql80s2_component
+_linear_unit
+carrier_unit
+mechanical_compo
+nent
+Linear unit
+直线单元；编号 4（P41 机械要素表）
+1
+set
+棒料机维修手册.pdf / page 41
+是
+ql80s2_component
+_notched_belt
+carrier_unit
+mechanical_compo
+nent
+Notched belt
+齿形带；编号 5（P41 机械要素表）；张力可调
+1
+pc
+棒料机维修手册.pdf / page 41
+是
+ql80s2_component
+_rolling_bearing
+carrier_unit
+mechanical_compo
+nent
+Rolling bearing
+滚动轴承；编号 6（P41 机械要素表）
+1
+pc
+棒料机维修手册.pdf / page 41
+是
+ql80s2_component
+_guiding_rails
+retraction
+mechanical_compo
+nent
+Guiding rails
+导向轨；编号 1；棒料机在其上滑动保持对中
+2
+pc
+棒料机维修手册.pdf / page 43
+是
+ql80s2_component
+_sliding_wheels
+retraction
+mechanical_compo
+nent
+Sliding wheels
+滑动轮；编号 2；安装在退让机构上
+4
+pc
+棒料机维修手册.pdf / page 43
+是
+ql80s2_component
+_latch_handle
+retraction
+mechanical_compo
+nent
+Latch handle
+锁紧挂钩；编号 3；工作位置固定
+2
+pc
+棒料机维修手册.pdf / page 43
+是
+ql80s2_component
+_bracket
+retraction
+mechanical_compo
+nent
+Bracket (lateral/longitudinal
+retraction)
+支架；编号 4；用于侧向或纵向退让
+1
+set
+棒料机维修手册.pdf / page 43
+是
+
+===== PAGE 5 =====
+三台机器 BOM RAG 清洗整合
+第 5 页
+工业机器人
+记录数 56；缺料号 0；缺数量 56；需复核 6；疑似重复 0。
+记录ID
+组件
+类别
+料号
+名称
+描述/规格
+数量
+单位
+来源证据
+复核
+bom-001
+Robot arm
+Robot arm
+NB80000019
+CRJ-17-6 Joint
+Table 5-1
+否
+bom-002
+Robot arm
+Robot arm
+NB80000020
+CRJ-17-5 Joint L
+Table 5-1
+否
+bom-003
+Robot arm
+Robot arm
+NB80000021
+CRJ-17-4 Joint
+Table 5-1
+否
+bom-004
+Robot arm
+Robot arm
+NB20100154
+CRJ-25-3 Joint
+Table 5-1
+否
+bom-005
+Robot arm
+Robot arm
+NB80000022
+CRJ-32-2 Joint
+Table 5-1
+否
+bom-006
+Robot arm
+Robot arm
+NB80000023
+CRJ-32-1 Joint
+Table 5-1
+否
+bom-007
+Robot arm
+Robot arm
+NB20100194
+C12 Upper Arm Assembly-Spare
+Part
+Table 5-1
+否
+bom-008
+Robot arm
+Robot arm
+NB20100039
+C12 Lower Arm Assembly
+Table 5-1
+否
+bom-009
+Robot arm
+Robot arm
+NB20100040
+CS612 Base Assembly
+Table 5-1
+否
+bom-010
+Robot arm
+Robot arm
+NB20100150
+CRJ-17 Joint End Flange
+Assembly-Spare Part
+Table 5-1
+否
+bom-011
+Robot arm
+Robot arm
+NB20100007
+17 Joint INC Assembly-C
+Table 5-1
+否
+bom-012
+Robot arm
+Robot arm
+NB20100015
+25 Joint INC Assembly-C
+Table 5-1
+否
+bom-013
+Robot arm
+Robot arm
+NB20100019
+32 Joint INC Assembly-C
+Table 5-1
+否
+bom-014
+Robot arm
+Robot arm
+NB20100004
+14 Joint ABS Assembly-C
+Table 5-1
+否
+bom-015
+Robot arm
+Robot arm
+NB20100016
+25 Joint ABS Assembly-C
+Table 5-1
+否
+bom-016
+Robot arm
+Robot arm
+NB20100001
+14 Joint Electromagnet
+Assembly-C
+Table 5-1
+否
+bom-017
+Robot arm
+Robot arm
+NB20100013
+25 Joint Electromagnet
+Assembly-C
+Table 5-1
+否
+bom-018
+Robot arm
+Robot arm
+NB20100017
+32 Joint Electromagnet
+Assembly-C
+Table 5-1
+否
+bom-019
+Robot arm
+Robot arm
+NA60400047
+End Aviation Cap-C
+Table 5-1
+否
+bom-020
+Robot arm
+Robot arm
+NB50000114
+17-Joint Back Cover-C Sprayed
+Table 5-1
+否
+bom-021
+Robot arm
+Robot arm
+NB50000116
+25-Joint Back Cover-C Sprayed
+Table 5-1
+否
+bom-022
+Robot arm
+Robot arm
+NB50000117
+32-Joint Back Cover-C Sprayed
+Table 5-1
+否
+bom-023
+Robot arm
+Robot arm
+NA60300128
+Link Supporting Ring 17-C
+Table 5-1
+否
+bom-024
+Robot arm
+Robot arm
+NA60300130
+Link Supporting Ring 25-C
+Table 5-1
+否
+bom-025
+Robot arm
+Robot arm
+NA60300131
+Link Supporting Ring 32-C
+Table 5-1
+否
+bom-026
+Robot arm
+Robot arm
+NA60300138
+Link Rubber Ring 17-C / 25-C /
+32-C
+PDF text extraction table alignment
+ambiguous
+是
+
+===== PAGE 6 =====
+三台机器 BOM RAG 清洗整合
+第 6 页
+记录ID
+组件
+类别
+料号
+名称
+描述/规格
+数量
+单位
+来源证据
+复核
+bom-027
+Robot arm
+Robot arm
+NA60300140
+17 Joint Rubber Ring-C / 25
+Joint Rubber Ring-C / 32 Joint
+Rubber Ring-C
+PDF text extraction table alignment
+ambiguous
+是
+bom-028
+Robot arm
+Robot arm
+NA60300141
+Joint Rubber Ring-C
+PDF text extraction table alignment
+ambiguous
+是
+bom-029
+Robot arm
+Robot arm
+NA60300091
+CS612 Robot Cable
+Table 5-1
+否
+bom-030
+Robot arm
+Robot arm
+NA60300104
+Robot arm spare part entry
+Needs visual verification against PDF
+table 5-1
+是
+bom-031
+Robot arm
+Robot arm
+NA60300092
+Robot arm spare part entry
+Needs visual verification against PDF
+table 5-1
+是
+bom-032
+Robot arm
+Robot arm
+NB70100012
+Robot arm spare part entry
+Needs visual verification against PDF
+table 5-1
+是
+bom-033
+Controller
+Controller
+NB30000001
+CS Teach Pendant
+ERP400
+Table 5-2
+否
+bom-034
+Controller
+Controller
+NA21100002
+Filter
+FKL6622.300-EMC
+Table 5-2
+否
+bom-035
+Controller
+Controller
+NA20100051
+PWM Fan
+SI121238BH1FR004
+Table 5-2
+否
+bom-036
+Controller
+Controller
+NB80000002
+Safe&IO-C IO Plug Assembly
+10A
+Table 5-2
+否
+bom-037
+Controller
+Controller
+NA40800022
+Seiko Small Fuse
+CR2450
+Table 5-2
+否
+bom-038
+Controller
+Controller
+NB80000003
+X86 Module Components
+Table 5-2
+否
+bom-039
+Controller
+Controller
+NA41000025
+Battery
+Table 5-2
+否
+bom-040
+Controller
+Controller
+NB40000013
+BRAKE-C PCBA
+RSP-2000-48V
+PDF text alignment may mix next row
+specification
+否
+bom-041
+Controller
+Controller
+NA20100009
+48V Power Supply
+4301.0501
+PDF text alignment may mix next row
+specification
+否
+bom-042
+Controller
+Controller
+NA20200164
+Power Outlet
+3-125-661
+Table 5-2
+否
+bom-043
+Controller
+Controller
+NA31400119
+Power Outlet Shield
+KCD4-201-2
+Table 5-2
+否
+bom-044
+Controller
+Controller
+NA20600047
+Rocker Switch
+M25X1.5 black with nut
+Table 5-2
+否
+bom-045
+Controller
+Controller
+NA31400128
+Stuffy Cover
+GM-4
+Table 5-2
+否
+bom-046
+Controller
+Controller
+NA30600033
+Rubber Coil
+3-100-527
+Table 5-2
+否
+bom-047
+Controller
+Controller
+NA20300004
+Power Cable
+Table 5-2
+否
+bom-048
+Controller
+Controller
+NA60300180
+Nylon Thread Plug-C
+Table 5-2
+否
+bom-049
+Tool
+Tool
+NB80000004
+CS Repair Tool Kit
+set
+Table 5-3
+否
+bom-050
+Tool
+Tool
+NA50100238
+Antistatic Gloves 9 inch
+SF0002
+Table 5-3
+否
+bom-051
+Tool
+Tool
+NE00000009
+Diagonal Pliers/Electronic
+Cutters 5 inch
+70632
+Table 5-3
+否
+bom-052
+Tool
+Tool
+NA50200124
+Open End Wrench
+5.5-7 3mm thick
+Table 5-3
+否
+bom-053
+Tool
+Tool
+NA50200123
+Open End Wrench
+8-10 3mm thick
+Table 5-3
+否
+bom-054
+Tool
+Tool
+NE00000058
+1 Set Ball-headed Allen Keys 7
+pieces
+1.5/2/2.5/3/4/5/6M
+Table 5-3
+否
+
+===== PAGE 7 =====
+三台机器 BOM RAG 清洗整合
+第 7 页
+记录ID
+组件
+类别
+料号
+名称
+描述/规格
+数量
+单位
+来源证据
+复核
+bom-055
+Tool
+Tool
+NE00000123
+8mm Allen Key
+8*200*36
+Table 5-3
+否
+bom-056
+Tool
+Tool
+NE00000044
+Hexagon Screw Socket
+19400-M5
+Table 5-3
+否
+
+===== PAGE 8 =====
+三台机器 BOM RAG 清洗整合
+第 8 页
+TC820LTYsi
+记录数 31；缺料号 31；缺数量 11；需复核 10；疑似重复 0。
+记录ID
+组件
+类别
+料号
+名称
+描述/规格
+数量
+单位
+来源证据
+复核
+lty-bom-chip-con
+veyor-casters
+chip conveyor
+manual_reference
+_item
+Chip Conveyor Casters
+排屑机脚轮
+2
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-chip-str
+ainer
+coolant system
+manual_reference
+_item
+Chip Strainer
+切屑过滤篮/筛网
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-sheet-me
+tal-skirts
+machine enclosure
+manual_reference
+_item
+Sheet Metal Skirts
+钣金裙板
+3
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-sheet-me
+tal-conveyor-cov
+ers
+chip conveyor
+manual_reference
+_item
+Sheet Metal Conveyor Covers
+排屑机钣金盖板
+3
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-sheet-me
+tal-splash-guard
+s
+coolant system
+manual_reference
+_item
+Sheet Metal Splash Guards
+钣金防溅板
+2
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-chuck-fo
+ot-switch
+chuck
+manual_reference
+_item
+Chuck Foot Switch
+卡盘脚踏开关
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-quill-fo
+ot-switch
+tailstock
+manual_reference
+_item
+Quill Foot Switch
+尾座套筒脚踏开关
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-allen-ke
+ys
+toolbox
+manual_reference
+_item
+Set of Allen Keys
+内六角扳手套装
+1
+set
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-wrench-1
+2-14
+toolbox
+manual_reference
+_item
+12 mm-14 mm Open Ended Wrench
+12-14 mm 开口扳手
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-wrench-2
+6-32
+toolbox
+manual_reference
+_item
+26 mm-32 mm Open Ended Wrench
+26-32 mm 开口扳手
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-wrench-3
+0
+toolbox
+manual_reference
+_item
+30 mm Combination Wrench
+30 mm 两用扳手
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-cross-sc
+rewdriver
+toolbox
+manual_reference
+_item
+Cross Head Screwdriver
+十字螺丝刀
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-flat-scr
+ewdriver
+toolbox
+manual_reference
+_item
+Flat Head Screwdriver
+一字螺丝刀
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-oil-can
+toolbox
+manual_reference
+_item
+Oil Can
+油壶
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-dead-cen
+ter
+toolbox
+manual_reference
+_item
+Dead Center
+死顶尖
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-tailstoc
+k-taper-blank
+toolbox
+manual_reference
+_item
+Tailstock Taper Blank
+尾座锥孔空白件
+1
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-chuck-re
+moval-tool
+toolbox
+manual_reference
+_item
+Chuck Removal Tool with
+Attachments
+卡盘拆卸工具（含附件）
+1
+set
+维修手册/维修手册.pdf / section
+3.14.2 / page 60
+否
+lty-bom-leveling
+-pads
+foundation
+manual_reference
+_item
+Cast Iron Leveling Pads
+铸铁找平垫块
+8
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 61
+否
+lty-bom-pendant-
+keys
+control panel
+manual_reference
+_item
+Pendant Keys
+操作面板钥匙
+2
+set of 3
+keys
+维修手册/维修手册.pdf / section
+3.14.2 / page 61
+否
+
+===== PAGE 9 =====
+三台机器 BOM RAG 清洗整合
+第 9 页
+记录ID
+组件
+类别
+料号
+名称
+描述/规格
+数量
+单位
+来源证据
+复核
+lty-bom-cabinet-
+keys
+electrical
+cabinet
+manual_reference
+_item
+Electrical Cabinet Keys
+电柜钥匙
+2
+piece
+维修手册/维修手册.pdf / section
+3.14.2 / page 61
+否
+lty-bom-shipping
+-brackets
+shipping
+protection
+manual_reference
+_item
+TC820LTYsi Shipping Brackets and
+Hardware
+运输固定支架及紧固件，拆下后保存
+维修手册/维修手册.pdf / section
+3.14.2 / page 61
+否
+lty-bom-coolant-
+tank
+coolant system
+machine_componen
+t
+TC820LTYsi 50-gallon Coolant
+Tank
+TC820LTYsi 冷却液箱，安装在排屑机下方/右侧
+维修手册/维修手册.pdf / section
+3.14.2 / page 47
+是
+lty-bom-coolant-
+pump
+coolant system
+machine_componen
+t
+Coolant Pump
+普通冷却泵，连接电柜 U3
+维修手册/维修手册.pdf / section
+3.14.2 / page 48
+是
+lty-bom-chip-was
+h-pump
+chip wash system
+machine_componen
+t
+Chip Wash Pump
+冲屑泵，连接电柜 U4
+维修手册/维修手册.pdf / section
+3.14.2 / page 48
+是
+lty-bom-chip-con
+veyor
+chip conveyor
+machine_componen
+t
+Swarf/Chip Conveyor
+排屑机，连接电柜 U6
+维修手册/维修手册.pdf / section
+3.14.2 / page 49
+是
+lty-bom-oil-skim
+mer
+oil skimmer
+optional_compone
+nt
+Pump Type Oil Skimmer and
+Separator
+TC820LTYsi 可选泵式油水分离器/撇油器
+维修手册/维修手册.pdf / section
+3.14.2 / page 130
+是
+lty-bom-part-cat
+cher
+part catcher
+optional_compone
+nt
+Programmable Part Catcher
+液压驱动的可编程接料器
+维修手册/维修手册.pdf / section
+3.14.2 / page 132
+是
+lty-bom-hp-pump
+high-pressure
+coolant
+optional_compone
+nt
+High Pressure Coolant Pump
+约 220 psi 高压冷却泵，未提供 P/N/采购数量
+维修手册/维修手册.pdf / section
+3.14.2 / page 134
+是
+lty-bom-hp-filte
+r
+high-pressure
+coolant
+service_componen
+t
+High Pressure Coolant Filter
+Element
+高压冷却过滤元件，未提供 P/N/采购数量
+维修手册/维修手册.pdf / section
+3.14.2 / page 136
+是
+lty-bom-pressure
+-sensor
+high-pressure
+coolant
+service_componen
+t
+High Pressure Coolant Pressure
+Sensor
+高压冷却压力传感器，更换后设置 85 psi
+维修手册/维修手册.pdf / section
+3.14.2 / page 135
+是
+lty-bom-lns
+barfeeder
+optional_compone
+nt
+LNS Quick Load Servo 80 S2
+Barfeeder
+棒料直径 6-80 mm、长度 300-1600 mm
+维修手册/维修手册.pdf / section
+3.14.2 / page 139
+是
+
+===== PAGE 10 =====
+三台机器 BOM RAG 清洗整合
+第 10 页
+棒料机相关图纸索引
+图号
+标题
+组件
+范围
+来源证据
+备注
+020-40-620K
+CE MRJ-4 接线图
+electrical_control_cabinet
+CE 认证版本，MRJ-4
+伺服系统接线图，共 10 页
+棒料机维修手册.pdf / page 126 / WIRING DIAGRAM
+020-40-620K CE MRJ-4
+PDF 内为纯图片，无文本层，无法直接
+抽取图元；需原始 DWG/DXF
+或高清扫描件做图元解析
+020-40-650B
+CE DCS MRJ4 接线图
+electrical_control_cabinet
+CE 认证版本，DCS (Dual Check
+Safety) 配置的 MRJ-4 接线图，共
+11 页
+棒料机维修手册.pdf / page 136 / WIRING DIAGRAM
+020-40-650B CE DCS MRJ4
+PDF 内为纯图片，无文本层，无法直接
+抽取图元；需原始 DWG/DXF
+或高清扫描件做图元解析
+
+===== PAGE 11 =====
+三台机器 BOM RAG 清洗整合
+第 11 页
+清洗质量说明
+- LNS QL Servo 80 S2 棒料机来源为维修手册/CAD 目录抽取，文件自身标记为 partially_extracted，部分记录只有位号或规格，没有正式采购料号。
+- 工业机器人 CSV 中 product_specifications 有 36 条为空，remark 中出现表格对齐歧义或视觉复核提示的记录已标记 review_required。
+- TC820LTYsi JSONL 是参考 BOM 粒度，所有记录的 part_number_status 均为 not_provided_in_manual，适合维修参考检索，不等同采购 BOM。
+- 跨三台机器未合并近似同名部件，避免把不同设备的相似名称误判为同一物料。

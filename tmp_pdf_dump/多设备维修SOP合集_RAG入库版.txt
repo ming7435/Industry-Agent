@@ -1,0 +1,3449 @@
+===== PAGE 1 =====
+多设备维修 SOP 合集
+面向 RAG 离线入库 · 已清洗去重 · 原文语言保留
+设备
+制造商
+来源手册
+源数据文件
+SOP 条数
+正文语言
+TC820LTYsi 车削中心
+Southwestern
+Industries, Inc.
+维修手册/维修手册.pdf
+TC820LTYsi_SOP数据.jsonl
+35
+中文摘要 +
+英文原文摘录
+LNS QL Servo 80 S2
+棒料机
+LNS
+棒料机维修手册.pdf
+sop_catalog.json
+11
+中文
+工业机器人
+Elite Robots（源数
+据原文所载）
+工业机器人维修手册
+工业机器人_SOP.csv
+11
+英文
+合计 3 台设备 · 57 条 SOP 作业程序 · 本册为知识明细件，每张卡片一条 SOP，卡片之间不跨册混排。
+清洗说明：本册由三份源数据（JSON/JSONL/CSV）重建，非从 PDF 反解；已剔除原册页眉页脚重复文本、剔除冗余拼接字段与同值样板字
+段、并将三套字段名统一为一套规范字段。字段标签下方小字为该册原始字段名，供回溯源数据。
+生成时间 2026-09-17 15:12 · WorkBuddy
+多设备维修 SOP 合集 · RAG 入库版
+第 1 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 2 =====
+TC820LTYsi 车削中心
+35 条 SOP
+字段
+field
+取值
+设备型号
+TC820LTYsi
+制造商
+Southwestern Industries, Inc.
+来源手册
+维修手册/维修手册.pdf — TRAK TCsi with Siemens SINUMERIK ONE CNC — Safety, Installation, Maintenance, Service &
+Parts List
+源数据文件
+TC820LTYsi_SOP数据.jsonl
+文档版本
+022725
+章节编号
+LTY-SOP
+正文语言
+中文摘要 + 英文原文摘录
+记录规模
+35 条 SOP
+治理标记
+review_required = 是（全表同值）
+本册目录
+#
+SOP 编号
+名称
+部件 / 系统
+安全等级
+本册页
+1
+SOP-TC820LTYsi-298
+开箱、吊运和放置
+machine installation
+critical
+4
+2
+SOP-TC820LTYsi-299
+拆除运输固定支架
+shipping brackets
+critical
+6
+3
+SOP-TC820LTYsi-300
+电气接线和接地检查
+electrical system
+critical
+7
+4
+SOP-TC820LTYsi-301
+机床找平和扭曲检查
+machine alignment
+high
+8
+5
+SOP-TC820LTYsi-302
+冷却液箱、冷却泵和冲屑泵安装
+coolant system
+high
+9
+6
+SOP-TC820LTYsi-303
+排屑机安装和测试
+chip conveyor
+high
+10
+7
+SOP-TC820LTYsi-304
+卡盘和尾座套筒脚踏开关
+foot switches
+high
+11
+8
+SOP-TC820LTYsi-305
+液压和润滑系统调试
+hydraulic and lubrication
+high
+12
+9
+SOP-TC820LTYsi-306
+开机验收、TAILSTOCK_TEST 和 TURRET_TEST
+machine acceptance
+critical
+14
+10
+SOP-TC820LTYsi-307
+自动尾座参考位置恢复
+automatic tailstock
+critical
+15
+11
+SOP-TC820LTYsi-308
+自动尾座 JOG 模式定位
+automatic tailstock
+high
+17
+12
+SOP-TC820LTYsi-309
+自动尾座 AUTO 模式定位
+automatic tailstock
+high
+19
+13
+SOP-TC820LTYsi-310
+尾座套筒传感器定位
+tailstock sensors
+high
+21
+14
+SOP-TC820LTYsi-311
+尾座中心线、Z 轴和 B 轴对中
+tailstock alignment
+high
+22
+15
+SOP-TC820LTYsi-312
+刀塔工位重新参考和同步
+turret
+high
+23
+16
+SOP-TC820LTYsi-313
+刀塔 X/Z 轴平行度检查
+turret alignment
+high
+24
+17
+SOP-TC820LTYsi-314
+主轴与刀塔中心线同心度
+spindle and turret
+alignment
+high
+25
+18
+SOP-TC820LTYsi-315
+动力刀具驱动对中
+live tooling
+critical
+26
+19
+SOP-TC820LTYsi-316
+探头校准前的刀具表设置
+automatic tool setter
+probe
+high
+27
+20
+SOP-TC820LTYsi-317
+自动刀具设定臂和探头校准
+automatic tool setter
+probe
+critical
+28
+21
+SOP-TC820LTYsi-318
+JOG 模式探头测量刀具
+automatic tool setter
+probe
+high
+29
+22
+SOP-TC820LTYsi-319
+AUTO 模式探头测量刀具
+automatic tool setter
+probe
+high
+30
+23
+SOP-TC820LTYsi-320
+自动探头信号故障检查
+automatic tool setter
+probe
+high
+31
+24
+SOP-TC820LTYsi-321
+电柜热交换器过滤器清洁
+electrical cabinet cooling
+high
+32
+25
+SOP-TC820LTYsi-322
+液压泵过滤器更换
+hydraulic system
+critical
+33
+多设备维修 SOP 合集 · RAG 入库版
+第 2 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 3 =====
+#
+SOP 编号
+名称
+部件 / 系统
+安全等级
+本册页
+26
+SOP-TC820LTYsi-323
+各轴和尾座镶条调整
+gibs
+high
+3
+27
+SOP-TC820LTYsi-324
+主轴皮带检查和重新张紧
+spindle belt
+critical
+3
+28
+SOP-TC820LTYsi-325
+X/Z 轴反向间隙参数检查
+axis backlash
+high
+3
+29
+SOP-TC820LTYsi-326
+泵式油水分离器排油
+pump type oil skimmer
+high
+3
+30
+SOP-TC820LTYsi-327
+接料器清洁和功能检查
+part catcher
+high
+3
+31
+SOP-TC820LTYsi-328
+高压冷却泵更换
+high-pressure coolant
+critical
+3
+32
+SOP-TC820LTYsi-329
+高压冷却压力传感器更换
+high-pressure coolant
+critical
+3
+33
+SOP-TC820LTYsi-330
+高压冷却过滤元件更换
+high-pressure coolant
+high
+3
+34
+SOP-TC820LTYsi-331
+LNS 棒料送料器安全操作和故障检查
+barfeeder
+critical
+3
+35
+SOP-TC820LTYsi-332
+三爪液压卡盘拆装
+hydraulic chuck
+critical
+3
+多设备维修 SOP 合集 · RAG 入库版
+第 3 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 4 =====
+SOP-TC820LTYsi-298  开箱、吊运和放置
+部件/系统
+component
+machine installation
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 合格机器吊装人员执行
+· 清理吊运路径并确认无人处于运动范围
+作业步骤
+steps
+1. 拆解木托盘并取出附件。
+2. 安装找平螺钉和外侧找平垫块。
+3. 将叉车货叉穿过底座，确认伸过远侧并检查平衡。
+4. 由第二人引导，缓慢放到找平垫块。
+5. 拆出冷却液箱、排屑机和包装支架。
+安全要求
+safety_warnings
+· 使用至少 15,000 lb 叉车
+· 主轴箱侧较重，确认平衡
+· 不得突然停止或提升过高
+验收标准
+acceptance_criteria
+· 机器稳定、无倾覆和运输损伤。
+关键词
+keywords
+15000 lb · 吊装 · 找平垫块
+来源
+page / page_end / section_code
+手册 LTY-SOP · P59–P61
+多设备维修 SOP 合集 · RAG 入库版
+第 4 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 5 =====
+SOP-TC820LTYsi-298  开箱、吊运和放置
+原文摘录
+source_excerpt
+3.14.2 TC820LTYsi Installation Checklist
+Installer – Use this checklist to assure a complete setup on the TC820LTYsi.
+Installation Checklist
+ITEMS TO BE COMPLETED BY QUALIFIED MACHINE RIGGER, IF NOT COMPLETED
+FOLLOW THE SUBSEQUENT STEPS:
+The Turning Center is packed on one wooden pallet during transportation:
+• When arriving at the machine the rigger should have carefully disassembled the wooden pallet and removed all the loose parts
+from the machine.
+• The leveling screws on the machine should be thread down by the rigger approximately 1.5” as measured from the bottom of
+the leveling screw to the bottom of the base casting.
+• The rigger should have placed the machine on the 4 outside leveling pads.
+• The coolant tank is packed separately on the pallet; the rigger should first remove any brackets holding the coolant tank in
+place, then remove the coolant tank from the pallet and set it aside.
+• The chip conveyor is packed separately on the pallet; the rigger should first remove any brackets holding the chip conveyor in
+place, then remove the chip conveyor from the pallet and install the casters on swarf conveyer before placing it in the machine
+casting.
+Refer to section 3.3 Uncrating the TCsi, and 3.4 Lifting and Placing the TCsi in the
+Service Manual.
+The machine should be lifted and moved by a fork-lift truck
+• Use a fork-lift truck with a minimum loading capacity of 15,000 lbs to lift and move the machine.
+• Place the forks of the fork-lift under the machine.
+• Make sure the forks of the fork-lift protrude past the far edge of the machine base and ensure the machine is balanced before
+starting to lift and move it.
+• Pay special attention to the machine balance while lifting and moving, please note that the weight of the machine is greater on
+the headstock side.
+• Do not stop the lifting motions suddenly during the process and prevent sudden movement as the machine could become
+unbalanced.
+• Do not raise the machine too high as this may create a loss of stability and cause the fork-lift truck to overturn.
+• Have another person to help guide the way while lifting and moving the machine. Ensure nobody is in the way and the path is
+not blocked before moving the machine.
+• When placing the machine on leveling pads be careful when removing machine from the forklift truck, the machine is subject
+to tipping over if placed even a little off balance.
+Please contact TRAK customer service and a qualified machine rigger if you plan to lift and move the machine using an overhead
+crane. Only certified equipment should be
+多设备维修 SOP 合集 · RAG 入库版
+第 5 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 6 =====
+SOP-TC820LTYsi-299  拆除运输固定支架
+部件/系统
+component
+shipping brackets
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 机器稳定放置并可安全供电
+作业步骤
+steps
+1. 拆前门安全开关附近固定板。
+2. 从后方拆除 Z、X/Y 轴支架。
+3. 拆除尾座支架。
+4. 按手册步骤处理刀塔木块，不能直接手动取出。
+5. 将支架和硬件装袋放入工具箱。
+安全要求
+safety_warnings
+· 支架未拆前不得运行
+· 不得手动移动自动尾座
+· 支架和硬件不得丢弃
+验收标准
+acceptance_criteria
+· 所有支架和木块已按步骤移除，支架已保存。
+关键词
+keywords
+运输支架 · 碰撞 · 尾座
+来源
+page / page_end / section_code
+手册 LTY-SOP · P40–P42
+原文摘录
+source_excerpt
+3. Remove the bracket between the tailstock bed and tailstock base see figure 2.6.1c.
+Figure 2.6.1c Turret & Tailstock 4. Note the wooden block between the bed and the turret see figure 2.6.1c.
+DO NOT ATTEMPT TO REMOVE THE SUPPORT AT THIS TIME.
+Power needs to be supplied to move the X-Axis in the positive direction to remove the block. Make sure this is removed before
+using the machine!
+3.6.2 TC820LTYsi Shipping Brackets
+On the TC820LTYsi machines there are shipping brackets that hold the axes in place during shipping. These brackets must be
+removed before operating the machine. Do not discard the shipping brackets. The shipping brackets must be replaced if the
+machine is ever moved.
+多设备维修 SOP 合集 · RAG 入库版
+第 6 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 7 =====
+SOP-TC820LTYsi-300  电气接线和接地检查
+部件/系统
+component
+electrical system
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 合格电工执行
+· 电源已隔离且配置与铭牌一致
+作业步骤
+steps
+1. 确认 480 V 或变压器 208 V 配置。
+2. 完成接地、进线密封和应力释放。
+3. 按图纸核对进线和断路器。
+4. 逐相测量并记录 456–504 V。
+5. 用相序表确认顺时针相序。
+安全要求
+safety_warnings
+· 三相 480 V；432–528 V 可接受
+· 现场核验 456–504 V
+· 约 8 ft 铜接地棒和 6 AWG 接地线
+验收标准
+acceptance_criteria
+· 电压、相序、接地和进线防护符合要求。
+关键词
+keywords
+480V · 接地 · 相序 · 456-504V
+来源
+page / page_end / section_code
+手册 LTY-SOP · P42–P60
+原文摘录
+source_excerpt
+3. Remove the bracket between the tailstock bed and tailstock base see figure 2.6.1c.
+Figure 2.6.1c Turret & Tailstock
+4. Note the wooden block between the bed and the turret see figure 2.6.1c.
+DO NOT ATTEMPT TO REMOVE THE SUPPORT AT THIS TIME.
+Power needs to be supplied to move the X-Axis in the positive direction to remove the block. Make sure this is removed before
+using the machine!
+3.7 Electrical Connection
+The TCsi machines come either with 208VAC input or 480VAC input. A 208VAC to 480VAC transformer is required for a 208VAC
+input. A 480VAC input does not require the transformer option.
+DANGER!!! Only a qualified electrician should wire the electricity for your machine installation.
+3.7.1 Main Power to the Machine Connections
+The TCsi machine should be installed under the correct electrical environments. Before connecting the power wires, make sure
+the voltage is the same for both the machine and the plant power.
+Ensure the electrical cables have the same or better power rating as prescribed. Do not connect any power cable that might
+cause an abrupt voltage drop or generate signal noises on the power panel of the machine. Seal the electrical cabinet from
+moisture at the incoming power cable opening.
+多设备维修 SOP 合集 · RAG 入库版
+第 7 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 8 =====
+SOP-TC820LTYsi-301  机床找平和扭曲检查
+部件/系统
+component
+machine alignment
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 运输支架已拆除
+· 找平垫块稳定
+· 使用校准水平仪
+作业步骤
+steps
+1. 从 Z 轴箱式导轨两侧测量。
+2. 将刀塔置于中心并逐点调整找平螺钉。
+3. 沿全 Z 行程检查 X/Z 扭曲。
+4. 锁紧螺母且不改变螺钉高度。
+安全要求
+safety_warnings
+· 水平 ≤ 0.0006 in/12 in
+· X/Z 扭曲 < 0.0006 in/12 in
+验收标准
+acceptance_criteria
+· 多位置重复测量后仍在阈值内。
+关键词
+keywords
+找平 · 扭曲 · 0.0006 in
+来源
+page / page_end / section_code
+手册 LTY-SOP · P45–P47
+原文摘录
+source_excerpt
+208 T BLACK WHITE L1 INCOMING S FAN FAN L2 L3 POWER R 480V L1 L2 L3 POWER TO MACHINE
+Figure 2.7.4 Transformer Wiring Configuration 220 Volt Options
+208 T L1 L2 INCOMING S L3 480V POWER R BLACK WHITE POWER TO FAN FAN MACHINE L1 L2 L3
+Figure 2.7.5 Transformer Wiring Configuration 240 Volt Options
+3.8 Machine Leveling
+3.8.1 Leveling Procedure
+The leveling of the TCsi machine consists of adjusting leveling screws (F1 – F4 and R1 – R4), shown in figure 2.8.1a, such that the
+machine is level using either analog or digital instruments. If the machine is not leveled properly, it may become twisted. Even a
+slight amount of twist will move centers out of alignment, and result in inaccurate work.
+多设备维修 SOP 合集 · RAG 入库版
+第 8 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 9 =====
+SOP-TC820LTYsi-302  冷却液箱、冷却泵和冲屑泵安装
+部件/系统
+component
+coolant system
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 机床已找平
+· 泵和接线处于断电状态
+作业步骤
+steps
+1. 将冷却液箱滑入排屑机下方/右侧。
+2. 普通泵接 U3，chip wash pump 接 U4。
+3. 接软管并检查密封。
+4. 从 MCP 启动两泵，核对标签旋向。
+5. 确认冷却流经刀塔、冲屑流经 hose 且无泄漏。
+安全要求
+safety_warnings
+· TC820LTYsi 使用 50 gallon 冷却液箱
+· 普通泵接 U3、冲屑泵接 U4
+· 旋向错误或泄漏不得运行
+验收标准
+acceptance_criteria
+· U3/U4 接线、旋向、流量和泄漏检查通过。
+关键词
+keywords
+50 gallon · U3 · U4 · chip wash
+来源
+page / page_end / section_code
+手册 LTY-SOP · P47–P48
+原文摘录
+source_excerpt
+• Once the machine is sufficiently leveled lower screws F2, R2, F3 and R3 onto their leveling pads by hand and use a wrench and
+tighten only by 10°. Do not tighten any further as you will change the level of the machine.
+• Verify that the machine is still level by checking for twist at different points along the Z-Axis Box Ways.
+• Tighten the locking nuts for all leveling screws making sure that you do not raise or lower any of the leveling screws.
+• Verify that the machine is still level by checking for twist at different points along the Z-Axis Box Ways.
+Further Checks
+• To further check for twist in the machine a leveling plate can be attached to the turret with two calibrated bubble type levels or
+a multi axis digital level placed level on the plate, shown in figure 2.8.1.c.
+• Starting at the spindle of the machine, move the turret along the Z-Axis, stopping at 4 positions and allowing the bubble to
+settle. The change in level must be within 0.002”/10”.
+Figure 2.8.1c Leveling Plate
+3.9 Placing the Coolant System
+The TC820si machine is fitted with a 33-gallon coolant tank and pump that delivers coolant through the turret at 30psi. The
+TC820LTYsi machine is fitted with a 50-gallon coolant tank and pump that delivers coolant through the turret at 70psi. Once the
+machine is leveled the coolant tank can be placed. For the TC820si machine, with the pump removed starting from the front of
+the machine, push the coolant tank through the center of the machine’s base casting. The front face of the coolant tank should
+sit flush with the sheet metal guarding. For the TC820LTYsi machine, the coolant tank can slide in the right-hand side of the
+machine under the chip conveyor with the pumps located at the back of the machine.
+多设备维修 SOP 合集 · RAG 入库版
+第 9 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 10 =====
+SOP-TC820LTYsi-303  排屑机安装和测试
+部件/系统
+component
+chip conveyor
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 脚轮已安装
+· 排屑机位于铸件内且运动区无人
+作业步骤
+steps
+1. 安装脚轮并放置排屑机。
+2. 电机电缆接 U6并做应力释放。
+3. 用 MCP 测正转和反转。
+4. 安装盖板，使冷却液流入排屑机。
+安全要求
+safety_warnings
+· 电缆接 U6
+· 正反方向正确
+· 反转按住 MCP 按键
+验收标准
+acceptance_criteria
+· 正反转、回流和电缆布置正常。
+关键词
+keywords
+U6 · 排屑机 · 正转 · 反转
+来源
+page / page_end / section_code
+手册 LTY-SOP · P49–P49
+原文摘录
+source_excerpt
+3.10 Setting Up Chip Conveyor
+The chip conveyor will be delivered installed in the machine envelope, make sure to install the wheels before placing the
+machine on the ground, see figure 2.10a. The chip conveyor is used to evacuate chips during machining.
+Connect the cable from the chip conveyor motor to U6 on the electrical cabinet side facing the coolant pump see figure 2.10b.
+To test the chip conveyor, use the forward and reverse buttons on the MCP and confirm the directions are correct.
+Figure 2.10a Chip Conveyor TCsi
+Figure 2.10b Chip Conveyor Connection TC820si Chip Conveyor Connection TC820LTYsi
+多设备维修 SOP 合集 · RAG 入库版
+第 10 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 11 =====
+SOP-TC820LTYsi-304  卡盘和尾座套筒脚踏开关
+部件/系统
+component
+foot switches
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 脚踏开关未接电
+· 操作区域清洁
+作业步骤
+steps
+1. 将两个脚踏开关放在机器前方。
+2. 沿左侧布线并连接电柜下方连接器。
+3. 打开门测试卡盘夹紧/松开。
+4. 测试尾座套筒前进/后退。
+5. 核对卡盘 255 psi、限压 425 psi、套筒 70/140 psi。
+安全要求
+safety_warnings
+· 测试卡盘时人员远离卡爪
+· 电缆远离地面和运动件
+验收标准
+acceptance_criteria
+· 脚踏开关方向正确，压力符合安装要求。
+关键词
+keywords
+脚踏开关 · 255 psi · 70 psi · 尾座套筒
+来源
+page / page_end / section_code
+手册 LTY-SOP · P50–P50
+原文摘录
+source_excerpt
+3.11 Setting Up Foot Switches
+3.11.1 Setting Up Chuck Foot Switch
+The chuck foot switch will be delivered in a box along with the TCsi machine. Place the foot pedal in a convenient position for
+the operator in the front of the machine see figure 2.11a. Route the cable under the left side of the machine to the connector
+under the electrical cabinet close to the rear door. The connector only attaches one way, and the location is labeled inside the
+cabinet see figure 2.11b, inset photo installed cable under cabinet.
+To test its operation, with the door open press the foot pedal and the chuck jaws should actuate.
+Figure 2.11.1a Chuck Foot Switch Figure 2.11.1b Switch Connection
+3.11.2 Setting Up Quill Foot Switch
+On the TC820LTYsi machines the quill foot switch will be delivered in a box along with the machine. Place the foot pedal in a
+convenient position for the operator in the front of the machine see figure 2.11.2a.
+Route the cable under the left side of the machine to the connector under the electrical cabinet close to the rear door. The
+connector only attaches one way, and the location is labeled inside the cabinet see figure 2.11.2b, inset photo installed cable
+under cabinet. To test its operation, press the foot pedal forward and the tailstock quill should move forward and press the foot
+pedal back and the tailstock quill should move back towards its original position.
+Figure 2.11.2a Quill Foot Switch Figure 2.11.2b Switch Connection
+多设备维修 SOP 合集 · RAG 入库版
+第 11 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 12 =====
+SOP-TC820LTYsi-305  液压和润滑系统调试
+部件/系统
+component
+hydraulic and lubrication
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 完成接线、找平和支架拆除
+· 液压/润滑油箱可安全检查
+作业步骤
+steps
+1. 释放急停并按 Reset 启动液压泵。
+2. 检查液压油位、ISO VG32 和泄漏。
+3. 按 MCP 润滑键 5 次运行润滑泵。
+4. 确认润滑压力 70 psi。
+5. 点动 X/Y/Z，确认导轨和丝杠见油。
+安全要求
+safety_warnings
+· 压力异常立即停机
+· 保持远离运动件和高压油路
+验收标准
+acceptance_criteria
+· 液压稳定、无泄漏、润滑到达导轨和丝杠。
+关键词
+keywords
+700 psi · 70 psi · ISO VG32 · ISO VG68
+来源
+page / page_end / section_code
+手册 LTY-SOP · P61–P62
+多设备维修 SOP 合集 · RAG 入库版
+第 12 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 13 =====
+SOP-TC820LTYsi-305  液压和润滑系统调试
+原文摘录
+source_excerpt
+Installation Checklist (8) Cast Iron Leveling Pads (May already be placed under the machine) (2) Sets of 3 pendant keys
+8 Verify 2 electrical cabinet keys are zip tied to the electrical cabinet door lock on the
+• inside of the electrical cabinet.
+Remove covers and shipping brackets:
+• On the TC820LTYsi machines there are shipping brackets that hold the axes in place during shipping, these brackets must be
+removed before operating the machine, see section 2.6.2 of the Service
+Manual.
+• Remove the sheet metal cover on rear of the machine exposing the Z-
+9 axis box ways and the X-
+axis and the Y-axis casting.
+• Remove the Z-axis shipping bracket.
+• Remove the X/Y-axis shipping bracket.
+• Remove the sheet metal cover on the tailstock side of the machine exposing the rear of the tailstock box ways.
+• Remove the tailstock shipping bracket.
+• DO NOT MOVE THE TAILSTOCK BY HAND, THIS WILL CAUSE IT
+TO LOSE POSITION AND MAY CAUSE A CRASH.
+• Remove the front door shipping bracket.
+• Place the shipping brackets and hardware in a bag and store in the machine toolbox.
+10 Clean the machine if needed and remove any remaining protective grease.
+Turn on the power to the machine. To start machine after boot up:
+• Release all E-Stop buttons.
+• Press and hold reset button, at this point you should hear the hydraulic pump
+• and system start (the pump should rotate CCW per the label on the pump).
+• Turn Feed Start on to allow axis motion.
+• Turn Spindle Start on to allow spindle motion.
+Check the level of the machine from both sides of the Z-axis box ways. Center the turret
+12 as required before leveling. The machine should be level to within 0.0006"/12”. Refer to section 3.8 of the Service Manual.
+13 Check the X and Z-axis twist from the turret across the entire Z-axis travel. The machine
+• twist should be < 0.0006”/12”.
+14 Confirm the MCP panel has the key plugged in to change the access level. Key is
+• shipped in toolbox.
+Check the Hydraulic Fluid Tank level and fill with ISO VG 32 oil if needed.
+• Inspect all hydraulic lines, fittings and components to make sure there are no leaks.
+15 Run the lube pump by pressing the lube button on MCP 5 times.
+多设备维修 SOP 合集 · RAG 入库版
+第 13 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 14 =====
+SOP-TC820LTYsi-306  开机验收、TAILSTOCK_TEST 和 TURRET_TEST
+部件/系统
+component
+machine acceptance
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 安装和安全检查完成
+· 人员远离运动区
+作业步骤
+steps
+1. 测试 MPG、X/Y/Z 方向、软件限位、急停、门互锁、工作灯和主轴制动。
+2. 测试尾座销、停车开关、工件开关和限位。
+3. 运行 TAILSTOCK_TEST 15 分钟。
+4. 运行 TURRET_TEST，验证正反分度和刀具表工位。
+5. 测试探头、主轴 100–4000 RPM 和动力刀具 100–4500 RPM。
+安全要求
+safety_warnings
+· 急停、门互锁、主轴制动失败不得生产
+· 持续观察噪声、泄漏和状态灯
+验收标准
+acceptance_criteria
+· 安全功能、尾座、刀塔、探头、主轴和动力刀具均有记录。
+关键词
+keywords
+TAILSTOCK_TEST · TURRET_TEST · 100-4000 RPM · 4500 RPM
+来源
+page / page_end / section_code
+手册 LTY-SOP · P64–P66
+原文摘录
+source_excerpt
+Installation Checklist
+• Inspect all coolant lines, fittings and components to make sure there are no leaks.
+Check spindle motor cooling:
+• Remove the sheet metal cover to the spindle motor fan
+• Make sure the air is blowing towards the motor.
+Check electrical cabinet cooling:
+• Open the electrical cabinet door.
+• Make sure the air is blowing into the heat exchange on both sides of the door.
+• Make sure the cabinet circulation fan is blowing towards the components in the electrical cabinet.
+Check MPG functions correctly:
+• Move all axis at all speed settings and confirm each axis moves in the correct
+22 direction.
+• Confirm Deadman switch on MPG is working to move the axis when the door is open.
+Test machine MCP motion and limits:
+• Set the MPG to off.
+• Test each axis by using the Axis + and - button with and without the RAPID
+23 button on the MCP.
+• Verify the machine stops on the software limits before hitting the hard stop.
+Adjust parameters 36100 (-) and 36110 (+) on the axis in question if you do hit a hard stop.
+Check to make sure that the E-Stop button is functioning correctly:
+• Turn spindle on and jog an axis and press the E-stop button during this operation and verify the spindle and axis stops.
+Test door interlock:
+• Close the door and make sure the control recognizes the door as being closed.
+• Once you close the door, you should not be able to open it until you press the door open button on the MCP.
+多设备维修 SOP 合集 · RAG 入库版
+第 14 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 15 =====
+SOP-TC820LTYsi-307  自动尾座参考位置恢复
+部件/系统
+component
+automatic tailstock
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 确认自动尾座丢失位置
+· 尾座和 Z 轴无干涉
+作业步骤
+steps
+1. 移动 Z 轴使尾座销对齐 pickup hole。
+2. 用 MCP 松开尾座。
+3. 用 MCP 使尾座销啮合开关。
+4. 退回尾座销并夹紧尾座。
+安全要求
+safety_warnings
+· 禁止手动推动尾座
+· 尾座销与 pickup hole 对齐后操作
+验收标准
+acceptance_criteria
+· 控制器重新学习尾座相对 Z 轴位置。
+关键词
+keywords
+pickup hole · 参考位置 · 尾座销
+来源
+page / page_end / section_code
+手册 LTY-SOP · P117–P117
+多设备维修 SOP 合集 · RAG 入库版
+第 15 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 16 =====
+SOP-TC820LTYsi-307  自动尾座参考位置恢复
+原文摘录
+source_excerpt
+7.3.1 Automatic Tailstock Has Lost its Position
+It is important that the TC820LTYsi tailstock is not moved by hand. If the tailstock is moved by hand the control will lose its
+position and will not be able to locate it for automatic tailstock commands. If the control loses the position of the automatic
+tailstock:
+• Move the Z-axis to line the tailstock pin up with the pickup hole on the Z-Axis. There are markers on the Z-Axis and the
+Tailstock body that show when this is lined up.
+• Unclamp the tailstock using the button on the MCP.
+• Engage the tailstock pin using the button on the MCP. The pin must engage the switch in the pickup hole to learn the new
+position.
+• Disengage the tailstock pin using the button on the MCP.
+• Clamp the tailstock using the button on the MCP.
+The machine should now have learned the position of the tailstock relative to the z-axis machine coordinate system.
+7.3.2 Automatic Tailstock in JOG Mode
+To correctly position the tailstock manually in jog mode:
+• Move the Z-axis to line the tailstock pin up with either the park hole or pick up hole (depending on where they want to move
+the tailstock to).
+• Unclamp the tailstock using the button on MCP button or M code.
+• Engage the tailstock pin using the MCP button or M code.
+• Move the Z-axis to position the tailstock in the location desired.
+• Disengage the tailstock pin using the MCP button or M code.
+• Clamp the tailstock using the MCP button or M code.
+o The tailstock location can be found from the z-axis position in the machine coordinate system or from the custom screen
+(shown below) in the programing environment that can be used for automatically positioning the tailstock in a part program.
+• Set the quill pressure.
+• Position the quill in the desired position.
+• Open the tailstock cover to move the quill sensor to match the required position.
+o The user would do this to set the tailstock position before running an automatic cycle. From this they will have the quill
+position set and a tailstock location they can use in their part program.
+• Close the tailstock cover to make the machine ready for machining.
+• The tailstock can be manually put on the park switch following the first 6 steps of the method outlined above and moving it
+back onto the park switch.
+• The tailstock can automatically be moved to the park switch using a m-code.
+7.3.3 Automatic Tailstock in Auto Mode
+To correctly position the tailstock manually in auto mode:
+If the user wants to automatically move the tailstock in a part program, they must do it by using the custom screen. For this the
+tailstock position must be known by the machine and the user must know where they want to position the tailstock relative to
+the Z-axis machine coordinate system. To use the automatic tailstock cycle in a part program the user must:
+• Go to the Tailstock custom screen in the part programming environment. o The tailstock custom screen can be found by
+pressing the tailstock button on the second page of the horizontal soft keys.
+• ZP: New Tailstock Position
+多设备维修 SOP 合集 · RAG 入库版
+第 16 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 17 =====
+SOP-TC820LTYsi-308  自动尾座 JOG 模式定位
+部件/系统
+component
+automatic tailstock
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 主轴停止且路径清空
+· 确定 park hole 或 pickup hole
+作业步骤
+steps
+1. 对齐目标孔位。
+2. 松开尾座并啮合尾座销。
+3. 移动 Z 轴到目标位置。
+4. 退销并夹紧。
+5. 设置套筒压力和位置，必要时调整传感器。
+安全要求
+safety_warnings
+· 不允许手动推移
+· 啮合/退销前不得移动 Z 轴
+验收标准
+acceptance_criteria
+· 尾座位置、park/part switch 与实际状态一致。
+关键词
+keywords
+JOG · park hole · pickup hole
+来源
+page / page_end / section_code
+手册 LTY-SOP · P117–P117
+多设备维修 SOP 合集 · RAG 入库版
+第 17 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 18 =====
+SOP-TC820LTYsi-308  自动尾座 JOG 模式定位
+原文摘录
+source_excerpt
+7.3.1 Automatic Tailstock Has Lost its Position
+It is important that the TC820LTYsi tailstock is not moved by hand. If the tailstock is moved by hand the control will lose its
+position and will not be able to locate it for automatic tailstock commands. If the control loses the position of the automatic
+tailstock:
+• Move the Z-axis to line the tailstock pin up with the pickup hole on the Z-Axis. There are markers on the Z-Axis and the
+Tailstock body that show when this is lined up.
+• Unclamp the tailstock using the button on the MCP.
+• Engage the tailstock pin using the button on the MCP. The pin must engage the switch in the pickup hole to learn the new
+position.
+• Disengage the tailstock pin using the button on the MCP.
+• Clamp the tailstock using the button on the MCP.
+The machine should now have learned the position of the tailstock relative to the z-axis machine coordinate system.
+7.3.2 Automatic Tailstock in JOG Mode
+To correctly position the tailstock manually in jog mode:
+• Move the Z-axis to line the tailstock pin up with either the park hole or pick up hole (depending on where they want to move
+the tailstock to).
+• Unclamp the tailstock using the button on MCP button or M code.
+• Engage the tailstock pin using the MCP button or M code.
+• Move the Z-axis to position the tailstock in the location desired.
+• Disengage the tailstock pin using the MCP button or M code.
+• Clamp the tailstock using the MCP button or M code.
+o The tailstock location can be found from the z-axis position in the machine coordinate system or from the custom screen
+(shown below) in the programing environment that can be used for automatically positioning the tailstock in a part program.
+• Set the quill pressure.
+• Position the quill in the desired position.
+• Open the tailstock cover to move the quill sensor to match the required position.
+o The user would do this to set the tailstock position before running an automatic cycle. From this they will have the quill
+position set and a tailstock location they can use in their part program.
+• Close the tailstock cover to make the machine ready for machining.
+• The tailstock can be manually put on the park switch following the first 6 steps of the method outlined above and moving it
+back onto the park switch.
+• The tailstock can automatically be moved to the park switch using a m-code.
+7.3.3 Automatic Tailstock in Auto Mode
+To correctly position the tailstock manually in auto mode:
+If the user wants to automatically move the tailstock in a part program, they must do it by using the custom screen. For this the
+tailstock position must be known by the machine and the user must know where they want to position the tailstock relative to
+the Z-axis machine coordinate system. To use the automatic tailstock cycle in a part program the user must:
+• Go to the Tailstock custom screen in the part programming environment. o The tailstock custom screen can be found by
+pressing the tailstock button on the second page of the horizontal soft keys.
+• ZP: New Tailstock Position
+多设备维修 SOP 合集 · RAG 入库版
+第 18 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 19 =====
+SOP-TC820LTYsi-309  自动尾座 AUTO 模式定位
+部件/系统
+component
+automatic tailstock
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 控制器已知尾座参考位置
+· 首件已确定 Z 位置和套筒位置
+作业步骤
+steps
+1. 进入 Tailstock custom screen。
+2. 输入 ZP 目标位置。
+3. 在 QL 选择 Forward 或 Back。
+4. 确认 ZPOS 当前值并选择 Accept。
+5. 需要停车时使用手册 M-Code。
+安全要求
+safety_warnings
+· 验证 ZP/QL，避免进入工件或刀具路径
+· 停车前确认空间和限位逻辑
+验收标准
+acceptance_criteria
+· 程序尾座定位与首件设置一致。
+关键词
+keywords
+AUTO · ZP · QL · ZPOS
+来源
+page / page_end / section_code
+手册 LTY-SOP · P117–P118
+多设备维修 SOP 合集 · RAG 入库版
+第 19 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 20 =====
+SOP-TC820LTYsi-309  自动尾座 AUTO 模式定位
+原文摘录
+source_excerpt
+7.3.1 Automatic Tailstock Has Lost its Position
+It is important that the TC820LTYsi tailstock is not moved by hand. If the tailstock is moved by hand the control will lose its
+position and will not be able to locate it for automatic tailstock commands. If the control loses the position of the automatic
+tailstock:
+• Move the Z-axis to line the tailstock pin up with the pickup hole on the Z-Axis. There are markers on the Z-Axis and the
+Tailstock body that show when this is lined up.
+• Unclamp the tailstock using the button on the MCP.
+• Engage the tailstock pin using the button on the MCP. The pin must engage the switch in the pickup hole to learn the new
+position.
+• Disengage the tailstock pin using the button on the MCP.
+• Clamp the tailstock using the button on the MCP.
+The machine should now have learned the position of the tailstock relative to the z-axis machine coordinate system.
+7.3.2 Automatic Tailstock in JOG Mode
+To correctly position the tailstock manually in jog mode:
+• Move the Z-axis to line the tailstock pin up with either the park hole or pick up hole (depending on where they want to move
+the tailstock to).
+• Unclamp the tailstock using the button on MCP button or M code.
+• Engage the tailstock pin using the MCP button or M code.
+• Move the Z-axis to position the tailstock in the location desired.
+• Disengage the tailstock pin using the MCP button or M code.
+• Clamp the tailstock using the MCP button or M code.
+o The tailstock location can be found from the z-axis position in the machine coordinate system or from the custom screen
+(shown below) in the programing environment that can be used for automatically positioning the tailstock in a part program.
+• Set the quill pressure.
+• Position the quill in the desired position.
+• Open the tailstock cover to move the quill sensor to match the required position.
+o The user would do this to set the tailstock position before running an automatic cycle. From this they will have the quill
+position set and a tailstock location they can use in their part program.
+• Close the tailstock cover to make the machine ready for machining.
+• The tailstock can be manually put on the park switch following the first 6 steps of the method outlined above and moving it
+back onto the park switch.
+• The tailstock can automatically be moved to the park switch using a m-code.
+7.3.3 Automatic Tailstock in Auto Mode
+To correctly position the tailstock manually in auto mode:
+If the user wants to automatically move the tailstock in a part program, they must do it by using the custom screen. For this the
+tailstock position must be known by the machine and the user must know where they want to position the tailstock relative to
+the Z-axis machine coordinate system. To use the automatic tailstock cycle in a part program the user must:
+• Go to the Tailstock custom screen in the part programming environment. o The tailstock custom screen can be found by
+pressing the tailstock button on the second page of the horizontal soft keys.
+• ZP: New Tailstock Position
+多设备维修 SOP 合集 · RAG 入库版
+第 20 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 21 =====
+SOP-TC820LTYsi-310  尾座套筒传感器定位
+部件/系统
+component
+tailstock sensors
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 设备停止且确认需要调整传感器
+作业步骤
+steps
+1. 确认 700427 或相关位置消息。
+2. 清洁并拆下四个罩螺钉。
+3. 松开六角螺母滑动传感器座。
+4. 使指示灯在正确位置点亮并紧固。
+5. 整理线缆、清洁垫片并复装。
+安全要求
+safety_warnings
+· 清洁后拆罩，防止切屑进入
+· 保护垫片和线缆
+验收标准
+acceptance_criteria
+· 前进/退回反馈与实际位置一致。
+关键词
+keywords
+700427 · 接近开关 · 传感器
+来源
+page / page_end / section_code
+手册 LTY-SOP · P119–P120
+原文摘录
+source_excerpt
+7.3.4 Extended Tail Stock Will Not Respond to Control
+Sensors inside the tailstock body can be used to determine the tailstock quill position and motion during operation. In order to
+set the tailstock quill, position the operator will have to adjust a sensor under the tailstock cover. See figure 6.3.2a showing the
+tailstock position indicator and the control measurement sensors. For the control to allow a cycle start command the tailstock
+quill must be sat on its backward sensor. The control will display the message, “700427 Tailstock Quill is no located on the
+Advanced or retracted Proximity Switch”. Figure 6.3.2a shows the details of the forward and backward sensors which need
+positioning.
+Figure 6.3.2a Tailstock Sensors
+In order to set the tailstock quill position sensors, first clean off the cover and surrounding areas to prevent dirt and debris from
+entering tailstock. In order to position the sensors with the tailstock quill, remove the four knurled screws that hold the cover in
+position see figure 6.3.2b. Be careful with the gasket, it needs to be cleaned and reused.
+Figure 6.3.2b Tailstock Sensor Access Cover
+多设备维修 SOP 合集 · RAG 入库版
+第 21 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 22 =====
+SOP-TC820LTYsi-311  尾座中心线、Z 轴和 B 轴对中
+部件/系统
+component
+tailstock alignment
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 碰撞或加工锥度时执行
+· 测量面清洁
+作业步骤
+steps
+1. 用千分表扫测尾座套筒孔，中心线误差 ≤ 0.002 in。
+2. 用 MT4 对中杆和磁性表座检查 Z 平行度。
+3. 顶部/侧面误差 < 0.001 in/4 in。
+4. B 轴移到另一端重复检查。
+5. 超差时用调整螺栓小量修正。
+安全要求
+safety_warnings
+· 调整前必须有精密测量设备
+· 小量调整并复测
+验收标准
+acceptance_criteria
+· 中心线、Z 和 B 轴平行度达到阈值。
+关键词
+keywords
+MT4 · 0.002 in · 0.001 in/4 in
+来源
+page / page_end / section_code
+手册 LTY-SOP · P115–P116
+原文摘录
+source_excerpt
+7.2 Tailstock Alignment
+7.2.1 Tailstock to Spindle Centerline Alignment
+The machine should have a common centerline between the spindle, turret pocket at the X0 position, and the tailstock. After a
+crash occurs the spindle to tailstock centerline should be checked and adjusted accordingly. The maximum permitted error is
+0.002” (0.05mm). To Check the current spindle to turret pocket centerline alignment:
+1. Clamp an indicator in the chuck and move the tailstock so the indicator feeler is measuring the pocket of the tailstock quill.
+2. Make sure that the measuring surfaces are clean. Any debris or dirt will affect the measurements. 3. Sweep the pocket of the
+tailstock quill and measure the error in the pocket. The error must not exceed 0.002” (0.05mm). 4. If this value is exceeded you
+will need to adjust your tailstock centerline.
+7.2.2 Tailstock to Z-Axis Parallelism
+It is important when using the tailstock, it is aligned to the Z-Axis motion on the machine. To check the tailstock parallelism:
+1. Install a MT4 taper alignment tool into the tailstock quill. 2. Attach a magnetic base to the turret body. 3. Set up your indicator
+so that it is reading off the side of the alignment bar. Be sure to have your indicator set up in a way to reduce any cosine errors
+present in the reading. 4. Make sure that the measuring surfaces are clean. Any debris or dirt will affect the measurements. 5.
+Move the turret in the Z direction so your indicator runs across the top of the alignment bar. 6. Record the difference in position
+on your indicator from the start to the end of travel along the alignment bar. 7. Repeat this process taking a reading from the
+top of the alignment bar. 8. The error along the top and the side of the alignment bar should be less than 0.001”/4”
+(0.025mm/100mm). 9. If the indicator shows an error of greater than this your tailstock needs realigning to make it move parallel
+to the Z-Axis motion in the machine.
+NOTE: if you do not have a MT4 alignment bar, place a precision ground bar between centers on the headstock and tailstock
+measuring the error along the top and side of the precision ground bar, see figure 6.2.2. The measured error across the span
+should be < 0.001”/4”.
+Figure 6.2.2 Tailstock Alignment Between Centers
+多设备维修 SOP 合集 · RAG 入库版
+第 22 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 23 =====
+SOP-TC820LTYsi-312  刀塔工位重新参考和同步
+部件/系统
+component
+turret
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 实际工位与刀具表不一致
+· 刀塔周围无干涉
+作业步骤
+steps
+1. MCP 按 JOG 和 REF PT。
+2. 控制器进入 turret menu 执行 Turret Reference。
+3. Feed Start 快按三次进入 service mode。
+4. 查看 IP/OP Clamp 状态，必要时用 T REF/T PLUS/T Minus。
+5. 退出前确认夹紧且工位一致。
+安全要求
+safety_warnings
+· 进入 service mode 前确认主轴/尾座安全
+· 退出前确认刀塔夹紧
+验收标准
+acceptance_criteria
+· 刀塔工位与刀具表绿色工位一致。
+关键词
+keywords
+T REF · REF PT · 刀塔参考
+来源
+page / page_end / section_code
+手册 LTY-SOP · P106–P107
+原文摘录
+source_excerpt
+6.0 Sauter 12 Station Turret
+6.1 12 Station Hydraulic Turret
+The TCsi series is fitted with a 12-station turret from Sauter. The TC820si uses and Bolt-on Turret face and the TC820LTYsi is
+fitted with a BMT45 Turret face with a live tooling drive. The BMT45 turret for the TC820LTY is available in a half index option
+providing 24 indexing positions. The turret is driven by an AC servo motor and utilizes a hydraulic clamping mechanism and
+proximity switch.
+As the tool exchange command is issued, turret will be rotated to the selected tool position according to NC or manual
+commands. When the selected tool traces the target location, the AC servo motor will stop immediately. The hydraulic system
+will then lock the tool magazine to prevent the tool magazine from further traveling. The proximity switch is used for checking
+the magazine’s clamping.
+The rotation direction could be either cw or ccw. The tool is selected based on the shortest path to minimize the tool selection
+time.
+6.2 Troubleshooting the 12 Station Turret
+6.2.1 12 Station Turret Out of Sync with Control Display
+Occasionally the turret position will become out-of-synch with the control display. Typically, this is when the green highlighted
+entry of the Tool List as shown in figure 5.2.1a shows a different number than the tool position number engraved into the turret
+body at the current cutting position.
+Figure 5.2.1a Tool List Showing Tool Position
+To re-sync the turret with the tool table, on the MCP press “JOG” and “REF PT”. On the control press 1 - “>” arrow to pull
+out hidden window, 2 – turret menu, then 3 – Turret Reference as shown on figure 5.2.1b.
+多设备维修 SOP 合集 · RAG 入库版
+第 23 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 24 =====
+SOP-TC820LTYsi-313  刀塔 X/Z 轴平行度检查
+部件/系统
+component
+turret alignment
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 碰撞后或精度异常时执行
+· 测量面清洁
+作业步骤
+steps
+1. 磁性表座安装于尾座导轨。
+2. 沿 X 轴约 4 in 扫测刀塔面。
+3. 沿 Z 轴约 4 in 扫测周边面。
+4. 两轴误差均需 < 0.0004 in/4 in。
+5. 按手册调整后交替复测。
+安全要求
+safety_warnings
+· 调整两个螺钉会同时影响 X/Z
+· 超差由精密测量人员处理
+验收标准
+acceptance_criteria
+· X/Z 平行度均达标。
+关键词
+keywords
+0.0004 in · X轴 · Z轴
+来源
+page / page_end / section_code
+手册 LTY-SOP · P108–P110
+原文摘录
+source_excerpt
+6.2.2 Turret Parallelism to Axis Motion
+It is essential that the turret is set up and aligned parallel to the axis motion of the machine in order to ensure proper accuracy.
+The turret parallelism to the axis motion should be checked after a crash has occurred, see figure 5.2.2.
+Figure 5.2.2 Ready to Measure
+6.2.2.1 Turret to X-Axis Parallelism To check the turret parallelism to the X-Axis motion:
+1. Attach a magnetic base to a tailstock way, see figure 5.2.2. 2. Set up your indicator so that it is reading off the turret’s face
+where a turning tool will be mounted, see figure 5.2.2.1. Be sure to have your indicator set up in a way to reduce any cosine
+errors present in the reading. 3. Make sure that the measuring surfaces on the turret are clean. Any debris or dirt on the turret
+will affect the measurements. 4. Move the turret in the X direction so your indicator runs across its face. You should be able to
+achieve about 4 inches of travel. 5. Record the difference in position on your indicator from the start to the end of travel along
+the turret face. 6. The error should be less than 0.0004”/4” (0.010mm/100mm). 7. If the indicator shows an error of greater
+than this your turret needs realigning to make it move parallel to the X-Axis motion in the machine.
+多设备维修 SOP 合集 · RAG 入库版
+第 24 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 25 =====
+SOP-TC820LTYsi-314  主轴与刀塔中心线同心度
+部件/系统
+component
+spindle and turret alignment
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 碰撞后或加工异常时执行
+· 刀塔和测量面清洁
+作业步骤
+steps
+1. 安装镗刀杆夹持座并移至 X0。
+2. 卡盘夹表，扫测夹持座孔。
+3. 按 ±X/±Y 位置记录总误差。
+4. 确认总误差 ≤ 0.002 in，超差则调整并复测。
+安全要求
+safety_warnings
+· 卡盘夹表确认夹持可靠
+· 调整由精密测量人员执行
+验收标准
+acceptance_criteria
+· 刀塔孔相对主轴中心线总误差达标。
+关键词
+keywords
+0.002 in · 同心度 · 碰撞
+来源
+page / page_end / section_code
+手册 LTY-SOP · P111–P111
+原文摘录
+source_excerpt
+The machine should have a common centerline between the spindle, turret pocket at the X0 position, and the tailstock. After a
+crash occurs the spindle to turret pocket centerline should be checked and adjusted accordingly. The maximum permitted error
+is 0.002” (0.05mm). To Check the current spindle to turret pocket centerline alignment:
+• Install a boring bar holder and move the turret so it is at X0,.
+• Make sure that the mating surfaces of the turret and tooling are clean. Any debris between the turret and the boring bar
+holder will affect the measurements.
+• Clamp an indicator in the chuck and move the turret so the indicator feeler is measuring the pocket of the boring bar holder.
+• Set your indicator zero at position 1, +X. Refer to figure 5.2.2.4a to show the positions of ±X and
+±Y.
+• Sweep the pocket of the boring bar holder and measure the error in the pocket. Refer to figure
+5.2.2.4b to show the actual tooling used.
+• The total error must not exceed 0.002” (0.05mm).
+• If the total error exceeds this value you will need to adjust your turret centerline position.
+Figure 5.2.2.4a Spindle to Turret Centerline
+Figure 5.2.2.4b Tooling for Spindle to Turret Centerline 6.2.2.5 TC820LTY Driven Tooling Drive Alignment.
+多设备维修 SOP 合集 · RAG 入库版
+第 25 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 26 =====
+SOP-TC820LTYsi-315  动力刀具驱动对中
+部件/系统
+component
+live tooling
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 动力刀具不能正确啮合
+· 移除动力刀具和前盖
+作业步骤
+steps
+1. 用千分表检查两个耦合标记点。
+2. 超差时拆 plug screw 并松开夹紧块螺钉。
+3. 旋转耦合头使差值 < 0.0008 in。
+4. 按 20、40、60 ft-lbs逐级紧固并复测。
+5. 复装 plug screw、动力刀具和前盖。
+安全要求
+safety_warnings
+· 保持运动区无人
+· 夹紧螺钉按 20/40/60 ft-lbs 逐级紧固
+验收标准
+acceptance_criteria
+· 动力刀具完全啮合，差值 < 0.0008 in。
+关键词
+keywords
+BMT45 · 0.0008 in · 60 ft-lbs
+来源
+page / page_end / section_code
+手册 LTY-SOP · P112–P112
+原文摘录
+source_excerpt
+If the driven tools are not properly engaging with the driven tooling drive check turret to live tooling drive alignment:
+• Remove all driven tools and the front cover of 5.2.2.5a BMT45 Live Tooling Gear Head the turret. Alignment Markers
+• Take the machine out of E-Stop and with an 5.2.2.5b BMT45 Plug Screw indicator check the alignment of the 2 marking points
+on the live tooling gear head coupling 5.2.2.5c BMT45 Gear Head Clamping Screw along the X-Axis, shown in figure 5.2.2.5a.
+• The level of the 2 marking points along the X- Axis direction should be within 0.0008in or 0.2mm. If the level is greater than
+0.0008” or 0.2mm along the X-Axis direction the gear head coupling will need to be adjusted.
+• If the level is out of spec remove the plug screw on the side of the turret housing, shown in figure 5.2.2.5b.
+• Loosen the screw of the shaft clamping block from the hole opened by removing the plug screw from the side of the turret
+housing, figure 5.2.2.5c. The Gear coupling head should now be able to rotate. o NOTE: This screw should be torqued to 60
+ft-lbs. When tightening ensure it is tightened to 60 ft-lbs.
+• Rotate the gear head coupling and sweep the indicator checking the 2 markings on the gear head coupling until they are level
+across the X- Axis within 0.0008” or 0.2mm.
+• Fastening the clamping block screw to 20 ft-lbs then 40lbs and finally 60 ft-lbs checking the marking level remains less than
+0.0008” or 0.2mm after each tighten.
+• When the clamping block screw is tightened to 60 ft-lbs and the 2 markings level remains less than 0.0008” or 0.2mm reinstall
+the plug screw on the side of the turret housing.
+• Install a driven tool and verify the drive is fully engaged.
+• Reinstall the front cover of the tool disc and tighten the M6 bolts to 14 ft-lbs.
+多设备维修 SOP 合集 · RAG 入库版
+第 26 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 27 =====
+SOP-TC820LTYsi-316  探头校准前的刀具表设置
+部件/系统
+component
+automatic tool setter probe
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 准备 1/3/5 号校准刀具
+· 相邻刀具无干涉
+作业步骤
+steps
+1. 工位 1 装 OD 粗车刀，3 装 ID 粗车刀，5 装切断刀。
+2. 在 Tool List 新建并填写刀具数据。
+3. 从 T,S,M 清除工作偏置，选择 G500。
+安全要求
+safety_warnings
+· 清除工作偏置后建立机器零点
+· 确认刀具不会撞击探头/卡盘
+验收标准
+acceptance_criteria
+· 三把刀具数据完整且 G500 生效。
+关键词
+keywords
+Tool List · G500 · 工位1/3/5
+来源
+page / page_end / section_code
+手册 LTY-SOP · P122–P123
+原文摘录
+source_excerpt
+8.0 Tool Setter Probe
+8.1 About Probe
+8.1.1 Manual Tool Setting Arm and Probe
+A manual tool setting arm and probe is fitted to the TC820si machine as standard. The tool setting arm is manually deployed by
+the user and can be used in the jog environment to set tool data. The position of the tool setting arm and probe are stored in
+the machine and used to set the position of the tools cutting edge with reference to the work piece and machine coordinate
+system. If the tool setting arm or probe is ever crashed, it will require recalibration. Although your probe will be calibrated at the
+factory before shipping it is suggested that you recalibrate the probe before using it to set any tools.
+Figure 7.1.1 Manual Tool Setting Arm and Probe
+8.1.2 Automatic Tool Setting Arm and Probe
+An automatic tool setting arm and probe is fitted to the TC820LTYsi machine as standard. The tool setting arm is automatically
+deployed by the button on the MCP or with M-Codes. The automatic probe can be used in the jog environment to set tool data
+or in auto to check for tools throughout a part program or production run. The position of the tool setting arm and probe are
+stored in the machine and used to set the position of the tools cutting edge with reference to the work piece and machine
+coordinate system. If the tool setting arm or probe is ever crashed, it will require recalibration. Although your probe will be
+calibrated at the factory before shipping it is suggested that you recalibrate the probe before using it to set any tools.
+Figure 7.1.2 Automatic Tool Setting Arm and Probe
+8.2 Tool Probe Calibration It is recommended you calibrate your tool setting arm and probe as soon as you receive your TCsi
+machine from the factory. The probe will also need to be recalibrated if a collision occurs.
+8.2.1 Setting Up the Tool Table
+In order to calibrate all 4 sides of the tool setting probe 3 different tools will need to be used. To calibrate the tool setting probe,
+set up:
+• An OD roughing tool in position #1 on the turret.
+• An ID roughing tool in position #3 on the turret.
+• A cutoff tool in position #5 on the turret
+Populate your tool table with the information for the 3 tools installed on the turret following the instructions below, see figure
+7.2a for a sample of the completed Tool list:
+多设备维修 SOP 合集 · RAG 入库版
+第 27 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 28 =====
+SOP-TC820LTYsi-317  自动刀具设定臂和探头校准
+部件/系统
+component
+automatic tool setter probe
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 刀具表和 G500 已准备
+· 门互锁正常
+作业步骤
+steps
+1. 选择 Meas. Tool → Calibrate。
+2. 用 MCP 部署自动刀具设定臂。
+3. 将适用刀具移至所选探头边缘约 0.5 in。
+4. Cycle Start 触碰并更新数据。
+5. 对四个探头面重复。
+安全要求
+safety_warnings
+· 自动探头只能门关闭时部署
+· 起始距离约 0.5 in 且无干涉
+验收标准
+acceptance_criteria
+· 四面数据更新且无碰撞/报警。
+关键词
+keywords
+四面校准 · 0.5 in · 探头
+来源
+page / page_end / section_code
+手册 LTY-SOP · P125–P126
+原文摘录
+source_excerpt
+8.2.3 Calibrate the Tool Setting Arm and Probe
+To calibrate the tool setting arm and probe press [M] from the left VSK. Make sure any adjacent tools will not hit the probe or
+chuck during the calibration process. Press “Meas. Tool” from the HSK and “Calibrate” from the right VSK. Press one of the
+buttons on the right VSK for the direction to be calibrated shown in figure 7.2.3a.
+Figure 7.2.3a Probe Calibration Screen
+• On the TC820si for the manual tool setter there is a release knob inside of the machine envelope just under the chuck. Pull the
+knob as shown in figure 7.2.3b. Swing the probe arm into position as shown in figure 7.2.3c. There is a light on the probe to
+show it is active, this only works when the door is closed.
+Figure 7.2.3b Release Knob Figure 7.2.3c Probe in Position
+多设备维修 SOP 合集 · RAG 入库版
+第 28 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 29 =====
+SOP-TC820LTYsi-318  JOG 模式探头测量刀具
+部件/系统
+component
+automatic tool setter probe
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 探头已校准
+· 相邻刀具无干涉
+作业步骤
+steps
+1. 选择 Meas. Tool → Automatic。
+2. 选择方向并查看提示。
+3. 用 MPG 移到探头前约 1/2 in。
+4. Cycle Start 完成接触并重复另一轴。
+5. 确认 Tool data 更新。
+安全要求
+safety_warnings
+· MPG 低速靠近并确认路径
+· 异常立即停止
+验收标准
+acceptance_criteria
+· 目标刀具 X/Z 数据更新。
+关键词
+keywords
+JOG · MPG · Tool data
+来源
+page / page_end / section_code
+手册 LTY-SOP · P126–P127
+原文摘录
+source_excerpt
+• On the TC820LTYsi for the automatic tool setter the tool setting arm is automatically deployed by pressing the button on the
+MCP, figure 7.2.3d, or through the use of M-Codes. The arm will swing into position as shown in figure 7.2.3e. The probe can
+only be deployed when the door is closed.
+Figure 7.2.3d Probe Deploy Button Figure 7.2.3e Probe in Position
+All 4 sides of the tool setter will need to be calibrated, move the tool to within 0.5” of the edge you selected on the calibration
+screen on the machine control, figure 7.2.3a, and press cycle start. The tool should move and touch the probe updating the
+probe data. Repeat this process for all 4 sides of the probe using the appropriate tool that can reach and touch off the desired
+side.
+8.3 Measuring Tools Using the Tool Setting Arm and Probe in Jog
+Press [M] from the left VSK. Make sure any adjacent tools will not hit the probe or chuck during the measurement cycle. Press
+“Meas. Tool” from the HSK and “Automatic” from the right VSK. Press one of the buttons on the right VSK for the direction
+to be measured. The screen will display which of the four sides of the probe need to be touched by the tool as shown in figure
+7.3a. Use MPG to move the active tool about ½” away from the correct probe. Press cycle start.
+Figure 7.3a First Position
+多设备维修 SOP 合集 · RAG 入库版
+第 29 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 30 =====
+SOP-TC820LTYsi-319  AUTO 模式探头测量刀具
+部件/系统
+component
+automatic tool setter probe
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 探头已校准
+· 零件程序已验证
+作业步骤
+steps
+1. 在 Auto 调用 Siemens 测量循环。
+2. 核对刀塔布置和相邻工具间隙。
+3. 单件低风险试运行。
+4. 确认结果写入正确刀具补偿。
+安全要求
+safety_warnings
+· 嵌入生产程序前验证所有干涉
+· 报警时停止程序检查反馈
+验收标准
+acceptance_criteria
+· Auto 测量循环无碰撞和报警。
+关键词
+keywords
+AUTO · 测量循环 · 刀具补偿
+来源
+page / page_end / section_code
+手册 LTY-SOP · P127–P127
+原文摘录
+source_excerpt
+Repeat this process for the other axis displayed on the right VSK as shown in figure 7.3b.
+Figure 7.3b Second Position This process will fill in the dimensions in the “Tool data” chart in the Work Area. Repeat this same
+process using whichever tool needs to be measured.
+8.4 Measuring Tools Using the Tool Setting Arm and Probe in Auto
+The TC820LTY automatic tool setting arm and probe with the Siemens measuring cycle software can be used in the Auto
+environment and embedded in a part program and production run. Before the probe measuring cycle can be embedded in a
+program the tool setting arm and probe needs to be calibrated. Pay attention to the tooling set up on the turret so any tool
+being measured will not have other tools interfere and hit the tool setting arm or the chuck.
+8.5 Tool Setting Probe Troubleshooting
+The probe is designed to turn on when the tool setting arm is deployed.
+When the probe signal is not working for the TC820si manual tool setting arm and probe:
+• Check the door is closed and the interlock is engaged. The door open message on the control should not be showing.
+• Check the connecting cable in the X222 area of the TC820si electrical cabinet and make sure the red wire is connected properly
+to X222-216-1 and the white wire is connected properly to X132.13- 8.
+• There are limit switches that show when the probe is deployed and parked. Refer to the TRAK I/O Diagnostic screen and make
+sure all the inputs and outputs for the probe and tool setting arm limit switches are working as expected.
+When the probe signal is not working for the TC820LTYsi automatic tool setting arm and probe:
+• Check the door is closed and the interlock is engaged. The door open message on the control should not be showing.
+多设备维修 SOP 合集 · RAG 入库版
+第 30 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 31 =====
+SOP-TC820LTYsi-320  自动探头信号故障检查
+部件/系统
+component
+automatic tool setter probe
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 探头信号异常且机床停止相关动作
+作业步骤
+steps
+1. 确认门关闭且互锁有效。
+2. 检查 TSI 3 到 X111、X222、TB4 的电缆。
+3. 在 TRAK I/O Diagnostic 观察限位输入输出。
+4. 参考 Renishaw 手册并保存报警/I/O证据。
+安全要求
+safety_warnings
+· 不得带电插拔电柜连接器
+· 门互锁异常不得旁路运行
+验收标准
+acceptance_criteria
+· 部署、停车和触发反馈与实际状态一致。
+关键词
+keywords
+TSI 3 · X111 · X222 · TB4
+来源
+page / page_end / section_code
+手册 LTY-SOP · P127–P128
+原文摘录
+source_excerpt
+Repeat this process for the other axis displayed on the right VSK as shown in figure 7.3b.
+Figure 7.3b Second Position This process will fill in the dimensions in the “Tool data” chart in the Work Area. Repeat this same
+process using whichever tool needs to be measured.
+8.4 Measuring Tools Using the Tool Setting Arm and Probe in Auto
+The TC820LTY automatic tool setting arm and probe with the Siemens measuring cycle software can be used in the Auto
+environment and embedded in a part program and production run. Before the probe measuring cycle can be embedded in a
+program the tool setting arm and probe needs to be calibrated. Pay attention to the tooling set up on the turret so any tool
+being measured will not have other tools interfere and hit the tool setting arm or the chuck.
+8.5 Tool Setting Probe Troubleshooting
+The probe is designed to turn on when the tool setting arm is deployed.
+When the probe signal is not working for the TC820si manual tool setting arm and probe:
+• Check the door is closed and the interlock is engaged. The door open message on the control should not be showing.
+• Check the connecting cable in the X222 area of the TC820si electrical cabinet and make sure the red wire is connected properly
+to X222-216-1 and the white wire is connected properly to X132.13- 8.
+• There are limit switches that show when the probe is deployed and parked. Refer to the TRAK I/O Diagnostic screen and make
+sure all the inputs and outputs for the probe and tool setting arm limit switches are working as expected.
+When the probe signal is not working for the TC820LTYsi automatic tool setting arm and probe:
+• Check the door is closed and the interlock is engaged. The door open message on the control should not be showing.
+多设备维修 SOP 合集 · RAG 入库版
+第 31 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 32 =====
+SOP-TC820LTYsi-321  电柜热交换器过滤器清洁
+部件/系统
+component
+electrical cabinet cooling
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 机床停机并断电
+· 过滤器可安全取出
+作业步骤
+steps
+1. 抬底部卡舌取出过滤器。
+2. 用空气吹净或水洗。
+3. 清洁风扇格栅散热片。
+4. 干燥后滑回槽内固定。
+安全要求
+safety_warnings
+· 过滤器干燥后再装回
+· 不得带电接触电柜内部
+验收标准
+acceptance_criteria
+· 过滤器和冷却通道无堵塞。
+关键词
+keywords
+电柜 · 热交换器 · 过滤器
+来源
+page / page_end / section_code
+手册 LTY-SOP · P84–P84
+原文摘录
+source_excerpt
+5.0 Maintenance and Replacement
+5.1 Maintenance
+5.1.1 How to Clean the Touchscreen & Machine Control Panel (MCP)
+The pendant is designed for low maintenance operation. Nevertheless, you must regularly clean the pendant.
+WARNING!!! 1. Turn power off when cleaning the pendant. 2. Do not clean the device using compressed air or steam jets
+because they can damage it.
+Clean only the front panel with a soft cloth moistened with water of mild cleaning agent. Spray the cleaning agent or water on
+to a cleaning cloth. Do not spray anything directly on the front panel. Never use caustic solvents or abrasive cleaners.
+Use dry cloth to clean the backside of the pendant.
+5.1.2 How to Clean the Electrical Cabinet Heat Exchanger Air Filter
+1. Lift tab at the bottom of the filter which lifts the filter out of the slot in front of the fan, see figure 4.1.2.
+2. Clean filter either by blowing with air or rinsing with water.
+3. Clean fins on the grate of the fan.
+4. Dry filter if needed and replace into the slot and slide down to secure.
+Figure 4.1.2 Heat Exchanger Filter
+多设备维修 SOP 合集 · RAG 入库版
+第 32 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 33 =====
+SOP-TC820LTYsi-322  液压泵过滤器更换
+部件/系统
+component
+hydraulic system
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 系统断电泄压
+· 准备起吊设备和新过滤器
+作业步骤
+steps
+1. 拆六个螺钉和两个吊环螺栓。
+2. 用起吊设备分离并提升上盖。
+3. 更换过滤器。
+4. 复位上盖并固定油箱。
+安全要求
+safety_warnings
+· 油箱上盖是重物必须起吊
+· 防止油液喷出和污染
+验收标准
+acceptance_criteria
+· 过滤器已换、密封正常、无泄漏。
+关键词
+keywords
+液压泵 · 过滤器 · 起吊设备
+来源
+page / page_end / section_code
+手册 LTY-SOP · P85–P85
+原文摘录
+source_excerpt
+5.1.3 How to Replace Hydraulic Pump Filter
+WARNING!!! Heavy Object, us proper lifting equipment.
+1. Remove the six screws and two eye bolts between the top cover and the tank, see figure 4.1.3. 2. Use proper lifting equipment
+to separate the top cover from the tank. 3. Lift the top cover high enough to replace the filter. 4. Replace top cover and secure to
+tank.
+Figure 4.1.3 Hydraulic Pump
+5.2 Maintenance Intervals
+5.2.1 Daily Maintenance
+• Remove majority of chips and debris from around the ways, way covers, chuck, turret, tool holders and other moving parts.
+• Empty chips from screen sitting above the coolant tank.
+• Check hydraulic oil levels. If the oil level is low check for leaks in the hydraulic system. If needed fill with ISO VG32/SAE 10W.
+• Check the main hydraulic pressure is set to 700psi.
+• Check the lubrication pump oil level and make sure it is always above the minimum line. If needed fill with ISO VG68/SAE 20W.
+• Check to make sure there are no obvious oil leaks to the lubrication system, and it is getting to all the slideways and moving
+parts.
+• Check lubrication pressure is set to 70psi when the pump is running.
+• Check to make sure the clamping mechanism is clean and in proper working order. Grease the chuck twice daily.
+• Check coolant level and add if low.
+多设备维修 SOP 合集 · RAG 入库版
+第 33 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 34 =====
+SOP-TC820LTYsi-323  各轴和尾座镶条调整
+部件/系统
+component
+gibs
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 轴停止且区域清洁
+· 确认对应轴和镶条类型
+作业步骤
+steps
+1. 检查镶条平直、无毛刺且油道畅通。
+2. TC820LTYsi X/Y/Z 从后盖、B 轴从尾座防护板进入。
+3. 用扭矩螺丝刀设为 1.2 Nm/10.62 lbf.in。
+4. 按单面/双面镶条步骤往复、复紧和锁定。
+5. 复装后检查运动、润滑和精度。
+安全要求
+safety_warnings
+· 错误调整会损失精度
+· 禁止用垫片替代，避免气流吹屑入滑道
+验收标准
+acceptance_criteria
+· 运动平稳，调整扭矩和精度符合要求。
+关键词
+keywords
+X轴 · Y轴 · Z轴 · B轴 · 1.2 Nm
+来源
+page / page_end / section_code
+手册 LTY-SOP · P86–P92
+多设备维修 SOP 合集 · RAG 入库版
+第 34 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 35 =====
+SOP-TC820LTYsi-323  各轴和尾座镶条调整
+原文摘录
+source_excerpt
+5.2.2 Monthly Maintenance
+• Clean air filters on the electrical cabinet heat exchanger and replace if needed.
+• Remove covers and inspect ways, clean areas of chips and debris.
+• Every 2 months remove and drain the coolant tank, clean inside and fill with new clean coolant.
+5.2.3 Half Yearly Maintenance
+• Check all switches and interlocks are working correctly.
+• Check the level of the machine and re-level as necessary.
+• Check the spindle motor belt tension and adjust as necessary.
+• Check the backlash on each axis and adjust as necessary.
+• Check gibs on each axis and tailstock and adjust as necessary.
+5.2.4 Yearly Maintenance
+• Remove the hydraulic tank. Drain oil and clean inside. Clean filter and fill with new clean hydraulic oil (ISO VG32/SAE 10W).
+• Remove all covers, vacuum chips and debris that may have built up, and wipe down machine from top to bottom.
+• Inspect machine for any unusual wear and play.
+• Check cables, coolant hoses and hydraulic lines for any abrasion or cuts.
+5.3 Mechanical Adjustments
+5.3.1 Gib Adjustments
+WARNING!!!
+Ensure to adjust gibs frequently and properly. Otherwise, this might result in loss of machine accuracy.
+The gibs are vital to the performance of your TCsi Machine. Gibs should be:
+• flat
+• free of twist
+• free of burrs
+• free of blockages in the oil passages and channels Defective or scarred gibs must be replaced.
+Shimming of gibs will not yield acceptable results. It is good machining practice to avoid the use of shop air to clean the chips
+off a machine. This risks blowing chips into the sliding way surfaces and compromising the performance of the machine.
+Because of long-term friction between the bed and carriage, wear may occur. Proper gib adjustment is necessary after the
+machine has been operated for a long time. Adjust the gib by turning the gib adjustment screw (2) using torque screwdriver see
+figure 4.3.1. Set torque to 1.2Nm (0.9 ft lbs).
+多设备维修 SOP 合集 · RAG 入库版
+第 35 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 36 =====
+SOP-TC820LTYsi-324  主轴皮带检查和重新张紧
+部件/系统
+component
+spindle belt
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 确认需检查/调整皮带
+· 电源已断开并防止启动
+作业步骤
+steps
+1. 松开电机板六个螺钉并调张紧器。
+2. TC820LTYsi 仪表输入 150 g/m、11 mm/#R、span 766 mm。
+3. 测量目标约 120 lbf，允许 105–145 lbf，新带约 145 lbf。
+4. 确认后六螺钉紧固 100 ft-lbs。
+安全要求
+safety_warnings
+· 无法确保张力时不要调整
+· 新皮带 48 小时后复查
+验收标准
+acceptance_criteria
+· 张力、对中和扭矩符合要求，运行无异常噪声。
+关键词
+keywords
+766 mm · 120 lbf · 105-145 lbf · 100 ft-lbs
+来源
+page / page_end / section_code
+手册 LTY-SOP · P94–P96
+原文摘录
+source_excerpt
+5.4.3 Check Spindle Belt
+WARNING!!!
+Ensure to have a proper tension value for the spindle transmission belt. If you cannot ensure the proper tension value, please do
+not adjust the belt tension.
+After the machine has been operated for a long period, the spindle drive-timing belt may gradually become loose. Check the
+main drive belt tension frequently.
+5.4.4 Re-tension Spindle Belt
+Follow steps below to adjust the belt tension reference figure 4.4.2a. Two tool choices are explained to test the tension:
+1. Make sure the power source has been disconnected before adjusting the timing belt tension. 2. Loosen the 6 fastening screws
+(1) on the spindle motor mounting plate.
+Figure 4.4.2a Spindle Belt Orientation 3. Set belt tension by adjusting the belt tension motor bracket reference figure 4.4.2b inset
+photo. Use the tensioner block to either increase tension on the belt or decrease tension. When the tension on the belt looks
+good, snug the 6 fastening screws.
+多设备维修 SOP 合集 · RAG 入库版
+第 36 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 37 =====
+SOP-TC820LTYsi-325  X/Z 轴反向间隙参数检查
+部件/系统
+component
+axis backlash
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 确认重复性/定位精度需检查
+· 具备制造商级参数权限
+作业步骤
+steps
+1. 进入 Setup → Mach data → Axis MD。
+2. Search 参数 32450。
+3. Select axis 查看 AX1/AX2。
+4. 记录参数和测量结果，授权后才可调整。
+安全要求
+safety_warnings
+· 32450[0] 是单机值，禁止套用其他机床
+· Manufacturer level password 才可编辑
+验收标准
+acceptance_criteria
+· 参数与单机实测和维修记录一致。
+关键词
+keywords
+32450 · AX1 · AX2
+来源
+page / page_end / section_code
+手册 LTY-SOP · P97–P97
+原文摘录
+source_excerpt
+5.4.5 Backlash Constants
+Backlash settings for the TCsi machines are set by the factory during the build for the X & Z-Axis. These values are unique for
+each machine. The backlash values for the two axes, AX1 (X-Axis) and AX2 (Z-Axis) are stored in the control under Axis MD
+parameter 32450[0]. To find the parameter, press “Setup”, make sure you are on page 1 according to the far-right corner of
+HSK, press “Mach data” then “Axis MD”. From the right VSK press “Search” and enter 32450 into the field. The backlash
+values may need to be adjusted over time to account for wear in the drive train system, see figure 4.4.3a.
+Figure 4.4.3a Axis MD Using the right VSK press “Select axis” and you will see the axis list appear. You need “Manufacturer”
+level password to be able to edit the fields, see figure 4.4.3b.
+Figure 4.4.3b Select Axis
+多设备维修 SOP 合集 · RAG 入库版
+第 37 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 38 =====
+SOP-TC820LTYsi-326  泵式油水分离器排油
+部件/系统
+component
+pump type oil skimmer
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 已安装泵式撇油器
+· 准备废油容器
+作业步骤
+steps
+1. 检查分离油液位。
+2. 打开阀门排入收集容器。
+3. 关闭阀门并按环保规定处置。
+4. 检查回流路径和溢漏。
+安全要求
+safety_warnings
+· 防止分离油溢回冷却液箱
+· 拆泵/皮带前先急停断电并装防护
+验收标准
+acceptance_criteria
+· 分离油未溢回冷却液箱，阀门和回流正常。
+关键词
+keywords
+撇油器 · 分离器 · 排油
+来源
+page / page_end / section_code
+手册 LTY-SOP · P130–P131
+原文摘录
+source_excerpt
+9.1.2 Pump Type Oil Skimmer
+The pump type oil skimmer on the TC820LTYsi machines is positioned adjacent to the coolant pump. The oil skimmer is wired
+directly to the electrical cabinet and is controlled using a button on the MCP or through the use of M-Codes. As the pump of the
+oil skimmer runs the top layer of the coolant is removed with the layer of oil and dumped in the oil separator.
+The oil and coolant collected by the oil skimmer is then separated with the coolant being returned back into the coolant tank
+and the oil passed into a section of the oil separator where it can be removed. The oil skimmer helps keep your coolant free of
+oil, extending the life of the coolant and reducing coolant maintenance. Figure 8.1.2 shows an overview of the pump ty pe oil
+skimmer on the TC820LTYsi machine.
+Figure 8.1.2 Pump Type Oil Skimmer
+9.1.3 Maintenance
+9.1.3.1 Emptying the Skimmed Oil
+Both oil skimmer options on the TCsi machines come with a collection container.
+• On the TC820si machines the skimmed oil will run off the oil separator into the collection container. There is a bucket beneath
+it to catch any excess oil, but it is important to empty the skimmed oil before it spills over the top. Simply remove the funnel and
+pick up the container using the handle and empty the oil where it can be disposed. Any oil skimmed while the tank is removed
+will be captured in the bucket below the tank.
+• On the TC820LTY machines the skimmed oil will be held in the oil separator. There is a valve that can be opened to empty the
+skimmed oil from the oil separator into the collection container. It is important to empty the skimmed oil from the oil separator
+into the collection container before it runs over the top where it will then return to the coolant tank. Simply open the valve to
+empty
+多设备维修 SOP 合集 · RAG 入库版
+第 38 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 39 =====
+SOP-TC820LTYsi-327  接料器清洁和功能检查
+部件/系统
+component
+part catcher
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 生产结束且接料器处于安全状态
+作业步骤
+steps
+1. 清除接料器本体和滑道切屑。
+2. 清空储料桶，防止拥堵。
+3. 清除桶内和筛网下方切屑。
+4. 用 MCP 测试升起和闲置位置及反馈。
+安全要求
+safety_warnings
+· 停止动作后清洁
+· 堵塞回流路径会导致冷却液溢出
+验收标准
+acceptance_criteria
+· 升降无迟滞、位置反馈正确、回流畅通。
+关键词
+keywords
+接料器 · 切屑 · 冷却液回流
+来源
+page / page_end / section_code
+手册 LTY-SOP · P132–P133
+原文摘录
+source_excerpt
+5. Loosen or remove as needed the two screws holding the pulley bracket see figure 8.1.2.2c in order to compress the spring and
+remove the belt.
+Figure 8.1.2.2a Mounting Bolts
+Figure 8.1.2.2b Cover Screws Figure 8.1.2.2c Pulley
+5. Replace the belt and reverse the above procedure to replace the oil skimmer.
+9.2 Part Catcher
+9.2.1 Programable Part Catcher
+The TRAK part catcher on the TCsi machines is operated using the button on the MCP or through the use
+M-Codes embedded in a program. Driven by the hydraulic system, the part catcher can be deployed to catch finished parts as
+they are cut off and retracted to be clear during machining operations. Utilizing the part catcher can aid with unattended
+machining as the finished part runs down the shoot to be stored in a built-in bucket, see figure 8.2.1.
+多设备维修 SOP 合集 · RAG 入库版
+第 39 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 40 =====
+SOP-TC820LTYsi-328  高压冷却泵更换
+部件/系统
+component
+high-pressure coolant
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 确认高压泵故障
+· 急停/断电并准备接液和起吊设备
+作业步骤
+steps
+1. MCP 关闭流体并关闭电源。
+2. 排液至过滤器罐清空。
+3. 断开泵电缆和传感器线并记录方向。
+4. 拆过滤器、螺钉并吊出旧泵。
+5. 装入新泵，复接管线和电缆。
+6. 启动后核对旋向，至少无故障运行 10 秒并查漏。
+安全要求
+safety_warnings
+· 约 220 psi，先关闭流体和电源并排液
+· 泵总成是重物必须起吊
+验收标准
+acceptance_criteria
+· 约 220 psi、旋向正确、10 秒无故障且无泄漏。
+关键词
+keywords
+220 psi · 起吊 · 10 秒
+来源
+page / page_end / section_code
+手册 LTY-SOP · P134–P135
+原文摘录
+source_excerpt
+9.3.1 High Pressure Coolant
+The TRAK high pressure coolant system, see figure 8.3.1, delivers coolant at 220 psi directly through the turret and cutting tool
+effectively dissipating chips and heat during machining. The increased pressure will allow for heavier cuts, higher feed rates,
+deep-hole drilling, extended tool life and better surface finishes.
+This produces reduced cycle times, increase throughput, and higher-quality parts. The high-pressure coolant pump is fitted with
+a filter and pressure sensor, this helps keep the filter clean and at enough pressure to ensure optimal cutting conditions.
+Figure 8.3.1 High Pressure Coolant
+9.3.2 High Pressure Coolant Pump
+The high-pressure coolant system uses a larger pump delivering coolant at 220 psi. If the pump fails it will need to be replaced.
+Warning!!!
+Heavy object to be installed, proper safety precautions are needed.
+To replace a faulty pump:
+1. Turn off fluid flow using button on the MCP and turn off power to the TCsi machine. 2. Drain enough coolant to clear the filter
+canister. 3. Disconnect the cable going from the electric cabinet to coolant pump and the wires at the pressure sensor, see figure
+8.3.2. Note orientation of the sensor wires.
+多设备维修 SOP 合集 · RAG 入库版
+第 40 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 41 =====
+SOP-TC820LTYsi-329  高压冷却压力传感器更换
+部件/系统
+component
+high-pressure coolant
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 流体已关闭且电源隔离
+· 记录原线方向
+作业步骤
+steps
+1. 关闭流体和电源。
+2. 移开滑盖并拆 captive screw。
+3. 断开两个 ferrule，记录方向并拆传感器。
+4. 安装新传感器。
+5. 设为 85 psi，启动冷却至少 10 秒查漏。
+安全要求
+safety_warnings
+· 未释放压力不得拆卸
+· 更换后查漏
+验收标准
+acceptance_criteria
+· 85 psi、反馈正常且无泄漏。
+关键词
+keywords
+85 psi · 压力传感器 · 高压冷却
+来源
+page / page_end / section_code
+手册 LTY-SOP · P135–P135
+原文摘录
+source_excerpt
+Figure 8.3.2 High Pressure Coolant Wiring
+4. Prepare to collect the coolant and then disconnect the coolant hose from the pressure sensor. 5. Remove the filter with
+pressure sensor from the coolant pump. 6. Remove four SHCS screws that bolt the motor to the sheet metal base. 7. Using a
+proper lifting device, slowly lift the pump assembly from the coolant tank allowing it to drain thoroughly. Set down in a safe
+manner. 8. Using the lifting device, carefully guide the new pump assembly into position and reconnect the four SHCS. 9.
+Reconnect the filter and pressure sensor assembly to the pump outlet. The sensor should not need recalibrating. 10. Reconnect
+coolant hose using Teflon tape. 11. Connect wires to the pressure sensor. Plug in the pump electric cable to electric cabinet. 12.
+Power up the TCsi machine and turn on the coolant using the button on the MCP. Verify the motor is turning in the correct
+direction with the arrows on top of the pump and make sure the coolant comes on and operates for at least 10 seconds without
+faulting.
+9.3.3 High Pressure Coolant Pressure Sensor
+The coolant pressure sensor checks for proper coolant pressure through the system. The coolant pressure sensor is designed to
+warn if there is insufficient pressure in the system, it monitors the coolant pressure in case of coolant runout or equipment
+failure. Under these conditions there is a warning message displayed to give the operator a chance to correct the problem. If this
+warning message is triggered, the sensor halts the current program and stops operation in the machine.
+9.3.3.1 Pressure sensor replacement: 1. Turn off fluid flow using the button on the MCP and turn off power to the TCsi machine.
+2. Loosen the slide cap and unscrew the captive screw at the top of the sensor. Now you can slide the cap out of the way, see
+figure 8.3.2. 3. Disconnect two small electric ferrules on the sensor and remove the wires then loosen the sensor with a wrench.
+Note the wire orientation. Replace the old sensor with the new one. 4. Reverse above steps to reconnect the sensor. 5. Set the
+pressure value of the pressure sensor to 85psi (6 kg/cm2). 6. Power up the TCsi machine and turn on the coolant using the
+button on the MCP. Make sure the coolant comes on and operates for at least 10 seconds without faulting.
+9.3.4 High Pressure Coolant Filter Element
+The filter element is an important safeguard to keep contaminants out of the coolant system.
+9.3.4.1 Filter Element Replacement: The filter for the high-pressure coolant system should be cleaned every time the pressure
+sensor triggers or you replace your coolant:
+多设备维修 SOP 合集 · RAG 入库版
+第 41 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 42 =====
+SOP-TC820LTYsi-330  高压冷却过滤元件更换
+部件/系统
+component
+high-pressure coolant
+安全等级
+safety_level
+high
+前置条件
+preconditions
+· 压力传感器触发或更换冷却液后执行
+· 系统断电隔离
+作业步骤
+steps
+1. 关闭系统并拆压力传感器。
+2. 拆滤器顶部四个螺钉并托住壳体。
+3. 取出滤芯，检查并润滑 O-ring。
+4. 装新滤芯、滤罐并交叉紧固。
+5. 用 Teflon tape 复装传感器，通电查漏。
+安全要求
+safety_warnings
+· 保护 O-ring 防止泄漏
+· 通电前确认滤罐和压力表牢固
+验收标准
+acceptance_criteria
+· O-ring、滤芯、密封和泄漏检查通过。
+关键词
+keywords
+O-ring · 滤芯 · Teflon tape
+来源
+page / page_end / section_code
+手册 LTY-SOP · P135–P136
+原文摘录
+source_excerpt
+Figure 8.3.2 High Pressure Coolant Wiring
+4. Prepare to collect the coolant and then disconnect the coolant hose from the pressure sensor. 5. Remove the filter with
+pressure sensor from the coolant pump. 6. Remove four SHCS screws that bolt the motor to the sheet metal base. 7. Using a
+proper lifting device, slowly lift the pump assembly from the coolant tank allowing it to drain thoroughly. Set down in a safe
+manner. 8. Using the lifting device, carefully guide the new pump assembly into position and reconnect the four SHCS. 9.
+Reconnect the filter and pressure sensor assembly to the pump outlet. The sensor should not need recalibrating. 10. Reconnect
+coolant hose using Teflon tape. 11. Connect wires to the pressure sensor. Plug in the pump electric cable to electric cabinet. 12.
+Power up the TCsi machine and turn on the coolant using the button on the MCP. Verify the motor is turning in the correct
+direction with the arrows on top of the pump and make sure the coolant comes on and operates for at least 10 seconds without
+faulting.
+9.3.3 High Pressure Coolant Pressure Sensor
+The coolant pressure sensor checks for proper coolant pressure through the system. The coolant pressure sensor is designed to
+warn if there is insufficient pressure in the system, it monitors the coolant pressure in case of coolant runout or equipment
+failure. Under these conditions there is a warning message displayed to give the operator a chance to correct the problem. If this
+warning message is triggered, the sensor halts the current program and stops operation in the machine.
+9.3.3.1 Pressure sensor replacement: 1. Turn off fluid flow using the button on the MCP and turn off power to the TCsi machine.
+2. Loosen the slide cap and unscrew the captive screw at the top of the sensor. Now you can slide the cap out of the way, see
+figure 8.3.2. 3. Disconnect two small electric ferrules on the sensor and remove the wires then loosen the sensor with a wrench.
+Note the wire orientation. Replace the old sensor with the new one. 4. Reverse above steps to reconnect the sensor. 5. Set the
+pressure value of the pressure sensor to 85psi (6 kg/cm2). 6. Power up the TCsi machine and turn on the coolant using the
+button on the MCP. Make sure the coolant comes on and operates for at least 10 seconds without faulting.
+9.3.4 High Pressure Coolant Filter Element
+The filter element is an important safeguard to keep contaminants out of the coolant system.
+9.3.4.1 Filter Element Replacement: The filter for the high-pressure coolant system should be cleaned every time the pressure
+sensor triggers or you replace your coolant:
+多设备维修 SOP 合集 · RAG 入库版
+第 42 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 43 =====
+SOP-TC820LTYsi-331  LNS 棒料送料器安全操作和故障检查
+部件/系统
+component
+barfeeder
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 已安装 Barfeed Ready
+· 操作员完成 LNS/机床安全培训
+作业步骤
+steps
+1. 检查主电源、急停、停止灯和磁性安全开关。
+2. 检查主入口盖、保护盖和锁扣。
+3. 核对棒料 6–80 mm、300–1600 mm。
+4. 排查 I6.0/I6.2/I6.6 和 Easy Extend 配置。
+5. 无法恢复时升级受训维修。
+安全要求
+safety_warnings
+· 维修仅由 TRAK/LNS 受训人员执行
+· 禁止手伸入 magazine、保护盖和送料机构
+· 急停和磁性安全开关必须有效
+验收标准
+acceptance_criteria
+· 安全开关、反馈、选项配置和试运行均正常。
+关键词
+keywords
+LNS · 6-80 mm · 300-1600 mm · I6.0 · I6.2 · I6.6
+来源
+page / page_end / section_code
+手册 LTY-SOP · P136–P140
+原文摘录
+source_excerpt
+1. Turn off system power.
+2. Remove pressure sensor, see section 8.3.3.1 Carefully remove gauge with a wrench, see figure 8.3.4.1a.
+3. Remove the four socket head cap screws from the top of the filter body, be ready to catch the element housing and don’t
+lose the O- ring.
+4. Slide off the filter element from the housing.
+5. Check the canister O-ring and replace if needed. Figure 8.3.4.1a Gauge
+6. Apply lubricant to the O-ring with petroleum jelly or light oil and place on filter head.
+7. Slide the new filter on the housing, install canister and make sure O- ring is in its grove, see figure 8.3.4.1b.
+8. Cross tighten the screws.
+9. Replace the gauge and pressure sensor using Teflon tape.
+10. Confirm there are no leaks after powering the system.
+Figure 8.3.4.1b O-ring
+9.4 LNS Quick Load Servo 80 S2 Barfeed and Barfeed Ready
+9.4.1 LNS Barfeed Operation
+The LNS Quick Load Servo 80 S2 Bar Feeder allows for continuous machining. With quick changeovers from one part run to
+another and a library of up to 500-part programs, this servo driven bar feed will drastically increase productivity. Equipped with
+an automatic diameter changing system, no manual adjustment is required reducing changeover time to a minimum. The LNS
+servo motor control technology guarantees accurate bar feeding into the machine and prevents hitting the turret with its soft
+touch positioning.
+多设备维修 SOP 合集 · RAG 入库版
+第 43 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 44 =====
+SOP-TC820LTYsi-332  三爪液压卡盘拆装
+部件/系统
+component
+hydraulic chuck
+安全等级
+safety_level
+critical
+前置条件
+preconditions
+· 卡盘需要拆装且已急停
+· 准备吊装设备和吊环
+作业步骤
+steps
+1. 松开卡盘并急停，拆除卡爪。
+2. 用吊环起吊卡盘，拆下 draw nut。
+3. 清洁安装面、检查高点并涂防咬合剂。
+4. 用吊装设备对齐 drawtube，手紧六个螺钉。
+5. 按 53.5 ft-lbs 紧固并完成复装。
+安全要求
+safety_warnings
+· 卡盘是重物必须吊装
+· 安装后六螺钉 53.5 ft-lbs
+验收标准
+acceptance_criteria
+· 安装面、扭矩、夹紧和运行测试通过。
+关键词
+keywords
+卡盘 · 53.5 ft-lbs · drawtube
+来源
+page / page_end / section_code
+手册 LTY-SOP · P66–P66
+多设备维修 SOP 合集 · RAG 入库版
+第 44 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 45 =====
+SOP-TC820LTYsi-332  三爪液压卡盘拆装
+原文摘录
+source_excerpt
+Installation Checklist
+• Press the oil skim button to make sure the skimmer starts to skim oil.
+• Verify the oil skimmer pump is rotating in the clockwise direction.
+• Press the oil skim button again to make sure the skimmer stops.
+• Attach the way lube runoff hose to the oil separator box.
+Part Catcher – See part catcher section 9.2 of the Service Manual.
+• Test functionality using buttons on MCP.
+• Press the parts button to make sure the part catcher moves to its raised position, press button again to make sure it returns to
+its idle position.
+High Pressure Coolant – See high pressure coolant section 8.3.
+• Wire up the high-pressure coolant pressure sensor.
+• Test filter pressure sensor: o With the pump turned on and the pressure sensor unplugged check the
+IO screen in TRAK diagnostic to see coolant pressure switch is false.
+• Calibrate the coolant pressure sensor:
+• o Remove any tool from the turret prior to calibration.
+o Using a screwdriver slowly tighten the screw on the top center of the sensor approximately 1/8th of a turn per second.
+o When the machine faults out, loosen the screw ¼ turn, and clear the fault on the pendent.
+Run the high-pressure coolant pump for 10 minutes and check for leaks.
+3.15 Jaw Hydraulic Chuck Mounting
+3.15.1 Instructions to remove the 3 Jaw Chuck:
+1. Unclamp the chuck and press the E-Stop in center of travel. 2. Remove 2 of the 3 jaws from the chuck. 3. Using the remaining
+jaw to hold the chuck in place loosen all 6 screws holding the chuck to the spindle face. 4. Remove the last jaw from the chuck. 5.
+Remove chip cover from the center of the chuck. 6. Attach lifting eye bolt and hoist the chuck to take pressure off the drawtube
+and nut. 7. Remove the 6 screws holding the chuck. 8. Unscrew draw nut by hand, you may need to adjust the hoist until the nut
+rotates by hand.
+3.15.2 Instructions to reinstall the 3 Jaw Chuck:
+1. Clean off all the mounting surfaces and threads with WD40 and make sure they are free from any chips or swarf.
+2. Use a fine grit deburring stone to check for dinks or high spots on the mounting faces. 3. Apply anti seize to the threads and
+mounting screws. 4. Set the draw tube to the mid travel position and E-stop the machine. 5. Using the eyebolt on the chuck,
+hoist it into position and align with the draw nut with the drawtube. 6. Screw the draw nut by hand until it is approximately ¾
+engaged on the drawtube thread. 7. Align the chuck body holes to the holes on the spindle face and hand tighten the 6 screws.
+8. Remove the hoist so the chuck is supporting itself. 9. Attach one jaw to the chuck and use it to torque the 6 mounting screws
+to 53.5 ft lbs. 10. Remove the jaw again from the chuck and thread the draw nut until it bottoms against the bottom of the
+drawtube thread.
+多设备维修 SOP 合集 · RAG 入库版
+第 45 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 46 =====
+LNS QL Servo 80 S2 棒料机
+11 条 SOP
+字段
+field
+取值
+设备型号
+QL Servo 80 S2
+制造商
+LNS
+来源手册
+棒料机维修手册.pdf
+源数据文件
+sop_catalog.json
+文档版本
+schema_version 1.0
+章节编号
+—
+正文语言
+中文
+记录规模
+11 条 SOP
+治理标记
+cleaning_evidence 仅 1 条 SOP 具备
+本册目录
+#
+SOP 编号
+名称
+部件 / 系统
+安全等级
+本册页
+1
+ql80s2_sop_safe_service_entry
+检修前安全隔离与复机前检查
+—
+—
+47
+2
+ql80s2_sop_alignment_anchor
+棒料机与车床对中及锚固
+—
+—
+48
+3
+ql80s2_sop_pusher_changeover
+送料推料器更换
+—
+—
+49
+4
+ql80s2_sop_belt_tension
+送料载车皮带张力调整
+—
+—
+50
+5
+ql80s2_sop_sq5_adjustment
+SQ5 载车原点接近开关调整
+—
+—
+51
+6
+ql80s2_sop_sq4_adjustment
+SQ4 直径调整电机接近开关调整
+—
+—
+52
+7
+ql80s2_sop_sq3_adjustment
+SQ3 测量单元调整
+—
+—
+53
+8
+ql80s2_sop_reference
+载车原点参考/回零
+—
+—
+54
+9
+ql80s2_sop_loading_table_
+calibration
+上料台中心线校准
+—
+—
+55
+10
+ql80s2_sop_inspection_cleaning
+周期点检与清洁
+—
+—
+56
+11
+ql80s2_sop_plc_battery
+PLC 电池更换
+—
+—
+57
+多设备维修 SOP 合集 · RAG 入库版
+第 46 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 47 =====
+ql80s2_sop_safe_service_entry  检修前安全隔离与复机前检查
+触发条件
+trigger
+任何拆盖、调整、清洁、维修或进入运动机构区域前
+前置条件
+preconditions
+· 由受过培训的人员执行；电气故障由合格电工处理
+· 确认工作区域照明良好、地面无油污和障碍
+作业步骤
+steps.action / steps.safety
+1. 停止棒料机和车床，结束自动循环。
+安全：确认棒料和夹紧装置处于稳定状态。
+2. 关闭棒料机主电源；维修涉及运动或气动机构时关闭气源并释放压力。
+安全：不得在带电或带压状态下拆除防护盖。
+3. 拆盖前确认棒料机已与车床脱开，并隔离可能的车床启动信号。
+安全：防止跨设备误启动。
+4. 完成维修后安装全部防护件，清理工具和异物，检查电气部件未接触水/油。
+安全：未恢复安全防护不得试运行。
+5. 按对应 SOP 进行低速/手动验证，再恢复自动循环。
+安全：先验证安全联锁和急停，再验证送料。
+安全要求
+ppe_and_safety
+· 关闭棒料机电源并断开电源插头
+· 关闭并释放气源/确认无气动压力
+· 拆盖前将棒料机与车床脱开
+· 不得把手伸入运动中的棒料机
+· 不得踩踏皮带
+· 不得拆除、短接或旁路安全开关/断路器
+· 维修完成后必须恢复安全防护件
+工具与物料
+tools_and_materials
+· 设备断电/气源隔离设施
+· 适用的检修工具
+· LNS 推荐或提供的备件
+验收标准
+acceptance_criteria
+· 防护件完整并锁好
+· 急停和安全开关功能正常
+· 无遗留工具、油污或异物
+· 手动验证无异常阻力/刮擦后才允许自动运行
+回滚与升级
+rollback_or_escalation
+电气故障、保护回路异常或无法确认安全状态时停止操作并联系 LNS 或当地代表。
+来源
+evidence.page / evidence.section
+手册 P9 · SAFETY INSTRUCTIONS · 置信度 high
+原文摘录
+evidence.evidence_text
+Always switch off before service; uncouple before removing covers; no servicing while powered; do not bridge safety switches
+多设备维修 SOP 合集 · RAG 入库版
+第 47 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 48 =====
+ql80s2_sop_alignment_anchor  棒料机与车床对中及锚固
+触发条件
+trigger
+首次安装、设备移动后、报警45持续出现或发现棒料在主轴内刮擦/卡滞
+前置条件
+preconditions
+· 棒料机断电
+· 无气动压力
+· 车床稳定且已找平
+· 必要时确认棒料机与主轴后端间距不超过 200 mm，超出时准备延长件
+作业步骤
+steps.action / steps.safety
+1. 将棒料机尽量靠近车床后部放置，用水平仪检查 X/Y 方向；在直线皮带导轨和退让导轨处测量。
+2. 确认中心顶升螺钉与底座齐平后，松开底座两侧共 12 个槽孔螺钉。
+3. 使用中心千斤顶均匀升降，使送料推料器在主轴后端上下居中；拧紧 12 个螺钉并复查水平。
+4. 让推料器分别在主轴后端和夹头后端居中，反复调整棒料机后部和前部，直到两个位置均对中。
+5. 升起上料台，手动将直棒料推入主轴，确认前后均无卡滞、刮擦。
+6. 用 4 个锚固螺栓固定设备；不得锚固在退让导轨中心位置。锚固后重新复查水平和对中。
+7. 接通电源后执行上料台校准，再装载棒料进行最终送料验证。
+安全要求
+ppe_and_safety
+· 遵循安全隔离 SOP
+· 吊装/搬运时人员不得停留在悬吊物或车辆作业区附近
+工具与物料
+tools_and_materials
+· 鱼雷水平仪
+· 最大规格送料推料器
+· 中心千斤顶
+· 12 个底座槽孔螺钉
+· 4 个锚固螺栓
+· 直棒料
+验收标准
+acceptance_criteria
+· 推料器在主轴后端和夹头后端均居中
+· 直棒料手动推入时无卡滞/刮擦
+· 锚固后水平和对中复查合格
+· 上料台校准完成且自动送料无异常阻力
+回滚与升级
+rollback_or_escalation
+无法对中、棒料持续刮擦或设备移动后仍反复触发定位错误时停止送料并联系 LNS。
+来源
+evidence.page / evidence.section
+手册 P10 · SETUP, ALIGNMENT, AND ANCHOR PROCEDURE · 置信度 high
+原文摘录
+evidence.evidence_text
+power off/no pneumatic pressure; align pusher; anchor with four bolts; calibrate loading table
+多设备维修 SOP 合集 · RAG 入库版
+第 48 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 49 =====
+ql80s2_sop_pusher_changeover  送料推料器更换
+触发条件
+trigger
+棒料直径范围变化或现有送料推料器磨损/损坏
+前置条件
+preconditions
+· 棒料机开关 ON
+· 上料台处于下位
+· 推料器位于机械原点
+· 棒料机处于 STOP 模式
+作业步骤
+steps.action / steps.safety
+1. 前移上料台，打开主检修盖。
+2. 将推料器适配器锁止/解锁指向前压并顺时针旋转约四分之一圈，保持在前锁止位置；向前拉推料器但不要完全从载车抽
+出。
+3. 将前导向轴承上的白色衬套向棒料机后方拉出，取出推料器。
+4. 推出横向销，拆下旧推料器适配器；将销重新放回推料器本体以防遗失。
+5. 将适配器装到新推料器本体，并装上对应白色衬套。
+6. 先从棒料机前端插入推料器，再将适配器滑入载车；逆时针旋转指约四分之一圈锁止，确认适配器与载车右侧齐平并推
+料器完全锁定。
+7. 将载车滑回原点，关闭主检修盖。
+安全要求
+ppe_and_safety
+· 按安全隔离要求操作
+· 打开主检修盖前确认设备不会自动启动
+工具与物料
+tools_and_materials
+· 对应直径送料推料器
+· 对应白色导向衬套
+· 推料器适配器和横向销
+验收标准
+acceptance_criteria
+· 推料器与载车完全锁定
+· 适配器/衬套安装方向正确且右侧齐平
+· 载车可回到机械原点
+· 关闭主检修盖后无安全盖报警，手动送料无卡滞
+回滚与升级
+rollback_or_escalation
+无法锁定、衬套不匹配或推料器与主轴/衬套干涉时停止操作，核对变更组件和主轴衬套规格。
+来源
+evidence.page / evidence.section
+手册 P14 · PUSHER CHANGEOVER PROCEDURE · 置信度 high
+原文摘录
+evidence.evidence_text
+conditions and eight-step pusher replacement procedure
+多设备维修 SOP 合集 · RAG 入库版
+第 49 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 50 =====
+ql80s2_sop_belt_tension  送料载车皮带张力调整
+触发条件
+trigger
+报警11/12、回零异常、载车运动异常或定期点检发现皮带松弛
+前置条件
+preconditions
+· 棒料机开关 ON
+· 上料台下位
+· 推料器在机械原点
+· 棒料机 STOP 模式
+作业步骤
+steps.action / steps.safety
+1. 打开主检修盖并确认载车在原点。
+2. 在直线导轨中部测量皮带相对于导轨的垂直位移，不得施加外力。
+3. 将位移与约 20 mm 目标值比较；必要时使用棒料机前端张紧器调整。
+4. 关闭主检修盖，执行回零和手动低速移动验证。
+安全要求
+ppe_and_safety
+· 打开主检修盖前确认 STOP 状态
+· 测量时不得强行压迫皮带
+工具与物料
+tools_and_materials
+· 长度/间隙测量工具
+· 皮带张紧器
+验收标准
+acceptance_criteria
+· 皮带中部垂直位移约 20 mm
+· 载车能够回到原点
+· 手动移动无异常阻力和跳齿
+· 报警11/12不再出现
+回滚与升级
+rollback_or_escalation
+无法达到约 20 mm、皮带损伤或调整后仍定位异常时停止设备并升级机械检修。
+来源
+evidence.page / evidence.section
+手册 P16 · BELT TENSION ADJUSTMENT · 置信度 high
+原文摘录
+evidence.evidence_text
+measure belt displacement at rail middle; approximately 20 mm; adjust front tensioner
+多设备维修 SOP 合集 · RAG 入库版
+第 50 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 51 =====
+ql80s2_sop_sq5_adjustment  SQ5 载车原点接近开关调整
+触发条件
+trigger
+报警12、回零失败或载车轻微前移时 SQ5 未释放
+前置条件
+preconditions
+· 棒料机开关 ON
+· STOP 模式
+· 推料器在机械原点
+作业步骤
+steps.action / steps.safety
+1. 打开主检修盖，确认载车在原点。
+2. 调整 SQ5，使其刚好获得稳定信号；目标间隙约 0.5 mm，且不得超过 0.65 mm。
+3. 确认载车轻微向前移动时接近开关应释放。
+4. 锁紧开关，关闭主检修盖，按遥控器 STOP 清除报警并执行回零验证。
+安全要求
+ppe_and_safety
+· 按安全隔离要求打开主检修盖
+· 不得在自动模式下调整
+工具与物料
+tools_and_materials
+· 适用调整工具
+· 遥控器
+验收标准
+acceptance_criteria
+· SQ5 稳定检测原点
+· 轻微前移可释放 SQ5
+· 回零成功且报警不复现
+回滚与升级
+rollback_or_escalation
+无法同时满足稳定检测与前移释放条件时检查开关、支架和皮带，不得扩大间隙强行运行。
+来源
+evidence.page / evidence.section
+手册 P17 · HOME POSITION PROXIMITY SWITCH SQ5 ADJUSTMENT · 置信度 high
+原文摘录
+evidence.evidence_text
+approximately 0.5 mm and no more than 0.65 mm
+多设备维修 SOP 合集 · RAG 入库版
+第 51 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 52 =====
+ql80s2_sop_sq4_adjustment  SQ4 直径调整电机接近开关调整
+触发条件
+trigger
+报警16、直径选择动作超时或一次上料两根棒料
+前置条件
+preconditions
+· 料仓无棒料（按手册调整条件）
+· 上料台下位
+· STOP 模式
+· 准备两根 6 mm 直棒料用于验证
+作业步骤
+steps.action / steps.safety
+1. 在 Part Setup 中输入棒料直径 6 mm，将两根 6 mm 棒料放在料仓架上。
+2. 手动升起上料台；若选择指不动作，先将载车旗标前移到末端再回原点，降台后重复。
+3. 若棒料未被上料台拾取，说明开关过高，向下微调并重复动作；上位时棒料应接触台挡块和选择指。
+4. 确认单根拾取后，检查设备不会一次装载两根棒料；棒料必须保持直。
+5. 按 STOP，恢复实际棒料直径参数并执行手动/自动验证。
+安全要求
+ppe_and_safety
+· 调整期间禁止自动上料
+· 确认选择指运动区域无障碍
+工具与物料
+tools_and_materials
+· 两根 6 mm 直棒料
+· 遥控器
+· 适用调整工具
+验收标准
+acceptance_criteria
+· 6 mm 棒料可正确拾取
+· 不会同时拾取两根
+· 选择指动作无卡阻
+· 实际直径参数下报警16不复现
+回滚与升级
+rollback_or_escalation
+无法稳定单根拾取时停止上料，检查 SQ4、选择指和棒料直线度。
+来源
+evidence.page / evidence.section
+手册 P18 · DIAMETER ADJUSTMENT MOTOR PROXIMITY SWITCH - SQ4 · 置信度 high
+原文摘录
+evidence.evidence_text
+use 6 mm stock; adjust switch until stock loads correctly and does not load two stocks
+多设备维修 SOP 合集 · RAG 入库版
+第 52 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 53 =====
+ql80s2_sop_sq3_adjustment  SQ3 测量单元调整
+触发条件
+trigger
+报警21/30、棒料检测异常或更换测量单元后
+前置条件
+preconditions
+· 料仓无棒料
+· 上料台下位
+· STOP 模式
+· Part Setup 中棒料直径设为 6 mm/最小可用直径
+· 使用直棒料
+作业步骤
+steps.action / steps.safety
+1. 手动将上料台升至上位，按 STOP；退回送料机构以获得设备前部操作空间，打开主检修盖。
+2. 将直棒料放入通道并从棒料机前端伸出；将测量单元增益顺时针调到最大。
+3. 松开固定螺钉，调整测量单元，使红色传感器反射点对准棒料中心，然后锁紧。
+4. 将增益逆时针调到最小，再从最小位置缓慢顺时针调节，直到黄色 LED
+检测到棒料；检测到后再顺时针增加约四分之一圈。
+5. 移出棒料，关闭主检修盖，按遥控器 STOP 清除盖板报警并验证检测。
+安全要求
+ppe_and_safety
+· 调整时不得运行自动循环
+· 完成后安装并关闭主检修盖
+工具与物料
+tools_and_materials
+· 6 mm 或最小可用直棒料
+· 适用调整工具
+· 遥控器
+验收标准
+acceptance_criteria
+· 传感器稳定检测直棒料
+· 无棒料时不误报
+· 报警21/30条件下检测逻辑符合预期
+· 盖板关闭后安全联锁正常
+回滚与升级
+rollback_or_escalation
+LED 无法稳定切换、传感器或线路损坏时停止调整并转电气检修。
+来源
+evidence.page / evidence.section
+手册 P19 · MEASURING CELL ADJUSTMENT - SQ3 · 置信度 high
+原文摘录
+evidence.evidence_text
+center red sensor reflection on bar; adjust gain from minimum until yellow LED detects bar, then add quarter turn
+多设备维修 SOP 合集 · RAG 入库版
+第 53 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 54 =====
+ql80s2_sop_reference  载车原点参考/回零
+触发条件
+trigger
+编码器丢失原点、报警12、设备移动或断电后需要重新建立位置基准
+前置条件
+preconditions
+· 棒料机通电
+· STOP 模式
+· 运动区域无人员和障碍
+作业步骤
+steps.action / steps.safety
+1. 从遥控器主菜单进入 MISC. FUNCTIONS，翻页到 REQUEST FOR REFERENCE POINT。
+2. 选择 YES，按住 ENTER 约 2–3 秒返回主页。
+3. 按 MANUAL MODE 两次，再按 REFERENCE。
+4. 确认显示 POSITIONING ERROR / ENCODER LOST ITS REFERENCE POINT 后启动 RESET REFERENCE POINT。
+5. 等待载车向原点退回；PLC 等待 SQ5，伺服放大器建立机械止挡扭矩。
+安全要求
+ppe_and_safety
+· 确认上料台和载车可安全运动
+· 回零过程中不得接触运动部件
+工具与物料
+tools_and_materials
+· 遥控器
+验收标准
+acceptance_criteria
+· 显示 POSITIONING IN PROGRESS 后完成
+· 回到主页且原点位置恢复
+· SQ5 输入状态正常
+· 手动低速移动无异常阻力
+回滚与升级
+rollback_or_escalation
+回零撞击、无法检测 SQ5 或反复丢失原点时停止设备，检查 SQ5、皮带张力和机械障碍。
+来源
+evidence.page / evidence.section
+手册 P23 · REFERENCE PROCEDURE · 置信度 high
+原文摘录
+evidence.evidence_text
+PLC waits for SQ5 while servo amplifier builds torque at mechanical stop
+多设备维修 SOP 合集 · RAG 入库版
+第 54 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 55 =====
+ql80s2_sop_loading_table_calibration  上料台中心线校准
+触发条件
+trigger
+更换棒料直径/型材后上料台中心线偏高或偏低，或安装对中后首次校准
+前置条件
+preconditions
+· 料仓有棒料
+· 上料台下位
+· STOP 模式
+作业步骤
+steps.action / steps.safety
+1. 进入 MANUAL MODE，按 F2 将上料台升至上位并按 STOP。
+2. 进入 SERVICE > BAR FEED SETUP，翻页到 NUMBER OF PULSES FOR TABLE CENTERING CALIBRATION。
+3. 输入密码 2534 后修改中心线脉冲值；约 1 脉冲对应 0.4 mm 垂直位移。
+4. 按 ENTER 确认，按 ESC 退出；按 F3 降台，再按 F2 升台验证修正结果。
+安全要求
+ppe_and_safety
+· 升降动作前确认运动区域无障碍
+· 仅授权人员修改校准参数
+工具与物料
+tools_and_materials
+· 遥控器
+· 现场棒料
+验收标准
+acceptance_criteria
+· 棒料中心线与主轴入口对齐
+· 示例校准量满足 10 脉冲≈上移 4 mm、-5 脉冲≈下移 2 mm 的换算关系
+· 升降无障碍且无报警
+回滚与升级
+rollback_or_escalation
+校准后仍偏心或发生刮擦时恢复原参数，重新执行对中锚固 SOP，不得继续自动送料。
+来源
+evidence.page / evidence.section
+手册 P24 · CALIBRATION OF THE LOADING TABLE · 置信度 high
+原文摘录
+evidence.evidence_text
+one pulse approximately 0.4 mm; password 2534; examples 10 and -5 pulses
+多设备维修 SOP 合集 · RAG 入库版
+第 55 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 56 =====
+ql80s2_sop_inspection_cleaning  周期点检与清洁
+触发条件
+trigger
+按维护周期执行，或发现传感器污染、送料异常、油污/粉尘积聚
+前置条件
+preconditions
+· 按安全隔离 SOP 停机
+· 确认检修区域安全
+作业步骤
+steps.action / steps.safety
+1. 每日/按现场制度检查急停按钮及安全状态；记录异常。
+2. 按手册周期清洁传感器；检查气源过滤单元水位和状态、气动系统密封性等点检项，并记录结果。
+3. 外部用软布和清洁产品清洁，内部用布或刷子清洁。
+4. 清洁后检查传感器、滚轮、电气柜和防护件，确认无液体残留、异物和松动。
+5. 恢复防护件，执行安全联锁和手动送料验证。
+安全要求
+ppe_and_safety
+· 拆盖前断电并关闭气源
+· 清洁剂不得接触滚轮、合成材料和电气部件
+· 不得使用压缩空气清洁
+· 不得使用丙酮、稀释剂等溶剂
+工具与物料
+tools_and_materials
+· 软布
+· 刷子
+· 适用于设备表面的清洁产品
+· 必要的点检记录表
+验收标准
+acceptance_criteria
+· 传感器表面洁净
+· 电气部件无水/油/清洁剂接触
+· 无压缩空气造成的颗粒滞留
+· 防护件和安全联锁正常
+· 点检记录完整
+回滚与升级
+rollback_or_escalation
+发现电气进液、传感器损坏、气动泄漏或急停失效时禁止复机并升级维修。
+来源
+evidence.page / evidence.section
+手册 P90 · INSPECTIONS · 置信度 high
+原文摘录
+evidence.evidence_text
+periodic inspections table; clean sensors and bar feeder; check air filtering/pneumatic items
+多设备维修 SOP 合集 · RAG 入库版
+第 56 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 57 =====
+ql80s2_sop_plc_battery  PLC 电池更换
+触发条件
+trigger
+报警46 PLC battery low 或预防性维护到期
+前置条件
+preconditions
+· 按手册条件棒料机通电；由合格人员执行
+· 准备同型号电池
+· 记录当前 PLC/Parts Library 参数和版本
+作业步骤
+steps.action / steps.safety
+1. 打开电气柜内 PLC 盖。
+2. 从标记为 BATT 的插槽取出电池支架。
+3. 用同型号电池替换，确认极性方向正确。
+4. 将电池支架装回 BATT 插槽，关闭 PLC 盖和电气柜。
+5. 检查 PLC RUN、参数、Parts Library 和报警状态，执行受控复机。
+安全要求
+ppe_and_safety
+· 仅合格电气人员可打开电气柜
+· 不得给 PLC 电池充电
+· 遵循现场 ESD 和电气安全制度
+工具与物料
+tools_and_materials
+· 同型号替换电池
+· 适用电气工具
+· 参数/版本记录表
+验收标准
+acceptance_criteria
+· 电池型号和方向正确
+· PLC 正常运行且参数保持
+· 报警46消除
+· 受控手动送料验证通过
+回滚与升级
+rollback_or_escalation
+更换后 PLC 参数丢失、无法 RUN 或报警持续时停止设备并联系 LNS/合格电气人员。
+来源
+evidence.page / evidence.section
+手册 P31 · PLC BATTERY REPLACEMENT · 置信度 high
+原文摘录
+evidence.evidence_text
+replace battery with identical type; check direction; BATT bay
+多设备维修 SOP 合集 · RAG 入库版
+第 57 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 58 =====
+工业机器人
+11 条 SOP
+字段
+field
+取值
+设备型号
+—
+制造商
+Elite Robots（源数据原文所载）
+来源手册
+工业机器人维修手册
+源数据文件
+工业机器人_SOP.csv
+文档版本
+—
+章节编号
+—
+正文语言
+英文
+记录规模
+11 条 SOP
+治理标记
+—
+本册目录
+#
+SOP 编号
+名称
+部件 / 系统
+安全等级
+本册页
+1
+sop-001
+Controller monthly safety function inspection
+—
+—
+59
+2
+sop-002
+Controller visual inspection
+—
+—
+60
+3
+sop-003
+Clean and replace controller filter
+—
+—
+61
+4
+sop-004
+Robot arm visual inspection
+—
+—
+62
+5
+sop-005
+Robot arm functional inspection
+—
+—
+63
+6
+sop-006
+Manual joint brake release
+—
+—
+64
+7
+sop-007
+General joint disassembly
+—
+—
+65
+8
+sop-008
+General joint assembly
+—
+—
+66
+9
+sop-009
+Replace Safe IO Board
+—
+—
+67
+10
+sop-010
+Replace Brake Board
+—
+—
+68
+11
+sop-011
+Robot packaging
+—
+—
+69
+多设备维修 SOP 合集 · RAG 入库版
+第 58 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 59 =====
+sop-001  Controller monthly safety function inspection
+执行频次
+frequency
+Once a month
+触发条件
+trigger
+Periodic maintenance
+前置条件
+preconditions
+· Qualified personnel
+· robot work area safe
+作业步骤
+steps
+1. Test teach pendant emergency stop
+2. test free drive mode
+3. test backdrive mode
+4. verify safety settings
+5. test active safety inputs/outputs
+安全要求
+safety_notice
+· Stop robot program and disconnect hazardous tool power before repair work
+验收标准
+acceptance_criteria
+· Emergency stop powers off joints
+· free drive holds position
+· backdrive releases brakes as expected
+· safety IO can be triggered
+来源
+source_section
+手册章节 2.1.1,2.1.2
+多设备维修 SOP 合集 · RAG 入库版
+第 59 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 60 =====
+sop-002  Controller visual inspection
+执行频次
+frequency
+Monthly / every six months / yearly by checklist
+触发条件
+trigger
+Periodic maintenance or abnormal controller condition
+前置条件
+preconditions
+· Disconnect controller power cord
+作业步骤
+steps
+1. Check safety control board terminals and wires
+2. check motherboard and safety board connections
+3. check controller dirt/dust
+4. clean with ESD-safe vacuum if needed
+安全要求
+safety_notice
+· Disconnect power cord before opening controller
+验收标准
+acceptance_criteria
+· Terminals inserted, wires intact, connections secure, no abnormal dust/dirt
+来源
+source_section
+手册章节 2.1.3
+多设备维修 SOP 合集 · RAG 入库版
+第 60 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 61 =====
+sop-003  Clean and replace controller filter
+执行频次
+frequency
+Once a year or as needed
+触发条件
+trigger
+Dirty filter or periodic maintenance
+前置条件
+preconditions
+· Controller stopped and safe to service
+作业步骤
+steps
+1. Remove filters on both controller sides
+2. clean with low-pressure air
+3. replace filter if needed
+4. gently remove outer plastic frame and maintain filter
+安全要求
+safety_notice
+· Avoid damaging filter frame and controller
+验收标准
+acceptance_criteria
+· Filter clean and seated correctly
+来源
+source_section
+手册章节 2.1.4
+多设备维修 SOP 合集 · RAG 入库版
+第 61 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 62 =====
+sop-004  Robot arm visual inspection
+执行频次
+frequency
+Every six months / after serious collision for marked items
+触发条件
+trigger
+Periodic maintenance, collision, visible damage
+前置条件
+preconditions
+· Move arm to origin if possible
+· turn off controller and disconnect power cord
+作业步骤
+steps
+1. Check controller-arm cable damage
+2. inspect rubber rings
+3. inspect joint lids for cracks/damage
+4. check lid screws and tighten to 0.5 Nm
+安全要求
+safety_notice
+· Contact dealer if damage found during warranty period
+验收标准
+acceptance_criteria
+· Cables intact, rubber rings and joint lids undamaged, lid screws tightened to 0.5 Nm
+来源
+source_section
+手册章节 2.2.1,2.2.3
+多设备维修 SOP 合集 · RAG 入库版
+第 62 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 63 =====
+sop-005  Robot arm functional inspection
+执行频次
+frequency
+Every six months / after serious collision for marked items
+触发条件
+trigger
+Periodic maintenance or collision
+前置条件
+preconditions
+· Correct torque wrench available
+作业步骤
+steps
+1. Check robot arm mounting bolts, tool mounting bolts and screws/bolts connecting joints with torque wrench
+安全要求
+safety_notice
+· Use torque values in section 3.2.4 and user manual mounting specs
+验收标准
+acceptance_criteria
+· Bolts/screws not loose and torque matches specification
+来源
+source_section
+手册章节 2.2.2,3.2.4
+多设备维修 SOP 合集 · RAG 入库版
+第 63 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 64 =====
+sop-006  Manual joint brake release
+执行频次
+frequency
+As needed
+触发条件
+trigger
+Need to move powered-off robot or package robot without power
+前置条件
+preconditions
+· Power disconnected
+· dangerous parts not disassembled
+· mechanical support for base/shoulder/elbow
+· personnel clear of robot arm
+作业步骤
+steps
+1. Disconnect power supply
+2. remove joint lid
+3. lift brake pin upward and hold
+4. turn joint
+5. replace joint lid and tighten screw to 0.5 Nm
+6. connect power supply
+安全要求
+safety_notice
+· Do not rotate joints more than 160 degrees; support robot before releasing large-joint brakes
+验收标准
+acceptance_criteria
+· Joint moves safely and lid restored to 0.5 Nm
+来源
+source_section
+手册章节 3.2.2
+多设备维修 SOP 合集 · RAG 入库版
+第 64 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 65 =====
+sop-007  General joint disassembly
+执行频次
+frequency
+As needed
+触发条件
+trigger
+Joint/link replacement
+前置条件
+preconditions
+· Read manual
+· prepare repair kit, torque tools, anti-static wristband, rubber rings, M3/M4 hex wrenches, beveled pliers, nylon
+cable ties
+· robot supported if removed
+作业步骤
+steps
+1. Move arm to easy disassembly pose
+2. turn off power
+3. remove joint lid
+4. cut cable tie and unplug wire without damaging PCB
+5. move rubber ring and supporting ring
+6. loosen screws
+7. gently separate joints
+安全要求
+safety_notice
+· Use ESD precautions and mechanical support
+验收标准
+acceptance_criteria
+· Joint separated without wire/PCB/rubber-ring damage
+来源
+source_section
+手册章节 3.2.3
+多设备维修 SOP 合集 · RAG 入库版
+第 65 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 66 =====
+sop-008  General joint assembly
+执行频次
+frequency
+As needed
+触发条件
+trigger
+After joint/link replacement
+前置条件
+preconditions
+· Correct replacement joint and torque tools ready
+作业步骤
+steps
+1. Thread wire bundle through joint
+2. align locating pin marks
+3. push joints together
+4. tighten screws crosswise to specified torque
+5. reinstall supporting/rubber rings
+6. set white-button flash count to joint number
+7. connect and tie wires
+8. install lid screws to 0.5 Nm
+安全要求
+safety_notice
+· If flash count is incorrect hold white button and release after correct flashes to reset
+验收标准
+acceptance_criteria
+· Joint number flash count correct, wires tied, torque meets spec, lid secured
+来源
+source_section
+手册章节 3.2.3,3.2.4
+多设备维修 SOP 合集 · RAG 入库版
+第 66 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 67 =====
+sop-009  Replace Safe IO Board
+执行频次
+frequency
+As needed
+触发条件
+trigger
+Safe IO board fault/replacement
+前置条件
+preconditions
+· Controller powered down completely
+作业步骤
+steps
+1. Turn off controller and disconnect power
+2. open cabinet and lay flat
+3. remove four flange nylon lock nuts
+4. remove/disconnect fan cable, flash card, teach pendant cable, IO plug and fuses
+5. remove connector mounting plate screws and grounds
+6. remove sheet metal module
+7. disconnect power, robot arm and brake cables
+8. remove 22 M3 screws
+9. replace Safe IO
+10. reconnect and restore module
+11. power on and test through teach pendant
+安全要求
+safety_notice
+· Ensure controller fully powered down before replacing internal components
+验收标准
+acceptance_criteria
+· Teach pendant test confirms normal function
+来源
+source_section
+手册章节 3.3.1
+多设备维修 SOP 合集 · RAG 入库版
+第 67 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 68 =====
+sop-010  Replace Brake Board
+执行频次
+frequency
+As needed
+触发条件
+trigger
+Brake board fault/replacement
+前置条件
+preconditions
+· Controller safe to open and power disconnected
+作业步骤
+steps
+1. Lay controller flat
+2. release four anti-loosen nuts
+3. disconnect fan and teach pendant cables
+4. remove sheet metal module
+5. disconnect brake board cables
+6. remove four cross slot screws
+7. replace brake board
+8. reconnect wires
+9. reinstall module and cables
+10. power on and test through teach pendant
+安全要求
+safety_notice
+· Avoid flash card/fuse interference with box; keep controller powered off during replacement
+验收标准
+acceptance_criteria
+· Teach pendant test confirms normal brake-board related function
+来源
+source_section
+手册章节 3.3.2
+多设备维修 SOP 合集 · RAG 入库版
+第 68 页 / 共 69 页
+2026-09-17 15:12
+
+===== PAGE 69 =====
+sop-011  Robot packaging
+执行频次
+frequency
+Before shipment
+触发条件
+trigger
+Robot/controller shipment
+前置条件
+preconditions
+· External tools and electrical connections removed
+· third-party products safely uninstalled if possible
+作业步骤
+steps
+1. Move robot to packaging pose via JOG: A1 45°, A2 -180°, A3 160°, A4 -70°, A5 180°, A6 -90°
+2. shut down
+3. disconnect main power
+4. disconnect arm from controller
+5. load arm and controller into specified box with arm centered
+安全要求
+safety_notice
+· If robot cannot run or power unavailable release brakes manually per section 3.2.2
+验收标准
+acceptance_criteria
+· Robot arm/controller/teach pendant packed responsibly in original Elite Robots package
+来源
+source_section
+手册章节 6
+多设备维修 SOP 合集 · RAG 入库版
+第 69 页 / 共 69 页
+2026-09-17 15:12
