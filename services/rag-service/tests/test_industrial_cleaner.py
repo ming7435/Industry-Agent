@@ -82,6 +82,52 @@ class IndustrialCleanerTests(unittest.TestCase):
         self.assertIn("尺寸: 10 mm", cleaned[0].clean_text)
         self.assertEqual(cleaned[0].quality, ChunkQuality.HIGH)
 
+    def test_table_semantic_text_flattens_multi_row_headers(self) -> None:
+        document = self.build_document(
+            [
+                DocumentBlock(
+                    block_id="p1-table1",
+                    page_number=1,
+                    kind=BlockType.TABLE,
+                    content=(
+                        "| 部件 | 参数 | 参数 |\n"
+                        "| --- | --- | --- |\n"
+                        "|  | 最小值 | 最大值 |\n"
+                        "| 主轴 | 10 mm | 20 mm |\n"
+                        "| 部件 | 参数 | 参数 |"
+                    ),
+                    metadata={"rows": 4, "columns": 3},
+                )
+            ]
+        )
+
+        cleaned = IndustrialCleaner().clean_document(document)
+
+        self.assertEqual(len(cleaned), 1)
+        self.assertIn("部件: 主轴", cleaned[0].clean_text)
+        self.assertIn("参数/最小值: 10 mm", cleaned[0].clean_text)
+        self.assertIn("参数/最大值: 20 mm", cleaned[0].clean_text)
+        self.assertNotIn("表格行2: 部件", cleaned[0].clean_text)
+
+    def test_repairs_chinese_pdf_line_wraps_and_units(self) -> None:
+        document = self.build_document(
+            [
+                DocumentBlock(
+                    block_id="p1-t1",
+                    page_number=1,
+                    kind=BlockType.TEXT,
+                    content="主轴轴承安装前应检查\n润滑油状态，温度不得超过 80 ° C。\n1. 保持设备断电。\n2. 安装防护罩。",
+                )
+            ]
+        )
+
+        cleaned = IndustrialCleaner().clean_document(document)
+
+        self.assertEqual(len(cleaned), 1)
+        self.assertIn("安装前应检查润滑油状态", cleaned[0].clean_text)
+        self.assertIn("80°C", cleaned[0].clean_text)
+        self.assertIn("1. 保持设备断电。\n2. 安装防护罩。", cleaned[0].clean_text)
+
 
 if __name__ == "__main__":
     unittest.main()

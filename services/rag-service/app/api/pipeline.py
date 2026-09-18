@@ -55,7 +55,7 @@ from loguru import logger
 
 from app.evidence import EvidenceBundle, build_bundle, format_citations
 from app.fusion import rrf_fusion
-from app.milvus.retriever import Hit
+from app.retrieval import Hit
 
 from config.settings import settings
 

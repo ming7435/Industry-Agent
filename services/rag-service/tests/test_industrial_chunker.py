@@ -180,7 +180,48 @@ class IndustrialChunkerTests(unittest.TestCase):
         )
 
         self.assertGreater(len(chunks), 1)
-        self.assertTrue(all(len(chunk.text) <= 140 for chunk in chunks))
+        self.assertTrue(all(len(chunk.text) <= 120 for chunk in chunks))
+    def test_heading_starts_new_text_chunk_group(self) -> None:
+        document = self.build_document(
+            [
+                DocumentBlock("p1-h1", 1, BlockType.TEXT, "第一章 维护", metadata={"is_heading": True}),
+                DocumentBlock("p1-t1", 1, BlockType.TEXT, "主轴维护步骤说明，拆卸前断电并挂牌。"),
+                DocumentBlock("p1-h2", 1, BlockType.TEXT, "第二章 报警", metadata={"is_heading": True}),
+                DocumentBlock("p1-t2", 1, BlockType.TEXT, "报警 ALM-01 表示润滑压力不足。"),
+            ]
+        )
+
+        chunks = build_chunks(document, config=ChunkerConfig(min_characters=1))
+
+        self.assertEqual(len(chunks), 2)
+        self.assertIn("第一章 维护", chunks[0].text)
+        self.assertNotIn("第二章 报警", chunks[0].text)
+        self.assertIn("第二章 报警", chunks[1].text)
+    def test_long_text_prefers_sentence_boundary_when_splitting(self) -> None:
+        document = self.build_document(
+            [
+                DocumentBlock(
+                    block_id="p1-t1",
+                    page_number=1,
+                    kind=BlockType.TEXT,
+                    content="第一句说明主轴维护需要断电挂牌。第二句说明拆卸轴承座前要做好支撑。第三句说明复装后检查温升和振动。",
+                )
+            ]
+        )
+
+        chunks = build_chunks(
+            document,
+            config=ChunkerConfig(
+                max_characters=60,
+                overlap_characters=0,
+                min_characters=1,
+                include_source_prefix=False,
+            ),
+        )
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(chunks[0].text.endswith("。"))
+        self.assertTrue(all(len(chunk.text) <= 60 for chunk in chunks))
 
 
 if __name__ == "__main__":

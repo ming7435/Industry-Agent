@@ -20,7 +20,7 @@ from __future__ import annotations
 from copy import copy
 from typing import Any
 
-from app.milvus.retriever import Hit
+from app.retrieval import Hit
 
 from config.settings import settings
 

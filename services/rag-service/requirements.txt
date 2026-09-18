@@ -34,6 +34,9 @@ openai>=1.40.0
 # --- offline metadata store ---
 pymysql>=1.1,<2
 
+# --- offline original-file storage (MinIO/S3) ---
+minio>=7.2,<8
+
 # --- configuration / observability ---
 python-dotenv>=1.0,<2
 loguru>=0.7.2

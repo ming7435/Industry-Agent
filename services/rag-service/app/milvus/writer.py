@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
 from app.embedding import VectorRecord
@@ -31,6 +31,11 @@ class MilvusVectorWriter:
             dropped.append(collection_name)
         return dropped
 
+    def has_collection(self) -> bool:
+        """Return whether the configured collection exists."""
+
+        return bool(self.client.has_collection(self.config.collection_name))
+
     def recreate_collection(self, dimension: int) -> None:
         """Drop and create the target collection using the detected vector dimension."""
 
@@ -40,6 +45,21 @@ class MilvusVectorWriter:
             if self.config.drop_existing:
                 self.client.drop_collection(self.config.collection_name)
             else:
+                existing_dimension = self._collection_dimension()
+                if existing_dimension is not None and existing_dimension != dimension:
+                    raise MilvusWriteError(
+                        f"Collection '{self.config.collection_name}' already uses "
+                        f"dimension {existing_dimension}, but the current embedding "
+                        f"model returned dimension {dimension}. Drop or migrate the "
+                        "collection before changing embedding models."
+                    )
+                missing_fields = self._missing_required_fields()
+                if missing_fields:
+                    raise MilvusWriteError(
+                        f"Collection '{self.config.collection_name}' is missing fields "
+                        f"required by the current schema: {', '.join(missing_fields)}. "
+                        "Drop or migrate the collection before writing CAD-aware records."
+                    )
                 return
 
         schema = self.client.create_schema(auto_id=False, enable_dynamic_field=False)
@@ -54,6 +74,13 @@ class MilvusVectorWriter:
         schema.add_field(field_name="source_name", datatype=self._data_type().VARCHAR, max_length=512)
         schema.add_field(field_name="source_path", datatype=self._data_type().VARCHAR, max_length=2048)
         schema.add_field(field_name="source_format", datatype=self._data_type().VARCHAR, max_length=32)
+        schema.add_field(field_name="drawing_id", datatype=self._data_type().VARCHAR, max_length=128)
+        schema.add_field(field_name="version_id", datatype=self._data_type().VARCHAR, max_length=128)
+        schema.add_field(field_name="entity_id", datatype=self._data_type().VARCHAR, max_length=128)
+        schema.add_field(field_name="project_id", datatype=self._data_type().VARCHAR, max_length=128)
+        schema.add_field(field_name="layer_name", datatype=self._data_type().VARCHAR, max_length=255)
+        schema.add_field(field_name="device_id", datatype=self._data_type().VARCHAR, max_length=128)
+        schema.add_field(field_name="tenant_id", datatype=self._data_type().VARCHAR, max_length=128)
         schema.add_field(field_name="page_numbers_json", datatype=self._data_type().VARCHAR, max_length=2048)
         schema.add_field(field_name="chunk_type", datatype=self._data_type().VARCHAR, max_length=64)
         schema.add_field(field_name="quality", datatype=self._data_type().VARCHAR, max_length=32)
@@ -87,16 +114,35 @@ class MilvusVectorWriter:
         """
 
         total = 0
-        for batch in _batched(list(records), self.config.batch_size):
-            if not batch:
+        batch: list[VectorRecord] = []
+        for record in records:
+            batch.append(record)
+            if len(batch) < self.config.batch_size:
                 continue
-            rows = [self._record_to_row(record) for record in batch]
-            write_method = getattr(self.client, "upsert", None) or self.client.insert
-            write_method(collection_name=self.config.collection_name, data=rows)
-            total += len(rows)
+            total += self._write_batch(batch)
+            batch = []
+        if batch:
+            total += self._write_batch(batch)
         if total:
             self.client.flush(collection_name=self.config.collection_name)
         return total
+
+    def delete_records(self, record_ids: Iterable[str]) -> int:
+        """Delete stale chunk IDs left by a previous ingestion run."""
+
+        ids = [str(record_id) for record_id in record_ids if str(record_id)]
+        if not ids:
+            return 0
+        delete_method = getattr(self.client, "delete", None)
+        if delete_method is None:
+            raise MilvusWriteError(
+                "This Milvus client does not support delete; stale vectors cannot be removed."
+            )
+        deleted = 0
+        for batch in _batched(ids, self.config.batch_size):
+            delete_method(collection_name=self.config.collection_name, ids=batch)
+            deleted += len(batch)
+        return deleted
 
     def count(self) -> int:
         """Return the number of entities in the target collection."""
@@ -113,6 +159,13 @@ class MilvusVectorWriter:
             "source_name": record.source_name or "",
             "source_path": record.source_path or "",
             "source_format": record.source_format or "",
+            "drawing_id": record.drawing_id or "",
+            "version_id": record.version_id or "",
+            "entity_id": record.entity_id or "",
+            "project_id": record.project_id or "",
+            "layer_name": record.layer_name or "",
+            "device_id": record.device_id or "",
+            "tenant_id": record.tenant_id or "",
             "page_numbers_json": json.dumps(record.page_numbers, ensure_ascii=False),
             "chunk_type": record.chunk_type or "",
             "quality": record.quality or "",
@@ -122,6 +175,71 @@ class MilvusVectorWriter:
             "metadata_json": record.metadata_json,
             self.config.vector_field: record.vector,
         }
+
+    def _write_batch(self, batch: list[VectorRecord]) -> int:
+        rows = [self._record_to_row(record) for record in batch]
+        write_method = getattr(self.client, "upsert", None) or self.client.insert
+        write_method(collection_name=self.config.collection_name, data=rows)
+        return len(rows)
+
+    def _collection_dimension(self) -> int | None:
+        """Read an existing vector dimension when the client exposes schema details."""
+
+        fields = self._collection_fields()
+        for field in fields or []:
+            name = field.get("name") if isinstance(field, dict) else getattr(field, "name", None)
+            if name != self.config.vector_field:
+                continue
+            params = field.get("params", {}) if isinstance(field, dict) else getattr(field, "params", {})
+            dimension = params.get("dim") if isinstance(params, dict) else getattr(params, "dim", None)
+            if dimension is None and isinstance(field, dict):
+                dimension = field.get("dim")
+            try:
+                return int(dimension) if dimension is not None else None
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _missing_required_fields(self) -> list[str]:
+        names = {
+            field.get("name") if isinstance(field, dict) else getattr(field, "name", None)
+            for field in self._collection_fields()
+        }
+        required = {
+            self.config.primary_field,
+            "chunk_id",
+            "text",
+            "source_name",
+            "source_path",
+            "source_format",
+            "drawing_id",
+            "version_id",
+            "entity_id",
+            "project_id",
+            "layer_name",
+            "device_id",
+            "tenant_id",
+            "page_numbers_json",
+            "chunk_type",
+            "quality",
+            "contains_table",
+            "contains_image",
+            "contains_cad",
+            "metadata_json",
+            self.config.vector_field,
+        }
+        return sorted(field for field in required if field not in names)
+
+    def _collection_fields(self) -> list[Any]:
+        describe = getattr(self.client, "describe_collection", None)
+        if describe is None:
+            return []
+        try:
+            description = describe(collection_name=self.config.collection_name)
+        except (AttributeError, TypeError, RuntimeError, ValueError):
+            return []
+        fields = description.get("fields", []) if isinstance(description, dict) else getattr(description, "fields", [])
+        return list(fields or [])
 
     def _create_client(self) -> Any:
         try:
@@ -139,9 +257,9 @@ class MilvusVectorWriter:
         return DataType
 
 
-def _batched(items: list[VectorRecord], batch_size: int) -> Iterator[list[VectorRecord]]:
+def _batched(items: Sequence[str], batch_size: int) -> Iterator[list[str]]:
     for start in range(0, len(items), batch_size):
-        yield items[start : start + batch_size]
+        yield list(items[start : start + batch_size])
 
 
 __all__ = ["MilvusVectorWriter", "MilvusWriteError"]

@@ -1,5 +1,7 @@
 import unittest
 
+from app.embedding.bge_m3 import BGEM3EmbeddingClient
+
 from app.chunk import IndustrialChunk
 from app.embedding import (
     EmbeddingConfig,
@@ -104,6 +106,30 @@ class EmbeddingPipelineTests(unittest.TestCase):
         self.assertEqual(record.chunk_type, "text_chunk")
         self.assertFalse(record.contains_cad)
         self.assertEqual(record.to_dict()["metadata"]["source_name"], "manual.pdf")
+
+    def test_bge_client_normalizes_legacy_model_output(self) -> None:
+        class LegacyModel:
+            def encode(self, texts: list[str], **kwargs: object) -> list[list[float]]:
+                if kwargs:
+                    raise TypeError("legacy encode signature")
+                return [[3.0, 4.0] for _ in texts]
+
+        client = BGEM3EmbeddingClient(
+            EmbeddingConfig(normalize_embeddings=True),
+            model=LegacyModel(),
+        )
+
+        vectors = client.embed_texts(["工业文本"])
+
+        self.assertEqual(vectors, [[0.6, 0.8]])
+    def test_embedding_config_accepts_local_model_path(self) -> None:
+        config = EmbeddingConfig(model_path="models/bge-m3")
+
+        self.assertEqual(config.model_path, "models/bge-m3")
+
+    def test_embedding_config_rejects_empty_local_model_path(self) -> None:
+        with self.assertRaises(ValueError):
+            EmbeddingConfig(model_path=" ")
 
 
 if __name__ == "__main__":

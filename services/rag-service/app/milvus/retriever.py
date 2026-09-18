@@ -26,12 +26,12 @@ metadata of the hit they rewrite.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
 
 from app.corpus import infer_corpus, infer_device_model
+from app.retrieval import Hit, load_metadata_json, matches_metadata
 
 from config.settings import settings
 
@@ -68,29 +68,6 @@ _OUTPUT_FIELDS: tuple[str, ...] = (
     "metadata_json",
 )
 """Scalar columns read back with every hit."""
-
-
-@dataclass
-class Hit:
-    """One candidate chunk returned by a retrieval route."""
-
-    chunk_id: str
-    """Identifier of the chunk in the offline index."""
-
-    text: str
-    """Chunk content."""
-
-    score: float
-    """Route-specific relevance score (dense similarity, BM25 score, RRF score)."""
-
-    source: str
-    """Route label: ``bm25`` / ``dense`` / ``fusion``."""
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-    """Offline chunk metadata plus the derived ``corpus`` label."""
-
-    rank: int = 0
-    """1-based position inside the list this hit belongs to."""
 
 
 def _sanitize(value: Any) -> str:
@@ -132,45 +109,6 @@ def _build_expression(filters: dict[str, Any] | None) -> tuple[str, dict[str, An
             remaining[key] = value
 
     return " and ".join(clauses), remaining
-
-
-def _matches(hit: Hit, remaining: dict[str, Any]) -> bool:
-    """Tell whether a hit satisfies the filters Milvus could not push down.
-
-    Args:
-        hit: Candidate hit.
-        remaining: Filters to apply on the hit metadata.
-
-    Returns:
-        ``True`` when every filter matches (string comparison, case-insensitive).
-    """
-    for key, value in remaining.items():
-        found = hit.metadata.get(key)
-        if found is None:
-            return False
-        if str(found).lower() != str(value).lower():
-            return False
-    return True
-
-
-def _load_json(raw: Any) -> dict[str, Any]:
-    """Parse a ``metadata_json`` column.
-
-    Args:
-        raw: Raw column value.
-
-    Returns:
-        The decoded mapping, or an empty dict when the value is not valid JSON.
-    """
-    if isinstance(raw, dict):
-        return dict(raw)
-    if not raw:
-        return {}
-    try:
-        decoded = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    return decoded if isinstance(decoded, dict) else {}
 
 
 def _embed_query(embedder: Any, query: str) -> list[float]:
@@ -225,7 +163,7 @@ def _hit_from_row(row: Any) -> Hit:
         except (TypeError, ValueError):
             score = 0.0
 
-    metadata: dict[str, Any] = _load_json(entity.get("metadata_json"))
+    metadata: dict[str, Any] = load_metadata_json(entity.get("metadata_json"))
     for name in _OUTPUT_FIELDS:
         if name in ("text", "metadata_json"):
             continue
@@ -276,6 +214,7 @@ class DenseRetriever:
         port: int | None = None,
         collection_name: str | None = None,
         collection: str | None = None,
+        collection_names: list[str] | None = None,
         dim: int | None = None,
         embedding_dim: int | None = None,
         embedder: Any | None = None,
@@ -287,10 +226,16 @@ class DenseRetriever:
             uri: Milvus URI; defaults to ``settings.milvus_uri``.
             host: Milvus host (alternative to ``uri``).
             port: Milvus port (alternative to ``uri``).
-            collection_name: Collection to query; defaults to
+            collection_name: Primary collection to query; defaults to
                 ``settings.milvus_collection`` -- the same collection the
                 offline writer fills. ``collection`` is an alias.
             collection: Alias of ``collection_name``.
+            collection_names: Explicit list of collections to fan out across. When
+                provided (for example the comma-separated ``MILVUS_COLLECTIONS``
+                setting), every dense search queries each collection and merges
+                the hits by score. If a collection is explicitly provided without
+                this list, only that collection is queried; otherwise the configured
+                search collection list is used.
             dim: Expected vector dimension; defaults to ``settings.embedding_dim``.
             embedding_dim: Alias of ``dim``.
             embedder: Query embedder; defaults to the process-wide
@@ -300,7 +245,16 @@ class DenseRetriever:
         self.uri = uri or settings.milvus_uri
         self.host = host or settings.milvus_host
         self.port = int(port or settings.milvus_port)
-        self.collection_name = collection_name or collection or settings.milvus_collection
+        primary = collection_name or collection or settings.milvus_collection
+        explicit_primary = collection_name is not None or collection is not None
+        if collection_names:
+            self.collection_names = list(collection_names)
+        elif explicit_primary or client is not None:
+            self.collection_names = [primary]
+        else:
+            self.collection_names = settings.milvus_search_collections or [primary]
+        # Keep the canonical single name for logs/health of the primary store.
+        self.collection_name = primary
         self.dim = int(dim or embedding_dim or settings.embedding_dim)
         self._embedder = embedder
         self._client = client
@@ -375,43 +329,52 @@ class DenseRetriever:
         expression, remaining = _build_expression(filters)
 
         client = self._get_client()
-        results = client.search(
-            collection_name=self.collection_name,
-            data=[vector],
-            limit=limit,
-            # ``None`` rather than ``""``: some pymilvus builds reject an empty
-            # filter expression.
-            filter=expression or None,
-            output_fields=list(_OUTPUT_FIELDS),
-        )
+        merged: list[Hit] = []
+        for collection_name in self.collection_names:
+            results = client.search(
+                collection_name=collection_name,
+                data=[vector],
+                limit=limit,
+                # ``None`` rather than ``""``: some pymilvus builds reject an empty
+                # filter expression.
+                filter=expression or None,
+                output_fields=list(_OUTPUT_FIELDS),
+            )
+            rows = results[0] if results else []
+            merged.extend(_hit_from_row(row) for row in rows)
 
-        rows = results[0] if results else []
-        hits = [_hit_from_row(row) for row in rows]
+        hits = merged
         if remaining:
-            hits = [hit for hit in hits if _matches(hit, remaining)]
+            hits = [hit for hit in hits if matches_metadata(hit, remaining)]
+
+        # Merge by relevance across every queried collection, then keep the top_k.
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        hits = hits[:limit]
 
         logger.info(
-            "dense search collection={} hits={} filtered={}",
-            self.collection_name,
+            "dense search collections={} hits={} filtered={}",
+            self.collection_names,
             len(hits),
             bool(remaining),
         )
         return hits
 
     def health(self) -> bool:
-        """Report whether the collection is reachable.
+        """Report whether the queried collections are reachable.
 
         Returns:
-            ``True`` when the collection exists; ``False`` on any error, so the
-            health endpoint stays cheap and never raises.
+            ``True`` when every configured collection exists; ``False`` on any
+            error, so the health endpoint stays cheap and never raises.
         """
         try:
             client = self._get_client()
-            return bool(client.has_collection(self.collection_name))
+            return all(
+                bool(client.has_collection(name)) for name in self.collection_names
+            )
         except Exception as exc:  # noqa: BLE001 - unhealthy is a valid result
             logger.warning(
-                "milvus health probe failed collection={} error_type={}",
-                self.collection_name,
+                "milvus health probe failed collections={} error_type={}",
+                self.collection_names,
                 type(exc).__name__,
             )
             return False

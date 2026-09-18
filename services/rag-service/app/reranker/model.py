@@ -23,7 +23,7 @@ from copy import copy
 from numbers import Real
 from typing import Any
 
-from app.milvus.retriever import Hit
+from app.retrieval import Hit
 
 try:  # pragma: no cover - exercised only when the dependency is installed
     from FlagEmbedding import FlagReranker

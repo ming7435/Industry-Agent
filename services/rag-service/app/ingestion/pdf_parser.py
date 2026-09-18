@@ -415,18 +415,9 @@ def _extract_table_records(page: Any) -> list[dict[str, Any]]:
 
 
 def _table_to_markdown(rows: Any) -> str:
-    normalized = [
-        [str(cell or "").replace("|", "\\|").replace("\n", " ").strip() for cell in row]
-        for row in rows
-    ]
-    width = max((len(row) for row in normalized), default=0)
-    if width == 0:
-        return ""
-    normalized = [row + [""] * (width - len(row)) for row in normalized]
-    lines = ["| " + " | ".join(normalized[0]) + " |"]
-    lines.append("| " + " | ".join("---" for _ in range(width)) + " |")
-    lines.extend("| " + " | ".join(row) + " |" for row in normalized[1:])
-    return "\n".join(lines)
+    from .parser import markdown_table
+
+    return markdown_table(rows)
 
 
 def _order_text_records(records: list[dict[str, Any]], page_rect: Any) -> list[dict[str, Any]]:

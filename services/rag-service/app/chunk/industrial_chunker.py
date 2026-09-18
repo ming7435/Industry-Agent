@@ -222,6 +222,11 @@ def _pack_text_blocks(
     current_length = 0
     for block in blocks:
         block_length = len(block.clean_text)
+        starts_heading = bool(block.metadata.get("is_heading"))
+        if starts_heading and current:
+            groups.append(current)
+            current = []
+            current_length = 0
         if current and current_length + block_length > max_characters:
             groups.append(current)
             current = []
@@ -433,7 +438,18 @@ def _split_text(text: str, max_characters: int, overlap_characters: int) -> list
             current = candidate
         else:
             chunks.append(current.strip())
-            current = _with_overlap(chunks[-1], overlap_characters, paragraph)
+            overlap = chunks[-1][-overlap_characters:].strip() if overlap_characters else ""
+            overlapped = f"{overlap}\n\n{paragraph}".strip() if overlap else paragraph
+            if len(overlapped) <= max_characters:
+                current = overlapped
+            else:
+                # Do not let overlap turn a nominally bounded chunk into an
+                # oversized one.  This is especially important for tables and
+                # long industrial parameter paragraphs.
+                chunks.extend(
+                    _split_long_text(paragraph, max_characters, overlap_characters)
+                )
+                current = ""
     if current:
         chunks.append(current.strip())
     return chunks
@@ -443,19 +459,39 @@ def _split_long_text(text: str, max_characters: int, overlap_characters: int) ->
     chunks: list[str] = []
     start = 0
     while start < len(text):
-        end = min(len(text), start + max_characters)
+        end = _natural_split_end(text, start, max_characters)
         chunks.append(text[start:end].strip())
-        if end == len(text):
+        if end >= len(text):
             break
-        start = max(0, end - overlap_characters)
-    return chunks
+        start = _next_split_start(text, end, overlap_characters)
+    return [chunk for chunk in chunks if chunk]
 
 
-def _with_overlap(previous: str, overlap_characters: int, paragraph: str) -> str:
-    if overlap_characters == 0:
-        return paragraph
-    overlap = previous[-overlap_characters:].strip()
-    return f"{overlap}\n\n{paragraph}".strip()
+def _natural_split_end(text: str, start: int, max_characters: int) -> int:
+    hard_end = min(len(text), start + max_characters)
+    if hard_end == len(text):
+        return hard_end
+    window = text[start:hard_end]
+    minimum = max(0, int(max_characters * 0.55))
+    split_marks = ["\n\n", "。", "！", "？", ";", "；", "\n", "，", ",", " "]
+    best = -1
+    for mark in split_marks:
+        index = window.rfind(mark)
+        if index >= minimum:
+            best = index + len(mark)
+            break
+    if best <= 0:
+        return hard_end
+    return start + best
+
+
+def _next_split_start(text: str, previous_end: int, overlap_characters: int) -> int:
+    if overlap_characters <= 0:
+        return previous_end
+    start = max(0, previous_end - overlap_characters)
+    while start < previous_end and text[start].isspace():
+        start += 1
+    return start
 
 
 def _chunk_id(
@@ -490,8 +526,33 @@ def _chunk_metadata(
         for block in group
         if block.metadata.get("recognition_status")
     )
+    entity_ids = _sorted_unique(
+        str(block.metadata.get("entity_id") or block.metadata.get("entity_handle"))
+        for block in group
+        if block.metadata.get("entity_id") or block.metadata.get("entity_handle")
+    )
+    layer_names = _sorted_unique(
+        str(block.metadata.get("layer_name"))
+        for block in group
+        if block.metadata.get("layer_name")
+    )
+    device_ids = _sorted_unique(
+        str(block.metadata.get("device_id"))
+        for block in group
+        if block.metadata.get("device_id")
+    )
     return {
         "document_id": document.metadata.get("document_id"),
+        "drawing_id": document.metadata.get("drawing_id"),
+        "version_id": document.metadata.get("version_id"),
+        "project_id": document.metadata.get("project_id"),
+        "tenant_id": document.metadata.get("tenant_id"),
+        "entity_ids": entity_ids,
+        "entity_id": entity_ids[0] if len(entity_ids) == 1 else None,
+        "layer_names": layer_names,
+        "layer_name": layer_names[0] if len(layer_names) == 1 else None,
+        "device_ids": device_ids,
+        "device_id": device_ids[0] if len(device_ids) == 1 else None,
         "content_hash": document.metadata.get("content_hash"),
         "source_name": document.source_name,
         "source_path": str(document.source_path) if document.source_path else None,

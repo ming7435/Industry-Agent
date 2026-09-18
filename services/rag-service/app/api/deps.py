@@ -169,6 +169,7 @@ def _create_dense() -> Any:
     """
     from app.milvus.retriever import DenseRetriever
 
+    collection_names = settings.milvus_search_collections
     return _instantiate(
         DenseRetriever,
         {
@@ -177,6 +178,7 @@ def _create_dense() -> Any:
             "port": settings.milvus_port,
             "collection_name": settings.milvus_collection,
             "collection": settings.milvus_collection,
+            "collection_names": collection_names,
             "dim": settings.embedding_dim,
             "embedding_dim": settings.embedding_dim,
         },

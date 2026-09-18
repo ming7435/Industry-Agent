@@ -140,6 +140,38 @@ class MultiFormatIngestionTests(unittest.TestCase):
             self.assertTrue(all(block.kind.value == "cad_drawing" for block in document.blocks))
             self.assertEqual(document.metadata["parser"], "ezdxf")
             self.assertIn("A-102", document.blocks[0].content)
+            entities = document.metadata["cad_entities"]
+            self.assertEqual(len(entities), 2)
+            text_entity = next(entity for entity in entities if entity["entity_type"] == "TEXT")
+            self.assertEqual(text_entity["layer_name"], "零件编号")
+            self.assertEqual(text_entity["text"], "A-102")
+            self.assertEqual(text_entity["device_id"], "A-102")
+            self.assertTrue(text_entity["handle"])
+            self.assertIsNotNone(text_entity["bbox"])
+            entity_block = next(block for block in document.blocks if block.metadata.get("source") == "dxf_entity")
+            self.assertEqual(entity_block.metadata["entity_handle"], text_entity["handle"])
+
+    def test_dxf_paper_space_entities_are_preserved(self) -> None:
+        try:
+            import ezdxf
+        except ImportError as exc:
+            self.skipTest(f"optional parser dependency unavailable: {exc}")
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "layout.dxf"
+            drawing = ezdxf.new("R2010")
+            layout = drawing.layout("Layout1")
+            layout.add_text("V-202", dxfattribs={"layer": "图框标注"})
+            drawing.saveas(path)
+
+            document = parse_document(path)
+
+            entity = next(
+                item for item in document.metadata["cad_entities"]
+                if item.get("text") == "V-202"
+            )
+            self.assertEqual(entity["space_name"], "Layout1")
+            self.assertEqual(entity["device_id"], "V-202")
 
     def test_unsupported_extension_has_clear_error(self) -> None:
         with TemporaryDirectory() as directory:

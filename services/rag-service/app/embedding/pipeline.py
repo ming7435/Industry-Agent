@@ -57,28 +57,44 @@ def iter_embed_chunks(
     """Stream vector records in batches while preserving chunk order."""
 
     config = config or EmbeddingConfig()
-    valid_chunks = [chunk for chunk in chunks if should_embed_chunk(chunk, config)]
     expected_dimension = config.expected_dimension or client.dimension
 
-    for batch in _batched(valid_chunks, config.batch_size):
-        texts = [chunk.text for chunk in batch]
-        vectors = client.embed_texts(texts)
+    # Keep only one embedding batch in memory.  The previous implementation
+    # first materialized every valid chunk, which made large document imports
+    # needlessly consume memory before the model was called.
+    batch: list[IndustrialChunk] = []
+    for chunk in chunks:
+        if not should_embed_chunk(chunk, config):
+            continue
+        batch.append(chunk)
+        if len(batch) < config.batch_size:
+            continue
+
+        vectors = client.embed_texts([item.text for item in batch])
         if len(vectors) != len(batch):
             raise EmbeddingError(
                 f"Embedding client returned {len(vectors)} vectors for {len(batch)} texts."
             )
-
         if expected_dimension is None and vectors:
             expected_dimension = len(vectors[0])
-
-        for chunk, vector in zip(batch, vectors, strict=True):
+        for chunk_item, vector in zip(batch, vectors, strict=True):
             validate_vector(vector, expected_dimension=expected_dimension)
-            yield VectorRecord.from_chunk(chunk, vector)
+            yield VectorRecord.from_chunk(chunk_item, vector)
+        batch = []
 
+    if not batch:
+        return
 
-def _batched(items: list[IndustrialChunk], batch_size: int) -> Iterator[list[IndustrialChunk]]:
-    for start in range(0, len(items), batch_size):
-        yield items[start : start + batch_size]
+    vectors = client.embed_texts([item.text for item in batch])
+    if len(vectors) != len(batch):
+        raise EmbeddingError(
+            f"Embedding client returned {len(vectors)} vectors for {len(batch)} texts."
+        )
+    if expected_dimension is None and vectors:
+        expected_dimension = len(vectors[0])
+    for chunk, vector in zip(batch, vectors, strict=True):
+        validate_vector(vector, expected_dimension=expected_dimension)
+        yield VectorRecord.from_chunk(chunk, vector)
 
 
 __all__ = [

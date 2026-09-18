@@ -13,14 +13,13 @@ corpus after fusion.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from app.corpus import infer_corpus
-from app.milvus.retriever import Hit
+from app.retrieval import Hit, load_metadata_json, matches_metadata
 
 from config.settings import settings
 
@@ -38,26 +37,6 @@ SOURCE_BM25 = "bm25"
 
 STAGE_BM25 = "bm25"
 """Value written to ``Hit.metadata["stage"]``."""
-
-
-def _load_metadata(raw: Any) -> dict[str, Any]:
-    """Parse the stored ``metadata_json`` column of a Whoosh document.
-
-    Args:
-        raw: Raw stored value.
-
-    Returns:
-        The decoded mapping, or an empty dict when it is not valid JSON.
-    """
-    if isinstance(raw, dict):
-        return dict(raw)
-    if not raw:
-        return {}
-    try:
-        decoded = json.loads(raw)
-    except (TypeError, ValueError):
-        return {}
-    return decoded if isinstance(decoded, dict) else {}
 
 
 class BM25Retriever:
@@ -161,7 +140,7 @@ class BM25Retriever:
         with ix.searcher() as searcher:
             results = searcher.search(And(terms), limit=limit)
             for position, result in enumerate(results, start=1):
-                metadata = _load_metadata(result.get(FIELD_METADATA))
+                metadata = load_metadata_json(result.get(FIELD_METADATA))
                 for name in (FIELD_CORPUS, "device_model", "error_code", "source_name"):
                     value = result.get(name)
                     if value:
@@ -183,31 +162,12 @@ class BM25Retriever:
                     metadata=metadata,
                     rank=position,
                 )
-                if remaining and not self._matches(hit, remaining):
+                if remaining and not matches_metadata(hit, remaining):
                     continue
                 hits.append(hit)
 
         logger.info("whoosh search dir={} hits={}", self.index_dir, len(hits))
         return hits
-
-    @staticmethod
-    def _matches(hit: Hit, remaining: dict[str, Any]) -> bool:
-        """Apply the filters Whoosh could not push down.
-
-        Args:
-            hit: Candidate hit.
-            remaining: Filters to apply on the hit metadata.
-
-        Returns:
-            ``True`` when every filter matches (string comparison, case-insensitive).
-        """
-        for key, value in remaining.items():
-            found = hit.metadata.get(key)
-            if found is None:
-                return False
-            if str(found).lower() != str(value).lower():
-                return False
-        return True
 
     def health(self) -> bool:
         """Report whether the index is present and readable.

@@ -98,6 +98,9 @@ class IndustrialCleaner:
         text = _remove_placeholder_only_noise(text)
         text = _remove_repeated_lines(text, repeated_lines or set())
         text = _remove_noise_lines(text)
+        if block.kind is BlockType.TEXT:
+            text = _repair_broken_text_lines(text)
+            text = _normalize_industrial_units(text)
 
         warnings = _block_warnings(block, text, document_format=document_format)
         if block.kind is BlockType.TABLE:
@@ -172,6 +175,7 @@ def _detect_repeated_lines(document: StructuredDocument, config: CleanerConfig) 
 
 def _normalize_text(text: str) -> str:
     text = text.replace("　", " ")
+    text = text.replace(" ", " ")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -208,24 +212,128 @@ def _remove_noise_lines(text: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _repair_broken_text_lines(text: str) -> str:
+    """Join PDF line wraps without flattening lists, headings, or tables."""
+
+    lines = [line.strip() for line in text.splitlines()]
+    if len(lines) < 2:
+        return text
+
+    repaired: list[str] = []
+    for line in lines:
+        if not line:
+            if repaired and repaired[-1]:
+                repaired.append("")
+            continue
+        if repaired and _should_join_lines(repaired[-1], line):
+            repaired[-1] = f"{repaired[-1]}{line}"
+        else:
+            repaired.append(line)
+    return "\n".join(repaired).strip()
+
+
+def _should_join_lines(previous: str, current: str) -> bool:
+    if not previous.strip() or not current.strip():
+        return False
+    if _is_structural_line(previous) or _is_structural_line(current):
+        return False
+    if re.search(r"[。！？；;：:，,、)）】\\]]$", previous):
+        return False
+    if re.match(r"^[（(【\\[]", current):
+        return True
+    return _contains_cjk(previous[-1]) and _contains_cjk(current[0])
+
+
+def _is_structural_line(line: str) -> bool:
+    return bool(
+        re.match(r"^\s*(#{1,6}\s+|[-*•]\s+|\d+[.)、]\s+|[A-Z]\.|[一二三四五六七八九十]+[、.])", line)
+        or line.strip().startswith("|")
+        or re.search(r"[:：]$", line.strip())
+    )
+
+
+def _contains_cjk(text: str) -> bool:
+    return bool(re.search(r"[一-鿿]", text))
+
+
+def _normalize_industrial_units(text: str) -> str:
+    units = "mm|cm|m|MPa|kPa|Pa|kW|W|V|A|Hz|rpm|N|Nm|kg|g|℃|°C"
+    text = re.sub(rf"(?<=\d)\s*({units})\b", r" \1", text, flags=re.IGNORECASE)
+    text = re.sub(r"°\s*C", "°C", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<=\d)\s+(℃|°C)", r"\1", text, flags=re.IGNORECASE)
+    return text
+
+
 def _table_to_semantic_text(markdown: str) -> str:
     rows = _parse_markdown_table(markdown)
     if not rows:
         return markdown
-    header = rows[0]
+    header_rows, data_rows = _split_table_header_rows(rows)
+    headers = _flatten_table_headers(header_rows)
     semantic_rows: list[str] = []
-    for row_index, row in enumerate(rows[1:], start=1):
+    for row_index, row in enumerate(data_rows, start=1):
+        if _is_repeated_header_row(row, header_rows):
+            continue
         if not any(cell.strip() for cell in row):
             continue
         pairs = []
         for index, value in enumerate(row):
             if not value.strip():
                 continue
-            column = header[index] if index < len(header) and header[index] else f"列{index + 1}"
+            column = headers[index] if index < len(headers) and headers[index] else f"列{index + 1}"
             pairs.append(f"{column}: {value}")
         if pairs:
             semantic_rows.append(f"表格行{row_index}: " + "；".join(pairs))
     return "\n".join(semantic_rows) or markdown
+
+
+def _split_table_header_rows(rows: list[list[str]]) -> tuple[list[list[str]], list[list[str]]]:
+    if len(rows) <= 1:
+        return [rows[0]], []
+    header_rows = [rows[0]]
+    for row in rows[1:3]:
+        if _looks_like_header_continuation(row):
+            header_rows.append(row)
+        else:
+            break
+    return header_rows, rows[len(header_rows) :]
+
+
+def _looks_like_header_continuation(row: list[str]) -> bool:
+    non_empty = [cell for cell in row if cell.strip()]
+    if not non_empty:
+        return False
+    text_cells = sum(1 for cell in non_empty if re.search(r"[A-Za-z_一-鿿]", cell))
+    numeric_cells = sum(1 for cell in non_empty if _looks_like_table_value(cell))
+    return text_cells > 0 and numeric_cells == 0
+
+
+def _flatten_table_headers(header_rows: list[list[str]]) -> list[str]:
+    width = max((len(row) for row in header_rows), default=0)
+    headers: list[str] = []
+    for index in range(width):
+        parts: list[str] = []
+        for row in header_rows:
+            if index >= len(row):
+                continue
+            cell = row[index].strip()
+            if cell and cell not in parts:
+                parts.append(cell)
+        headers.append("/".join(parts) if parts else f"列{index + 1}")
+    return headers
+
+
+def _is_repeated_header_row(row: list[str], header_rows: list[list[str]]) -> bool:
+    normalized = _normalize_table_row_for_compare(row)
+    return any(normalized == _normalize_table_row_for_compare(header) for header in header_rows)
+
+
+def _normalize_table_row_for_compare(row: list[str]) -> tuple[str, ...]:
+    return tuple(re.sub(r"\s+", "", cell).lower() for cell in row)
+
+
+def _looks_like_table_value(text: str) -> bool:
+    return bool(re.fullmatch(r"[-+]?\d+(?:[.,]\d+)*(?:\s*[A-Za-z%℃°/]+)?", text.strip()))
 
 
 def _parse_markdown_table(markdown: str) -> list[list[str]]:

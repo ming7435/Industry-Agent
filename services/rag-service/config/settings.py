@@ -202,6 +202,31 @@ class Settings(BaseSettings):
     ``MILVUS_COLLECTION`` when ingesting into a differently named collection.
     """
 
+    milvus_collections: str = ""
+    """Comma-separated extra Milvus collections the dense retriever fans out across.
+
+    When empty, the retriever only queries :attr:`milvus_collection`. Set
+    ``MILVUS_COLLECTIONS`` to a comma-separated list (e.g.
+    ``industry_rag_alarm_codes,industry_rag_bom,industry_rag_sop``) to query
+    several collections in one dense search and merge the results by score. The
+    resolved list is exposed via :attr:`milvus_search_collections`.
+    """
+
+    @property
+    def milvus_search_collections(self) -> list[str]:
+        """Resolved list of collections the dense retriever queries.
+
+        Returns the parsed ``MILVUS_COLLECTIONS`` list when non-empty, otherwise
+        falls back to the single :attr:`milvus_collection`.
+        """
+
+        raw = (self.milvus_collections or "").strip()
+        if raw:
+            parsed = [item.strip() for item in raw.split(",") if item.strip()]
+            if parsed:
+                return parsed
+        return [self.milvus_collection]
+
     milvus_primary_field: str = "id"
     """Primary key field of the chunk collection."""
 

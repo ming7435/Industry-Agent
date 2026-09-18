@@ -34,16 +34,36 @@
 完整链路如下：
 
 ```text
-读取文件
-  -> PDF 结构化解析
-  -> Qwen-VL 多模态识别图片 / CAD / 扫描页
+读取本地源文件
+  -> MySQL rag_documents 预登记 processing
+  -> 可选 MinIO/S3 原始文件存储并回写对象 URI/ETag/版本
+  -> PDF / 多格式 / DXF 结构化解析
   -> StructuredDocument 结构化文档
+  -> DXF/DWG drawing/version/layer/entity/annotation/relations
   -> clean 清洗
   -> chunk 结构感知语义切块
   -> BGE-M3 本地向量化
-  -> VectorRecord 向量记录
-  -> Milvus 向量入库 + MySQL 文档/Chunk 元数据入库
+  -> MySQL rag_chunks 元数据
+  -> Milvus CAD-aware 语义向量
 ```
+
+对于 CAD 文件，三个存储层通过稳定标识关联：
+
+```text
+原始文件
+  -> document_id
+  -> drawing_id
+  -> version_id
+  -> entity_id
+  -> chunk_id
+  -> Milvus primary key
+```
+
+MinIO/S3 保存原始文件及其对象版本信息；MySQL 保存可审计的文件、图纸版本、图层、实体、文字标注和关系事实；Milvus 只保存适合语义召回的 chunk 向量及其过滤字段。当前 `same_device_id` 关系来自可解释的文字或块标注，不代表空间相交、距离或工艺拓扑关系。
+
+默认开启 MySQL 元数据写入时，重复处理同一文件会同时清理 Milvus 中已经失效的旧
+chunk ID。向量集合已存在时会校验 embedding 维度，避免更换模型后静默写入失败。若使用
+`--no-mysql`，没有文档到 chunk 的历史清单，建议配合 `--drop-all-collections` 做完整重建。
 
 ## 2. 文件读取层
 
@@ -353,7 +373,8 @@ CAD 图纸或图纸页单独形成 chunk，可附带短标题或邻近说明。
 
 #### 7.3.6 最后按长度拆分
 
-所有 chunk 最终都会受到最大长度限制，如果超过最大字符数，会进行带 overlap 的拆分。
+所有 chunk 最终都会受到最大长度限制，如果超过最大字符数，会进行带 overlap 的拆分；
+overlap 本身不会把结果重新撑大到超过上限。
 
 好处：
 
@@ -410,8 +431,11 @@ BAAI/bge-m3
 实际测试的向量维度为：
 
 ```text
-1024
+1024（最终维度仍以模型实际输出为准）
 ```
+
+当本地 `sentence-transformers` 版本不支持 `normalize_embeddings` 参数时，代码会在
+兼容回退路径手动执行 L2 归一化，确保与 Milvus 的 COSINE 检索配置一致。
 
 ### 8.3 使用的方法
 
@@ -605,8 +629,11 @@ BOM、SOP、保养维护、安全规程、报警码、故障诊断时，会路�
 
 MySQL 不替代 Milvus 的向量检索，而是保存可审计、可更新的结构化数据：
 
-- `rag_documents`：源文件、格式、SHA-256、处理状态、chunk 数量、错误信息
-- `rag_chunks`：chunk 原文、页码、质量、类型、Milvus collection、完整 metadata
+- `rag_documents`：源文件、格式、SHA-256、处理状态、chunk 数量、错误信息，以及 MinIO/S3 bucket、key、URI、ETag、版本 ID
+- `rag_chunks`：chunk 原文、页码、质量、类型、Milvus collection、完整 metadata，以及 drawing/version/entity/project/layer/device/tenant 关联字段
+- `cad_drawings` / `cad_drawing_versions`：图纸及版本
+- `cad_layers` / `cad_entities`：图层和结构化实体
+- `cad_text_annotations` / `cad_entity_relations`：文字标注和可解释实体关系
 
 文档重新处理时使用相同的 `document_id`，chunk 使用相同的 `chunk_id` 做
 upsert，并删除该文档已经不存在的旧 chunk，因此可以重复运行。
@@ -686,6 +713,8 @@ python scripts/ingest_to_milvus.py \
 - `tests/test_embedding_pipeline.py`
 - `tests/test_rag_pipeline_integration.py`
 - `tests/test_milvus_writer.py`
+- `tests/test_mysql_writer.py`
+- `tests/test_object_storage.py`
 - `tests/test_ingest_to_milvus_script.py`
 
 ### 12.2 测试覆盖内容
@@ -707,14 +736,15 @@ python scripts/ingest_to_milvus.py \
 
 ### 12.3 当前验证结果
 
-当前可在本地沙箱稳定运行的核心测试结果：
+当前回归验证结果：
 
 ```text
-17 tests OK
+python -m compileall -q app scripts
+python -m pytest tests
+55 passed
 ```
 
-完整多格式测试在当前 Windows 执行沙箱中会受到临时目录写权限限制，
-失败发生在测试夹具创建文件阶段，而不是解析、清洗、切块或入库断言阶段。
+测试覆盖文件读取、多格式解析、DXF 实体字段、清洗、切块、Embedding、对象存储客户端、MySQL 文档/chunk 双写、CAD 元数据写入和 Milvus 字段扁平化。真实 MinIO、MySQL、Milvus 服务仍需在部署环境中执行端到端验证。
 
 Milvus 最终验证结果：
 

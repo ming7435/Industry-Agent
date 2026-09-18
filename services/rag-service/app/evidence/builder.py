@@ -19,7 +19,7 @@ from collections import defaultdict
 from math import inf
 from typing import Any
 
-from app.milvus.retriever import Hit
+from app.retrieval import Hit
 
 from .models import Evidence, EvidenceBundle
 

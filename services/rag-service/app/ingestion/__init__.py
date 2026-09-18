@@ -16,6 +16,7 @@ from .models import (
     PdfType,
     StructuredDocument,
 )
+from .ocr import LocalOcrClient, LocalOcrConfig, OcrError
 from .parser import (
     CAD_ENTITY_TYPES,
     CsvParseError,
@@ -66,6 +67,9 @@ __all__ = [
     "ImageDescriber",
     "ImageParseError",
     "IndustrialPdfParser",
+    "LocalOcrClient",
+    "LocalOcrConfig",
+    "OcrError",
     "ParsedPage",
     "PdfParseError",
     "PdfParserConfig",
