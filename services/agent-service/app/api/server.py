@@ -3,12 +3,36 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - optional for library-only usage
+    load_dotenv = None
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.graph import AgentOrchestrator, build_orchestrator
+
+
+def _load_project_env() -> None:
+    """Load the repository environment before constructing the orchestrator.
+
+    The Agent service is often launched with ``--app-dir`` from the repository
+    root, but ``uvicorn`` does not load ``.env`` by itself. Without this step a
+    restart silently drops ``RAG_SERVICE_BASE_URL`` and falls back to the demo
+    index even though the project is configured for the remote RAG service.
+    """
+
+    if load_dotenv is None:
+        return
+    project_root = Path(__file__).resolve().parents[4]
+    load_dotenv(project_root / ".env", override=False)
+
+
+_load_project_env()
 
 
 class UserQuestionRequest(BaseModel):

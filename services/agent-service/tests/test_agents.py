@@ -2,6 +2,7 @@ import sys
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -16,12 +17,26 @@ from app.experience import ExperienceLearningModule
 from app.graph import build_orchestrator
 from app.tools.registry import ToolRegistry
 from app.workorder import WorkOrderService
-from app.rag import RAGIndex
+from app.rag import RAGIndex, RAGServiceClient
 
 
 class MissingKeyClient:
     available = False
     model = "deepseek-chat"
+
+
+class FakeHTTPResponse:
+    def __init__(self, payload):
+        self.payload = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self):
+        return self.payload
 
 
 class AllAgentTests(unittest.TestCase):
@@ -357,6 +372,24 @@ class AllAgentTests(unittest.TestCase):
         self.assertEqual(document["document_id"], "ALARM-700223")
         self.assertEqual(document["metadata"]["alarm_code"], "700223")
         self.assertEqual(document["metadata"]["collection"], "maint_fault_events")
+
+    def test_remote_rag_status_reports_connected_but_degraded_components(self):
+        health = {
+            "milvus": True,
+            "whoosh": True,
+            "embedding": True,
+            "reranker": False,
+            "llm": True,
+        }
+        client = RAGServiceClient(base_url="http://rag-service")
+
+        with patch("app.rag.client.urlopen", return_value=FakeHTTPResponse(health)):
+            result = client.status()
+
+        self.assertTrue(result["connected"])
+        self.assertTrue(result["degraded"])
+        self.assertEqual(result["connection_status"], "connected")
+        self.assertFalse(result["reranker"])
 
     def test_rag_jsonl_ingest_and_filter(self):
         index = RAGIndex()

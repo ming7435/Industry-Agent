@@ -179,9 +179,13 @@ class RAGServiceClient:
                 result = self._get("/health")
                 result.setdefault("backend", "remote-rag-service")
                 result["connected"] = True
-                result["degraded"] = False
                 result["connection_status"] = "connected"
                 result["remote_base_url"] = self.base_url
+                # HTTP connectivity and dependency readiness are separate
+                # concerns. A remote service can be reachable while one of its
+                # optional stages (for example the reranker) is unavailable.
+                component_keys = ("milvus", "whoosh", "embedding", "reranker", "llm")
+                result["degraded"] = not all(bool(result.get(key)) for key in component_keys)
                 return result
             except Exception as error:
                 if not self.allow_fallback:

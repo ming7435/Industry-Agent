@@ -137,8 +137,14 @@ class Settings(BaseSettings):
     llm_timeout_ms: int = 30000
     """Budget of the DeepSeek generation call."""
 
-    health_probe_timeout_ms: int = 500
-    """Budget of a single dependency probe used by ``GET /health``."""
+    health_probe_timeout_ms: int = 3000
+    """Budget of a single dependency probe used by ``GET /health``.
+
+    The first Milvus readiness probe may include client creation and collection
+    discovery. A 500ms budget caused a healthy local Milvus instance to be
+    reported as unavailable on a cold process, so the default is deliberately
+    above the local connection/discovery latency.
+    """
 
     # ------------------------------------------------------------------
     # Models
