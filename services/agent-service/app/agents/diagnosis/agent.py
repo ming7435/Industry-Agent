@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from . import evidence, parsing, tool_policy, validator
 from .dedup import DiagnosisRunCache
+from .graph import build_diagnosis_graph
 from .prompt import build_diagnosis_messages
 from .schemas import (
     AgentStatus,
@@ -148,8 +149,6 @@ class DiagnosisAgent:
         )
 
         try:
-            from app.graph import build_diagnosis_graph
-
             graph = build_diagnosis_graph()
             output = graph.invoke({
                 "agent": self,

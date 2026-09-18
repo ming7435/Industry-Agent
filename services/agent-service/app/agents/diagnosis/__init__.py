@@ -2,6 +2,7 @@
 
 from .agent import DiagnosisAgent
 from .dedup import DiagnosisRunCache
+from .graph import build_diagnosis_graph
 from .schemas import AgentStatus, DiagnosisResult, DiagnosisState
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "DiagnosisResult",
     "DiagnosisState",
     "DiagnosisRunCache",
+    "build_diagnosis_graph",
 ]

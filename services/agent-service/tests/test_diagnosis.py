@@ -9,7 +9,7 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from app.agents.diagnosis import DiagnosisAgent, DiagnosisRunCache
+from app.agents.diagnosis import DiagnosisAgent, DiagnosisRunCache, build_diagnosis_graph
 from app.agents.diagnosis.tool_policy import requires_history, select_skill
 from app.mcp.registry import LocalMcpToolRegistry
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
@@ -440,6 +440,9 @@ class DiagnosisAgentTests(unittest.TestCase):
         self.assertEqual(payload["triggered_at"], "2026-09-15T10:00:05")
         self.assertEqual(payload["event_revision"], 2)
         self.assertEqual(payload["trigger_cause"], "故障等级升级")
+
+    def test_diagnosis_graph_belongs_to_diagnosis_agent_module(self):
+        self.assertEqual(build_diagnosis_graph.__module__, "app.agents.diagnosis.graph")
 
 
 if __name__ == "__main__":
