@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-DEFAULT_COLLECTION_NAME = "industry_rag_chunks"
+DEFAULT_COLLECTION_NAME = "industry_rag_alarm_codes"
 DEFAULT_VECTOR_FIELD = "vector"
 DEFAULT_PRIMARY_FIELD = "id"
 DEFAULT_METRIC_TYPE = "COSINE"

@@ -7,8 +7,8 @@ without re-parsing the manuals.
 
 Usage::
 
-    python scripts/build_whoosh_index.py
-    python scripts/build_whoosh_index.py --collection industry_rag_chunks
+    python scripts/build_whoosh_index.py --all-configured
+    python scripts/build_whoosh_index.py --collection industry_rag_alarm_codes
     python scripts/build_whoosh_index.py --index-dir data/index/whoosh
 """
 
@@ -24,7 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from loguru import logger
 
-from app.whoosh import build_index, count_documents
+from app.whoosh import build_index, count_documents, index_dir_for_collection
 
 from config.settings import settings
 
@@ -34,6 +34,9 @@ OUTPUT_FIELDS: tuple[str, ...] = (
     "source_name",
     "source_path",
     "source_format",
+    "corpus",
+    "device_model",
+    "error_code",
     "chunk_type",
     "quality",
     "metadata_json",
@@ -115,44 +118,116 @@ def rebuild(
     index_dir: str | None = None,
     uri: str | None = None,
     database: str | None = None,
+    *,
+    append: bool = False,
 ) -> int:
     """Rebuild the BM25 index from Milvus.
 
     Args:
         collection_name: Source collection; defaults to
             ``settings.milvus_collection``.
-        index_dir: Target index directory; defaults to
-            ``settings.whoosh_index_dir``.
+        index_dir: Base Whoosh directory; the collection index is written under
+            ``index_dir/<collection_name>``.
         uri: Milvus URI; defaults to ``settings.milvus_uri``.
 
     Returns:
         The number of indexed documents.
     """
     target_collection = collection_name or settings.milvus_collection
+    target_index_dir = index_dir_for_collection(
+        index_dir or settings.whoosh_index_dir,
+        target_collection,
+    )
     rows = iter_collection_rows(target_collection, uri, database)
     if not rows:
         logger.warning("collection={} is empty, nothing to index", target_collection)
         return 0
 
-    written = build_index(rows, index_dir, recreate=True)
+    written = build_index(rows, target_index_dir, recreate=not append)
     logger.info(
-        "whoosh index rebuilt dir={} documents={}",
-        index_dir or settings.whoosh_index_dir,
+        "whoosh index rebuilt collection={} dir={} documents={}",
+        target_collection,
+        target_index_dir,
         written,
     )
     return written
 
 
+def rebuild_all_configured(
+    index_dir: str | None = None,
+    uri: str | None = None,
+    database: str | None = None,
+    *,
+    append: bool = False,
+) -> dict[str, int]:
+    """Rebuild BM25 indexes for every configured typed collection."""
+
+    results: dict[str, int] = {}
+    for collection_name in settings.milvus_search_collections:
+        try:
+            results[collection_name] = rebuild(
+                collection_name,
+                index_dir,
+                uri,
+                database,
+                append=append,
+            )
+        except RuntimeError as exc:
+            logger.warning("skip collection={} reason={}", collection_name, exc)
+            results[collection_name] = 0
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Rebuild the Whoosh BM25 index from Milvus.")
     parser.add_argument("--collection", default=settings.milvus_collection)
-    parser.add_argument("--index-dir", default=settings.whoosh_index_dir)
+    parser.add_argument("--index-dir", default=None)
     parser.add_argument("--milvus-uri", default=settings.milvus_uri)
     parser.add_argument("--milvus-database", default=settings.milvus_database)
+    parser.add_argument(
+        "--all-configured",
+        action="store_true",
+        help="Rebuild one Whoosh sub-index per collection in MILVUS_COLLECTIONS.",
+    )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Update the existing Whoosh index instead of recreating it.",
+    )
     args = parser.parse_args()
 
-    written = rebuild(args.collection, args.index_dir, args.milvus_uri, args.milvus_database)
-    print(f"Whoosh index rebuilt: documents={written} total={count_documents(args.index_dir)}")
+    if args.all_configured:
+        results = rebuild_all_configured(
+            args.index_dir,
+            args.milvus_uri,
+            args.milvus_database,
+            append=args.append,
+        )
+        total = sum(results.values())
+        for collection_name, written in results.items():
+            index_dir = index_dir_for_collection(
+                args.index_dir or settings.whoosh_index_dir,
+                collection_name,
+            )
+            print(
+                f"Whoosh index rebuilt: collection={collection_name} "
+                f"documents={written} total={count_documents(index_dir)}"
+            )
+        print(f"Whoosh indexes rebuilt: collections={len(results)} documents={total}")
+        return 0
+
+    target_index_dir = index_dir_for_collection(
+        args.index_dir or settings.whoosh_index_dir,
+        args.collection,
+    )
+    written = rebuild(
+        args.collection,
+        args.index_dir,
+        args.milvus_uri,
+        args.milvus_database,
+        append=args.append,
+    )
+    print(f"Whoosh index rebuilt: collection={args.collection} documents={written} total={count_documents(target_index_dir)}")
     return 0
 
 

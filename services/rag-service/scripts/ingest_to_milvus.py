@@ -2,15 +2,13 @@
 
 Pipeline:
 Supported files -> StructuredDocument -> CleanedBlock -> IndustrialChunk ->
-VectorRecord -> Milvus collection.
+VectorRecord -> typed Milvus collections + MySQL manifest + Whoosh BM25 index.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import logging
-import re
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -31,15 +29,23 @@ from app.ingestion import (
 )
 from app.milvus import MilvusConfig, MilvusVectorWriter
 from app.mysql import MySQLConfig, MySQLRagWriter, MySQLWriteError
-from app.storage import ObjectStorageClient, ObjectStorageConfig, ObjectStorageError
+from app.storage import ObjectStorageClient, ObjectStorageConfig
+from app.whoosh import build_index, delete_documents, index_dir_for_collection
+from config.settings import settings
 
 
-# 默认读取项目 data/ 目录（递归扫描其分类子目录：alarms / sop / manuals / cases / index 等）。
-# 之后新增数据只需丢进对应的分类子目录，直接运行本脚本即可入库。
-DEFAULT_DATA_DIR = Path("data")
-ADMIN_COLLECTION = "industry_rag_chunks"
+# 默认读取项目 data/ 目录（递归扫描其分类子目录：alarms / cases / manuals / sop / cad 等）。
+# 标准离线管道按项目数据类型分 Milvus collection，避免仅依赖不完整 metadata 过滤。
+DEFAULT_DATA_DIR = Path(settings.rag_data_dir)
 LOGGER = logging.getLogger("rag_offline_ingest")
-COLLECTION_NAME_BY_KEYWORD = {
+COLLECTION_BY_DATA_TYPE = {
+    "alarms": "industry_rag_alarm_codes",
+    "cases": "industry_rag_alarm_solutions",
+    "manuals": "industry_rag_manuals",
+    "sop": "industry_rag_sop",
+    "cad": "industry_rag_drawings",
+}
+COLLECTION_BY_KEYWORD = {
     "BOM": "industry_rag_bom",
     "SOP": "industry_rag_sop",
     "保养维护": "industry_rag_maintenance",
@@ -49,26 +55,42 @@ COLLECTION_NAME_BY_KEYWORD = {
 }
 
 
-def collection_name_for_document(path: Path, *, prefix: str = "industry_rag") -> str:
-    """Build a stable Milvus collection name from a document filename."""
+def collection_name_for_document(path: Path, *, prefix: str = "industry_rag", data_root: Path | None = None) -> str:
+    """Return the typed Milvus collection for a source document.
 
-    for keyword, collection_name in COLLECTION_NAME_BY_KEYWORD.items():
-        if keyword in path.stem:
+    The directory under ``data/`` is authoritative. Filename keywords are a
+    secondary refinement for manual-like corpora where BOM/SOP/maintenance files
+    may share a directory.
+    """
+
+    root = Path(data_root or DEFAULT_DATA_DIR)
+    try:
+        relative = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        relative = path
+    parts = [part.lower() for part in relative.parts]
+    for part in parts[:-1]:
+        if part in COLLECTION_BY_DATA_TYPE:
+            if part == "manuals":
+                for keyword, collection_name in COLLECTION_BY_KEYWORD.items():
+                    if keyword.lower() in path.stem.lower():
+                        return collection_name
+            return COLLECTION_BY_DATA_TYPE[part]
+    for keyword, collection_name in COLLECTION_BY_KEYWORD.items():
+        if keyword.lower() in path.stem.lower():
             return collection_name
-
-    normalized = re.sub(r"[^0-9A-Za-z_]+", "_", path.stem).strip("_").lower()
-    normalized = re.sub(r"_+", "_", normalized) or "document"
-    if normalized[0].isdigit():
-        normalized = f"doc_{normalized}"
-    extension = path.suffix.lower().lstrip(".") or "file"
-    path_digest = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:10]
-    return f"{prefix}_{normalized}_{extension}_{path_digest}"
+    return settings.milvus_collection or f"{prefix}_chunks"
 
 
-def collection_name_for_pdf(pdf_path: Path, *, prefix: str = "industry_rag") -> str:
+def collection_name_for_pdf(
+    pdf_path: Path,
+    *,
+    prefix: str = "industry_rag",
+    data_root: Path | None = None,
+) -> str:
     """Backward-compatible alias for the former PDF-only API."""
 
-    return collection_name_for_document(pdf_path, prefix=prefix)
+    return collection_name_for_document(pdf_path, prefix=prefix, data_root=data_root)
 
 
 def _normalize_extensions(extensions: Iterable[str] | None) -> set[str] | None:
@@ -100,10 +122,14 @@ def _supported_files(data_dir: Path, extensions: Iterable[str] | None = None) ->
 def ingest_directory(
     data_dir: Path = DEFAULT_DATA_DIR,
     *,
-    milvus_uri: str = "http://localhost:19530",
-    milvus_database: str = "industry_rag_documents",
+    milvus_uri: str = settings.milvus_uri,
+    milvus_database: str = settings.milvus_database,
+    milvus_collection: str = settings.milvus_collection,
+    whoosh_index_dir: str | Path | None = settings.whoosh_index_dir,
     extensions: Sequence[str] | None = None,
     drop_all_collections: bool = False,
+    drop_collection: bool = False,
+    build_whoosh: bool = True,
     use_vision: bool = False,
     use_local_ocr: bool = False,
     embedding_model: str = "BAAI/bge-m3",
@@ -127,6 +153,9 @@ def ingest_directory(
     if not paths:
         supported = ", ".join(sorted(_normalize_extensions(extensions) or SUPPORTED_EXTENSIONS))
         raise FileNotFoundError(f"No supported files found in {data_dir}. Supported: {supported}")
+    if skip_unchanged and (drop_all_collections or drop_collection):
+        LOGGER.warning("skip_unchanged disabled because the target vector store is being rebuilt.")
+        skip_unchanged = False
 
     image_describer = None
     if use_vision and use_local_ocr:
@@ -142,18 +171,44 @@ def ingest_directory(
     embed_config = EmbeddingConfig(
         model_name=embedding_model,
         batch_size=embedding_batch_size,
+        min_characters=settings.embedding_min_characters,
+        normalize_embeddings=settings.embedding_normalize,
+        expected_dimension=settings.embedding_dim,
     )
     chunk_config = ChunkerConfig(
         max_characters=chunk_max_characters,
         overlap_characters=chunk_overlap_characters,
     )
     embed_client = SiliconFlowEmbeddingClient(model=embed_config.model_name)
-    if drop_all_collections:
-        admin_writer = MilvusVectorWriter(
-            MilvusConfig(uri=milvus_uri, database=milvus_database, collection_name=ADMIN_COLLECTION)
+    writers: dict[str, MilvusVectorWriter] = {}
+
+    def writer_for(collection_name: str) -> MilvusVectorWriter:
+        writer = writers.get(collection_name)
+        if writer is not None:
+            return writer
+        writer = MilvusVectorWriter(
+            MilvusConfig(
+                uri=milvus_uri,
+                database=milvus_database,
+                collection_name=collection_name,
+                vector_field=settings.milvus_vector_field,
+                primary_field=settings.milvus_primary_field,
+                metric_type=settings.milvus_metric_type,
+                index_type=settings.milvus_index_type,
+                batch_size=settings.milvus_batch_size,
+            )
         )
-        dropped = admin_writer.drop_all_collections()
-        LOGGER.warning("Dropped collections: %s", dropped)
+        writers[collection_name] = writer
+        return writer
+
+    if drop_all_collections:
+        dropped = writer_for(milvus_collection).drop_all_collections()
+        LOGGER.warning("Dropped all Milvus collections: %s", dropped)
+    elif drop_collection:
+        target_collections = sorted({collection_name_for_document(path, data_root=data_dir) for path in paths})
+        for collection_name in target_collections:
+            dropped = writer_for(collection_name).drop_collection()
+            LOGGER.warning("Dropped Milvus collection %s: %s", collection_name, dropped)
 
     mysql_writer: MySQLRagWriter | None = None
     if mysql_enabled:
@@ -181,13 +236,16 @@ def ingest_directory(
     created_collections: set[str] = set()
     format_counts: dict[str, int] = {}
     failed_files = 0
+    recreate_whoosh_collections = (
+        set(collection_name_for_document(path, data_root=data_dir) for path in paths)
+        if drop_all_collections or drop_collection
+        else set()
+    )
 
     try:
         for path in paths:
-            target_collection = collection_name_for_document(path)
-            writer = MilvusVectorWriter(
-                MilvusConfig(uri=milvus_uri, database=milvus_database, collection_name=target_collection)
-            )
+            target_collection = collection_name_for_document(path, data_root=data_dir)
+            writer = writer_for(target_collection)
             LOGGER.info("Parsing: %s", path)
             LOGGER.info("Target collection: %s", target_collection)
             document_id: str | None = None
@@ -305,10 +363,24 @@ def ingest_directory(
                     created_collections.add(target_collection)
                     inserted = writer.insert_records(records)
                     total_inserted += inserted
+                    if build_whoosh and whoosh_index_dir:
+                        target_index_dir = index_dir_for_collection(whoosh_index_dir, target_collection)
+                        recreate_whoosh = target_collection in recreate_whoosh_collections
+                        build_index(
+                            records,
+                            target_index_dir,
+                            recreate=recreate_whoosh,
+                        )
+                        recreate_whoosh_collections.discard(target_collection)
                 if previous_chunk_ids and writer.has_collection():
                     current_chunk_ids = {record.chunk_id for record in records}
                     stale_ids = previous_chunk_ids - current_chunk_ids
                     stale_deleted = writer.delete_records(stale_ids)
+                    if build_whoosh and whoosh_index_dir:
+                        delete_documents(
+                            stale_ids,
+                            index_dir_for_collection(whoosh_index_dir, target_collection),
+                        )
                     total_stale_deleted += stale_deleted
                 if mysql_writer is not None:
                     mysql_writer.replace_chunks(
@@ -366,8 +438,10 @@ def ingest_directory(
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Ingest industrial documents into Milvus.")
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--milvus-uri", default="http://localhost:19530")
-    parser.add_argument("--milvus-database", default="industry_rag_documents")
+    parser.add_argument("--milvus-uri", default=settings.milvus_uri)
+    parser.add_argument("--milvus-database", default=settings.milvus_database)
+    parser.add_argument("--milvus-collection", default=settings.milvus_collection)
+    parser.add_argument("--whoosh-index-dir", default=settings.whoosh_index_dir)
     parser.add_argument(
         "--extensions",
         default=None,
@@ -376,7 +450,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--drop-all-collections",
         action="store_true",
-        help="Drop every existing Milvus collection before inserting.",
+        help="Drop every existing Milvus collection before inserting. Use only for disposable local stores.",
+    )
+    parser.add_argument(
+        "--drop-collection",
+        action="store_true",
+        help="Drop the typed Milvus collections touched by --data-dir and recreate their Whoosh sub-indexes on first write.",
+    )
+    parser.add_argument(
+        "--no-whoosh",
+        action="store_true",
+        help="Skip updating the Whoosh BM25 index during ingestion.",
     )
     parser.add_argument(
         "--vision",
@@ -445,8 +529,12 @@ def main() -> int:
         args.data_dir,
         milvus_uri=args.milvus_uri,
         milvus_database=args.milvus_database,
+        milvus_collection=args.milvus_collection,
+        whoosh_index_dir=args.whoosh_index_dir,
         extensions=extensions,
         drop_all_collections=args.drop_all_collections,
+        drop_collection=args.drop_collection,
+        build_whoosh=not args.no_whoosh,
         use_vision=args.vision,
         use_local_ocr=args.local_ocr,
         embedding_model=args.embedding_model,

@@ -6,6 +6,7 @@ import json
 from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
+from app.corpus import infer_corpus, infer_device_model
 from app.embedding import VectorRecord
 
 from .schema import MilvusConfig
@@ -30,6 +31,18 @@ class MilvusVectorWriter:
             self.client.drop_collection(collection_name)
             dropped.append(collection_name)
         return dropped
+
+    def drop_collection(self) -> bool:
+        """Drop only the configured collection.
+
+        Returns:
+            ``True`` when a collection existed and was dropped.
+        """
+
+        if not self.client.has_collection(self.config.collection_name):
+            return False
+        self.client.drop_collection(self.config.collection_name)
+        return True
 
     def has_collection(self) -> bool:
         """Return whether the configured collection exists."""
@@ -74,6 +87,9 @@ class MilvusVectorWriter:
         schema.add_field(field_name="source_name", datatype=self._data_type().VARCHAR, max_length=512)
         schema.add_field(field_name="source_path", datatype=self._data_type().VARCHAR, max_length=2048)
         schema.add_field(field_name="source_format", datatype=self._data_type().VARCHAR, max_length=32)
+        schema.add_field(field_name="corpus", datatype=self._data_type().VARCHAR, max_length=64)
+        schema.add_field(field_name="device_model", datatype=self._data_type().VARCHAR, max_length=128)
+        schema.add_field(field_name="error_code", datatype=self._data_type().VARCHAR, max_length=128)
         schema.add_field(field_name="drawing_id", datatype=self._data_type().VARCHAR, max_length=128)
         schema.add_field(field_name="version_id", datatype=self._data_type().VARCHAR, max_length=128)
         schema.add_field(field_name="entity_id", datatype=self._data_type().VARCHAR, max_length=128)
@@ -152,6 +168,17 @@ class MilvusVectorWriter:
         return int(row_count)
 
     def _record_to_row(self, record: VectorRecord) -> dict[str, Any]:
+        corpus = str(record.metadata.get("corpus") or infer_corpus(
+            source_name=record.source_name,
+            source_path=record.source_path,
+            metadata=record.metadata,
+        ))
+        device_model = str(
+            record.metadata.get("device_model")
+            or infer_device_model(record.source_name, record.source_path)
+            or ""
+        )
+        error_code = str(record.metadata.get("error_code") or record.metadata.get("alarm_code") or "")
         return {
             self.config.primary_field: record.id,
             "chunk_id": record.chunk_id,
@@ -159,6 +186,9 @@ class MilvusVectorWriter:
             "source_name": record.source_name or "",
             "source_path": record.source_path or "",
             "source_format": record.source_format or "",
+            "corpus": corpus,
+            "device_model": device_model,
+            "error_code": error_code,
             "drawing_id": record.drawing_id or "",
             "version_id": record.version_id or "",
             "entity_id": record.entity_id or "",
@@ -212,6 +242,9 @@ class MilvusVectorWriter:
             "source_name",
             "source_path",
             "source_format",
+            "corpus",
+            "device_model",
+            "error_code",
             "drawing_id",
             "version_id",
             "entity_id",

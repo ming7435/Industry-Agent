@@ -29,7 +29,7 @@
 - 扫描页
 - 多栏排版
 
-因此，本流程不是简单地把 PDF 按固定长度切开，而是采用“结构化解析 + 清洗 + 结构感知语义切块 + 本地向量化 + Milvus 分库入库”的方式，尽量保留工业文档中的结构、语义和来源信息。
+因此，本流程不是简单地把 PDF 按固定长度切开，而是采用“结构化解析 + 清洗 + 结构感知语义切块 + BGE-M3 向量化 + 按业务类型拆分 Milvus collection + Whoosh BM25 同步分索引”的方式，尽量保留工业文档中的结构、语义和来源信息。
 
 完整链路如下：
 
@@ -532,12 +532,20 @@ BGE-M3 适合本项目的原因：
 
 ### 10.2 逻辑说明
 
-Milvus 入库层负责创建 collection、写入向量记录、flush 数据，并支持删除旧 collection 后重建。
+Milvus 入库层负责按业务类型创建 collection、写入向量记录、flush 数据，并支持删除目标 typed collection 后重建。
 
-当前固定按文档写入独立 collection：文件名命中业务关键词时路由到对应业务 collection，其他文件生成带格式和路径摘要的独立 collection。
+当前标准工业离线管道按项目数据目录进行物理分库：报警码、案例、手册、SOP、CAD/图纸等不会堆到同一个 collection 中。`corpus`、`source_name`、`source_format`、`device_model`、`project_id`、`tenant_id`、`device_id`、`error_code` 等字段仍会写入 Milvus，但它们只作为二次过滤和证据展示补充，不作为唯一隔离手段。
 
 ```text
-六个 PDF -> 六个 Milvus collection
+data/alarms  -> industry_rag_alarm_codes
+
+data/cases   -> industry_rag_alarm_solutions
+
+data/manuals -> industry_rag_manuals（文件名包含 BOM/SOP/保养维护/安全规程/故障诊断时细分到对应 collection）
+
+data/sop     -> industry_rag_sop
+
+data/cad     -> industry_rag_drawings
 ```
 
 ### 10.3 使用的方法
@@ -556,6 +564,14 @@ schema 字段包括：
 - `chunk_id`
 - `text`
 - `source_name`
+- `source_path`
+- `source_format`
+- `corpus`
+- `device_model`
+- `error_code`
+- `project_id`
+- `tenant_id`
+- `device_id`
 - `page_numbers_json`
 - `chunk_type`
 - `quality`
@@ -565,45 +581,38 @@ schema 字段包括：
 - `metadata_json`
 - `vector`
 
-### 10.4 六个 collection 对应关系
+### 10.4 业务域隔离方式
 
-固定按文档分 collection 后，collection 数量由实际文件数量决定。文件名中包含
-BOM、SOP、保养维护、安全规程、报警码、故障诊断时，会路由到对应业务 collection；
-其他文件会生成带格式和路径摘要的独立 collection。
+在线检索优先通过 collection 物理隔离业务域，再在 collection 内使用 metadata 字段细化过滤：
 
-| 文档类型 | Collection |
-| --- | --- |
-| BOM 数据 | `industry_rag_bom` |
-| SOP 数据 | `industry_rag_sop` |
-| 保养维护数据 | `industry_rag_maintenance` |
-| 安全规程数据 | `industry_rag_safety_rules` |
-| 报警码数据 | `industry_rag_alarm_codes` |
-| 故障诊断数据 | `industry_rag_troubleshooting` |
+| 文档类型 | 目标 collection | 辅助过滤字段 |
+| --- | --- | --- |
+| 报警码数据 | `industry_rag_alarm_codes` | `error_code` / `device_model` |
+| 报警处理案例 | `industry_rag_alarm_solutions` | `corpus=cases` / `device_model` |
+| 普通手册 | `industry_rag_manuals` | `corpus=manuals` / `source_name` |
+| BOM 数据 | `industry_rag_bom` | `source_name` / `chunk_type` |
+| SOP 数据 | `industry_rag_sop` | `corpus=sop` |
+| 保养维护数据 | `industry_rag_maintenance` | `device_model` / `source_name` |
+| 安全规程数据 | `industry_rag_safety_rules` | `source_name` / `quality` |
+| 故障诊断数据 | `industry_rag_troubleshooting` | `error_code` / `device_model` |
+| CAD / 图纸 | `industry_rag_drawings` | `project_id` / `device_id` / `chunk_type` |
 
-### 10.5 为什么按 PDF 分 collection
+### 10.5 为什么采用类型分库
 
-按文档类型分 collection 的好处：
+类型分库的好处：
 
-- 查询时可以按业务类型直接选择 collection
-- BOM、SOP、报警码、故障诊断互不干扰
-- 不同类型文档可以配置不同检索策略
-- 后续可以单独重建某一类知识库
-- 数据量增长后更容易管理和排查
-
-例如：
-
-- 查报警码时只检索 `industry_rag_alarm_codes`
-- 查维修步骤时优先检索 `industry_rag_sop`
-- 查故障原因时检索 `industry_rag_troubleshooting`
-- 查零件结构时检索 `industry_rag_bom`
+- 避免在元数据不完整时仅靠过滤条件隔离业务域导致误召回
+- Milvus 中的 collection 与项目数据目录一一对应，便于运维观察和重建
+- 报警、案例、手册、SOP、BOM、CAD 等数据可以独立 drop / rebuild
+- 在线 dense 与 BM25 都按同一组 typed collection fan-out 后合并结果
+- metadata 继续用于租户、项目、设备、报警码等精细筛选，而不是承担全部隔离职责
 
 ### 10.6 好处
 
-- Milvus schema 稳定，便于检索服务复用
-- 支持删除旧库后完整重建
+- Milvus schema 稳定，各 typed collection 复用同一字段定义
+- 支持删除目标 collection 后完整重建
 - 支持批量写入和 flush
-- 支持按 PDF 类型拆分知识库
-- 支持后续 top_k 检索、过滤、rerank 和证据链展示
+- 支持 metadata 过滤、top_k 检索、rerank 和证据链展示
 
 ## 11. MySQL 元数据入库层
 
@@ -653,14 +662,15 @@ MySQL processing
   -> parse_document / DocumentSource
   -> build_chunks
   -> embed_chunks
-  -> create/reuse Milvus collection
+  -> create/reuse typed Milvus collection
   -> Milvus upsert
   -> MySQL 文档和 chunk upsert
+  -> Whoosh collection 子索引更新
 ```
 
 ### 11.3 常用命令
 
-按六个 PDF 分别创建六个 collection：
+按数据目录和业务类型创建 typed collection：
 
 ```bash
 python scripts/ingest_to_milvus.py \
@@ -731,15 +741,13 @@ python -m pytest tests
 
 测试覆盖文件读取、多格式解析、DXF 实体字段、清洗、切块、Embedding、对象存储客户端、MySQL 文档/chunk 双写、CAD 元数据写入和 Milvus 字段扁平化。真实 MinIO、MySQL、Milvus 服务仍需在部署环境中执行端到端验证。
 
-Milvus 最终验证结果：
+Milvus 标准验证结果应按业务类型分布到多个 collection：
 
 ```text
-industry_rag_alarm_codes: 757
-industry_rag_bom: 299
-industry_rag_maintenance: 88
-industry_rag_safety_rules: 24
-industry_rag_sop: 303
-industry_rag_troubleshooting: 101
+industry_rag_alarm_codes: <alarm_code_vector_records>
+industry_rag_alarm_solutions: <case_vector_records>
+industry_rag_manuals / industry_rag_bom / industry_rag_sop / ...: <manual_vector_records>
+industry_rag_drawings: <cad_vector_records>
 ```
 
 ### 12.4 好处

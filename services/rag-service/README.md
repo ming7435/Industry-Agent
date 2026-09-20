@@ -5,26 +5,29 @@ One service, two halves that share a single configuration file
 
 | half | what it does | entry point |
 | --- | --- | --- |
-| **offline** | parse -> clean -> chunk -> embed (SiliconFlow BGE-M3) -> write Milvus + MySQL + Whoosh | `scripts/ingest_to_milvus.py`, `scripts/build_whoosh_index.py` |
+| **offline** | parse -> clean -> chunk -> embed (SiliconFlow BGE-M3) -> write typed Milvus collections + MySQL manifest + Whoosh BM25 index | `scripts/ingest_to_milvus.py`, `scripts/build_whoosh_index.py` |
 | **online** | BM25 + dense retrieval -> RRF fusion -> SiliconFlow rerank -> evidence & citations -> DeepSeek generation | `app/main.py` (`uvicorn app.main:app`) |
 
 The online half adapts to the data the offline half already produces -- no
 schema change, no re-ingestion:
 
-* the same Milvus collections derived by the offline writer (for example
-  `industry_rag_bom`, `industry_rag_sop`, `industry_rag_alarm_codes`);
+* typed Milvus collections derived from the project data layout (for example
+  `data/alarms` -> `industry_rag_alarm_codes`, `data/sop` -> `industry_rag_sop`,
+  `data/cad` -> `industry_rag_drawings`), with metadata columns used only as a
+  refinement layer;
 * the same embedder factory (`app.embedding.model.get_embedder`), so documents and
   queries share one set of weights;
 * the corpus label (`alarms` / `cases` / `manuals` / `sop`) is **derived at read
   time** by `app/corpus.py` from `source_name` / `source_path` / `metadata_json`,
   so even a collection ingested before this code existed is grouped correctly;
-* the BM25 index is built from the same rows (`scripts/build_whoosh_index.py`).
+* the BM25 index is built from the same rows, one Whoosh sub-index per typed
+  collection (`scripts/build_whoosh_index.py`).
 
 ```
 documents (PDF/DOCX/XLSX/CSV/TXT/MD/images/CAD)
         │  app.ingestion → app.clean → app.chunk → app.embedding
-        ├──────────────► Milvus  collections ─► dense route  (app.milvus.retriever)
-        ├──────────────► Whoosh  index       ──► BM25  route  (app.whoosh.retriever)
+        ├──────────────► Milvus  typed collections ─► dense route  (app.milvus.retriever)
+        ├──────────────► Whoosh  typed indexes      ─► BM25  route  (app.whoosh.retriever)
         └──────────────► MySQL   metadata    ──► ingestion bookkeeping
                                                   │
         query ──► BM25 ┐                          │
@@ -63,32 +66,44 @@ cp .env.example .env      # then fill in SILICONFLOW_API_KEY, DEEPSEEK_API_KEY a
 ## Offline: build the indexes
 
 ```bash
-# 1) parse + embed + write Milvus, MySQL and the Whoosh BM25 index
-python scripts/ingest_to_milvus.py --data-dir data/SHUJU
+# 1) parse + embed + write typed Milvus collections, MySQL manifest,
+#    and matching Whoosh BM25 sub-indexes. Values default from .env.
+python scripts/ingest_to_milvus.py
 
-# 2) only rebuild the BM25 index (e.g. after ingesting with --no-whoosh)
-python scripts/build_whoosh_index.py
+# 2) rebuild the typed vector collections from scratch; this also recreates
+#    each collection's Whoosh sub-index on first successful document write.
+python scripts/ingest_to_milvus.py --drop-collection
+
+# 3) only rebuild BM25 indexes from existing Milvus collections
+python scripts/build_whoosh_index.py --all-configured
+python scripts/build_whoosh_index.py --collection industry_rag_alarm_codes
+python scripts/build_whoosh_index.py --index-dir data/index/whoosh  # base dir; writes data/index/whoosh/<collection>
 
 # useful flags
+python scripts/ingest_to_milvus.py --data-dir data/SHUJU
 python scripts/ingest_to_milvus.py --vision            # Qwen-VL for images / scanned pages
+python scripts/ingest_to_milvus.py --local-ocr         # local OCR instead of Qwen-VL
 python scripts/ingest_to_milvus.py --no-mysql          # skip MySQL bookkeeping
-python scripts/ingest_to_milvus.py --drop-all-collections
+python scripts/ingest_to_milvus.py --no-whoosh         # skip BM25 index updates
+python scripts/ingest_to_milvus.py --drop-all-collections  # local disposable stores only
 ```
 
-Offline ingestion always writes each document to its derived Milvus collection. Set
-`MILVUS_COLLECTIONS=<name1>,<name2>,...` on the online side to query multiple
-collections in one dense search.
+Offline ingestion writes each supported document into a typed Milvus collection
+based first on its project data directory, then on filename keywords for manual-like
+corpora. This keeps alarms, cases, SOP, BOM, CAD/drawings and manuals physically
+separated while still writing common metadata fields for optional filtering.
 
 ### How the online side reads the offline data
 
-Corpus labels (`alarms` / `cases` / `manuals` / `sop`) are **derived online**,
-not written offline: `app/corpus.py` looks at `metadata_json["corpus"]` first,
-then the parent directory of `source_path`, then a keyword in `source_name`
-(`..._报警码数据.pdf` -> `alarms`), then `DEFAULT_CORPUS`. The label lands in
-`hit.metadata["corpus"]` and is what the evidence layer groups citations by.
-Filters follow the same split: `source_name` / `source_format` / `chunk_type` /
-`quality` are real Milvus columns and are pushed down, `corpus` /
-`device_model` / `error_code` are applied in Python on the metadata.
+Corpus labels (`alarms` / `cases` / `manuals` / `sop`) are written during
+offline indexing when available and can still be **derived online** as a fallback:
+`app/corpus.py` looks at `metadata_json["corpus"]` first, then the parent directory
+of `source_path`, then a keyword in `source_name` (`..._报警码数据.pdf` ->
+`alarms`), then `DEFAULT_CORPUS`. The label lands in `hit.metadata["corpus"]` and
+is what the evidence layer groups citations by. Filters such as `source_name`,
+`source_format`, `corpus`, `device_model`, `error_code`, `project_id`, `tenant_id`,
+`device_id`, `chunk_type` and `quality` are pushed down to Milvus / Whoosh when the
+field exists; other metadata keys remain Python-side refinements.
 
 ## Online: run the API
 

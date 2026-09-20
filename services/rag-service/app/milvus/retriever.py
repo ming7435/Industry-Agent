@@ -44,14 +44,16 @@ STAGE_DENSE = "dense"
 _FILTERABLE_FIELDS: tuple[str, ...] = (
     "source_name",
     "source_format",
+    "corpus",
+    "device_model",
+    "error_code",
+    "project_id",
+    "tenant_id",
+    "device_id",
     "chunk_type",
     "quality",
 )
-"""Existing collection columns a filter can be pushed down to as an expression.
-
-``corpus`` / ``device_model`` / ``error_code`` are *not* columns: they live in
-``metadata_json`` and are applied in Python by :func:`_matches`.
-"""
+"""Existing collection columns a filter can be pushed down to as an expression."""
 
 _OUTPUT_FIELDS: tuple[str, ...] = (
     "chunk_id",
@@ -59,6 +61,12 @@ _OUTPUT_FIELDS: tuple[str, ...] = (
     "source_name",
     "source_path",
     "source_format",
+    "corpus",
+    "device_model",
+    "error_code",
+    "project_id",
+    "tenant_id",
+    "device_id",
     "page_numbers_json",
     "chunk_type",
     "quality",
@@ -177,7 +185,7 @@ def _hit_from_row(row: Any) -> Hit:
         except (TypeError, ValueError):
             pass
 
-    metadata["corpus"] = infer_corpus(
+    metadata["corpus"] = metadata.get("corpus") or infer_corpus(
         source_name=metadata.get("source_name"),
         source_path=metadata.get("source_path"),
         metadata=metadata,

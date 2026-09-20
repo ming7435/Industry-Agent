@@ -146,12 +146,14 @@ def _create_bm25() -> Any:
     """
     from app.whoosh.retriever import BM25Retriever
 
+    collection_names = settings.milvus_search_collections
     return _instantiate(
         BM25Retriever,
         {
             "index_dir": settings.whoosh_index_dir,
             "index_path": settings.whoosh_index_dir,
             "path": settings.whoosh_index_dir,
+            "collection_names": collection_names,
         },
         what="BM25Retriever",
     )

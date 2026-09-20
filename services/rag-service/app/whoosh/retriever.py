@@ -23,6 +23,7 @@ from app.retrieval import Hit, load_metadata_json, matches_metadata
 
 from config.settings import settings
 
+from .indexer import index_dir_for_collection
 from .schema import (
     FILTER_FIELDS,
     FIELD_CHUNK_ID,
@@ -51,22 +52,48 @@ class BM25Retriever:
         index_dir: str | None = None,
         index_path: str | None = None,
         path: str | None = None,
+        collection_names: list[str] | tuple[str, ...] | str | None = None,
     ) -> None:
-        """Store the index location, defaulting to the service settings.
+        """Store index locations, defaulting to the service settings.
 
         Args:
-            index_dir: Directory of the Whoosh index; defaults to
-                ``settings.whoosh_index_dir``. ``index_path`` and ``path`` are
-                accepted aliases so the dependency container can bind whichever
-                name it finds.
+            index_dir: Base Whoosh directory. When ``collection_names`` is given,
+                each collection is searched under ``index_dir/<collection>``.
             index_path: Alias of ``index_dir``.
             path: Alias of ``index_dir``.
+            collection_names: Typed Milvus collection names whose BM25 indexes
+                should be searched and merged. When omitted with no explicit index
+                directory, ``settings.milvus_search_collections`` is used; when an
+                explicit index directory is supplied, the historical single-index
+                layout remains available.
         """
+        explicit_index_dir = any(value is not None for value in (index_dir, index_path, path))
         self.index_dir = Path(index_dir or index_path or path or settings.whoosh_index_dir)
-        self._index: Any = None
+        if isinstance(collection_names, str):
+            self.collection_names = [
+                item.strip() for item in collection_names.split(",") if item.strip()
+            ]
+        elif collection_names:
+            self.collection_names = [str(item).strip() for item in collection_names if str(item).strip()]
+        elif explicit_index_dir:
+            self.collection_names = []
+        else:
+            self.collection_names = settings.milvus_search_collections
+        self._indexes: dict[Path, Any] = {}
 
-    def _get_index(self) -> Any:
-        """Open the index on first use and cache it.
+    @property
+    def index_dirs(self) -> list[Path]:
+        """Return concrete index directories searched by this retriever."""
+
+        if not self.collection_names:
+            return [self.index_dir]
+        return [index_dir_for_collection(self.index_dir, name) for name in self.collection_names]
+
+    def _get_index(self, index_dir: Path) -> Any:
+        """Open one index on first use and cache it.
+
+        Args:
+            index_dir: Concrete Whoosh index directory.
 
         Returns:
             The opened ``whoosh.index.FileIndex``.
@@ -74,19 +101,22 @@ class BM25Retriever:
         Raises:
             RuntimeError: If ``whoosh`` is missing or the index does not exist.
         """
-        if self._index is None:
-            try:
-                from whoosh import index as whoosh_index
-            except (ImportError, ModuleNotFoundError) as exc:
-                raise RuntimeError("whoosh is not installed") from exc
+        cached = self._indexes.get(index_dir)
+        if cached is not None:
+            return cached
+        try:
+            from whoosh import index as whoosh_index
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise RuntimeError("whoosh is not installed") from exc
 
-            if not whoosh_index.exists_in(str(self.index_dir)):
-                raise RuntimeError(
-                    f"whoosh index not built yet at {self.index_dir}; "
-                    "run scripts/build_whoosh_index.py"
-                )
-            self._index = whoosh_index.open_dir(str(self.index_dir))
-        return self._index
+        if not whoosh_index.exists_in(str(index_dir)):
+            raise RuntimeError(
+                f"whoosh index not built yet at {index_dir}; "
+                "run scripts/build_whoosh_index.py"
+            )
+        opened = whoosh_index.open_dir(str(index_dir))
+        self._indexes[index_dir] = opened
+        return opened
 
     def search(
         self,
@@ -117,57 +147,76 @@ class BM25Retriever:
         from whoosh.qparser import MultifieldParser, OrGroup
         from whoosh.query import And, Term
 
-        ix = self._get_index()
-        parser = MultifieldParser(list(TEXT_FIELDS), schema=ix.schema, group=OrGroup)
-
-        try:
-            parsed = parser.parse(query.strip())
-        except Exception as exc:  # noqa: BLE001 - a malformed query yields no hits
-            logger.warning("whoosh query parse failed error_type={}", type(exc).__name__)
-            return []
-
-        terms: list[Any] = [parsed]
-        remaining: dict[str, Any] = {}
-        for key, value in (filters or {}).items():
-            if value is None:
+        all_hits: list[Hit] = []
+        searched_dirs: list[str] = []
+        missing_dirs: list[str] = []
+        for index_dir in self.index_dirs:
+            try:
+                ix = self._get_index(index_dir)
+            except RuntimeError:
+                missing_dirs.append(str(index_dir))
                 continue
-            if key in FILTER_FIELDS:
-                terms.append(Term(key, str(value)))
-            else:
-                remaining[key] = value
+            searched_dirs.append(str(index_dir))
+            parser = MultifieldParser(list(TEXT_FIELDS), schema=ix.schema, group=OrGroup)
 
-        hits: list[Hit] = []
-        with ix.searcher() as searcher:
-            results = searcher.search(And(terms), limit=limit)
-            for position, result in enumerate(results, start=1):
-                metadata = load_metadata_json(result.get(FIELD_METADATA))
-                for name in (FIELD_CORPUS, "device_model", "error_code", "source_name"):
-                    value = result.get(name)
-                    if value:
-                        metadata[name] = value
-                if not metadata.get(FIELD_CORPUS):
-                    metadata[FIELD_CORPUS] = infer_corpus(
-                        source_name=metadata.get("source_name"),
-                        source_path=metadata.get("source_path"),
-                        metadata=metadata,
-                    )
-                metadata["stage"] = STAGE_BM25
-                metadata["bm25_score"] = float(result.score or 0.0)
+            try:
+                parsed = parser.parse(query.strip())
+            except Exception as exc:  # noqa: BLE001 - a malformed query yields no hits
+                logger.warning("whoosh query parse failed error_type={}", type(exc).__name__)
+                return []
 
-                hit = Hit(
-                    chunk_id=str(result.get(FIELD_CHUNK_ID) or ""),
-                    text=str(result.get(FIELD_TEXT) or ""),
-                    score=float(result.score or 0.0),
-                    source=SOURCE_BM25,
-                    metadata=metadata,
-                    rank=position,
-                )
-                if remaining and not matches_metadata(hit, remaining):
+            terms: list[Any] = [parsed]
+            remaining: dict[str, Any] = {}
+            for key, value in (filters or {}).items():
+                if value is None:
                     continue
-                hits.append(hit)
+                if key in FILTER_FIELDS:
+                    terms.append(Term(key, str(value)))
+                else:
+                    remaining[key] = value
 
-        logger.info("whoosh search dir={} hits={}", self.index_dir, len(hits))
-        return hits
+            with ix.searcher() as searcher:
+                results = searcher.search(And(terms), limit=limit)
+                for result in results:
+                    metadata = load_metadata_json(result.get(FIELD_METADATA))
+                    for name in (FIELD_CORPUS, "device_model", "error_code", "source_name"):
+                        value = result.get(name)
+                        if value:
+                            metadata[name] = value
+                    if not metadata.get(FIELD_CORPUS):
+                        metadata[FIELD_CORPUS] = infer_corpus(
+                            source_name=metadata.get("source_name"),
+                            source_path=metadata.get("source_path"),
+                            metadata=metadata,
+                        )
+                    metadata["stage"] = STAGE_BM25
+                    metadata["bm25_score"] = float(result.score or 0.0)
+                    metadata["whoosh_index_dir"] = str(index_dir)
+
+                    hit = Hit(
+                        chunk_id=str(result.get(FIELD_CHUNK_ID) or ""),
+                        text=str(result.get(FIELD_TEXT) or ""),
+                        score=float(result.score or 0.0),
+                        source=SOURCE_BM25,
+                        metadata=metadata,
+                        rank=0,
+                    )
+                    if remaining and not matches_metadata(hit, remaining):
+                        continue
+                    all_hits.append(hit)
+
+        if not searched_dirs:
+            missing = ", ".join(missing_dirs) or str(self.index_dir)
+            raise RuntimeError(
+                f"whoosh index not built yet at {missing}; run scripts/build_whoosh_index.py"
+            )
+
+        ranked_hits = sorted(all_hits, key=lambda hit: hit.score, reverse=True)[:limit]
+        for position, hit in enumerate(ranked_hits, start=1):
+            hit.rank = position
+
+        logger.info("whoosh search dirs={} hits={}", searched_dirs, len(ranked_hits))
+        return ranked_hits
 
     def health(self) -> bool:
         """Report whether the index is present and readable.
@@ -175,16 +224,18 @@ class BM25Retriever:
         Returns:
             ``True`` when the index exists and can be opened.
         """
-        try:
-            self._get_index()
-            return True
-        except Exception as exc:  # noqa: BLE001 - unhealthy is a valid result
-            logger.warning(
-                "whoosh health probe failed dir={} error_type={}",
-                self.index_dir,
-                type(exc).__name__,
-            )
-            return False
+        ok = False
+        for index_dir in self.index_dirs:
+            try:
+                self._get_index(index_dir)
+                ok = True
+            except Exception as exc:  # noqa: BLE001 - unhealthy is a valid result
+                logger.warning(
+                    "whoosh health probe failed dir={} error_type={}",
+                    index_dir,
+                    type(exc).__name__,
+                )
+        return ok
 
 
 __all__ = ["BM25Retriever", "SOURCE_BM25"]

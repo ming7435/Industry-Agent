@@ -205,22 +205,16 @@ class Settings(BaseSettings):
     milvus_port: int = 19530
     """Milvus port."""
 
-    milvus_collection: str = "industry_rag_chunks"
-    """Primary collection used when ``MILVUS_COLLECTIONS`` is not configured.
-
-    Offline ingestion now writes each document to its derived collection, so
-    production deployments should set ``MILVUS_COLLECTIONS`` to the collection
-    list that online dense retrieval should fan out across.
-    """
+    milvus_collection: str = "industry_rag_alarm_codes"
+    """Primary fallback collection used when ``MILVUS_COLLECTIONS`` is empty."""
 
     milvus_collections: str = ""
-    """Comma-separated extra Milvus collections the dense retriever fans out across.
+    """Comma-separated typed collections the dense retriever fans out across.
 
-    When empty, the retriever only queries :attr:`milvus_collection`. Set
-    ``MILVUS_COLLECTIONS`` to a comma-separated list (e.g.
-    ``industry_rag_alarm_codes,industry_rag_bom,industry_rag_sop``) to query
-    several collections in one dense search and merge the results by score. The
-    resolved list is exposed via :attr:`milvus_search_collections`.
+    Standard ingestion routes documents by data directory / business type into
+    separate collections, then online dense retrieval queries this resolved list
+    and merges hits by score. Metadata filters remain a refinement layer, not the
+    only source of isolation.
     """
 
     @property

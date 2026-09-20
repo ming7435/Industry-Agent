@@ -137,6 +137,23 @@ def to_document(record: Any) -> dict[str, Any]:
     }
 
 
+def index_dir_for_collection(
+    base_dir: str | Path | None = None,
+    collection_name: str | None = None,
+) -> Path:
+    """Return the Whoosh index directory for one Milvus collection.
+
+    Typed Milvus collections get isolated BM25 indexes under the shared base
+    directory. A missing collection name keeps backward compatibility with the
+    historical single-index layout.
+    """
+
+    directory = Path(base_dir or settings.whoosh_index_dir)
+    if not collection_name:
+        return directory
+    return directory / collection_name
+
+
 def open_index(index_dir: str | Path | None = None, *, recreate: bool = False) -> Any:
     """Open (and optionally reset) the Whoosh index.
 
@@ -207,6 +224,42 @@ def build_index(
     return written
 
 
+def delete_documents(
+    chunk_ids: Iterable[str],
+    index_dir: str | Path | None = None,
+) -> int:
+    """Delete stale chunk documents from an existing Whoosh index.
+
+    Args:
+        chunk_ids: Chunk ids that no longer exist in the vector store.
+        index_dir: Directory of the index; defaults to ``settings.whoosh_index_dir``.
+
+    Returns:
+        Number of requested ids when the index exists, otherwise ``0``.
+    """
+
+    ids = [str(chunk_id) for chunk_id in chunk_ids if str(chunk_id)]
+    if not ids:
+        return 0
+
+    try:
+        from whoosh import index as whoosh_index
+    except (ImportError, ModuleNotFoundError):
+        return 0
+
+    directory = Path(index_dir or settings.whoosh_index_dir)
+    if not whoosh_index.exists_in(str(directory)):
+        return 0
+
+    ix = whoosh_index.open_dir(str(directory))
+    with ix.writer(limitmb=512) as writer:
+        for chunk_id in ids:
+            writer.delete_by_term(FIELD_CHUNK_ID, chunk_id)
+
+    logger.info("whoosh stale documents deleted dir={} documents={}", directory, len(ids))
+    return len(ids)
+
+
 def count_documents(index_dir: str | Path | None = None) -> int:
     """Return the number of documents in the index.
 
@@ -231,4 +284,11 @@ def count_documents(index_dir: str | Path | None = None) -> int:
         return int(searcher.doc_count())
 
 
-__all__ = ["build_index", "count_documents", "open_index", "to_document"]
+__all__ = [
+    "build_index",
+    "count_documents",
+    "delete_documents",
+    "index_dir_for_collection",
+    "open_index",
+    "to_document",
+]
