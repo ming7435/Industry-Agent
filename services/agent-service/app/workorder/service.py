@@ -103,9 +103,6 @@ class WorkOrderService:
     def reopen(self, workorder_id: str) -> dict[str, Any]:
         return self.tools.execute("reopen_workorder", {"workorder_id": workorder_id})
 
-    def verify_repair(self, workorder_id: str, device_id: str = "") -> dict[str, Any]:
-        return self.tools.execute("verify_repair", {"workorder_id": workorder_id, "device_id": device_id})
-
     def execute_action(self, task: Mapping[str, Any]) -> dict[str, Any] | WorkOrder | None:
         action = str(task.get("action", "create"))
         workorder_id = str(task.get("workorder_id", ""))

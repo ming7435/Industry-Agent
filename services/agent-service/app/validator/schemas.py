@@ -212,13 +212,9 @@ class WorkOrderResultView(BaseModel):
 
 
 class QualityResult(BaseModel):
-    """质量检测结果。
+    """生产出来的零件质量检测结果。"""
 
-    ``repair_acceptance`` 字段保留旧维修验收契约；生产质检使用零件和检测项字段。
-    """
-
-    workorder_id: str = ""
-    inspection_type: Literal["part_quality", "repair_acceptance"] = "part_quality"
+    inspection_type: Literal["part_quality"] = "part_quality"
     part_id: str = ""
     part_no: str = ""
     part_name: str = ""
@@ -227,13 +223,6 @@ class QualityResult(BaseModel):
     device_id: str = ""
     passed: bool = False
     status: Literal["pass", "fail", "review"] = "fail"
-    recent_acceptance_status: Literal["PASSED", "FAILED", "REVIEW"] = "REVIEW"
-    device_recovered: bool = False
-    alarm_cleared: bool = False
-    parameters_recovered: bool = False
-    workorder_compliance: bool = False
-    sop_compliant: bool = False
-    sop_compliance: bool = False
     qualified: bool = False
     quality_grade: str = ""
     inspection_items: List[Dict[str, Any]] = Field(default_factory=list)

@@ -65,7 +65,7 @@ def validate_candidate(
             (confidence is not None and confidence >= 0.8) or _looks_deterministic(diagnosis_text)
         ):
             errors.append("缺少外部 Evidence，不允许输出确定性根因")
-    blocked_tools = {"create_workorder", "close_workorder", "query_inventory", "generate_report", "verify_repair"}
+    blocked_tools = {"create_workorder", "close_workorder", "query_inventory", "generate_report"}
     if any(item.get("name") in blocked_tools and item.get("guard") != "deny" for item in state.tool_calls):
         errors.append("调用了非 Diagnosis 权限工具")
     return {"pass": not errors, "errors": errors, "evidence_count": len(state.evidence)}

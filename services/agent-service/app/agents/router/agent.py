@@ -150,10 +150,8 @@ class RouterAgent:
         if intent == "report" and entities.get("report_type"):
             target_input["report_type"] = entities["report_type"]
         if intent == "quality":
-            target_input["inspection_type"] = "part_quality" if any(
-                key in target_input for key in ("part_id", "part_no", "batch_id", "production_order_id")
-            ) or any(keyword in text for keyword in ("零件", "成品", "尺寸", "外观", "材料", "生产出来")) else "repair_acceptance"
-            target_input["action"] = "inspect_part" if target_input["inspection_type"] == "part_quality" else "verify_repair"
+            target_input["inspection_type"] = "part_quality"
+            target_input["action"] = "inspect_part"
         return target_input
 
     @staticmethod

@@ -98,7 +98,7 @@ def test_quality_contract_and_quality_to_maintenance_rework_a2a() -> None:
         trace_id="TRACE-QUALITY-001",
         from_agent="router",
         to_agent="quality",
-        workorder_id="WO-001",
+        part_id="PART-001",
     )
     assert quality_request.message_id == quality_request.request_id
     assert quality_request.source_agent == "router"
@@ -158,7 +158,7 @@ def test_diagnosis_and_maintenance_can_request_memory_with_explicit_sources() ->
     assert {item.get("from_agent") for item in calls} >= {"diagnosis", "maintenance"}
 
 
-def test_api_quality_entry_uses_quality_a2a_and_updates_workorder() -> None:
+def test_legacy_workorder_quality_entry_is_explicitly_deprecated() -> None:
     orchestrator = build_orchestrator(tools=ToolRegistry())
     order = orchestrator.nodes.workorder_service.create(
         device_id="CNC-001",
@@ -170,12 +170,14 @@ def test_api_quality_entry_uses_quality_a2a_and_updates_workorder() -> None:
         feedback="已完成维修并提交复测",
     )
 
-    result = orchestrator.nodes.quality_workorder(order["workorder_id"])
+    from fastapi.testclient import TestClient
 
-    assert result["workorder"]["workorder_id"] == order["workorder_id"]
-    assert any(
-        item.get("type") == "a2a"
-        and item.get("from_agent") == "workorder"
-        and item.get("to_agent") == "quality"
-        for item in orchestrator.nodes.trace_records()
+    from app.api.server import create_app
+
+    result = TestClient(create_app(orchestrator)).post(
+        "/api/workorders/%s/quality" % order["workorder_id"]
     )
+
+    assert result.status_code == 200
+    assert result.json()["status"] == "deprecated"
+    assert result.json()["success"] is False

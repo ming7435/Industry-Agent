@@ -121,19 +121,6 @@ class WorkOrderMcpAdapter:
     def reopen_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
         return self.update_workorder(workorder_id, status="open")
 
-    def verify_repair(self, workorder_id: str, device_id: str = "", **_: Any) -> Dict[str, Any]:
-        order = self._orders.get(workorder_id, {})
-        passed = order.get("status") in {"completed", "closed"}
-        return {
-            "workorder_id": workorder_id,
-            "device_id": device_id or order.get("device_id", ""),
-            "passed": passed,
-            "device_recovered": passed,
-            "alarm_cleared": passed,
-            "sop_compliant": True,
-            "findings": ["工单状态已完成" if passed else "工单仍未完成"],
-        }
-
     def query_technicians(self, device_id: str = "", component: str = "", priority: str = "", **_: Any) -> Dict[str, Any]:
         items = [
             {"technician_id": "TECH-001", "name": "张工", "skills": ["主轴", "电气", "冷却系统"], "area": "A区", "shift": "白班", "workload": 1, "available": True},

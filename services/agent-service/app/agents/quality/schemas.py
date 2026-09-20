@@ -1,4 +1,4 @@
-"""Quality Agent 的输入和 LangGraph 状态契约。"""
+"""Quality Agent 的生产零件质检输入和图状态契约。"""
 
 from __future__ import annotations
 
@@ -12,16 +12,8 @@ class QualityQuery(BaseModel):
     action: str = "inspect_part"
     task_id: str = ""
     trace_id: str = ""
-    workorder_id: str = ""
     device_id: str = ""
     event_id: str = ""
-    diagnosis_result: Dict[str, Any] = Field(default_factory=dict)
-    diagnosis: Dict[str, Any] = Field(default_factory=dict)
-    maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
-    repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
-    workorder: Dict[str, Any] = Field(default_factory=dict)
-    pre_metrics: Dict[str, Any] = Field(default_factory=dict)
-    post_metrics: Dict[str, Any] = Field(default_factory=dict)
     part_id: str = ""
     part_no: str = ""
     part_name: str = ""
@@ -41,20 +33,6 @@ class QualityQuery(BaseModel):
         if hasattr(payload, "model_dump"):
             payload = payload.model_dump(mode="json")
         values = dict(payload or {})
-        raw_order = values.get("workorder")
-        if hasattr(raw_order, "model_dump"):
-            values["workorder"] = raw_order.model_dump(mode="json")
-        elif raw_order:
-            values["workorder"] = dict(raw_order)
-        order = values.get("workorder") or {}
-        if not values.get("inspection_type") or (
-            values.get("inspection_type") == "part_quality"
-            and (values.get("action") == "verify_repair" or values.get("workorder_id") or order)
-            and not (values.get("part_id") or values.get("part_no") or values.get("part"))
-        ):
-            values["inspection_type"] = "repair_acceptance" if (values.get("workorder_id") or order) else "part_quality"
-        values.setdefault("workorder_id", str(order.get("workorder_id") or ""))
-        values.setdefault("device_id", str(order.get("device_id") or ""))
         part = values.get("part") or {}
         if hasattr(part, "model_dump"):
             part = part.model_dump(mode="json")
@@ -62,26 +40,18 @@ class QualityQuery(BaseModel):
         for key in ("part_id", "part_no", "part_name", "batch_id", "production_order_id", "device_id"):
             if not values.get(key) and part.get(key):
                 values[key] = str(part[key])
-        if not values.get("diagnosis") and values.get("diagnosis_result"):
-            values["diagnosis"] = values["diagnosis_result"]
+        values["inspection_type"] = "part_quality"
+        values["action"] = "inspect_part"
         return cls(**values)
 
 
 class QualityGraphState(dict):
-    """仅作为文档化状态类型，实际图使用 TypedDict 以兼容 LangGraph。"""
+    """仅作为文档化状态类型，实际图使用 TypedDict 兼容 LangGraph。"""
 
     request: Dict[str, Any]
     active_skill: str
+    active_skills: List[str]
     allowed_tools: List[str]
-    workorder: Dict[str, Any]
-    repair_feedback: Dict[str, Any]
-    repair_check: Dict[str, Any]
-    workorder_check: Dict[str, Any]
-    device_status: Dict[str, Any]
-    active_alarms: Dict[str, Any]
-    alarm_check: Dict[str, Any]
-    parameter_check: Dict[str, Any]
-    sop_check: Dict[str, Any]
     validation_findings: List[str]
     result: Any
     route: str

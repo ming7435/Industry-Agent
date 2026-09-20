@@ -189,7 +189,12 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.post("/api/workorders/{workorder_id}/quality")
     def workorder_quality(workorder_id: str) -> Dict[str, Any]:
-        return runtime.nodes.quality_workorder(workorder_id)
+        return {
+            "success": False,
+            "status": "deprecated",
+            "workorder_id": workorder_id,
+            "message": "维修验收已从 Quality Agent 移除；请通过 WorkOrder Agent 管理维修完成和工单关闭，生产零件质检请调用 /api/quality/parts/{part_id}。",
+        }
 
     @app.post("/api/quality/parts/{part_id}")
     def part_quality(part_id: str, request: PartQualityRequest) -> Dict[str, Any]:
@@ -205,7 +210,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             "diagnosis": {},
             "maintenance_plan": {},
         }
-        return runtime.nodes._quality_request(state, {}, from_agent="router", quality_payload=values)
+        return runtime.nodes._quality_request(state, from_agent="router", quality_payload=values)
 
     @app.post("/api/experience/search")
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:

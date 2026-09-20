@@ -61,6 +61,12 @@ class SkillRegistryTests(unittest.TestCase):
         self.assertIn("fetch_document", tools)
         self.assertIn("fetch_chunk", tools)
 
+    def test_quality_skills_are_production_quality_only(self):
+        skills = self.registry.list("quality")
+        names = {item.name for item in skills}
+        self.assertEqual(names, {"part_quality_inspection_skill", "dimension_inspection_skill"})
+        self.assertFalse(any("repair" in item.name or "test_result" in item.name for item in skills))
+
     def test_graph_load_skill_exposes_active_skill_list(self):
         knowledge = load_knowledge_skill({"request": {"query": "主轴维修步骤 SOP"}})
         cad = load_cad_skill({"request": {"component": "主轴轴承", "query": "零件图纸"}})

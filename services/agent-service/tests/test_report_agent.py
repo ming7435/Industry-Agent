@@ -41,12 +41,12 @@ def _case() -> dict:
             "repair_feedback": "已检查冷却泵并完成复测",
         },
         "quality": {
-            "workorder_id": "WO-001",
+            "part_id": "PART-001",
+            "part_no": "PART-001-NO",
             "passed": True,
             "status": "pass",
-            "device_recovered": True,
-            "alarm_cleared": True,
-            "sop_compliant": True,
+            "qualified": True,
+            "quality_grade": "合格",
         },
         "trace": [{"type": "node", "name": "quality"}],
     }

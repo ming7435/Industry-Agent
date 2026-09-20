@@ -66,7 +66,6 @@ class OrchestratorNodes:
             diagnosis=diagnosis_runtime,
             maintenance_knowledge_provider=self._maintenance_knowledge_request,
             maintenance_cad_provider=self._maintenance_cad_request,
-            quality_knowledge_provider=self._quality_knowledge_request,
             workorder_service=self.workorder_service,
             experience_module=self.experience_module,
         )
@@ -247,18 +246,6 @@ class OrchestratorNodes:
     def _maintenance_cad_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
         return self._cad_a2a(str(context.get("task_id") or ""), "maintenance", query, context)
 
-    def _quality_knowledge_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
-        return self._knowledge_a2a(
-            str(context.get("task_id") or ""),
-            "quality",
-            query,
-            {"knowledge_type": "sop"},
-            trace_id=str(context.get("trace_id") or ""),
-            device_id=str(context.get("device_id") or ""),
-            component=str(context.get("component") or ""),
-            required_sources=["sop"],
-        )
-
     def _cad_endpoint(self, request: CADRequest) -> CADResponse:
         result = self.harnesses["cad"].execute_agent(request.model_dump(mode="json"))
         payload = _serialize_agent_result(result)
@@ -438,15 +425,12 @@ class OrchestratorNodes:
     def _quality_request(
         self,
         state: AgentState,
-        workorder: Dict[str, Any] | None = None,
         from_agent: str = "router",
         quality_payload: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
         context = state.get("context") or {}
-        values = dict(quality_payload or {})
-        order = dict(workorder or values.get("workorder") or {})
+        values = {**context, **dict(quality_payload or {})}
         part = dict(values.get("part") or context.get("part") or {})
-        inspection_type = str(values.get("inspection_type") or ("repair_acceptance" if order else "part_quality"))
         response = self.a2a.request(
             QualityRequest(
                 request_id=self.a2a.new_request_id(),
@@ -454,10 +438,9 @@ class OrchestratorNodes:
                 trace_id=state.get("trace_id", ""),
                 from_agent=from_agent,
                 to_agent="quality",
-                action="verify_repair" if inspection_type == "repair_acceptance" else "inspect_part",
-                inspection_type=inspection_type,
-                workorder_id=str(order.get("workorder_id") or values.get("workorder_id") or ""),
-                device_id=str(order.get("device_id") or part.get("device_id") or values.get("device_id") or context.get("device_id") or ""),
+                action="inspect_part",
+                inspection_type="part_quality",
+                device_id=str(part.get("device_id") or values.get("device_id") or context.get("device_id") or ""),
                 part_id=str(part.get("part_id") or values.get("part_id") or context.get("part_id") or ""),
                 part_no=str(part.get("part_no") or values.get("part_no") or context.get("part_no") or ""),
                 part_name=str(part.get("part_name") or values.get("part_name") or ""),
@@ -469,10 +452,6 @@ class OrchestratorNodes:
                 inspection_results=list(values.get("inspection_results") or []),
                 specifications=dict(values.get("specifications") or {}),
                 production_context=dict(values.get("production_context") or {}),
-                diagnosis_result=state.get("diagnosis") or {},
-                diagnosis=state.get("diagnosis") or {},
-                maintenance_plan=state.get("maintenance_plan") or {},
-                workorder=order,
             ),
             QualityResponse,
         )
@@ -810,80 +789,9 @@ class OrchestratorNodes:
         self._node_start("quality", state)
         route = state.get("route_result") or {}
         target_input = dict(route.get("target_input") or state.get("context") or {})
-        order = state.get("workorder", {})
-        workorder_id = str(order.get("workorder_id", ""))
-        latest = order
-        is_part_quality = bool(
-            target_input.get("inspection_type") == "part_quality"
-            or target_input.get("part_id")
-            or target_input.get("part_no")
-            or target_input.get("part")
-            or (not workorder_id and target_input)
-        )
-        if workorder_id and not is_part_quality:
-            queried = self._workorder_request(state, action="query", workorder={"workorder_id": workorder_id}, from_agent="workorder")
-            latest = queried.get("workorder") or order
-        result = self._quality_request(
-            state,
-            latest if not is_part_quality else {},
-            quality_payload=target_input if is_part_quality else None,
-        )
-        result["workorder"] = latest
-        return self._finish("quality", state, {"quality": result, "workorder": latest})
+        result = self._quality_request(state, from_agent="router", quality_payload=target_input)
+        return self._finish("quality", state, {"quality": result})
 
-    def quality_workorder(self, workorder_id: str) -> Dict[str, Any]:
-        """通过统一 A2A 入口执行质检，再由 WorkOrder/Memory Agent 收口。"""
-
-        state: AgentState = {
-            "entry": "user",
-            "task_id": "TASK-QUALITY-" + uuid4().hex[:12].upper(),
-            "trace_id": "TRACE-QUALITY-" + uuid4().hex[:12].upper(),
-            "context": {},
-            "diagnosis": {},
-            "maintenance_plan": {},
-        }
-        queried = self._workorder_request(state, action="query", workorder={"workorder_id": workorder_id}, from_agent="router")
-        order = queried.get("workorder") or {}
-        state["context"] = {"device_id": str(order.get("device_id") or ""), "workorder_id": workorder_id}
-        quality = self._quality_request(state, order, from_agent="workorder", quality_payload={"inspection_type": "repair_acceptance"})
-        latest = order
-        quality["workorder"] = latest
-        if quality.get("passed"):
-            close_result = self._workorder_request({**state, "workorder": latest}, action="close", workorder=latest, from_agent="quality")
-            latest = close_result.get("workorder") or latest
-            quality["workorder_result"] = close_result
-            quality["workorder"] = latest
-            report_result = _serialize_agent_result(self.harnesses["report"].execute_agent({
-                **state,
-                "workorder": latest,
-                "quality": quality,
-                "entry": "user",
-                "report_type": "full_case_report",
-            }))
-            quality["report"] = report_result
-            memory_state = {**state, "workorder": latest, "quality": quality, "report": report_result}
-            quality["memory_result"] = self._memory_request(memory_state, action="learn", from_agent="report")
-        else:
-            reopen_result = self._workorder_request({**state, "workorder": latest}, action="reopen", workorder=latest, from_agent="quality")
-            quality["workorder_result"] = reopen_result
-            quality["workorder"] = reopen_result.get("workorder") or latest
-            rework_diagnosis = dict(latest.get("diagnosis_context") or {})
-            rework_diagnosis.setdefault("device_id", latest.get("device_id", ""))
-            rework_diagnosis.setdefault("fault", latest.get("title", "设备维修返工"))
-            rework_plan = self._maintenance_request(
-                {**state, "workorder": quality["workorder"]},
-                rework_diagnosis,
-                {},
-                {},
-                quality=quality,
-            )
-            quality["rework_plan"] = rework_plan
-            quality["rework_workorder_result"] = self._workorder_request(
-                {**state, "workorder": quality["workorder"], "maintenance_plan": rework_plan},
-                action="create",
-                from_agent="maintenance",
-            )
-        return quality
 
     def quality_rework(self, state: AgentState) -> Dict[str, Any]:
         """质量校验不通过时，通过 Quality -> Maintenance A2A 生成返工方案。"""

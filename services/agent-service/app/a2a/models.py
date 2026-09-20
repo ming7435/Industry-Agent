@@ -210,7 +210,6 @@ class MemoryResponse(A2AResponse):
 
 class QualityRequest(A2ARequest):
     inspection_type: str = "part_quality"
-    workorder_id: str = ""
     device_id: str = ""
     part_id: str = ""
     part_no: str = ""
@@ -223,13 +222,6 @@ class QualityRequest(A2ARequest):
     inspection_results: List[Dict[str, Any]] = Field(default_factory=list)
     specifications: Dict[str, Any] = Field(default_factory=dict)
     production_context: Dict[str, Any] = Field(default_factory=dict)
-    diagnosis_result: Dict[str, Any] = Field(default_factory=dict)
-    diagnosis: Dict[str, Any] = Field(default_factory=dict)
-    maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
-    repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
-    workorder: Dict[str, Any] = Field(default_factory=dict)
-    pre_metrics: Dict[str, Any] = Field(default_factory=dict)
-    post_metrics: Dict[str, Any] = Field(default_factory=dict)
 
 
 class QualityResponse(A2AResponse):

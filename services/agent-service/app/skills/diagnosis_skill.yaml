@@ -33,7 +33,6 @@ blocked_tools:
   - close_workorder
   - query_inventory
   - generate_report
-  - verify_repair
 
 sub_skills:
   alarm_diagnosis_skill:

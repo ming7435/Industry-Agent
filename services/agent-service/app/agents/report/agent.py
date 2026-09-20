@@ -264,12 +264,13 @@ class ReportAgent:
 
         quality = cls._mapping(sections.get("quality"))
         if quality:
-            add("quality", "quality", quality.get("workorder_id"), "quality", "QualityResult")
+            quality_ref = quality.get("part_id") or quality.get("part_no") or "part_quality"
+            add("quality", "quality", quality_ref, "quality", "QualityResult")
             if quality.get("checked_at"):
                 add("quality", "checked_at", quality.get("checked_at"), "quality", "质检时间")
             for item in quality.get("evidence") or []:
                 if isinstance(item, Mapping):
-                    add("quality", str(item.get("type") or "evidence"), item.get("workorder_id") or item.get("metric") or item.get("document_id"), item.get("source"), "质检证据")
+                    add("quality", str(item.get("type") or "evidence"), item.get("part_id") or item.get("part_no") or item.get("metric") or item.get("document_id"), item.get("source"), "质检证据")
 
         knowledge = cls._mapping(sections.get("knowledge"))
         for item in knowledge.get("documents") or []:

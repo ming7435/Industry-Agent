@@ -45,10 +45,7 @@ def build_agent_registry(**dependencies: Any) -> dict[str, Any]:
             dependencies["tools"],
             service=dependencies.get("workorder_service"),
         ),
-        "quality": QualityAgent(
-            dependencies["tools"],
-            knowledge_provider=dependencies.get("quality_knowledge_provider"),
-        ),
+        "quality": QualityAgent(dependencies["tools"]),
         "report": ReportAgent(dependencies["tools"]),
         "memory": MemoryAgent(
             experience_module=dependencies.get("experience_module"),

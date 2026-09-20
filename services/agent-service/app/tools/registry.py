@@ -63,12 +63,6 @@ from app.tools.knowledge import (
     search_sop as search_sop_tool,
 )
 from app.tools.quality import (
-    check_sop as check_sop_tool,
-    check_workorder_compliance as check_workorder_compliance_tool,
-    compare_pre_post_metrics as compare_pre_post_metrics_tool,
-    get_repair_feedback as get_repair_feedback_tool,
-    verify_alarm_clearance as verify_alarm_clearance_tool,
-    verify_repair as verify_repair_tool,
     get_production_part as get_production_part_tool,
     get_part_specification as get_part_specification_tool,
     inspect_part_dimensions as inspect_part_dimensions_tool,
@@ -151,12 +145,6 @@ class ToolRegistry:
             "query_technician_workload": self.query_technician_workload,
             "query_shift": self.query_shift,
             "query_team_availability": self.query_team_availability,
-            "verify_repair": self.verify_repair,
-            "check_sop": self.check_sop,
-            "get_repair_feedback": self.get_repair_feedback,
-            "check_workorder_compliance": self.check_workorder_compliance,
-            "verify_alarm_clearance": self.verify_alarm_clearance,
-            "compare_pre_post_metrics": self.compare_pre_post_metrics,
             "get_production_part": self.get_production_part,
             "get_part_specification": self.get_part_specification,
             "inspect_part_dimensions": self.inspect_part_dimensions,
@@ -275,21 +263,6 @@ class ToolRegistry:
     def submit_workorder_draft(self, **arguments: Any) -> Dict[str, Any]:
         return submit_workorder_draft_tool(**arguments)
 
-    def check_sop(self, workorder_id: str = "", query: str = "维修步骤", **_: Any) -> Dict[str, Any]:
-        return check_sop_tool(self.search_knowledge, workorder_id=workorder_id, query=query)
-
-    def get_repair_feedback(self, **arguments: Any) -> Dict[str, Any]:
-        return get_repair_feedback_tool(self.workorder_mcp, **arguments)
-
-    def check_workorder_compliance(self, **arguments: Any) -> Dict[str, Any]:
-        return check_workorder_compliance_tool(self.workorder_mcp, **arguments)
-
-    def verify_alarm_clearance(self, **arguments: Any) -> Dict[str, Any]:
-        return verify_alarm_clearance_tool(**arguments)
-
-    def compare_pre_post_metrics(self, **arguments: Any) -> Dict[str, Any]:
-        return compare_pre_post_metrics_tool(**arguments)
-
     def generate_report(self, report_type: str = "maintenance", sections: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return generate_report_tool(report_type=report_type, sections=sections)
 
@@ -356,9 +329,6 @@ class ToolRegistry:
     def query_team_availability(self, **arguments: Any) -> Dict[str, Any]:
         return query_team_availability_tool(self.workorder_mcp, **arguments)
 
-    def verify_repair(self, **arguments: Any) -> Dict[str, Any]:
-        return verify_repair_tool(self.workorder_mcp, **arguments)
-
     def get_production_part(self, **arguments: Any) -> Dict[str, Any]:
         return get_production_part_tool(self.quality_mcp, **arguments)
 
@@ -395,11 +365,9 @@ class ToolRegistry:
             "get_workorder_template": "mes", "submit_workorder_draft": "mes",
             "mark_repair_completed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
             "query_technicians": "mes", "query_technician_skills": "mes", "query_technician_workload": "mes", "query_shift": "mes", "query_team_availability": "mes",
-            "verify_repair": "qms", "check_sop": "qms", "verify_alarm_clearance": "qms",
             "get_production_part": "qms", "get_part_specification": "qms",
             "inspect_part_dimensions": "qms", "inspect_part_appearance": "qms",
             "inspect_part_material": "qms", "inspect_part_function": "qms", "inspect_part_process": "qms",
-            "get_repair_feedback": "mes", "check_workorder_compliance": "mes", "compare_pre_post_metrics": "plc",
             "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory",
             "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
             "fetch_document": "knowledge", "fetch_chunk": "knowledge", "document_parser": "knowledge", "ingest_knowledge": "knowledge",
@@ -499,12 +467,6 @@ class ToolRegistry:
             "query_technician_workload": "查询维修人员负载",
             "query_shift": "查询当前班次",
             "query_team_availability": "查询班组可用性",
-            "verify_repair": "验证维修结果",
-            "check_sop": "检查维修步骤是否符合SOP",
-            "get_repair_feedback": "获取维修反馈",
-            "check_workorder_compliance": "检查工单执行与反馈完整性",
-            "verify_alarm_clearance": "验证报警是否清除",
-            "compare_pre_post_metrics": "比较维修前后关键参数",
             "get_production_part": "获取已生产零件及生产追溯信息",
             "get_part_specification": "获取零件质量规格和检验标准",
             "inspect_part_dimensions": "检测零件尺寸是否符合规格",

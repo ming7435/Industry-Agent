@@ -1,4 +1,4 @@
-name: quality_master_skill
+name: part_quality_master_skill
 goal: 对生产出来的零件执行尺寸、外观、材料、功能和工艺质量检测，并返回结构化 QualityResult
 input: QualityRequest
 steps:

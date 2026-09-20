@@ -1,6 +1,6 @@
-name: test_result_skill
+name: part_quality_inspection_skill
 version: 1.0
-goal: 对生产零件的检测结果进行综合判定。
+goal: 对生产零件的尺寸、外观、材料、功能和工艺进行综合质量检测。
 trigger: part_quality
 steps:
   - load_part

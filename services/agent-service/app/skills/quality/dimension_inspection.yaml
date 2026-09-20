@@ -1,0 +1,13 @@
+name: dimension_inspection_skill
+version: 1.0
+goal: 对生产零件的关键尺寸执行专项质量检测。
+trigger: part_quality
+steps:
+  - load_part
+  - load_inspection_plan
+  - inspect_dimensions
+  - validate_part
+tools:
+  - get_production_part
+  - get_part_specification
+  - inspect_part_dimensions
