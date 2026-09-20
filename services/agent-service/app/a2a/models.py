@@ -209,8 +209,20 @@ class MemoryResponse(A2AResponse):
 
 
 class QualityRequest(A2ARequest):
+    inspection_type: str = "part_quality"
     workorder_id: str = ""
     device_id: str = ""
+    part_id: str = ""
+    part_no: str = ""
+    part_name: str = ""
+    batch_id: str = ""
+    production_order_id: str = ""
+    part: Dict[str, Any] = Field(default_factory=dict)
+    inspection_plan: Dict[str, Any] = Field(default_factory=dict)
+    measurements: Dict[str, Any] = Field(default_factory=dict)
+    inspection_results: List[Dict[str, Any]] = Field(default_factory=list)
+    specifications: Dict[str, Any] = Field(default_factory=dict)
+    production_context: Dict[str, Any] = Field(default_factory=dict)
     diagnosis_result: Dict[str, Any] = Field(default_factory=dict)
     diagnosis: Dict[str, Any] = Field(default_factory=dict)
     maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
@@ -222,7 +234,10 @@ class QualityRequest(A2ARequest):
 
 class QualityResponse(A2AResponse):
     quality_result: Dict[str, Any] = Field(default_factory=dict)
+    inspection_type: str = "part_quality"
     passed: bool = False
+    qualified: bool = False
+    defects: List[Dict[str, Any]] = Field(default_factory=list)
     rework_required: bool = False
     validation_findings: List[str] = Field(default_factory=list)
     stop_reason: str = ""

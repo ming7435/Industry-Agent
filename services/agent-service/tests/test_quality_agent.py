@@ -66,7 +66,42 @@ def test_quality_graph_contains_documented_nodes() -> None:
     assert {
         "initialize", "load_skill", "load_workorder", "load_repair_feedback", "verify_device",
         "verify_alarm", "verify_parameters", "verify_sop", "validate", "decision", "final", "fallback",
+        "load_part", "load_inspection_plan", "inspect_dimensions", "inspect_appearance",
+        "inspect_material", "inspect_function", "inspect_process", "validate_part",
     }.issubset(node_names)
+
+
+def test_quality_agent_inspects_produced_part_by_default() -> None:
+    result = QualityAgent(ToolRegistry()).run({"part_id": "PART-001", "inspection_type": "part_quality"})
+
+    assert result.inspection_type == "part_quality"
+    assert result.part_id == "PART-001"
+    assert result.qualified is True
+    assert result.quality_grade == "合格"
+    assert {item["name"] for item in result.inspection_items} == {"尺寸检测", "外观检测", "材料检测", "功能检测", "工艺追溯检测"}
+    assert all(item["passed"] for item in result.inspection_items)
+    assert {item["type"] for item in result.evidence} == {"part_identity", "dimensions", "appearance", "material", "function", "process"}
+
+
+def test_quality_agent_returns_part_defects_for_failed_measurement() -> None:
+    result = QualityAgent(ToolRegistry()).run({
+        "inspection_type": "part_quality",
+        "part": {
+            "part_id": "PART-BAD",
+            "part_no": "PART-BAD-NO",
+            "measurements": {"outer_diameter_mm": 50.50},
+            "appearance": {"scratch": True},
+            "material": {"grade": "铝"},
+            "function": {"rotation_test": False},
+            "process": {"cycle_complete": True, "traceable": True, "operator_confirmed": True},
+            "specifications": {"outer_diameter_mm": {"min": 49.98, "max": 50.02}, "material_grade": "45钢"},
+        },
+    })
+
+    assert result.qualified is False
+    assert "dimension_not_qualified" in result.failed_checks
+    assert "appearance_not_qualified" in result.failed_checks
+    assert result.defects
 
 
 def test_quality_pass_closes_workorder_and_uses_knowledge_provider() -> None:

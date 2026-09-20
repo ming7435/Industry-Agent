@@ -1,4 +1,4 @@
-"""维修质量验证 Agent。"""
+"""生产零件质量检测 Agent，兼容旧维修验收调用。"""
 
 from __future__ import annotations
 
@@ -54,20 +54,49 @@ class QualityAgent:
 
     def _build_result(self, state: Mapping[str, Any]) -> QualityResult:
         decision = dict(state.get("decision") or {})
+        request = dict(state.get("request") or {})
+        part = dict(state.get("part") or request.get("part") or {})
         workorder = dict(state.get("workorder") or {})
-        return QualityResult(
-            workorder_id=str(workorder.get("workorder_id") or state.get("request", {}).get("workorder_id") or ""),
-            recommendation=self._recommendation(decision),
-            evidence=self._evidence(state),
-            sop_compliance=bool(decision.get("sop_compliant")),
-            stop_reason="validator_pass" if decision.get("passed") else "validator_fail",
-            **decision,
-        )
+        result_payload = {
+            "workorder_id": str(workorder.get("workorder_id") or state.get("request", {}).get("workorder_id") or ""),
+            "inspection_type": str(request.get("inspection_type") or "part_quality"),
+            "part_id": str(part.get("part_id") or request.get("part_id") or ""),
+            "part_no": str(part.get("part_no") or request.get("part_no") or ""),
+            "part_name": str(part.get("part_name") or request.get("part_name") or ""),
+            "batch_id": str(part.get("batch_id") or request.get("batch_id") or ""),
+            "production_order_id": str(part.get("production_order_id") or request.get("production_order_id") or ""),
+            "device_id": str(part.get("device_id") or request.get("device_id") or ""),
+            "inspection_items": list(decision.get("inspection_items") or []),
+            "measurements": dict(part.get("measurements") or request.get("measurements") or {}),
+            "specifications": dict(decision.get("specifications") or state.get("inspection_plan") or {}),
+            "defects": list(decision.get("defects") or []),
+            "qualified": bool(decision.get("qualified", decision.get("passed"))),
+            "recommendation": self._recommendation(decision),
+            "evidence": self._evidence(state),
+            "sop_compliance": bool(decision.get("sop_compliant")),
+            "stop_reason": "validator_pass" if decision.get("passed") else "validator_fail",
+        }
+        # Validator fields are authoritative, while the surrounding payload
+        # adds the stable identity and evidence fields required by the DTO.
+        result_payload.update(decision)
+        result_payload["sop_compliance"] = bool(decision.get("sop_compliant"))
+        result_payload["recommendation"] = self._recommendation(decision)
+        result_payload["evidence"] = self._evidence(state)
+        result_payload["stop_reason"] = "validator_pass" if decision.get("passed") else "validator_fail"
+        return QualityResult(**result_payload)
 
     @staticmethod
     def _fallback_result(request: Mapping[str, Any], findings: list[str]) -> QualityResult:
+        part = dict(request.get("part") or {})
         return QualityResult(
             workorder_id=str(request.get("workorder_id") or ""),
+            inspection_type=str(request.get("inspection_type") or "part_quality"),
+            part_id=str(part.get("part_id") or request.get("part_id") or ""),
+            part_no=str(part.get("part_no") or request.get("part_no") or ""),
+            part_name=str(part.get("part_name") or request.get("part_name") or ""),
+            batch_id=str(part.get("batch_id") or request.get("batch_id") or ""),
+            production_order_id=str(part.get("production_order_id") or request.get("production_order_id") or ""),
+            device_id=str(part.get("device_id") or request.get("device_id") or ""),
             passed=False,
             status="review",
             device_recovered=False,
@@ -78,7 +107,7 @@ class QualityAgent:
             sop_compliance=False,
             failed_checks=["quality_input_missing"],
             findings=findings,
-            recommendation="补充工单、维修反馈和设备复测数据后重新发起质检。",
+            recommendation="补充生产零件编号、检测数据和规格后重新发起质量检测。",
         )
 
     def _safe_tool(self, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -115,6 +144,17 @@ class QualityAgent:
 
     @staticmethod
     def _evidence(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+        request = dict(state.get("request") or {})
+        if request.get("inspection_type") == "part_quality":
+            part = dict(state.get("part") or request.get("part") or {})
+            return [
+                {"type": "part_identity", "part_id": part.get("part_id", ""), "part_no": part.get("part_no", ""), "part_name": part.get("part_name", ""), "batch_id": part.get("batch_id", ""), "production_order_id": part.get("production_order_id", "")},
+                {"type": "dimensions", **dict(state.get("dimension_check") or {})},
+                {"type": "appearance", **dict(state.get("appearance_check") or {})},
+                {"type": "material", **dict(state.get("material_check") or {})},
+                {"type": "function", **dict(state.get("function_check") or {})},
+                {"type": "process", **dict(state.get("process_check") or {})},
+            ]
         workorder = dict(state.get("workorder") or {})
         parameter_check = dict(state.get("parameter_check") or {})
         sop_check = dict(state.get("sop_check") or {})
@@ -131,6 +171,10 @@ class QualityAgent:
 
     @staticmethod
     def _recommendation(decision: Mapping[str, Any]) -> str:
+        if decision.get("inspection_type") == "part_quality" or "qualified" in decision:
+            if decision.get("passed"):
+                return "零件质量检测合格，可进入入库或装配流程。"
+            return "零件质量检测未通过，请隔离不合格品并复核缺陷项。"
         if decision.get("passed"):
             return "维修验收通过，工单已关闭并可进入报告与经验沉淀。"
         failed = set(decision.get("failed_checks") or [])

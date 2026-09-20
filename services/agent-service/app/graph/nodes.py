@@ -386,7 +386,10 @@ class OrchestratorNodes:
             status="completed",
             success=True,
             quality_result=payload,
+            inspection_type=str(payload.get("inspection_type") or request.inspection_type),
             passed=passed,
+            qualified=bool(payload.get("qualified", passed)),
+            defects=list(payload.get("defects") or []),
             rework_required=not passed,
             validation_findings=list(payload.get("findings") or payload.get("validation_findings") or []),
             stop_reason=str(payload.get("stop_reason") or ""),
@@ -432,8 +435,18 @@ class OrchestratorNodes:
             payload=payload,
         )
 
-    def _quality_request(self, state: AgentState, workorder: Dict[str, Any], from_agent: str = "router") -> Dict[str, Any]:
+    def _quality_request(
+        self,
+        state: AgentState,
+        workorder: Dict[str, Any] | None = None,
+        from_agent: str = "router",
+        quality_payload: Mapping[str, Any] | None = None,
+    ) -> Dict[str, Any]:
         context = state.get("context") or {}
+        values = dict(quality_payload or {})
+        order = dict(workorder or values.get("workorder") or {})
+        part = dict(values.get("part") or context.get("part") or {})
+        inspection_type = str(values.get("inspection_type") or ("repair_acceptance" if order else "part_quality"))
         response = self.a2a.request(
             QualityRequest(
                 request_id=self.a2a.new_request_id(),
@@ -441,13 +454,25 @@ class OrchestratorNodes:
                 trace_id=state.get("trace_id", ""),
                 from_agent=from_agent,
                 to_agent="quality",
-                action="verify_repair",
-                workorder_id=str(workorder.get("workorder_id") or ""),
-                device_id=str(workorder.get("device_id") or context.get("device_id") or ""),
+                action="verify_repair" if inspection_type == "repair_acceptance" else "inspect_part",
+                inspection_type=inspection_type,
+                workorder_id=str(order.get("workorder_id") or values.get("workorder_id") or ""),
+                device_id=str(order.get("device_id") or part.get("device_id") or values.get("device_id") or context.get("device_id") or ""),
+                part_id=str(part.get("part_id") or values.get("part_id") or context.get("part_id") or ""),
+                part_no=str(part.get("part_no") or values.get("part_no") or context.get("part_no") or ""),
+                part_name=str(part.get("part_name") or values.get("part_name") or ""),
+                batch_id=str(part.get("batch_id") or values.get("batch_id") or ""),
+                production_order_id=str(part.get("production_order_id") or values.get("production_order_id") or ""),
+                part=part,
+                inspection_plan=dict(values.get("inspection_plan") or {}),
+                measurements=dict(values.get("measurements") or {}),
+                inspection_results=list(values.get("inspection_results") or []),
+                specifications=dict(values.get("specifications") or {}),
+                production_context=dict(values.get("production_context") or {}),
                 diagnosis_result=state.get("diagnosis") or {},
                 diagnosis=state.get("diagnosis") or {},
                 maintenance_plan=state.get("maintenance_plan") or {},
-                workorder=workorder,
+                workorder=order,
             ),
             QualityResponse,
         )
@@ -783,13 +808,26 @@ class OrchestratorNodes:
 
     def quality(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("quality", state)
+        route = state.get("route_result") or {}
+        target_input = dict(route.get("target_input") or state.get("context") or {})
         order = state.get("workorder", {})
         workorder_id = str(order.get("workorder_id", ""))
         latest = order
-        if workorder_id:
+        is_part_quality = bool(
+            target_input.get("inspection_type") == "part_quality"
+            or target_input.get("part_id")
+            or target_input.get("part_no")
+            or target_input.get("part")
+            or (not workorder_id and target_input)
+        )
+        if workorder_id and not is_part_quality:
             queried = self._workorder_request(state, action="query", workorder={"workorder_id": workorder_id}, from_agent="workorder")
             latest = queried.get("workorder") or order
-        result = self._quality_request(state, latest)
+        result = self._quality_request(
+            state,
+            latest if not is_part_quality else {},
+            quality_payload=target_input if is_part_quality else None,
+        )
         result["workorder"] = latest
         return self._finish("quality", state, {"quality": result, "workorder": latest})
 
@@ -807,7 +845,7 @@ class OrchestratorNodes:
         queried = self._workorder_request(state, action="query", workorder={"workorder_id": workorder_id}, from_agent="router")
         order = queried.get("workorder") or {}
         state["context"] = {"device_id": str(order.get("device_id") or ""), "workorder_id": workorder_id}
-        quality = self._quality_request(state, order, from_agent="workorder")
+        quality = self._quality_request(state, order, from_agent="workorder", quality_payload={"inspection_type": "repair_acceptance"})
         latest = order
         quality["workorder"] = latest
         if quality.get("passed"):

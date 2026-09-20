@@ -145,6 +145,8 @@ def _trigger_matches(trigger: str, context: Mapping[str, Any], text: str) -> boo
         return any(token in text for token in ("manual", "手册", "说明书"))
     if normalized in {"part_or_component", "part_search"}:
         return bool(context.get("part_no") or context.get("component")) or any(token in text for token in ("零件", "部件", "part", "bom"))
+    if normalized in {"part_quality", "production_part_quality"}:
+        return bool(context.get("part_id") or context.get("part_no") or context.get("batch_id") or context.get("production_order_id")) or any(token in text for token in ("零件质量", "质量检测", "尺寸检测", "外观检测", "成品质检", "零件质检"))
     if normalized in {"repair_plan", "fault_requires_repair"}:
         return any(token in text for token in ("维修", "修复", "repair", "故障"))
     return normalized in text

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 from pathlib import Path
+from uuid import uuid4
 
 try:
     from dotenv import load_dotenv
@@ -78,6 +79,19 @@ class ExperienceSearchRequest(BaseModel):
     part_no: str = ""
     query: str = ""
     limit: int = Field(default=20, ge=1, le=100)
+
+
+class PartQualityRequest(BaseModel):
+    part_no: str = ""
+    part_name: str = ""
+    batch_id: str = ""
+    production_order_id: str = ""
+    device_id: str = ""
+    part: Dict[str, Any] = Field(default_factory=dict)
+    inspection_plan: Dict[str, Any] = Field(default_factory=dict)
+    measurements: Dict[str, Any] = Field(default_factory=dict)
+    specifications: Dict[str, Any] = Field(default_factory=dict)
+    production_context: Dict[str, Any] = Field(default_factory=dict)
 
 
 def serialize_api_response(value: Any) -> Dict[str, Any]:
@@ -176,6 +190,22 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.post("/api/workorders/{workorder_id}/quality")
     def workorder_quality(workorder_id: str) -> Dict[str, Any]:
         return runtime.nodes.quality_workorder(workorder_id)
+
+    @app.post("/api/quality/parts/{part_id}")
+    def part_quality(part_id: str, request: PartQualityRequest) -> Dict[str, Any]:
+        """通过 Orchestrator 的 A2A 入口检测生产零件质量。"""
+
+        values = request.model_dump(mode="json")
+        values.update({"part_id": part_id, "inspection_type": "part_quality", "action": "inspect_part"})
+        state = {
+            "entry": "user",
+            "task_id": "TASK-PART-QUALITY-" + uuid4().hex[:12].upper(),
+            "trace_id": "TRACE-PART-QUALITY-" + uuid4().hex[:12].upper(),
+            "context": values,
+            "diagnosis": {},
+            "maintenance_plan": {},
+        }
+        return runtime.nodes._quality_request(state, {}, from_agent="router", quality_payload=values)
 
     @app.post("/api/experience/search")
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:

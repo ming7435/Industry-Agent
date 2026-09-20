@@ -1,15 +1,21 @@
 name: test_result_skill
 version: 1.0
-goal: Compare pre-repair and post-repair metrics and validate test results.
-trigger: test
+goal: 对生产零件的检测结果进行综合判定。
+trigger: part_quality
 steps:
-  - collect_pre_post_metrics
-  - compare_metrics
-  - verify_sop
-  - validate_result
+  - load_part
+  - load_inspection_plan
+  - inspect_dimensions
+  - inspect_appearance
+  - inspect_material
+  - inspect_function
+  - inspect_process
+  - validate_part
 tools:
-  - get_device_history
-  - compare_pre_post_metrics
-  - get_repair_feedback
-  - check_workorder_compliance
-
+  - get_production_part
+  - get_part_specification
+  - inspect_part_dimensions
+  - inspect_part_appearance
+  - inspect_part_material
+  - inspect_part_function
+  - inspect_part_process

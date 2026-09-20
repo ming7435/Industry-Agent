@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import Any, Dict, Mapping
 
 from app.mcp.client import McpClient
+from app.mcp.quality import QualityMcpAdapter
 from app.mcp.workorder import WorkOrderMcpAdapter
 from app.rag import RAGIndex, RAGServiceClient
 from app.tools.cad import (
@@ -68,6 +69,13 @@ from app.tools.quality import (
     get_repair_feedback as get_repair_feedback_tool,
     verify_alarm_clearance as verify_alarm_clearance_tool,
     verify_repair as verify_repair_tool,
+    get_production_part as get_production_part_tool,
+    get_part_specification as get_part_specification_tool,
+    inspect_part_dimensions as inspect_part_dimensions_tool,
+    inspect_part_appearance as inspect_part_appearance_tool,
+    inspect_part_material as inspect_part_material_tool,
+    inspect_part_function as inspect_part_function_tool,
+    inspect_part_process as inspect_part_process_tool,
 )
 from app.tools.report import (
     generate_report_file as generate_report_file_tool,
@@ -92,6 +100,7 @@ class ToolRegistry:
         self.rag = rag_client or RAGServiceClient(base_url=rag_base_url or "", fallback=rag_index)
         self.trace = trace
         self.workorder_mcp = WorkOrderMcpAdapter()
+        self.quality_mcp = QualityMcpAdapter()
         self.report_store: Dict[str, Dict[str, Any]] = {}
         self.mcp = McpClient({
             "get_alarm_definition": get_alarm_definition,
@@ -148,6 +157,13 @@ class ToolRegistry:
             "check_workorder_compliance": self.check_workorder_compliance,
             "verify_alarm_clearance": self.verify_alarm_clearance,
             "compare_pre_post_metrics": self.compare_pre_post_metrics,
+            "get_production_part": self.get_production_part,
+            "get_part_specification": self.get_part_specification,
+            "inspect_part_dimensions": self.inspect_part_dimensions,
+            "inspect_part_appearance": self.inspect_part_appearance,
+            "inspect_part_material": self.inspect_part_material,
+            "inspect_part_function": self.inspect_part_function,
+            "inspect_part_process": self.inspect_part_process,
             "generate_report": self.generate_report,
             "get_diagnosis_record": self.get_diagnosis_record,
             "get_maintenance_record": self.get_maintenance_record,
@@ -343,6 +359,27 @@ class ToolRegistry:
     def verify_repair(self, **arguments: Any) -> Dict[str, Any]:
         return verify_repair_tool(self.workorder_mcp, **arguments)
 
+    def get_production_part(self, **arguments: Any) -> Dict[str, Any]:
+        return get_production_part_tool(self.quality_mcp, **arguments)
+
+    def get_part_specification(self, **arguments: Any) -> Dict[str, Any]:
+        return get_part_specification_tool(self.quality_mcp, **arguments)
+
+    def inspect_part_dimensions(self, **arguments: Any) -> Dict[str, Any]:
+        return inspect_part_dimensions_tool(self.quality_mcp, **arguments)
+
+    def inspect_part_appearance(self, **arguments: Any) -> Dict[str, Any]:
+        return inspect_part_appearance_tool(self.quality_mcp, **arguments)
+
+    def inspect_part_material(self, **arguments: Any) -> Dict[str, Any]:
+        return inspect_part_material_tool(self.quality_mcp, **arguments)
+
+    def inspect_part_function(self, **arguments: Any) -> Dict[str, Any]:
+        return inspect_part_function_tool(self.quality_mcp, **arguments)
+
+    def inspect_part_process(self, **arguments: Any) -> Dict[str, Any]:
+        return inspect_part_process_tool(self.quality_mcp, **arguments)
+
     def execute(self, name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
         """通过 MCP 客户端分派工具，并记录开始、失败和完成轨迹。"""
 
@@ -359,6 +396,9 @@ class ToolRegistry:
             "mark_repair_completed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
             "query_technicians": "mes", "query_technician_skills": "mes", "query_technician_workload": "mes", "query_shift": "mes", "query_team_availability": "mes",
             "verify_repair": "qms", "check_sop": "qms", "verify_alarm_clearance": "qms",
+            "get_production_part": "qms", "get_part_specification": "qms",
+            "inspect_part_dimensions": "qms", "inspect_part_appearance": "qms",
+            "inspect_part_material": "qms", "inspect_part_function": "qms", "inspect_part_process": "qms",
             "get_repair_feedback": "mes", "check_workorder_compliance": "mes", "compare_pre_post_metrics": "plc",
             "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory",
             "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
@@ -465,6 +505,13 @@ class ToolRegistry:
             "check_workorder_compliance": "检查工单执行与反馈完整性",
             "verify_alarm_clearance": "验证报警是否清除",
             "compare_pre_post_metrics": "比较维修前后关键参数",
+            "get_production_part": "获取已生产零件及生产追溯信息",
+            "get_part_specification": "获取零件质量规格和检验标准",
+            "inspect_part_dimensions": "检测零件尺寸是否符合规格",
+            "inspect_part_appearance": "检测零件外观缺陷",
+            "inspect_part_material": "检测零件材料和硬度",
+            "inspect_part_function": "检测零件功能和关键性能",
+            "inspect_part_process": "检测零件生产过程记录是否完整",
             "generate_report": "生成结构化运维报告",
             "get_diagnosis_record": "获取已有诊断记录",
             "get_maintenance_record": "获取已有维修计划记录",

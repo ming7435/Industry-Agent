@@ -1,4 +1,4 @@
-"""Quality Agent 维修验收规则。"""
+"""Quality Agent 的生产零件质检和旧维修验收规则。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,64 @@ class QualityValidator:
 
     COMPLETED_STATUSES = {"completed", "repair_completed", "closed"}
     RECOVERED_DEVICE_STATUSES = {"running", "idle", "standby", "ready", "normal", "ok"}
+
+    @classmethod
+    def validate_part(
+        cls,
+        part: Mapping[str, Any],
+        specification: Mapping[str, Any],
+        dimension_check: Mapping[str, Any],
+        appearance_check: Mapping[str, Any],
+        material_check: Mapping[str, Any],
+        function_check: Mapping[str, Any],
+        process_check: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """按生产零件的五类质量门禁形成确定性结论。"""
+
+        checks = [
+            ("dimension_not_qualified", "尺寸检测", dimension_check),
+            ("appearance_not_qualified", "外观检测", appearance_check),
+            ("material_not_qualified", "材料检测", material_check),
+            ("function_not_qualified", "功能检测", function_check),
+            ("process_not_qualified", "工艺追溯检测", process_check),
+        ]
+        failed: list[str] = []
+        findings: list[str] = []
+        defects: list[dict[str, Any]] = []
+        inspection_items: list[dict[str, Any]] = []
+        for code, label, result in checks:
+            payload = dict(result or {})
+            passed = bool(payload.get("passed"))
+            inspection_items.append({"name": label, "passed": passed, "source": payload.get("source", "qms-mcp")})
+            defects.extend(list(payload.get("defects") or []))
+            if passed:
+                findings.append("%s通过" % label)
+            else:
+                failed.append(code)
+                findings.append("%s未通过" % label)
+
+        passed = not failed and bool(part.get("part_id") or part.get("part_no"))
+        if not part.get("part_id") and not part.get("part_no"):
+            failed.append("part_identity_missing")
+            findings.append("缺少生产零件编号，无法形成可追溯质检结果")
+        return {
+            "inspection_type": "part_quality",
+            "passed": passed,
+            "qualified": passed,
+            "status": "pass" if passed else "fail",
+            "recent_acceptance_status": "PASSED" if passed else "FAILED",
+            "quality_grade": "合格" if passed else "不合格",
+            "device_recovered": False,
+            "alarm_cleared": False,
+            "parameters_recovered": passed,
+            "workorder_compliance": False,
+            "sop_compliant": passed,
+            "failed_checks": cls._dedupe(failed),
+            "findings": cls._dedupe(findings),
+            "inspection_items": inspection_items,
+            "specifications": dict(specification or {}),
+            "defects": defects,
+        }
 
     @classmethod
     def validate(

@@ -52,3 +52,16 @@ def test_memory_api_rejects_empty_search_and_uses_memory_agent() -> None:
     assert payload["success"] is False
     assert "检索条件" in payload["validation_findings"][0]
 
+
+def test_part_quality_api_routes_production_inspection_through_quality_agent() -> None:
+    runtime = build_orchestrator(tools=ToolRegistry())
+    client = TestClient(create_app(runtime))
+
+    response = client.post("/api/quality/parts/PART-001", json={})
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["inspection_type"] == "part_quality"
+    assert payload["part_id"] == "PART-001"
+    assert payload["qualified"] is True
+    assert payload["quality_grade"] == "合格"

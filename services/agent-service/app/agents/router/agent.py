@@ -66,8 +66,8 @@ class RouterAgent:
         if entities.get("alarm_code") and any(keyword in text for keyword in ("什么", "含义", "处理", "步骤", "说明", "手册", "sop")):
             return "knowledge", "识别到报警码知识问答，路由到 Knowledge Agent"
         rules = [
+            ("quality", ("零件质量", "质量检测", "尺寸检测", "外观检测", "材料检测", "功能检测", "生产出来", "成品质检", "零件质检", "质检", "验收", "是否恢复", "复测")),
             ("cad", ("cad", "bom", "图纸", "结构", "零件", "物料", "位置", "在哪里", "部件", "组件", "传感器", "装配", "关系")),
-            ("quality", ("验收", "质检", "是否恢复", "复测")),
             ("report", ("报告", "日报", "维修记录")),
             ("workorder_query", ("查询工单", "工单状态", "维修状态", "查看工单", "获取工单")),
             ("workorder_action", ("创建工单", "新建工单", "生成工单", "派工", "关闭工单", "更新工单", "重新打开工单")),
@@ -88,6 +88,7 @@ class RouterAgent:
             for key, value in context.items()
             if key in {
                 "device_id", "device_model", "alarm_code", "part_no", "workorder_id", "component", "report_type",
+                "part_id", "batch_id", "production_order_id", "inspection_type",
                 "route_hint", "intent", "task_type", "target_agent",
             } and value
         }
@@ -103,6 +104,13 @@ class RouterAgent:
         part = _PART_RE.search(text)
         if part:
             entities["part_no"] = part.group(0).upper()
+            entities.setdefault("part_id", part.group(0).upper())
+        batch = re.search(r"\bBATCH[-_]?[A-Z0-9]{2,}\b", text, re.IGNORECASE)
+        if batch:
+            entities["batch_id"] = batch.group(0).upper().replace("_", "-")
+        production_order = re.search(r"\bPO[-_]?[A-Z0-9]{2,}\b", text, re.IGNORECASE)
+        if production_order:
+            entities["production_order_id"] = production_order.group(0).upper().replace("_", "-")
         for keyword, report_type in _REPORT_TYPES.items():
             if keyword in text:
                 entities["report_type"] = report_type
@@ -141,6 +149,11 @@ class RouterAgent:
             target_input["action"] = action
         if intent == "report" and entities.get("report_type"):
             target_input["report_type"] = entities["report_type"]
+        if intent == "quality":
+            target_input["inspection_type"] = "part_quality" if any(
+                key in target_input for key in ("part_id", "part_no", "batch_id", "production_order_id")
+            ) or any(keyword in text for keyword in ("零件", "成品", "尺寸", "外观", "材料", "生产出来")) else "repair_acceptance"
+            target_input["action"] = "inspect_part" if target_input["inspection_type"] == "part_quality" else "verify_repair"
         return target_input
 
     @staticmethod

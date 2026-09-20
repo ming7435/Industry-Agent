@@ -1,25 +1,25 @@
 name: quality_master_skill
-goal: 验证维修完成、报警清除、参数恢复与SOP合规，并返回结构化 QualityResult
+goal: 对生产出来的零件执行尺寸、外观、材料、功能和工艺质量检测，并返回结构化 QualityResult
 input: QualityRequest
 steps:
   - initialize
   - load_skill
-  - load_workorder
-  - load_repair_feedback
-  - verify_device
-  - verify_alarm
-  - verify_parameters
-  - verify_sop
-  - validate
+  - load_part
+  - load_inspection_plan
+  - inspect_dimensions
+  - inspect_appearance
+  - inspect_material
+  - inspect_function
+  - inspect_process
+  - validate_part
   - decision
   - final/fallback
 tools:
-  - get_workorder
-  - get_repair_feedback
-  - get_device_status
-  - get_device_history
-  - get_active_alarms
-  - check_workorder_compliance
-  - verify_alarm_clearance
-  - compare_pre_post_metrics
+  - get_production_part
+  - get_part_specification
+  - inspect_part_dimensions
+  - inspect_part_appearance
+  - inspect_part_material
+  - inspect_part_function
+  - inspect_part_process
 output: QualityResult

@@ -2554,30 +2554,23 @@ function RagWorkspace({ snapshot, sample }) {
 }
 
 function QualityWorkspace({ snapshot, sample }) {
-  const [orders, setOrders] = useState([]);
-  const [selectedId, setSelectedId] = useState("");
+  const [partId, setPartId] = useState("PART-001");
   const [quality, setQuality] = useState(null);
   const [trace, setTrace] = useState([]);
   const [experiences, setExperiences] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
-
   async function loadQualityData() {
     try {
-      const [orderBody, traceBody, experienceBody] = await Promise.all([
-        request("/api/workorders"),
+      const [traceBody, experienceBody] = await Promise.all([
         request("/api/trace"),
         request("/api/experience/search", {
           method: "POST",
           body: JSON.stringify({ device_id: sample?.device_id || snapshot?.device_id || "", limit: 8 }),
         }),
       ]);
-      const items = orderBody.items || [];
-      setOrders(items);
       setTrace(traceBody.trace || []);
       setExperiences(experienceBody.items || []);
-      if (!selectedId && items.length) setSelectedId(items[0].workorder_id);
       setError("");
     } catch (err) {
       setError(err.message);
@@ -2589,10 +2582,10 @@ function QualityWorkspace({ snapshot, sample }) {
   }, []);
 
   async function verifyQuality() {
-    if (!selectedOrder) return;
+    if (!partId.trim()) return;
     setBusy(true);
     try {
-      const body = await request(`/api/workorders/${selectedOrder.workorder_id}/quality`, { method: "POST", body: "{}" });
+      const body = await request(`/api/quality/parts/${encodeURIComponent(partId.trim())}`, { method: "POST", body: "{}" });
       setQuality(body);
       await loadQualityData();
       setError("");
@@ -2605,25 +2598,22 @@ function QualityWorkspace({ snapshot, sample }) {
 
   return (
     <section className="workspace-view active module-board" aria-label="质检系统">
-      <ModuleHero eyebrow="QMS 质检系统" title="维修验收与经验沉淀" text="对已处理工单执行恢复验证，查看 Agent Trace，并展示维修经验库检索结果。" />
+      <ModuleHero eyebrow="QMS 质检系统" title="生产零件质量检测" text="对生产完成的零件执行尺寸、外观、材料、功能和工艺追溯检测。" />
       <div className="module-grid">
-        <ModuleStat label="待验工单" value={orders.length} text="来自当前工单池" />
-        <ModuleStat label="最近验收" value={quality ? (quality.passed ? "通过" : "未通过") : "未执行"} text={quality?.workorder_id || "选择工单后执行"} />
+        <ModuleStat label="检测对象" value={quality?.part_id || partId || "--"} text={quality?.part_no || "输入生产零件编号"} />
+        <ModuleStat label="检测结果" value={quality ? (quality.qualified ? "合格" : "不合格") : "未执行"} text={quality?.quality_grade || "等待检测"} />
         <ModuleStat label="经验记录" value={experiences.length} text="长期记忆/经验库结果" />
       </div>
       <div className="ops-grid">
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">验收对象</span><h2>选择工单</h2></div><button className="button" type="button" onClick={loadQualityData}>刷新</button></div>
-          <select className="select-input" value={selectedOrder?.workorder_id || ""} onChange={(event) => setSelectedId(event.target.value)}>
-            {!orders.length && <option value="">暂无工单</option>}
-            {orders.map((order) => <option key={order.workorder_id} value={order.workorder_id}>{order.workorder_id} · {order.title}</option>)}
-          </select>
-          <div className="action-row"><button className="button primary" type="button" disabled={busy || !selectedOrder} onClick={verifyQuality}>{busy ? "验收中" : "执行质检"}</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">检测对象</span><h2>生产零件</h2></div><button className="button" type="button" onClick={loadQualityData}>刷新</button></div>
+          <input className="select-input" value={partId} onChange={(event) => setPartId(event.target.value)} placeholder="例如 PART-001" aria-label="生产零件编号" />
+          <div className="action-row"><button className="button primary" type="button" disabled={busy || !partId.trim()} onClick={verifyQuality}>{busy ? "检测中" : "执行质量检测"}</button></div>
           {error && <div className="inline-error">{error}</div>}
         </section>
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">质检结果</span><h2>{quality ? (quality.passed ? "验收通过" : "验收未通过") : "等待验收"}</h2></div></div>
-          {quality ? <QualityResultView quality={quality} /> : <div className="empty-state">工单完成或关闭后，质检结果会显示恢复状态、报警清除和 SOP 合规性。</div>}
+          <div className="panel-heading"><div><span className="eyebrow">检测结果</span><h2>{quality ? (quality.qualified ? "零件合格" : "零件不合格") : "等待检测"}</h2></div></div>
+          {quality ? <QualityResultView quality={quality} /> : <div className="empty-state">输入生产零件编号后，系统会返回尺寸、外观、材料、功能和工艺检测结果。</div>}
         </section>
       </div>
       <section className="answer-grid">
@@ -2658,12 +2648,8 @@ function DocumentList({ documents, limit = null, compact = false }) {
 }
 
 function QualityResultView({ quality }) {
-  const checks = [
-    ["设备恢复", quality.device_recovered],
-    ["报警清除", quality.alarm_cleared],
-    ["SOP合规", quality.sop_compliant],
-  ];
-  return <div className="quality-result"><div className="check-grid">{checks.map(([label, passed]) => <div key={label} className={passed ? "normal" : "fault"}><span>{label}</span><strong>{passed ? "通过" : "未通过"}</strong></div>)}</div><StepList steps={quality.findings || []} /></div>;
+  const checks = quality.inspection_items || [];
+  return <div className="quality-result"><div className="check-grid">{checks.map((item) => <div key={item.name} className={item.passed ? "normal" : "fault"}><span>{item.name}</span><strong>{item.passed ? "通过" : "未通过"}</strong></div>)}</div>{quality.defects?.length > 0 && <JsonBlock value={quality.defects} />}<StepList steps={quality.findings || []} /></div>;
 }
 
 function ExperienceList({ items }) {
