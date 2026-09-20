@@ -140,6 +140,24 @@ def test_quality_response_has_structured_result_fields() -> None:
     assert response.validation_findings == ["报警仍然存在"]
 
 
+def test_diagnosis_and_maintenance_can_request_memory_with_explicit_sources() -> None:
+    orchestrator = build_orchestrator(tools=ToolRegistry())
+    state = {
+        "task_id": "TASK-MEMORY-SOURCE-001",
+        "trace_id": "TRACE-MEMORY-SOURCE-001",
+        "entry": "user",
+        "user_text": "查询主轴轴承历史经验",
+        "context": {"device_id": "CNC-001"},
+        "diagnosis": {"device_id": "CNC-001", "fault": "主轴轴承异常"},
+    }
+
+    orchestrator.nodes._memory_request(state, action="search", query="主轴轴承异常", from_agent="diagnosis")
+    orchestrator.nodes._memory_request(state, action="search", query="主轴轴承异常", from_agent="maintenance")
+
+    calls = [item for item in orchestrator.nodes.trace_records() if item.get("type") == "a2a" and item.get("to_agent") == "memory"]
+    assert {item.get("from_agent") for item in calls} >= {"diagnosis", "maintenance"}
+
+
 def test_api_quality_entry_uses_quality_a2a_and_updates_workorder() -> None:
     orchestrator = build_orchestrator(tools=ToolRegistry())
     order = orchestrator.nodes.workorder_service.create(
@@ -157,7 +175,7 @@ def test_api_quality_entry_uses_quality_a2a_and_updates_workorder() -> None:
     assert result["workorder"]["workorder_id"] == order["workorder_id"]
     assert any(
         item.get("type") == "a2a"
-        and item.get("from_agent") == "router"
+        and item.get("from_agent") == "workorder"
         and item.get("to_agent") == "quality"
         for item in orchestrator.nodes.trace_records()
     )

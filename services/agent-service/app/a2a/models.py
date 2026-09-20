@@ -152,6 +152,7 @@ class MaintenanceRequest(A2ARequest):
     diagnosis: Dict[str, Any] = Field(default_factory=dict)
     knowledge: Dict[str, Any] = Field(default_factory=dict)
     cad: Dict[str, Any] = Field(default_factory=dict)
+    memory: Dict[str, Any] = Field(default_factory=dict)
     quality_result: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -217,7 +218,6 @@ class QualityRequest(A2ARequest):
     workorder: Dict[str, Any] = Field(default_factory=dict)
     pre_metrics: Dict[str, Any] = Field(default_factory=dict)
     post_metrics: Dict[str, Any] = Field(default_factory=dict)
-    manage_workorder: bool = True
 
 
 class QualityResponse(A2AResponse):

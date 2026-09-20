@@ -24,6 +24,7 @@ class MaintenanceGraphState(TypedDict, total=False):
     cad_required: bool
     knowledge: Dict[str, Any]
     cad: Dict[str, Any]
+    memory: Dict[str, Any]
     inventory: Dict[str, Any]
     part_availability: Dict[str, Any]
     plan_payload: Dict[str, Any]
@@ -61,6 +62,7 @@ def assess_diagnosis(state: MaintenanceGraphState) -> Dict[str, Any]:
     return {
         "diagnosis": diagnosis,
         "query": query,
+        "memory": dict(request.get("memory") or {}),
         "cad_required": agent._requires_cad(diagnosis),
         "route": "request_knowledge",
     }
@@ -98,7 +100,7 @@ def check_parts_tools(state: MaintenanceGraphState) -> Dict[str, Any]:
         plan["required_parts"] = parts
     plan["inventory_status"] = inventory
     plan["part_availability"] = availability
-    plan["evidence"] = agent._evidence(diagnosis, state.get("knowledge") or {}, state.get("cad") or {}, inventory, profile)
+    plan["evidence"] = agent._evidence(diagnosis, state.get("knowledge") or {}, state.get("cad") or {}, inventory, profile, state.get("memory") or {})
     return {"inventory": inventory, "part_availability": availability, "plan_payload": plan, "route": "safety_validate"}
 
 
@@ -108,6 +110,7 @@ def plan_repair(state: MaintenanceGraphState) -> Dict[str, Any]:
         diagnosis=state["diagnosis"],
         knowledge=state.get("knowledge") or {},
         cad=state.get("cad") or {},
+        memory=state.get("memory") or {},
     )
     return {"plan_payload": payload, "route": "check_parts_tools"}
 

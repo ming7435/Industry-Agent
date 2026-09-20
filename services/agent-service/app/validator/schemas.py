@@ -163,6 +163,7 @@ class MaintenancePlan(BaseModel):
     inventory_status: Dict[str, Any] = Field(default_factory=dict)
     part_availability: Dict[str, Any] = Field(default_factory=dict)
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    memory_evidence: List[Dict[str, Any]] = Field(default_factory=list)
     validation_findings: List[str] = Field(default_factory=list)
     risk_level: str = "medium"
     workorder_ready: bool = False
@@ -202,6 +203,7 @@ class WorkOrderResultView(BaseModel):
     priority: str = "normal"
     assignee: str = ""
     workorder: Dict[str, Any] = Field(default_factory=dict)
+    items: List[Dict[str, Any]] = Field(default_factory=list)
     candidates: List[Dict[str, Any]] = Field(default_factory=list)
     dispatch_context: Dict[str, Any] = Field(default_factory=dict)
     validation_findings: List[str] = Field(default_factory=list)

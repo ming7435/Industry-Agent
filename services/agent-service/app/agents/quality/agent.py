@@ -127,7 +127,6 @@ class QualityAgent:
             {"type": "alarm_clearance", **dict(state.get("alarm_check") or {})},
             {"type": "parameters", "parameters_recovered": parameter_check.get("parameters_recovered"), "details": parameter_check.get("comparisons") or parameter_check.get("evidence") or []},
             {"type": "sop", "passed": sop_check.get("passed"), "document_count": len(sop_check.get("documents") or []), "source": sop_check.get("source", "")},
-            {"type": "workorder_action", **dict(state.get("workorder_action") or {})},
         ]
 
     @staticmethod

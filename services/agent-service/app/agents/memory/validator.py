@@ -15,6 +15,13 @@ class MemoryAgentValidator:
         return []
 
     @staticmethod
+    def validate_action(request: Mapping[str, Any]) -> list[str]:
+        action = str(request.get("action") or "search")
+        if action not in {"search", "recent", "learn"}:
+            return ["不支持的记忆动作：%s" % action]
+        return []
+
+    @staticmethod
     def validate_admission(request: Mapping[str, Any]) -> list[str]:
         workorder = request.get("workorder") or {}
         quality = request.get("quality") or {}

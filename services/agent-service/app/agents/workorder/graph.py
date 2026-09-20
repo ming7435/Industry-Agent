@@ -43,15 +43,17 @@ def create_order(state: WorkOrderGraphState) -> Dict[str, Any]:
 
 
 def collect_dispatch_context(state: WorkOrderGraphState) -> Dict[str, Any]:
-    return {"dispatch_context": state["agent"].collect_dispatch_context(state.get("plan") or {}, state.get("workorder") or {}), "route": "select_assignee"}
+    return {"dispatch_context": state["agent"].collect_dispatch_context(state.get("plan") or {}, state.get("workorder") or {}, state.get("request") or {}), "route": "select_assignee"}
 
 
 def select_assignee(state: WorkOrderGraphState) -> Dict[str, Any]:
-    context = state.get("dispatch_context") or {}
-    candidates = list(context.get("candidates") or [])
+    context = dict(state.get("dispatch_context") or {})
+    candidates = state["agent"].rank_candidates(context, state.get("request") or {}, state.get("plan") or {})
     requested = str(state["request"].get("assignee") or "")
     selected = requested or (str(candidates[0].get("technician_id") or candidates[0].get("name") or "") if candidates else "")
-    return {"candidates": candidates, "selected_assignee": selected, "priority": WorkOrderAgentValidator.priority(state["request"], state.get("plan") or {}), "route": "assign_order"}
+    context["candidates"] = candidates
+    context["selected_assignee"] = selected
+    return {"dispatch_context": context, "candidates": candidates, "selected_assignee": selected, "priority": WorkOrderAgentValidator.priority(state["request"], state.get("plan") or {}), "route": "assign_order"}
 
 
 def assign_order(state: WorkOrderGraphState) -> Dict[str, Any]:
@@ -81,10 +83,14 @@ def validate(state: WorkOrderGraphState) -> Dict[str, Any]:
 
 def final(state: WorkOrderGraphState) -> Dict[str, Any]:
     order = dict(state.get("workorder") or {})
+    action = state["action"]
+    items = list(order.get("items") or [])
+    success = bool(order.get("workorder_id")) or (action == "query" and "items" in order)
     result = WorkOrderResult(
-        action=state["action"], success=bool(order.get("workorder_id")), workorder_id=str(order.get("workorder_id") or ""),
+        action=action, success=success, workorder_id=str(order.get("workorder_id") or ""),
         status=str(order.get("status") or ""), priority=str(state.get("priority") or "normal"),
         assignee=str(order.get("assignee") or state.get("selected_assignee") or ""), workorder=order,
+        items=items,
         candidates=list(state.get("candidates") or []), dispatch_context=dict(state.get("dispatch_context") or {}),
         validation_findings=list(state.get("validation_findings") or []), stop_reason="completed",
     )

@@ -23,6 +23,13 @@ def test_memory_agent_rejects_unverified_learning():
     assert result.validation_findings
 
 
+def test_memory_agent_rejects_empty_search_before_retrieval():
+    agent, _ = _agent()
+    result = agent.run({"action": "search"})
+    assert result.success is False
+    assert "检索条件" in result.validation_findings[0]
+
+
 def test_memory_agent_learns_only_closed_passed_workorders_and_searches_it():
     agent, _ = _agent()
     learned = agent.run({

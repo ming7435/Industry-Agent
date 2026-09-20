@@ -38,3 +38,9 @@ class MemoryAgent:
     @staticmethod
     def search_arguments(request: Mapping[str, Any]) -> dict[str, Any]:
         return {key: request.get(key, "") for key in ("device_id", "device_model", "alarm_code", "fault_type", "component", "part_no", "query")} | {"limit": int(request.get("limit") or 20)}
+
+    def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        store = self.experience_module.long_memory
+        if hasattr(store, "recent"):
+            return list(store.recent(limit=max(1, min(int(limit), 100))))
+        return list(store.search(limit=max(1, min(int(limit), 100))))

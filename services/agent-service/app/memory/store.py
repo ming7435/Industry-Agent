@@ -49,6 +49,10 @@ class LongMemoryStore:
             values = [item for item in self._items if _matches(item, device_id=device_id, **filters)]
             return values[-limit:]
 
+    def recent(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._lock:
+            return list(self._items)[-limit:]
+
 
 class RedisShortMemoryStore:
     backend = "redis"
@@ -136,6 +140,9 @@ class MySQLLongMemoryStore:
         values = [json.loads(row[0]) for row in cursor.fetchall()]
         cursor.close()
         return [item for item in values if _matches(item, device_id=device_id, **filters)][:limit]
+
+    def recent(self, limit: int = 20) -> List[Dict[str, Any]]:
+        return self.search(limit=limit)
 
 
 def _matches(item: Dict[str, Any], device_id: str = "", **filters: Any) -> bool:

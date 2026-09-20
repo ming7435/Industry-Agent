@@ -53,6 +53,7 @@ class WorkOrderResult(BaseModel):
     priority: str = "normal"
     assignee: str = ""
     workorder: Dict[str, Any] = Field(default_factory=dict)
+    items: List[Dict[str, Any]] = Field(default_factory=list)
     candidates: List[Dict[str, Any]] = Field(default_factory=list)
     dispatch_context: Dict[str, Any] = Field(default_factory=dict)
     validation_findings: List[str] = Field(default_factory=list)

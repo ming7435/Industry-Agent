@@ -14,12 +14,19 @@ from .validator import MemoryAgentValidator
 
 def initialize(state: MemoryGraphState) -> Dict[str, Any]:
     request = state["agent"].normalize_request(state.get("request") or {})
-    return {"request": request, "action": request.get("action", "search"), "validation_findings": [], "route": "load_skill"}
+    findings = MemoryAgentValidator.validate_action(request)
+    return {"request": request, "action": request.get("action", "search"), "validation_findings": findings, "route": "fallback" if findings else "load_skill"}
 
 
 def load_skill(state: MemoryGraphState) -> Dict[str, Any]:
     skills = get_skill_registry().select("memory", state.get("request") or {})
-    return {"active_skill": "+".join(item.name for item in skills), "active_skills": [item.name for item in skills], "allowed_tools": get_skill_registry().merge_tools(skills), "route": "validate_admission" if state["action"] == "learn" else "retrieve_memory"}
+    route = "validate_admission" if state["action"] == "learn" else "validate_search" if state["action"] == "search" else "retrieve_memory"
+    return {"active_skill": "+".join(item.name for item in skills), "active_skills": [item.name for item in skills], "allowed_tools": get_skill_registry().merge_tools(skills), "route": route}
+
+
+def validate_search(state: MemoryGraphState) -> Dict[str, Any]:
+    findings = MemoryAgentValidator.validate_search(state["request"])
+    return {"validation_findings": findings, "route": "retrieve_memory" if not findings else "fallback"}
 
 
 def validate_admission(state: MemoryGraphState) -> Dict[str, Any]:
@@ -28,7 +35,12 @@ def validate_admission(state: MemoryGraphState) -> Dict[str, Any]:
 
 
 def retrieve_memory(state: MemoryGraphState) -> Dict[str, Any]:
-    response = state["agent"].experience_module.search(**state["agent"].search_arguments(state["request"]))
+    request = state["request"]
+    if state["action"] == "recent":
+        items = state["agent"].recent(limit=int(request.get("limit") or 20))
+        response = {"items": items, "backend": getattr(state["agent"].experience_module.long_memory, "backend", "")}
+    else:
+        response = state["agent"].experience_module.search(**state["agent"].search_arguments(request))
     return {"items": list(response.get("items") or []), "route": "dedup"}
 
 
@@ -46,7 +58,7 @@ def rerank(state: MemoryGraphState) -> Dict[str, Any]:
 
 def validate(state: MemoryGraphState) -> Dict[str, Any]:
     findings = list(state.get("validation_findings") or [])
-    if not state.get("ranked_items"):
+    if state["action"] == "search" and not state.get("ranked_items"):
         findings.append("未检索到已验证维修经验")
     return {"validation_findings": list(dict.fromkeys(findings)), "route": "final"}
 
@@ -82,7 +94,7 @@ def final(state: MemoryGraphState) -> Dict[str, Any]:
     action = state.get("action", "search")
     items = list(state.get("ranked_items") or [])
     experience = dict(state.get("experience") or {})
-    result = MemoryResult(action=action, success=bool(items) if action == "search" else bool(experience.get("memory_saved")), items=items, experience=experience, count=len(items), backend=getattr(state["agent"].experience_module.long_memory, "backend", ""), validation_findings=list(state.get("validation_findings") or []), stop_reason="completed")
+    result = MemoryResult(action=action, success=bool(items) if action in {"search", "recent"} else bool(experience.get("memory_saved")), items=items, experience=experience, count=len(items), backend=getattr(state["agent"].experience_module.long_memory, "backend", ""), validation_findings=list(state.get("validation_findings") or []), stop_reason="completed")
     return {"result": result, "stop_reason": "completed"}
 
 
@@ -96,11 +108,12 @@ def _route(state: MemoryGraphState) -> str:
 
 def build_memory_graph():
     workflow = StateGraph(MemoryGraphState)
-    for name, node in (("initialize", initialize), ("load_skill", load_skill), ("validate_admission", validate_admission), ("retrieve_memory", retrieve_memory), ("dedup", dedup), ("rerank", rerank), ("validate", validate), ("extract_experience", extract_experience), ("dedup_experience", dedup_experience), ("validate_experience", validate_experience), ("persist", persist), ("final", final), ("fallback", fallback)):
+    for name, node in (("initialize", initialize), ("load_skill", load_skill), ("validate_search", validate_search), ("validate_admission", validate_admission), ("retrieve_memory", retrieve_memory), ("dedup", dedup), ("rerank", rerank), ("validate", validate), ("extract_experience", extract_experience), ("dedup_experience", dedup_experience), ("validate_experience", validate_experience), ("persist", persist), ("final", final), ("fallback", fallback)):
         workflow.add_node(name, node)
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
-    workflow.add_conditional_edges("load_skill", _route, {"retrieve_memory": "retrieve_memory", "validate_admission": "validate_admission"})
+    workflow.add_conditional_edges("load_skill", _route, {"retrieve_memory": "retrieve_memory", "validate_search": "validate_search", "validate_admission": "validate_admission"})
+    workflow.add_conditional_edges("validate_search", _route, {"retrieve_memory": "retrieve_memory", "fallback": "fallback"})
     workflow.add_edge("retrieve_memory", "dedup")
     workflow.add_edge("dedup", "rerank")
     workflow.add_edge("rerank", "validate")

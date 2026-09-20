@@ -51,3 +51,8 @@ def test_router_graph_keeps_documented_nodes() -> None:
         "final",
         "fallback",
     }.issubset(node_names)
+
+
+def test_memory_graph_validates_search_before_retrieval() -> None:
+    node_names = set(MemoryAgent(tools=ToolRegistry()).graph.get_graph().nodes)
+    assert {"load_skill", "validate_search", "retrieve_memory", "dedup", "rerank", "validate", "final", "fallback"} <= node_names

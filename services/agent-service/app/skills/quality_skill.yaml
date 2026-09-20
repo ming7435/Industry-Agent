@@ -1,5 +1,5 @@
 name: quality_master_skill
-goal: 验证维修完成、报警清除、参数恢复与SOP合规，并闭环工单
+goal: 验证维修完成、报警清除、参数恢复与SOP合规，并返回结构化 QualityResult
 input: QualityRequest
 steps:
   - initialize

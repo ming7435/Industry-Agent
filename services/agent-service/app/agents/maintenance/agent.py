@@ -83,6 +83,7 @@ class MaintenanceAgent:
         diagnosis: DiagnosisView,
         knowledge: Mapping[str, Any],
         cad: Mapping[str, Any],
+        memory: Mapping[str, Any] | None = None,
         inventory: Mapping[str, Any] | None = None,
         part_availability: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -101,7 +102,7 @@ class MaintenanceAgent:
         tools = self._tools(profile)
         parts = self._parts(profile, spare_parts, components, bom_items)
         safety = self._safety(profile, diagnosis.severity)
-        evidence = self._evidence(diagnosis, knowledge, cad, spare_parts, profile)
+        evidence = self._evidence(diagnosis, knowledge, cad, spare_parts, profile, memory or {})
         target_part = self._target_part(diagnosis, profile, components, bom_items)
         engineering_context = {
             "drawing_refs": list(cad.get("drawing_refs") or self._drawing_refs(cad, components)),
@@ -125,6 +126,7 @@ class MaintenanceAgent:
             "source_documents": self._document_ids(documents),
             "cad_components": self._component_ids(components, bom_items),
             "evidence": evidence,
+            "memory_evidence": list((memory or {}).get("items") or [])[:5],
             "inventory_status": spare_parts,
             "part_availability": availability,
             "risk_level": self._risk_level(diagnosis.severity),
@@ -268,7 +270,7 @@ class MaintenanceAgent:
         return safety
 
     @staticmethod
-    def _evidence(diagnosis: DiagnosisView, knowledge: Mapping[str, Any], cad: Mapping[str, Any], spare_parts: Mapping[str, Any], profile: Mapping[str, Any]) -> list[dict[str, Any]]:
+    def _evidence(diagnosis: DiagnosisView, knowledge: Mapping[str, Any], cad: Mapping[str, Any], spare_parts: Mapping[str, Any], profile: Mapping[str, Any], memory: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
         evidence: list[dict[str, Any]] = []
         for item in diagnosis.evidence:
             evidence.append({"type": "diagnosis", "content": item})
@@ -279,6 +281,8 @@ class MaintenanceAgent:
                 evidence.append({"type": "inventory", **dict(item)})
         for item in cad.get("evidence") or []:
             evidence.append({"type": "cad", **dict(item)})
+        for item in (memory or {}).get("items") or []:
+            evidence.append({"type": "historical_experience", **dict(item)})
         return evidence[:20]
 
     @staticmethod

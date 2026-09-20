@@ -17,7 +17,7 @@ class AgentOrchestrator:
     def __init__(self, diagnosis_agent: DiagnosisAgent | None = None, tools: ToolRegistry | None = None) -> None:
         self.nodes = OrchestratorNodes(diagnosis_agent=diagnosis_agent, tools=tools)
         graph = StateGraph(AgentState)
-        for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "quality_rework", "workorder_action", "workorder_query", "memory", "report"):
+        for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "workorder_action", "workorder_query", "memory", "report"):
             graph.add_node(name, getattr(self.nodes, name))
         graph.add_edge(START, "route")
         graph.add_conditional_edges("route", lambda state: state.get("route", "unknown"), {
@@ -38,8 +38,7 @@ class AgentOrchestrator:
         graph.add_conditional_edges("knowledge", self._after_knowledge, {"cad": "cad", "report": "report"})
         graph.add_conditional_edges("cad", self._after_cad, {"maintenance": "maintenance", "report": "report"})
         graph.add_conditional_edges("maintenance", self._after_maintenance, {"workorder": "workorder", "report": "report"})
-        graph.add_conditional_edges("quality", self._after_quality, {"report": "report", "quality_rework": "quality_rework"})
-        graph.add_edge("quality_rework", "report")
+        graph.add_edge("quality", "report")
         graph.add_edge("workorder", END)
         graph.add_edge("workorder_action", END)
         graph.add_edge("workorder_query", END)
@@ -64,9 +63,7 @@ class AgentOrchestrator:
 
     @staticmethod
     def _after_quality(state: AgentState) -> str:
-        if state.get("entry") != "trigger":
-            return "report"
-        return "report" if (state.get("quality") or {}).get("passed") else "quality_rework"
+        return "report"
 
     def run_user(self, user_text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         return self._execute_graph({"entry": "user", "user_text": user_text, "context": context or {}})

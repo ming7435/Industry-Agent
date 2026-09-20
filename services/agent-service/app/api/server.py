@@ -62,13 +62,21 @@ class WorkOrderCreateRequest(BaseModel):
 
 
 class WorkOrderActionRequest(BaseModel):
-    action: str = Field(default="update", pattern="^(update|close)$")
+    action: str = Field(default="update", pattern="^(assign|update|submit_feedback|mark_repair_completed|close|reopen)$")
     status: str = "in_progress"
     assignee: str = ""
+    feedback: str = ""
+    repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
 
 
 class ExperienceSearchRequest(BaseModel):
     device_id: str = ""
+    device_model: str = ""
+    alarm_code: str = ""
+    fault_type: str = ""
+    component: str = ""
+    part_no: str = ""
+    query: str = ""
     limit: int = Field(default=20, ge=1, le=100)
 
 
@@ -119,43 +127,51 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/memory/recent")
     def memory_recent(limit: int = 20) -> Dict[str, Any]:
-        return {"items": runtime.nodes.short_memory.recent(limit=max(1, min(limit, 100))), "backend": runtime.nodes.short_memory.backend}
+        result = runtime.nodes.execute_memory("recent", {"limit": max(1, min(limit, 100))}, from_agent="router")
+        return {"items": result.get("items", []), "count": result.get("count", 0), "backend": result.get("backend", "")}
 
     @app.get("/api/memory/search")
-    def memory_search(device_id: str = "", limit: int = 20) -> Dict[str, Any]:
-        return {"items": runtime.nodes.long_memory.search(device_id=device_id, limit=max(1, min(limit, 100))), "backend": runtime.nodes.long_memory.backend}
+    def memory_search(
+        device_id: str = "",
+        device_model: str = "",
+        alarm_code: str = "",
+        fault_type: str = "",
+        component: str = "",
+        part_no: str = "",
+        query: str = "",
+        limit: int = 20,
+    ) -> Dict[str, Any]:
+        result = runtime.nodes.execute_memory("search", {
+            "device_id": device_id,
+            "device_model": device_model,
+            "alarm_code": alarm_code,
+            "fault_type": fault_type,
+            "component": component,
+            "part_no": part_no,
+            "query": query,
+            "limit": max(1, min(limit, 100)),
+        }, from_agent="router")
+        return result
 
     @app.get("/api/workorders")
     def workorders() -> Dict[str, Any]:
-        return {"items": runtime.nodes.workorder_service.list()}
+        result = runtime.nodes.execute_workorder("query", {}, from_agent="router")
+        return {"items": result.get("items", []), "count": len(result.get("items", [])), "backend": "workorder-agent"}
 
     @app.post("/api/workorders")
     def workorder_create(request: WorkOrderCreateRequest) -> Dict[str, Any]:
-        return runtime.nodes.workorder_service.create(
-            device_id=request.device_id,
-            title=request.title,
-            plan_id=request.plan_id,
-            steps=request.steps,
-            assignee=request.assignee,
-            repair_target=request.repair_target,
-            drawing_context=request.drawing_context,
-            alarm_code=request.alarm_code,
-            diagnosis_context=request.diagnosis_context,
-        )
+        return runtime.nodes.execute_workorder("create", request.model_dump(mode="json"), from_agent="router")
 
     @app.get("/api/workorders/{workorder_id}")
     def workorder(workorder_id: str) -> Dict[str, Any]:
-        return runtime.nodes.workorder_service.get(workorder_id)
+        return runtime.nodes.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router")
 
     @app.post("/api/workorders/{workorder_id}/action")
     def workorder_action(workorder_id: str, request: WorkOrderActionRequest) -> Dict[str, Any]:
-        if request.action == "close":
-            return runtime.nodes.workorder_service.close(workorder_id)
-        return runtime.nodes.workorder_service.update(
-            workorder_id,
-            status=request.status,
-            assignee=request.assignee,
-        )
+        payload = request.model_dump(mode="json")
+        payload["workorder_id"] = workorder_id
+        payload["repair_feedback"] = payload.get("repair_feedback") or payload.get("feedback") or ""
+        return runtime.nodes.execute_workorder(request.action, payload, from_agent="router")
 
     @app.post("/api/workorders/{workorder_id}/quality")
     def workorder_quality(workorder_id: str) -> Dict[str, Any]:
@@ -163,7 +179,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.post("/api/experience/search")
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:
-        return runtime.nodes.experience_module.search(request.device_id, request.limit)
+        return runtime.nodes.execute_memory("search", request.model_dump(mode="json"), from_agent="router")
 
     return app
 

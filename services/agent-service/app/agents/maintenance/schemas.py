@@ -17,6 +17,7 @@ class MaintenanceQuery(BaseModel):
     diagnosis: Dict[str, Any] = Field(default_factory=dict)
     knowledge: Dict[str, Any] = Field(default_factory=dict)
     cad: Dict[str, Any] = Field(default_factory=dict)
+    memory: Dict[str, Any] = Field(default_factory=dict)
     constraints: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
@@ -35,4 +36,3 @@ class MaintenanceQuery(BaseModel):
         if not values.get("query"):
             values["query"] = values.get("user_text") or values.get("fault") or "设备维修"
         return cls(**values)
-

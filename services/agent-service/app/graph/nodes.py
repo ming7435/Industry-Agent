@@ -365,6 +365,7 @@ class OrchestratorNodes:
                 diagnosis=diagnosis,
                 knowledge=knowledge,
                 cad=cad,
+                memory=state.get("memory") or {},
                 quality_result=quality_result,
             ),
             MaintenanceResponse,
@@ -431,14 +432,14 @@ class OrchestratorNodes:
             payload=payload,
         )
 
-    def _quality_request(self, state: AgentState, workorder: Dict[str, Any]) -> Dict[str, Any]:
+    def _quality_request(self, state: AgentState, workorder: Dict[str, Any], from_agent: str = "router") -> Dict[str, Any]:
         context = state.get("context") or {}
         response = self.a2a.request(
             QualityRequest(
                 request_id=self.a2a.new_request_id(),
                 task_id=state.get("task_id", ""),
                 trace_id=state.get("trace_id", ""),
-                from_agent="router",
+                from_agent=from_agent,
                 to_agent="quality",
                 action="verify_repair",
                 workorder_id=str(workorder.get("workorder_id") or ""),
@@ -447,13 +448,18 @@ class OrchestratorNodes:
                 diagnosis=state.get("diagnosis") or {},
                 maintenance_plan=state.get("maintenance_plan") or {},
                 workorder=workorder,
-                manage_workorder=False,
             ),
             QualityResponse,
         )
         return response.quality_result
 
-    def _workorder_request(self, state: AgentState, action: str = "create", workorder: Mapping[str, Any] | None = None) -> Dict[str, Any]:
+    def _workorder_request(
+        self,
+        state: AgentState,
+        action: str = "create",
+        workorder: Mapping[str, Any] | None = None,
+        from_agent: str | None = None,
+    ) -> Dict[str, Any]:
         context = state.get("context") or {}
         plan = dict(context.get("maintenance_plan") or state.get("maintenance_plan") or {})
         order = dict(workorder or state.get("workorder") or {})
@@ -462,7 +468,7 @@ class OrchestratorNodes:
                 request_id=self.a2a.new_request_id(),
                 task_id=state.get("task_id", ""),
                 trace_id=state.get("trace_id", ""),
-                from_agent="maintenance" if action == "create" else "quality",
+                from_agent=from_agent or ("maintenance" if action == "create" else "quality" if action in {"close", "reopen"} else "router"),
                 to_agent="workorder",
                 action=action,
                 workorder_id=str(order.get("workorder_id") or context.get("workorder_id") or ""),
@@ -479,19 +485,28 @@ class OrchestratorNodes:
         )
         return response.workorder_result or response.payload
 
-    def _memory_request(self, state: AgentState, action: str = "search", query: str = "") -> Dict[str, Any]:
+    def _memory_request(
+        self,
+        state: AgentState,
+        action: str = "search",
+        query: str = "",
+        from_agent: str | None = None,
+    ) -> Dict[str, Any]:
         context = state.get("context") or {}
         response = self.a2a.request(
             MemoryRequest(
                 request_id=self.a2a.new_request_id(),
                 task_id=state.get("task_id", ""),
                 trace_id=state.get("trace_id", ""),
-                from_agent="report" if action == "learn" else "router",
+                from_agent=from_agent or ("report" if action == "learn" else "router"),
                 to_agent="memory",
                 action=action,
                 device_id=str(context.get("device_id") or (state.get("diagnosis") or {}).get("device_id") or ""),
+                device_model=str(context.get("device_model") or (state.get("diagnosis") or {}).get("device_model") or ""),
                 alarm_code=str(context.get("alarm_code") or (state.get("diagnosis") or {}).get("alarm_code") or ""),
                 component=str(context.get("component") or (state.get("diagnosis") or {}).get("component") or ""),
+                fault_type=str(context.get("fault_type") or (state.get("diagnosis") or {}).get("fault_type") or ""),
+                part_no=str(context.get("part_no") or (state.get("diagnosis") or {}).get("part_no") or ""),
                 query=query or str(state.get("user_text") or ""),
                 diagnosis=state.get("diagnosis") or {},
                 maintenance_plan=state.get("maintenance_plan") or {},
@@ -503,6 +518,52 @@ class OrchestratorNodes:
             MemoryResponse,
         )
         return response.memory_result or response.payload
+
+    def execute_workorder(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router") -> Dict[str, Any]:
+        """API/事件入口：所有工单业务动作都通过 WorkOrder Agent。"""
+
+        values = dict(payload or {})
+        values["action"] = action
+        if action == "create" and not values.get("maintenance_plan"):
+            values["maintenance_plan"] = {
+                "device_id": values.get("device_id") or "unknown",
+                "title": values.get("title") or "设备维修工单",
+                "plan_id": values.get("plan_id") or "",
+                "repair_steps": list(values.get("steps") or []),
+                "target_part": dict(values.get("repair_target") or {}),
+                "engineering_context": dict(values.get("drawing_context") or {}),
+                "alarm_code": values.get("alarm_code") or "",
+                "diagnosis": {"device_id": values.get("device_id") or "unknown", "fault": values.get("title") or "设备异常", **dict(values.get("diagnosis_context") or {})},
+                "workorder_ready": True,
+            }
+        state: AgentState = {
+            "entry": "user",
+            "task_id": "TASK-WO-API-" + uuid4().hex[:12].upper(),
+            "trace_id": "TRACE-WO-API-" + uuid4().hex[:12].upper(),
+            "context": values,
+            "workorder": dict(values.get("workorder") or {}),
+            "repair_feedback": values.get("repair_feedback") or {},
+        }
+        return self._workorder_request(state, action=action, workorder=values.get("workorder"), from_agent=from_agent)
+
+    def execute_memory(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router") -> Dict[str, Any]:
+        """API/事件入口：所有经验检索和学习动作都通过 Memory Agent。"""
+
+        values = dict(payload or {})
+        state: AgentState = {
+            "entry": "user",
+            "task_id": "TASK-MEMORY-API-" + uuid4().hex[:12].upper(),
+            "trace_id": "TRACE-MEMORY-API-" + uuid4().hex[:12].upper(),
+            "context": values,
+            "user_text": str(values.get("query") or ""),
+            "diagnosis": dict(values.get("diagnosis") or {}),
+            "maintenance_plan": dict(values.get("maintenance_plan") or {}),
+            "workorder": dict(values.get("workorder") or {}),
+            "repair_feedback": values.get("repair_feedback") or {},
+            "quality": dict(values.get("quality") or {}),
+            "report": dict(values.get("report") or {}),
+        }
+        return self._memory_request(state, action=action, query=str(values.get("query") or ""), from_agent=from_agent)
 
     def _diagnosis_request(self, state: AgentState, event: Dict[str, Any]) -> Dict[str, Any]:
         request = DiagnosisRequest(
@@ -567,8 +628,20 @@ class OrchestratorNodes:
                 "timestamp": state.get("task_id", ""),
             }
         output = {"diagnosis": self._diagnosis_request(state, event)}
+        diagnosis = output["diagnosis"]
+        memory_query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or event.get("event_type") or "设备维修经验")
+        try:
+            memory = self._memory_request(
+                {**state, "diagnosis": diagnosis, "context": {**dict(state.get("context") or {}), **event}},
+                action="search",
+                query=memory_query,
+                from_agent="diagnosis",
+            )
+            output["memory"] = memory
+            output["memory_result"] = memory
+        except A2AError as error:
+            output["errors"] = [str(error)]
         if state.get("entry") == "trigger":
-            diagnosis = output["diagnosis"]
             a2a_tool = next(
                 (
                     item
@@ -606,20 +679,32 @@ class OrchestratorNodes:
 
     def maintenance(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("maintenance", state)
+        diagnosis = state.get("diagnosis") or {}
+        context = state.get("context") or {}
         cad = state.get("cad") or {}
         if not cad:
-            diagnosis = state.get("diagnosis") or {}
-            context = state.get("context") or {}
             query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "设备维修")
             cad = self._cad_request(state, query, "maintenance", context=context)
+        memory_query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or context.get("query") or "设备维修经验")
+        memory = state.get("memory") or {}
+        try:
+            memory = self._memory_request(
+                {**state, "diagnosis": diagnosis, "context": {**dict(context), "device_id": diagnosis.get("device_id") or context.get("device_id", "")}},
+                action="search",
+                query=memory_query,
+                from_agent="maintenance",
+            )
+        except A2AError as error:
+            memory = {"success": False, "validation_findings": [str(error)], "items": []}
+        planning_state = {**state, "memory": memory}
         plan = self._maintenance_request(
-            state,
+            planning_state,
             state.get("diagnosis", {}),
             state.get("knowledge", {}),
             cad,
             quality=state.get("quality") or {},
         )
-        payload = {"maintenance_plan": plan}
+        payload = {"maintenance_plan": plan, "memory": memory, "memory_result": memory}
         if state.get("entry") == "trigger":
             payload["workorder"] = {}
         return self._finish("maintenance", state, payload)
@@ -628,7 +713,7 @@ class OrchestratorNodes:
         """Maintenance 完成后创建并派工；后续维修由外部反馈入口驱动。"""
 
         self._node_start("workorder", state)
-        result = self._workorder_request(state, action="create")
+        result = self._workorder_request(state, action="create", from_agent="maintenance")
         return self._finish("workorder", state, {
             "workorder_result": result,
             "workorder": result.get("workorder", {}),
@@ -640,7 +725,7 @@ class OrchestratorNodes:
         self._node_start("memory", state)
         route = state.get("route_result") or {}
         query = str((route.get("target_input") or {}).get("query") or state.get("user_text") or "")
-        result = self._memory_request(state, action="search", query=query)
+        result = self._memory_request(state, action="search", query=query, from_agent="router")
         return self._finish("memory", state, {"memory_result": result, "memory": result, "status": "completed" if result.get("success") else "insufficient_evidence"})
 
     def workorder_action(self, state: AgentState) -> Dict[str, Any]:
@@ -662,7 +747,7 @@ class OrchestratorNodes:
                     "target_part": enriched.get("repair_target") or enriched.get("target_part") or {},
                     "engineering_context": enriched.get("drawing_context") or enriched.get("engineering_context") or {},
                 }
-            result = self._workorder_request({**state, "context": enriched}, action=action)
+            result = self._workorder_request({**state, "context": enriched}, action=action, from_agent="router")
             return self._finish("workorder_action", state, {
                 "workorder_result": result,
                 "workorder": result.get("workorder", {}),
@@ -683,7 +768,7 @@ class OrchestratorNodes:
         target_input = dict(route.get("target_input") or state.get("context") or {})
         workorder_id = str(target_input.get("workorder_id") or "")
         try:
-            result = self._workorder_request({**state, "context": target_input}, action="query", workorder={"workorder_id": workorder_id})
+            result = self._workorder_request({**state, "context": target_input}, action="query", workorder={"workorder_id": workorder_id}, from_agent="router")
             return self._finish("workorder_query", state, {
                 "workorder_result": result,
                 "workorder": result.get("workorder", result),
@@ -700,31 +785,34 @@ class OrchestratorNodes:
         self._node_start("quality", state)
         order = state.get("workorder", {})
         workorder_id = str(order.get("workorder_id", ""))
-        latest = self.workorder_service.get(workorder_id) if workorder_id else order
-        result = self._quality_request(state, latest)
+        latest = order
         if workorder_id:
-            latest = self.workorder_service.get(workorder_id)
-            result["workorder"] = latest
+            queried = self._workorder_request(state, action="query", workorder={"workorder_id": workorder_id}, from_agent="workorder")
+            latest = queried.get("workorder") or order
+        result = self._quality_request(state, latest)
+        result["workorder"] = latest
         return self._finish("quality", state, {"quality": result, "workorder": latest})
 
     def quality_workorder(self, workorder_id: str) -> Dict[str, Any]:
         """通过统一 A2A 入口执行质检，再由 WorkOrder/Memory Agent 收口。"""
 
-        order = self.workorder_service.get(workorder_id)
         state: AgentState = {
             "entry": "user",
             "task_id": "TASK-QUALITY-" + uuid4().hex[:12].upper(),
             "trace_id": "TRACE-QUALITY-" + uuid4().hex[:12].upper(),
-            "context": {"device_id": str(order.get("device_id") or "")},
+            "context": {},
             "diagnosis": {},
             "maintenance_plan": {},
         }
-        quality = self._quality_request(state, order)
-        latest = self.workorder_service.get(workorder_id)
+        queried = self._workorder_request(state, action="query", workorder={"workorder_id": workorder_id}, from_agent="router")
+        order = queried.get("workorder") or {}
+        state["context"] = {"device_id": str(order.get("device_id") or ""), "workorder_id": workorder_id}
+        quality = self._quality_request(state, order, from_agent="workorder")
+        latest = order
         quality["workorder"] = latest
         if quality.get("passed"):
-            close_result = self._workorder_request({**state, "workorder": latest}, action="close", workorder=latest)
-            latest = close_result.get("workorder") or self.workorder_service.get(workorder_id)
+            close_result = self._workorder_request({**state, "workorder": latest}, action="close", workorder=latest, from_agent="quality")
+            latest = close_result.get("workorder") or latest
             quality["workorder_result"] = close_result
             quality["workorder"] = latest
             report_result = _serialize_agent_result(self.harnesses["report"].execute_agent({
@@ -736,11 +824,27 @@ class OrchestratorNodes:
             }))
             quality["report"] = report_result
             memory_state = {**state, "workorder": latest, "quality": quality, "report": report_result}
-            quality["memory_result"] = self._memory_request(memory_state, action="learn")
+            quality["memory_result"] = self._memory_request(memory_state, action="learn", from_agent="report")
         else:
-            reopen_result = self._workorder_request({**state, "workorder": latest}, action="reopen", workorder=latest)
+            reopen_result = self._workorder_request({**state, "workorder": latest}, action="reopen", workorder=latest, from_agent="quality")
             quality["workorder_result"] = reopen_result
             quality["workorder"] = reopen_result.get("workorder") or latest
+            rework_diagnosis = dict(latest.get("diagnosis_context") or {})
+            rework_diagnosis.setdefault("device_id", latest.get("device_id", ""))
+            rework_diagnosis.setdefault("fault", latest.get("title", "设备维修返工"))
+            rework_plan = self._maintenance_request(
+                {**state, "workorder": quality["workorder"]},
+                rework_diagnosis,
+                {},
+                {},
+                quality=quality,
+            )
+            quality["rework_plan"] = rework_plan
+            quality["rework_workorder_result"] = self._workorder_request(
+                {**state, "workorder": quality["workorder"], "maintenance_plan": rework_plan},
+                action="create",
+                from_agent="maintenance",
+            )
         return quality
 
     def quality_rework(self, state: AgentState) -> Dict[str, Any]:

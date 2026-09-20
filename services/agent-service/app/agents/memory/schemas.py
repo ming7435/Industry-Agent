@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class MemoryQuery(BaseModel):
     task_id: str = ""
     trace_id: str = ""
-    action: Literal["search", "learn"] = "search"
+    action: Literal["search", "recent", "learn"] = "search"
     device_id: str = ""
     device_model: str = ""
     alarm_code: str = ""

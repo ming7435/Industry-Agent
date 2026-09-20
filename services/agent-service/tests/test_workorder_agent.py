@@ -27,6 +27,8 @@ def test_workorder_agent_creates_assigns_and_keeps_idempotency():
     assert first.workorder_id == second.workorder_id
     assert first.assignee
     assert first.priority == "high"
+    assert first.dispatch_context["candidates"][0]["dispatch_score"] >= first.dispatch_context["candidates"][-1]["dispatch_score"]
+    assert first.dispatch_context["candidates"][0]["dispatch_reasons"]
 
 
 def test_workorder_agent_does_not_accept_missing_plan():

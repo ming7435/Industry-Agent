@@ -27,7 +27,7 @@ class WorkOrderService:
         )
         raw = self.tools.execute("create_workorder", {
             "device_id": str(diagnosis.get("device_id") or payload.get("device_id") or "unknown"),
-            "title": "设备维修：%s" % (diagnosis.get("fault") or "设备异常"),
+            "title": str(payload.get("title") or "设备维修：%s" % (diagnosis.get("fault") or "设备异常")),
             "plan_id": payload.get("plan_id", ""),
             "steps": payload.get("repair_steps", []),
             "repair_target": dict(payload.get("target_part") or payload.get("repair_target_detail") or {}),

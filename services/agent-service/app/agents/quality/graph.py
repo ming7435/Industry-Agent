@@ -29,7 +29,6 @@ class QualityWorkflowState(TypedDict, total=False):
     parameter_check: Dict[str, Any]
     sop_check: Dict[str, Any]
     decision: Dict[str, Any]
-    workorder_action: Dict[str, Any]
     validation_findings: List[str]
     route: str
     stop_reason: str
@@ -47,7 +46,7 @@ def load_skill(state: QualityWorkflowState) -> Dict[str, Any]:
     default_tools = [
         "get_workorder", "get_repair_feedback", "get_device_status", "get_device_history",
         "get_active_alarms", "check_workorder_compliance", "verify_alarm_clearance",
-        "compare_pre_post_metrics", "close_workorder", "reopen_workorder",
+        "compare_pre_post_metrics",
     ]
     return {
         "active_skill": "+".join(names),
@@ -148,15 +147,9 @@ def validate(state: QualityWorkflowState) -> Dict[str, Any]:
 
 
 def decision(state: QualityWorkflowState) -> Dict[str, Any]:
-    agent = state["agent"]
-    request = state["request"]
-    quality = state["decision"]
-    workorder_id = str((state.get("workorder") or {}).get("workorder_id") or "")
-    action: Dict[str, Any] = {}
-    if request.get("manage_workorder", False) and workorder_id:
-        action_name = "close_workorder" if quality.get("passed") else "reopen_workorder"
-        action = agent._safe_tool(action_name, {"workorder_id": workorder_id})
-    return {"workorder_action": action, "route": "final"}
+    # Quality only produces QualityResult. WorkOrder lifecycle changes are
+    # orchestrated through the WorkOrder Agent after this result is returned.
+    return {"route": "final"}
 
 
 def final(state: QualityWorkflowState) -> Dict[str, Any]:
