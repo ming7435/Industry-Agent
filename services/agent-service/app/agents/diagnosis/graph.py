@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.diagnosis import evidence, parsing, tool_policy
+from app.agents.diagnosis.prompt import build_diagnosis_messages
 from app.agents.diagnosis.schemas import AgentStatus, DiagnosisResult, DiagnosisState
 from app.skills import get_skill_registry
 
@@ -39,7 +41,7 @@ def initialize_diagnosis_state(state: DiagnosisGraphState) -> Dict[str, Any]:
     """初始化消息上下文，并在模型不可用时转入本地降级路径。"""
     agent = state["agent"]
     runtime = state["agent_state"]
-    runtime.messages = list(agent._messages(state["event"]))
+    runtime.messages = list(build_diagnosis_messages(state["event"]))
     runtime.status = AgentStatus.RUNNING
     runtime.current_agent = "diagnosis.initialize"
 
@@ -53,9 +55,8 @@ def initialize_diagnosis_state(state: DiagnosisGraphState) -> Dict[str, Any]:
 
 def load_diagnosis_skill(state: DiagnosisGraphState) -> Dict[str, Any]:
     """加载当前事件对应的 Skill 和工具白名单。"""
-    agent = state["agent"]
     runtime = state["agent_state"]
-    skill = agent._select_skill(state["event"])
+    skill = tool_policy.select_skill(state["event"])
     selected_names = list(skill.get("skills") or [skill["name"]])
     definitions = [
         definition
@@ -94,7 +95,7 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
     runtime.step_count += 1
     alarm_code = state.get("alarm_code")
     tool_choice = None
-    if alarm_code and not agent._has_tool_call(runtime, "get_alarm_definition"):
+    if alarm_code and not tool_policy.has_tool_call(runtime, "get_alarm_definition"):
         tool_choice = {"type": "function", "function": {"name": "get_alarm_definition"}}
 
     response = agent.client.chat(
@@ -102,10 +103,10 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
         tools=agent._tool_schemas_for(runtime.allowed_tools),
         tool_choice=tool_choice,
     )
-    assistant = dict(agent._assistant_message(response))
+    assistant = dict(parsing.assistant_message(response))
     calls = assistant.get("tool_calls") or []
 
-    if not calls and alarm_code and not agent._has_tool_call(runtime, "get_alarm_definition"):
+    if not calls and alarm_code and not tool_policy.has_tool_call(runtime, "get_alarm_definition"):
         calls = [{
             "id": "forced_get_alarm_definition",
             "type": "function",
@@ -119,8 +120,8 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
     runtime.messages.append(assistant)
     # 自动异常诊断需要知识证据时，通过 Orchestrator 注入的 A2A 回调调用 Knowledge。
     # 结果写回当前 Diagnosis Observation，后续模型继续基于证据判断，避免外层重复检索。
-    if not calls and getattr(agent, "knowledge_provider", None) and not agent._has_tool_call(runtime, "search_knowledge"):
-        query = agent._knowledge_query(state["event"])
+    if not calls and getattr(agent, "knowledge_provider", None) and not tool_policy.has_tool_call(runtime, "search_knowledge"):
+        query = tool_policy.knowledge_query(state["event"])
         arguments = {"query": query, "limit": 5}
         try:
             result = agent.request_knowledge(state["event"], query)
@@ -140,12 +141,12 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
         }
         runtime.tool_calls.append(record)
         runtime.tool_results.append(result)
-        observation = agent._observation_from_tool("search_knowledge", arguments, result, runtime.step_count)
+        observation = evidence.observation_from_tool("search_knowledge", arguments, result, runtime.step_count)
         runtime.observations.append(observation)
-        for item in agent._evidence_from_observation(observation):
+        for item in evidence.evidence_from_observation(observation):
             if item not in runtime.evidence:
                 runtime.evidence.append(item)
-        for item in agent._evidence_records_from_observation(observation):
+        for item in evidence.evidence_records_from_observation(observation):
             if not any(existing.get("source") == item.get("source") and existing.get("content") == item.get("content") for existing in runtime.evidence_records):
                 runtime.evidence_records.append(item)
         runtime.messages.append({
@@ -155,7 +156,7 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
             "content": json.dumps(result, ensure_ascii=False),
         })
         runtime.next_action = "基于 Knowledge Evidence 完成诊断"
-        fingerprint = agent._observation_hash([observation])
+        fingerprint = evidence.observation_hash([observation])
         if fingerprint and fingerprint == runtime.last_observation_hash:
             runtime.repeated_observation_count += 1
         else:
@@ -179,9 +180,9 @@ def guard_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
     for call in assistant.get("tool_calls") or []:
         function = call.get("function") or {}
         name = str(function.get("name") or "")
-        arguments = agent._json_arguments(function.get("arguments"))
-        arguments = agent._normalize_tool_arguments(name, arguments, state)
-        decision = agent._guard_tool_call(name, arguments, runtime)
+        arguments = parsing.json_arguments(function.get("arguments"))
+        arguments = tool_policy.normalize_tool_arguments(name, arguments, state)
+        decision = tool_policy.guard_tool_call(name, arguments, runtime)
         normalized_call = dict(call)
         normalized_call["function"] = {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)}
         if decision["allow"]:
@@ -232,7 +233,7 @@ def execute_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
     for call in state.get("guarded_calls") or []:
         function = call.get("function") or {}
         name = function.get("name") or ""
-        arguments = agent._json_arguments(function.get("arguments"))
+        arguments = parsing.json_arguments(function.get("arguments"))
         execution_started = perf_counter()
         try:
             result = agent.tools.execute(name, arguments)
@@ -277,13 +278,13 @@ def record_tool_observations(state: DiagnosisGraphState) -> Dict[str, Any]:
         call = item["call"]
         record = item["record"]
         result = item["result"]
-        observation = agent._observation_from_tool(record["name"], record["arguments"], result, runtime.step_count)
+        observation = evidence.observation_from_tool(record["name"], record["arguments"], result, runtime.step_count)
         observations.append(observation)
         runtime.observations.append(observation)
-        for evidence in agent._evidence_from_observation(observation):
-            if evidence not in runtime.evidence:
-                runtime.evidence.append(evidence)
-        for item in agent._evidence_records_from_observation(observation):
+        for evidence_text in evidence.evidence_from_observation(observation):
+            if evidence_text not in runtime.evidence:
+                runtime.evidence.append(evidence_text)
+        for item in evidence.evidence_records_from_observation(observation):
             if not any(existing.get("source") == item.get("source") and existing.get("content") == item.get("content") for existing in runtime.evidence_records):
                 runtime.evidence_records.append(item)
         runtime.messages.append({
@@ -293,7 +294,7 @@ def record_tool_observations(state: DiagnosisGraphState) -> Dict[str, Any]:
             "content": json.dumps(result, ensure_ascii=False),
         })
 
-    fingerprint = agent._observation_hash(observations)
+    fingerprint = evidence.observation_hash(observations)
     if fingerprint and fingerprint == runtime.last_observation_hash:
         runtime.repeated_observation_count += 1
     else:
@@ -326,7 +327,7 @@ def validate_diagnosis_candidate(state: DiagnosisGraphState) -> Dict[str, Any]:
     runtime.current_agent = "diagnosis.validate"
     assistant = state.get("assistant") or {}
     final_text = str(assistant.get("content") or "")
-    parsed = agent._parse_json(final_text)
+    parsed = parsing.parse_final_json(final_text)
     validation = agent._validate_candidate(runtime, state["event"], parsed, final_text)
     runtime.validation_errors = list(validation.get("errors") or [])
 
@@ -357,7 +358,7 @@ def build_final_diagnosis_result(state: DiagnosisGraphState) -> Dict[str, Any]:
         event_id=state["event_id"],
         device_id=state["device_id"],
         alarm_code=state.get("alarm_code"),
-        parsed=agent._parse_json(final_text),
+        parsed=parsing.parse_final_json(final_text),
         raw_text=final_text,
         task_id=state.get("task_id", ""),
         triggered_at=state.get("triggered_at"),

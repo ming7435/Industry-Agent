@@ -1,6 +1,5 @@
-"""MCP 工具注册和执行层。"""
+"""MCP 客户端入口。"""
 
-from .registry import LocalMcpToolRegistry
 from .client import McpClient
 
-__all__ = ["LocalMcpToolRegistry", "McpClient"]
+__all__ = ["McpClient"]

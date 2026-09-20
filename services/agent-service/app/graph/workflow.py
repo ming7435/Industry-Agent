@@ -61,10 +61,6 @@ class AgentOrchestrator:
     def _after_maintenance(state: AgentState) -> str:
         return "workorder" if state.get("entry") == "trigger" else "report"
 
-    @staticmethod
-    def _after_quality(state: AgentState) -> str:
-        return "report"
-
     def run_user(self, user_text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         return self._execute_graph({"entry": "user", "user_text": user_text, "context": context or {}})
 

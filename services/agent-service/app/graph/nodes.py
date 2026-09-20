@@ -116,7 +116,6 @@ class OrchestratorNodes:
             "cad": "cad",
             "maintenance": "maintenance",
             "quality": "quality",
-            "quality_rework": "maintenance",
             "workorder": "workorder",
             "workorder_action": "workorder",
             "workorder_query": "workorder",
@@ -331,12 +330,9 @@ class OrchestratorNodes:
         diagnosis: Dict[str, Any],
         knowledge: Dict[str, Any],
         cad: Dict[str, Any],
-        quality: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         context = state.get("context") or {}
-        quality_result = dict(quality or {})
-        is_rework = bool(quality_result) and not bool(quality_result.get("passed"))
-        source_agent = "quality" if is_rework else ("diagnosis" if state.get("entry") == "trigger" else "router")
+        source_agent = "diagnosis" if state.get("entry") == "trigger" else "router"
         response = self.a2a.request(
             MaintenanceRequest(
                 request_id=self.a2a.new_request_id(),
@@ -344,16 +340,15 @@ class OrchestratorNodes:
                 trace_id=state.get("trace_id", ""),
                 from_agent=source_agent,
                 to_agent="maintenance",
-                action="create_repair_plan" if not is_rework else "rework_repair_plan",
+                action="create_repair_plan",
                 device_id=str(context.get("device_id") or diagnosis.get("device_id") or ""),
                 user_text=state.get("user_text", ""),
                 diagnosis_result=diagnosis,
-                constraints={"need_workorder": state.get("entry") == "trigger", "rework": is_rework},
+                constraints={"need_workorder": state.get("entry") == "trigger"},
                 diagnosis=diagnosis,
                 knowledge=knowledge,
                 cad=cad,
                 memory=state.get("memory") or {},
-                quality_result=quality_result,
             ),
             MaintenanceResponse,
         )
@@ -706,7 +701,6 @@ class OrchestratorNodes:
             state.get("diagnosis", {}),
             state.get("knowledge", {}),
             cad,
-            quality=state.get("quality") or {},
         )
         payload = {"maintenance_plan": plan, "memory": memory, "memory_result": memory}
         if state.get("entry") == "trigger":
@@ -792,23 +786,6 @@ class OrchestratorNodes:
         result = self._quality_request(state, from_agent="router", quality_payload=target_input)
         return self._finish("quality", state, {"quality": result})
 
-
-    def quality_rework(self, state: AgentState) -> Dict[str, Any]:
-        """质量校验不通过时，通过 Quality -> Maintenance A2A 生成返工方案。"""
-
-        self._node_start("quality_rework", state)
-        plan = self._maintenance_request(
-            state,
-            state.get("diagnosis") or {},
-            state.get("knowledge") or {},
-            state.get("cad") or {},
-            quality=state.get("quality") or {},
-        )
-        return self._finish(
-            "quality_rework",
-            state,
-            {"maintenance_plan": plan, "rework_via": "quality->maintenance"},
-        )
 
     def report(self, state: AgentState) -> Dict[str, Any]:
         self._node_start("report", state)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -45,13 +45,15 @@ class QualityQuery(BaseModel):
         return cls(**values)
 
 
-class QualityGraphState(dict):
-    """仅作为文档化状态类型，实际图使用 TypedDict 兼容 LangGraph。"""
+class QualityWorkflowState(TypedDict, total=False):
+    """Quality LangGraph 节点之间传递的运行时状态。"""
 
+    agent: Any
     request: Dict[str, Any]
     active_skill: str
     active_skills: List[str]
     allowed_tools: List[str]
+    decision: Dict[str, Any]
     validation_findings: List[str]
     result: Any
     route: str

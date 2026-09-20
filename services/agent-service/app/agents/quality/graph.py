@@ -2,35 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
 from app.validator import QualityResult
 
-from .schemas import QualityQuery
+from .schemas import QualityQuery, QualityWorkflowState
 from .validator import QualityValidator
-
-
-class QualityWorkflowState(TypedDict, total=False):
-    agent: Any
-    request: Dict[str, Any]
-    active_skill: str
-    active_skills: List[str]
-    allowed_tools: List[str]
-    part: Dict[str, Any]
-    inspection_plan: Dict[str, Any]
-    dimension_check: Dict[str, Any]
-    appearance_check: Dict[str, Any]
-    material_check: Dict[str, Any]
-    function_check: Dict[str, Any]
-    process_check: Dict[str, Any]
-    decision: Dict[str, Any]
-    validation_findings: List[str]
-    route: str
-    stop_reason: str
-    result: QualityResult
 
 
 def initialize(state: QualityWorkflowState) -> Dict[str, Any]:

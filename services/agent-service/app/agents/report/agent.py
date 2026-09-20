@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -107,45 +106,6 @@ class ReportAgent:
                 values.append(item)
         return values
 
-    def _legacy_run(self, task: Any) -> ReportResult:
-        payload = dict(task or {}) if isinstance(task, Mapping) else {}
-        diagnosis = self._mapping(payload.get("diagnosis"))
-        plan = self._mapping(payload.get("maintenance_plan") or payload.get("plan"))
-        order = self._mapping(payload.get("workorder"))
-        quality = self._mapping(payload.get("quality"))
-        knowledge = self._mapping(payload.get("knowledge"))
-        event = self._mapping(payload.get("event"))
-        trace = list(payload.get("trace") or [])
-
-        sections: dict[str, Any] = {
-            "diagnosis": diagnosis,
-            "maintenance_plan": plan,
-            "workorder": order,
-            "quality": quality,
-        }
-        if knowledge:
-            sections["knowledge"] = knowledge
-        if event:
-            sections["event"] = event
-        if trace:
-            sections["trace_summary"] = self._trace_summary(trace)
-
-        report_type = self._report_type(payload, diagnosis, plan, order, quality)
-        source_refs = self._source_refs(payload, sections)
-        findings = ReportValidator.validate(sections, source_refs, report_type)
-        device_id = self._device_id(payload, diagnosis, order, event)
-        status = "completed" if not findings else "incomplete"
-        return ReportResult(
-            report_id="RPT-" + uuid4().hex[:10].upper(),
-            report_type=report_type,
-            title="%s设备运维案例报告" % device_id,
-            summary=self._summary(device_id, diagnosis, plan, quality, status, findings),
-            status=status,
-            sections=sections,
-            source_refs=source_refs,
-            validation_findings=findings,
-        )
-
     @staticmethod
     def _mapping(value: Any) -> dict[str, Any]:
         if hasattr(value, "model_dump"):
@@ -204,16 +164,6 @@ class ReportAgent:
         if status != "completed":
             base += "报告状态为 incomplete：%s。" % "；".join(findings)
         return base
-
-    @staticmethod
-    def _trace_summary(trace: list[Any]) -> dict[str, Any]:
-        records = [item for item in trace if isinstance(item, Mapping)]
-        type_counts = Counter(str(item.get("type") or "unknown") for item in records)
-        names = {
-            trace_type: sorted({str(item.get("name") or "") for item in records if item.get("type") == trace_type and item.get("name")})
-            for trace_type in type_counts
-        }
-        return {"record_count": len(records), "type_counts": dict(type_counts), "names": names}
 
     @classmethod
     def _source_refs(cls, payload: Mapping[str, Any], sections: Mapping[str, Any]) -> list[dict[str, Any]]:

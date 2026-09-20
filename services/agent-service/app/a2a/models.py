@@ -153,7 +153,6 @@ class MaintenanceRequest(A2ARequest):
     knowledge: Dict[str, Any] = Field(default_factory=dict)
     cad: Dict[str, Any] = Field(default_factory=dict)
     memory: Dict[str, Any] = Field(default_factory=dict)
-    quality_result: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MaintenanceResponse(A2AResponse):

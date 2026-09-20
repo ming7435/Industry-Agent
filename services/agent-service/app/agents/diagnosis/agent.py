@@ -15,7 +15,6 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from . import evidence, parsing, tool_policy, validator
 from .dedup import DiagnosisRunCache
 from .graph import build_diagnosis_graph
-from .prompt import build_diagnosis_messages
 from .schemas import (
     AgentStatus,
     DiagnosisResult,
@@ -24,7 +23,7 @@ from .schemas import (
 
 from app.alarm import AlarmCodeParser
 from app.llm import get_default_llm_client
-from app.mcp.registry import LocalMcpToolRegistry
+from app.tools.registry import ToolRegistry
 
 
 class DiagnosisAgent:
@@ -64,17 +63,14 @@ class DiagnosisAgent:
     def __init__(
         self,
         client: Optional[Any] = None,
-        tools: Optional[LocalMcpToolRegistry] = None,
+        tools: Optional[ToolRegistry] = None,
         knowledge_provider: Optional[Callable[[Mapping[str, Any], str], Mapping[str, Any]]] = None,
         run_cache: Optional[DiagnosisRunCache] = None,
     ) -> None:
 
         self.client = client if client is not None else get_default_llm_client()
 
-        self.tools = (
-            tools
-            or LocalMcpToolRegistry()
-        )
+        self.tools = tools or ToolRegistry()
         self.knowledge_provider = knowledge_provider
         self.run_cache = run_cache if run_cache is not None else DiagnosisRunCache()
         self.graph = build_diagnosis_graph()
@@ -143,7 +139,7 @@ class DiagnosisAgent:
             or ""
         )
 
-        triggered_at = self._parse_datetime(
+        triggered_at = parsing.parse_datetime(
             event.get("timestamp")
             or event.get("last_seen")
         )
@@ -212,88 +208,8 @@ class DiagnosisAgent:
 
         return dict(event)
 
-    # ==========================================================
-    # Prompt
-    # ==========================================================
-
-    @staticmethod
-    def _messages(
-        event: Mapping[str, Any],
-    ):
-        return build_diagnosis_messages(event)
-
-    # ==========================================================
-    # LLM Response
-    # ==========================================================
-
-    @staticmethod
-    def _assistant_message(
-        response: Mapping[str, Any],
-    ) -> Dict[str, Any]:
-        return parsing.assistant_message(response)
-
-    # ==========================================================
-    # Tool Arguments
-    # ==========================================================
-
-    @staticmethod
-    def _json_arguments(
-        raw: Any,
-    ) -> Dict[str, Any]:
-        return parsing.json_arguments(raw)
-
-    # ==========================================================
-    # Parse Final JSON
-    # ==========================================================
-
-    @staticmethod
-    def _parse_json(
-        text: str,
-    ) -> Dict[str, Any]:
-        return parsing.parse_final_json(text)
-
-    # ==========================================================
-    # Skill / Tool Guard / Validator
-    # ==========================================================
-
-    @staticmethod
-    def _select_skill(event: Mapping[str, Any]) -> Dict[str, Any]:
-        """按事件特征选择 Diagnosis 子 Skill。"""
-        return tool_policy.select_skill(event)
-
     def _tool_schemas_for(self, allowed_tools: List[str]) -> List[Dict[str, Any]]:
         return tool_policy.tool_schemas_for(self.tools, allowed_tools)
-
-    @staticmethod
-    def _has_tool_call(state: DiagnosisState, name: str) -> bool:
-        return tool_policy.has_tool_call(state, name)
-
-    def _normalize_tool_arguments(
-        self,
-        name: str,
-        arguments: Mapping[str, Any],
-        graph_state: Mapping[str, Any],
-    ) -> Dict[str, Any]:
-        return tool_policy.normalize_tool_arguments(name, arguments, graph_state)
-
-    @staticmethod
-    def _guard_tool_call(name: str, arguments: Mapping[str, Any], state: DiagnosisState) -> Dict[str, Any]:
-        return tool_policy.guard_tool_call(name, arguments, state)
-
-    @staticmethod
-    def _observation_hash(observations: List[Mapping[str, Any]]) -> str:
-        return evidence.observation_hash(observations)
-
-    @staticmethod
-    def _observation_from_tool(name: str, arguments: Mapping[str, Any], result: Mapping[str, Any], step: int) -> Dict[str, Any]:
-        return evidence.observation_from_tool(name, arguments, result, step)
-
-    def _evidence_from_observation(self, observation: Mapping[str, Any]) -> List[str]:
-        return evidence.evidence_from_observation(observation)
-
-    @staticmethod
-    def _evidence_records_from_observation(observation: Mapping[str, Any]) -> List[Dict[str, Any]]:
-        return evidence.evidence_records_from_observation(observation)
 
     def _validate_candidate(
         self,
@@ -303,21 +219,6 @@ class DiagnosisAgent:
         raw_text: str,
     ) -> Dict[str, Any]:
         return validator.validate_candidate(state, event, parsed, raw_text)
-
-    @staticmethod
-    def _requires_history(event: Mapping[str, Any]) -> bool:
-        return tool_policy.requires_history(event)
-
-    @staticmethod
-    def _metric_keys_from_event(event: Mapping[str, Any]) -> List[str]:
-        return tool_policy.metric_keys_from_event(event)
-
-    @staticmethod
-    def _knowledge_query(event: Mapping[str, Any]) -> str:
-        return tool_policy.knowledge_query(event)
-
-    def _event_evidence(self, event: Mapping[str, Any]) -> List[str]:
-        return evidence.event_evidence(event)
 
     # ==========================================================
     # Result
@@ -359,7 +260,7 @@ class DiagnosisAgent:
                 )
             )
 
-        summary = self._chinese_text(
+        summary = parsing.chinese_text(
             str(
                 parsed.get("summary")
                 or raw_text
@@ -367,7 +268,7 @@ class DiagnosisAgent:
             )
         )
 
-        diagnosis = self._chinese_text(
+        diagnosis = parsing.chinese_text(
             str(
                 parsed.get("diagnosis")
                 or summary
@@ -427,7 +328,7 @@ class DiagnosisAgent:
 
         evidence = self._result_evidence(state, state.abnormal_event)
         evidence_records = list(state.evidence_records)
-        recommendation = self._chinese_text(
+        recommendation = parsing.chinese_text(
             str(parsed.get("recommendation") or parsed.get("next_action") or state.next_action or "根据诊断结果安排现场检查")
         )
 
@@ -442,7 +343,7 @@ class DiagnosisAgent:
             tool_calls=state.tool_calls,
             model=self._model_name(),
             source=self._model_source(),
-            created_at=self._now(),
+            created_at=parsing.now_utc(),
             evidence=evidence,
             evidence_records=evidence_records,
             recommendation=recommendation,
@@ -532,7 +433,7 @@ class DiagnosisAgent:
         )
 
         severity_text = (
-            self._severity_label(
+            parsing.severity_label(
                 severity
             )
         )
@@ -634,7 +535,7 @@ class DiagnosisAgent:
             tool_calls=state.tool_calls,
             model=self._model_name(),
             source="local_fallback",
-            created_at=self._now(),
+            created_at=parsing.now_utc(),
             evidence=evidence,
             evidence_records=evidence_records,
             recommendation=recommendation,
@@ -773,39 +674,3 @@ class DiagnosisAgent:
             "warning": warning,
         }
         return details["overall"], details, warning
-
-    # ==========================================================
-    # Datetime
-    # ==========================================================
-
-    @staticmethod
-    def _parse_datetime(
-        value: Any,
-    ) -> Optional[datetime]:
-        return parsing.parse_datetime(value)
-
-    @staticmethod
-    def _now() -> datetime:
-        """统一使用UTC时间。"""
-        return parsing.now_utc()
-
-    # ==========================================================
-    # Severity
-    # ==========================================================
-
-    @staticmethod
-    def _severity_label(
-        value: Any,
-    ) -> str:
-        return parsing.severity_label(value)
-
-    # ==========================================================
-    # 中文清理
-    # ==========================================================
-
-    @classmethod
-    def _chinese_text(
-        cls,
-        text: str,
-    ) -> str:
-        return parsing.chinese_text(text)

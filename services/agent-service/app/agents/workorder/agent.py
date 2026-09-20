@@ -98,25 +98,7 @@ class WorkOrderAgent:
         return sorted(ranked, key=lambda item: (-int(item.get("dispatch_score") or 0), int(item.get("workload") or 0), str(item.get("technician_id") or "")))
 
     def execute_action(self, request: Mapping[str, Any]) -> Any:
-        action = str(request.get("action") or "query")
-        workorder_id = str(request.get("workorder_id") or "")
-        if action in {"query", "get"}:
-            return self.service.get(workorder_id) if workorder_id else {"items": self.service.list(device_id=str(request.get("device_id") or ""), status=str(request.get("status") or ""))}
-        if action == "assign":
-            return self.service.assign(workorder_id, str(request.get("assignee") or ""))
-        if action == "update":
-            return self.service.update(workorder_id, str(request.get("status") or "in_progress"), assignee=str(request.get("assignee") or ""))
-        if action == "submit_feedback":
-            feedback = request.get("repair_feedback")
-            return self.service.submit_repair_feedback(workorder_id, str(feedback.get("feedback") if isinstance(feedback, Mapping) else feedback or ""))
-        if action == "mark_repair_completed":
-            feedback = request.get("repair_feedback")
-            return self.service.mark_repair_completed(workorder_id, str(feedback.get("feedback") if isinstance(feedback, Mapping) else feedback or ""))
-        if action == "close":
-            return self.service.close(workorder_id)
-        if action == "reopen":
-            return self.service.reopen(workorder_id)
-        return self.service.create_from_plan(request.get("maintenance_plan") or request.get("plan") or request)
+        return self.service.execute_action(request)
 
     def _safe_tool(self, name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         try:

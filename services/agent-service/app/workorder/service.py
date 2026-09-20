@@ -104,13 +104,25 @@ class WorkOrderService:
         return self.tools.execute("reopen_workorder", {"workorder_id": workorder_id})
 
     def execute_action(self, task: Mapping[str, Any]) -> dict[str, Any] | WorkOrder | None:
-        action = str(task.get("action", "create"))
+        action = str(task.get("action") or "create")
         workorder_id = str(task.get("workorder_id", ""))
         if action in {"query", "get"}:
+            if not workorder_id:
+                return {"items": self.list(device_id=str(task.get("device_id") or ""), status=str(task.get("status") or ""))}
             raw = self.get(workorder_id)
             return WorkOrder(**raw) if raw.get("found", True) else None
+        if action == "assign":
+            return self.assign(workorder_id, str(task.get("assignee") or ""))
         if action == "update":
-            return self.update(workorder_id, str(task.get("status", "in_progress")))
+            return self.update(workorder_id, str(task.get("status", "in_progress")), assignee=str(task.get("assignee") or ""))
+        if action == "submit_feedback":
+            feedback = task.get("repair_feedback")
+            return self.submit_repair_feedback(workorder_id, str(feedback.get("feedback") if isinstance(feedback, Mapping) else feedback or ""))
+        if action == "mark_repair_completed":
+            feedback = task.get("repair_feedback")
+            return self.mark_repair_completed(workorder_id, str(feedback.get("feedback") if isinstance(feedback, Mapping) else feedback or ""))
         if action == "close":
             return self.close(workorder_id)
-        return self.create_from_plan(task.get("plan") or task)
+        if action == "reopen":
+            return self.reopen(workorder_id)
+        return self.create_from_plan(task.get("maintenance_plan") or task.get("plan") or task)
