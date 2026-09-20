@@ -105,7 +105,6 @@ def run_ingestion(
     milvus_database: str = "industry_rag_documents",
     extensions: tuple[str, ...] = DEFAULT_EXTENSIONS,
     embedding_model: str = "BAAI/bge-m3",
-    embedding_model_path: str | None = None,
     embedding_batch_size: int = 8,
     project_id: str | None = None,
     tenant_id: str | None = None,
@@ -130,7 +129,6 @@ def run_ingestion(
         milvus_database=milvus_database,
         extensions=list(extensions),
         embedding_model=embedding_model,
-        embedding_model_path=embedding_model_path,
         embedding_batch_size=embedding_batch_size,
         object_storage_enabled=upload_originals,
         object_storage_config=ObjectStorageConfig.from_env() if upload_originals else None,
@@ -159,11 +157,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Comma-separated CAD extensions to ingest, e.g. 'dxf' or 'dxf,dwg'.",
     )
     parser.add_argument("--embedding-model", default="BAAI/bge-m3")
-    parser.add_argument(
-        "--embedding-model-path",
-        default=None,
-        help="Local sentence-transformers directory (defaults to EMBEDDING_MODEL_PATH).",
-    )
     parser.add_argument("--embedding-batch-size", type=int, default=8)
     parser.add_argument("--project-id", default=None)
     parser.add_argument("--tenant-id", default=None)
@@ -204,7 +197,6 @@ def main() -> int:
     extensions = tuple(item.strip() for item in args.extensions.split(",") if item.strip())
     milvus_uri = args.milvus_uri or _env("MILVUS_URI", "http://127.0.0.1:19530")
     milvus_database = args.milvus_database or _env("MILVUS_DATABASE", "industry_rag_documents")
-    embedding_model_path = args.embedding_model_path or os.getenv("EMBEDDING_MODEL_PATH") or None
 
     result = run_ingestion(
         args.data_dir,
@@ -212,7 +204,6 @@ def main() -> int:
         milvus_database=milvus_database,
         extensions=extensions,
         embedding_model=args.embedding_model,
-        embedding_model_path=embedding_model_path,
         embedding_batch_size=args.embedding_batch_size,
         project_id=args.project_id,
         tenant_id=args.tenant_id,

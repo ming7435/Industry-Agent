@@ -1,11 +1,12 @@
-"""Embedding data models and configuration."""
+"""Embedding data models and SiliconFlow query client."""
 
 from __future__ import annotations
 
 import json
 import math
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
-from pathlib import Path
 from threading import Lock
 from typing import Any, Protocol
 
@@ -16,7 +17,7 @@ from config.settings import settings
 
 
 class EmbeddingError(RuntimeError):
-    """Raised when chunk embedding fails."""
+    """Raised when chunk or query embedding fails."""
 
 
 class EmbeddingClient(Protocol):
@@ -35,7 +36,6 @@ class EmbeddingConfig:
     """Options controlling chunk filtering and embedding batches."""
 
     model_name: str = "BAAI/bge-m3"
-    model_path: str | None = None
     batch_size: int = 16
     min_characters: int = 20
     normalize_embeddings: bool = True
@@ -46,8 +46,6 @@ class EmbeddingConfig:
     def __post_init__(self) -> None:
         if not self.model_name.strip():
             raise ValueError("model_name must not be empty.")
-        if self.model_path is not None and not self.model_path.strip():
-            raise ValueError("model_path must not be empty when provided.")
         if self.batch_size <= 0:
             raise ValueError("batch_size must be greater than zero.")
         if self.min_characters < 0:
@@ -140,165 +138,84 @@ class VectorRecord:
         }
 
 
-class BGEM3EmbeddingClient:
-    """Embed texts with the local ``BAAI/bge-m3`` sentence-transformers model."""
+class SiliconFlowEmbeddingClient:
+    """Embed texts through SiliconFlow's OpenAI-compatible embedding API."""
 
     def __init__(
         self,
-        config: EmbeddingConfig | None = None,
         *,
-        model: Any | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        timeout_s: float = 30.0,
     ) -> None:
-        self.config = config or EmbeddingConfig()
-        self._model = model or self._load_model()
+        self.api_key = api_key if api_key is not None else settings.siliconflow_api_key
+        self.base_url = (base_url or settings.siliconflow_base_url).rstrip("/")
+        self.model = model or settings.siliconflow_embedding_model
+        self.timeout_s = timeout_s
         self._dimension: int | None = None
+        if not self.api_key:
+            raise EmbeddingError("SILICONFLOW_API_KEY is not configured")
 
     @property
     def dimension(self) -> int | None:
         return self._dimension
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Return one normalized dense vector per input text."""
-
         if not texts:
             return []
         if any(not text.strip() for text in texts):
             raise ValueError("Embedding texts must not contain empty strings.")
-
-        try:
-            vectors = self._model.encode(
-                texts,
-                normalize_embeddings=self.config.normalize_embeddings,
-                convert_to_numpy=False,
-                show_progress_bar=False,
-            )
-        except TypeError:
-            # Keep compatibility with older sentence-transformers versions,
-            # then apply the requested normalization locally instead of
-            # silently changing the geometry used by COSINE search.
-            vectors = self._model.encode(texts)
-        except Exception as exc:
-            raise EmbeddingError(f"BGE-M3 embedding failed: {exc}") from exc
-
-        normalized_vectors = [_as_float_list(vector) for vector in vectors]
-        if self.config.normalize_embeddings:
-            normalized_vectors = [_l2_normalize(vector) for vector in normalized_vectors]
-        if normalized_vectors:
-            self._dimension = len(normalized_vectors[0])
-        return normalized_vectors
-
-    def _load_model(self) -> Any:
-        model_name = self.config.model_path or self.config.model_name
-        if self.config.model_path and (Path(self.config.model_path) / "onnx" / "model.onnx").is_file():
-            return _OnnxEmbeddingModel(self.config.model_path)
-
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as exc:
-            raise EmbeddingError(
-                "BGE-M3 embeddings require sentence-transformers. "
-                "Install it with 'pip install sentence-transformers'."
-            ) from exc
-
-        try:
-            return SentenceTransformer(model_name, local_files_only=bool(self.config.model_path))
-        except TypeError:
-            # Older sentence-transformers versions do not expose local_files_only.
-            # A local path is still passed directly, so no model name resolution is needed.
-            try:
-                return SentenceTransformer(model_name)
-            except Exception as exc:
-                raise EmbeddingError(
-                    f"Unable to load embedding model '{model_name}': {exc}"
-                ) from exc
-        except Exception as exc:
-            model_name = self.config.model_path or self.config.model_name
-            raise EmbeddingError(
-                f"Unable to load embedding model '{model_name}': {exc}"
-            ) from exc
-
-
-class _OnnxEmbeddingModel:
-    """Small SentenceTransformer-compatible wrapper for local BGE ONNX exports.
-
-    The project normally uses the PyTorch SentenceTransformer checkpoint. Some
-    Windows deployments already have the official ONNX export, however, and it
-    produces the same 1024-dimensional sentence embeddings. Keeping this
-    adapter behind ``BGEM3EmbeddingClient`` preserves the existing ingestion and
-    retrieval contracts while allowing those deployments to run offline.
-    """
-
-    def __init__(self, model_path: str) -> None:
-        try:
-            import numpy as np
-            import onnxruntime as ort
-            from transformers import AutoTokenizer
-        except ImportError as exc:
-            raise EmbeddingError(
-                "Local BGE ONNX models require onnxruntime and transformers."
-            ) from exc
-
-        self._np = np
-        self._session = ort.InferenceSession(
-            str(Path(model_path) / "onnx" / "model.onnx"),
-            providers=["CPUExecutionProvider"],
-        )
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            local_files_only=True,
-        )
-        self._input_names = {item.name for item in self._session.get_inputs()}
-
-    def encode(
-        self,
-        texts: list[str],
-        *,
-        normalize_embeddings: bool = True,
-        convert_to_numpy: bool = False,
-        show_progress_bar: bool = False,
-        **_: Any,
-    ) -> list[Any]:
-        del convert_to_numpy, show_progress_bar
-        if not texts:
-            return []
-
-        encoded = self._tokenizer(
-            texts,
-            padding=True,
-            truncation=True,
-            # Ingestion chunks are capped at 1200 characters. Keeping the
-            # ONNX sequence length bounded avoids quadratic CPU work from the
-            # model's native 8192-token context window.
-            max_length=512,
-            return_tensors="np",
-        )
-        feed = {
-            name: encoded[name].astype("int64")
-            for name in self._input_names
-            if name in encoded
+        payload = {
+            "model": self.model,
+            "input": texts,
         }
-        vectors = self._session.run(["sentence_embedding"], feed)[0].astype("float32")
-        if normalize_embeddings:
-            norms = self._np.linalg.norm(vectors, axis=1, keepdims=True)
-            vectors = vectors / self._np.where(norms == 0, 1, norms)
-        return list(vectors)
+        request = urllib.request.Request(
+            f"{self.base_url}/embeddings",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                body = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")[:300]
+            raise EmbeddingError(
+                f"SiliconFlow embedding request failed: HTTP {exc.code} {detail}"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise EmbeddingError(
+                f"SiliconFlow embedding request failed: {type(exc).__name__}"
+            ) from exc
+        try:
+            result = json.loads(body)
+            items = result["data"]
+            vectors = [
+                _as_float_list(item["embedding"])
+                for item in sorted(items, key=lambda item: int(item.get("index", 0)))
+            ]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise EmbeddingError("SiliconFlow embedding response is unusable") from exc
+        if len(vectors) != len(texts):
+            raise EmbeddingError(
+                f"SiliconFlow returned {len(vectors)} embeddings for {len(texts)} texts"
+            )
+        if vectors:
+            self._dimension = len(vectors[0])
+        return vectors
 
 
 class QueryEmbedder:
-    """Thin, synchronous wrapper turning any embedding client into a query encoder."""
+    """Thin, synchronous wrapper turning SiliconFlow embeddings into query vectors."""
 
     def __init__(self, client: Any | None = None) -> None:
         """Wrap an embedding client, building the default one when omitted."""
-        if client is None:
-            client = BGEM3EmbeddingClient(
-                EmbeddingConfig(
-                    model_path=settings.embedding_model_path,
-                    batch_size=settings.embedding_batch_size,
-                    min_characters=settings.embedding_min_characters,
-                    normalize_embeddings=settings.embedding_normalize,
-                )
-            )
-        self._client = client
+        self._client = client or SiliconFlowEmbeddingClient()
 
     @property
     def client(self) -> Any:
@@ -341,14 +258,14 @@ def get_embedder() -> QueryEmbedder | None:
         try:
             _embedder = QueryEmbedder()
             logger.info(
-                "embedder loaded model={} batch_size={}",
-                settings.embedding_model_path,
+                "embedder loaded provider=siliconflow model={} batch_size={}",
+                settings.siliconflow_embedding_model,
                 settings.embedding_batch_size,
             )
-        except Exception as exc:  # noqa: BLE001 - a broken model must not kill boot
+        except Exception as exc:  # noqa: BLE001 - a broken provider must not kill boot
             logger.warning(
-                "embedder unavailable model={} error={!r}",
-                settings.embedding_model_path,
+                "embedder unavailable provider=siliconflow model={} error={!r}",
+                settings.siliconflow_embedding_model,
                 exc,
             )
             _embedder = None
@@ -373,13 +290,6 @@ def _as_float_list(vector: Any) -> list[float]:
     return [float(value) for value in vector]
 
 
-def _l2_normalize(vector: list[float]) -> list[float]:
-    norm = math.sqrt(sum(value * value for value in vector))
-    if norm == 0.0:
-        return vector
-    return [value / norm for value in vector]
-
-
 def validate_vector(
     vector: list[float],
     *,
@@ -399,11 +309,11 @@ def validate_vector(
 
 
 __all__ = [
-    "BGEM3EmbeddingClient",
     "EmbeddingClient",
     "EmbeddingConfig",
     "EmbeddingError",
     "QueryEmbedder",
+    "SiliconFlowEmbeddingClient",
     "VectorRecord",
     "get_embedder",
     "reset_embedder",

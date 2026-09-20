@@ -201,16 +201,7 @@ def _create_embedder() -> Any:
     try:
         return get_embedder_model()
     except TypeError as exc:
-        candidates = {
-            "model_path": settings.embedding_model_path,
-            "embedding_model_path": settings.embedding_model_path,
-            "device": settings.reranker_device,
-        }
-        kwargs = _matching_kwargs(get_embedder_model, candidates)
-        if not kwargs:
-            raise TypeError(f"cannot construct embedder: {exc}") from exc
-        logger.warning("constructing embedder with explicit settings kwargs={}", sorted(kwargs))
-        return get_embedder_model(**kwargs)
+        raise TypeError(f"cannot construct embedder: {exc}") from exc
 
 
 def _create_reranker() -> Any:

@@ -115,9 +115,8 @@ def _embed_query(embedder: Any, query: str) -> list[float]:
     """Encode one query with whatever the embedder exposes.
 
     :class:`~app.embedding.model.QueryEmbedder` offers ``embed_query``, while a
-    bare offline client (for example ``BGEM3EmbeddingClient``) only offers
-    ``embed_texts``. Both are accepted so the retriever keeps working when a
-    plain client is injected.
+    plain embedding client only offers ``embed_texts``. Both are accepted so the
+    retriever keeps working when a client is injected.
 
     Args:
         embedder: Object exposing ``embed_query`` and/or ``embed_texts``.

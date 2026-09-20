@@ -422,7 +422,7 @@ overlap 本身不会把结果重新撑大到超过上限。
 
 向量化层负责将 `IndustrialChunk` 转换为 `VectorRecord`。
 
-本项目使用本地 BGE-M3 embedding 模型：
+本项目使用硅基流动 BGE-M3 embedding API：
 
 ```text
 BAAI/bge-m3
@@ -434,16 +434,9 @@ BAAI/bge-m3
 1024（最终维度仍以模型实际输出为准）
 ```
 
-当本地 `sentence-transformers` 版本不支持 `normalize_embeddings` 参数时，代码会在
-兼容回退路径手动执行 L2 归一化，确保与 Milvus 的 COSINE 检索配置一致。
-
 ### 8.3 使用的方法
 
-使用 `sentence-transformers` 加载 BGE-M3：
-
-```python
-SentenceTransformer("BAAI/bge-m3")
-```
+通过 `SiliconFlowEmbeddingClient` 调用远程 embedding 接口，避免在本机加载模型权重。
 
 向量化前会进行过滤：
 
@@ -473,15 +466,14 @@ BGE-M3 适合本项目的原因：
 
 - 支持多语言，中英文表现较好
 - 适合语义检索场景
-- 本地部署，不依赖外部 embedding API
+- 通过硅基流动 API 调用，避免维护本地模型文件
 - 成本可控，适合批量离线入库
 - 向量维度稳定，方便 Milvus 建表
 - 对工业文档中的说明、参数、故障、报警码等文本检索较合适
 
 ### 8.5 好处
 
-- 离线可运行，减少外部 API 依赖
-- 数据不需要发送给第三方 embedding 服务
+- 不需要本地 GPU 或模型权重
 - 可重复构建向量库
 - 与 Milvus 向量检索天然适配
 - 通过过滤策略降低脏数据进入向量库的概率

@@ -1,238 +1,118 @@
-"""Cross-encoder reranking with ``BAAI/bge-reranker-v2-m3``.
-
-The reranker is a heavy, synchronous, GPU-bound component.  Two consequences are
-handled here so that the rest of the service stays simple:
-
-* The model is loaded with :class:`FlagEmbedding.FlagReranker` and the requested
-  device is validated against the actual CUDA availability -- asking for
-  ``cuda`` on a CPU-only host transparently degrades to CPU instead of crashing.
-* :meth:`Reranker.rerank` returns *copies* of the input hits.  The fused list is
-  therefore left untouched, which lets :mod:`app.api.pipeline` fall back to the
-  pure RRF ordering when reranking times out or fails.
-
-Importing this module never imports ``FlagEmbedding`` eagerly in a way that would
-break the service: a missing dependency surfaces when a :class:`Reranker` is
-constructed, and :func:`app.reranker.pipeline.get_reranker` turns that into a
-``None`` singleton.
-"""
+"""Reranking through SiliconFlow's BGE reranker API."""
 
 from __future__ import annotations
 
-import inspect
+import json
+import urllib.error
+import urllib.request
 from copy import copy
-from numbers import Real
-from pathlib import Path
 from typing import Any
 
 from app.retrieval import Hit
-
-try:  # pragma: no cover - exercised only when the dependency is installed
-    from FlagEmbedding import FlagReranker
-except (ImportError, ModuleNotFoundError):  # pragma: no cover
-    FlagReranker = None  # type: ignore[assignment]
+from config.settings import settings
 
 STAGE_RERANK = "rerank"
 """Value written to ``Hit.metadata["stage"]`` for reranked hits."""
 
-_REQUIRED_LOCAL_FILES = (
-    "config.json",
-    "model.safetensors",
-    "tokenizer.json",
-    "sentencepiece.bpe.model",
-)
-_EXPECTED_LOCAL_FILE_SIZES = {
-    # Sizes published by the BAAI/bge-reranker-v2-m3 model repository. These
-    # checks catch interrupted downloads that leave a seemingly valid file.
-    "model.safetensors": 2_271_071_852,
-    "tokenizer.json": 17_098_273,
-    "sentencepiece.bpe.model": 5_069_051,
-}
+
+def _copy_reranked_hits(hits: list[Hit], scores: list[float], top_n: int) -> list[Hit]:
+    if len(scores) != len(hits):
+        raise RuntimeError(f"reranker returned {len(scores)} scores for {len(hits)} candidates")
+
+    ranked = sorted(
+        zip(hits, scores),
+        key=lambda item: item[1],
+        reverse=True,
+    )[:top_n]
+
+    reranked_hits: list[Hit] = []
+    for rank, (hit, score) in enumerate(ranked, start=1):
+        reranked_hit = copy(hit)
+        reranked_hit.score = float(score)
+        reranked_hit.rank = int(rank)
+        metadata: dict[str, Any] = dict(getattr(hit, "metadata", None) or {})
+        metadata["rerank_score"] = float(score)
+        metadata["stage"] = STAGE_RERANK
+        reranked_hit.metadata = metadata
+        reranked_hits.append(reranked_hit)
+
+    return reranked_hits
 
 
-def _validate_local_model_path(model_path: str) -> None:
-    """Fail early with the exact files missing from a local model checkout."""
-
-    path = Path(model_path)
-    if not path.is_dir():
-        return
-
-    missing = [name for name in _REQUIRED_LOCAL_FILES if not (path / name).is_file()]
-    invalid = [
-        f"{name} (expected {_EXPECTED_LOCAL_FILE_SIZES[name]} bytes, got {(path / name).stat().st_size} bytes)"
-        for name, expected_size in _EXPECTED_LOCAL_FILE_SIZES.items()
-        if (path / name).is_file() and (path / name).stat().st_size != expected_size
-    ]
-    if missing or invalid:
-        raise RuntimeError(
-            "reranker model directory is incomplete; "
-            + ("missing files: " + ", ".join(missing) if missing else "")
-            + ("; invalid files: " + ", ".join(invalid) if invalid else "")
-        )
-
-
-def _resolve_device(device: str) -> str:
-    """Return a usable device string.
-
-    Args:
-        device: Requested device, e.g. ``"cuda"``, ``"cuda:1"`` or ``"cpu"``.
-
-    Returns:
-        The requested device when it is usable, otherwise ``"cpu"``.
-    """
-    if not device.lower().startswith("cuda"):
-        return device
-    try:
-        import torch
-    except (ImportError, ModuleNotFoundError):
-        return "cpu"
-    return device if torch.cuda.is_available() else "cpu"
-
-
-def _scores_to_list(scores: Any) -> list[float]:
-    """Normalise ``FlagReranker.compute_score`` output into a list of floats.
-
-    The upstream API returns a scalar for a single pair, a ``numpy`` array for
-    several pairs, and occasionally a 0-d array; all three shapes are accepted.
-
-    Args:
-        scores: Raw return value of ``compute_score``.
-
-    Returns:
-        One float per scored pair, in input order.
-    """
-    if isinstance(scores, Real):
-        return [float(scores)]
-
-    item = getattr(scores, "item", None)
-    if callable(item):
-        try:
-            return [float(item())]
-        except (TypeError, ValueError, RuntimeError):
-            # Multi-element arrays raise `ValueError: only length-1 arrays can be
-            # converted to Python scalars`, so fall through to iteration.
-            pass
-
-    return [float(score) for score in scores]
-
-
-class Reranker:
-    """Thin, synchronous wrapper around ``FlagReranker``.
-
-    The class is deliberately low-level: it performs no device probing, no
-    timeout handling and no singleton management -- those live in
-    :mod:`app.reranker.pipeline` and :mod:`app.api.pipeline`, which run this
-    object inside a worker thread because it blocks.
-    """
+class SiliconFlowReranker:
+    """Rerank candidates through SiliconFlow's rerank API."""
 
     def __init__(
         self,
-        model_path: str,
-        device: str = "cuda",
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
         batch_size: int = 16,
+        timeout_s: float = 30.0,
     ) -> None:
-        """Load the reranking model.
-
-        Args:
-            model_path: Local path or HuggingFace id of the reranker.
-            device: Requested device; falls back to ``"cpu"`` when unavailable.
-            batch_size: Batch size used by ``compute_score``.
-
-        Raises:
-            ValueError: If ``batch_size`` is not strictly positive.
-            RuntimeError: If ``FlagEmbedding`` is missing or the model cannot be
-                loaded.
-        """
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than 0")
-
-        self.model_path = model_path
-        self.device = _resolve_device(device)
+        self.api_key = api_key if api_key is not None else settings.siliconflow_api_key
+        self.base_url = (base_url or settings.siliconflow_base_url).rstrip("/")
+        self.model_path = model or settings.siliconflow_reranker_model
+        self.device = "remote"
         self.batch_size = batch_size
-
-        _validate_local_model_path(model_path)
-
-        if FlagReranker is None:
-            raise RuntimeError("FlagEmbedding is not installed")
-
-        kwargs: dict[str, Any] = {
-            "use_fp16": self.device.lower().startswith("cuda"),
-        }
-        try:
-            parameters = inspect.signature(FlagReranker).parameters
-        except (TypeError, ValueError):
-            parameters = {}
-
-        # Recent FlagEmbedding releases renamed `device` to `devices`; support
-        # both so the service does not depend on a single version.
-        if "devices" in parameters:
-            kwargs["devices"] = self.device
-        elif "device" in parameters:
-            kwargs["device"] = self.device
-
-        try:
-            self.model = FlagReranker(model_path, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - re-raised with context
-            raise RuntimeError(
-                f"failed to load reranker model from {model_path!r}"
-            ) from exc
+        self.timeout_s = timeout_s
+        if not self.api_key:
+            raise RuntimeError("SILICONFLOW_API_KEY is not configured")
 
     def rerank(self, query: str, hits: list[Hit], top_n: int = 5) -> list[Hit]:
-        """Score ``hits`` against ``query`` and return the best ``top_n``.
-
-        Args:
-            query: User query.
-            hits: Candidate hits, typically the RRF output.
-            top_n: Number of hits to keep.
-
-        Returns:
-            New hit objects sorted by descending relevance score, at most
-            ``top_n`` items. ``score`` holds the normalised rerank score,
-            ``rank`` the 1-based reranked position and
-            ``metadata["rerank_score"]`` / ``metadata["stage"]`` record that the
-            score comes from this stage. The input list is not modified.
-
-        Raises:
-            RuntimeError: If the model returns a different number of scores than
-                it received pairs.
-        """
         if not hits or top_n <= 0:
             return []
+        scores = [0.0] * len(hits)
+        for start in range(0, len(hits), self.batch_size):
+            batch = hits[start : start + self.batch_size]
+            for offset, score in self._score_batch(query, [hit.text for hit in batch]).items():
+                scores[start + offset] = float(score)
+        return _copy_reranked_hits(hits, scores, top_n)
 
-        pairs = [[query, hit.text] for hit in hits]
+    def _score_batch(self, query: str, documents: list[str]) -> dict[int, float]:
+        payload = {
+            "model": self.model_path,
+            "query": query,
+            "documents": documents,
+            "top_n": len(documents),
+            "return_documents": False,
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/rerank",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
         try:
-            scores = self.model.compute_score(
-                pairs,
-                normalize=True,
-                batch_size=self.batch_size,
-            )
-        except TypeError as exc:
-            # Older FlagEmbedding builds do not accept `batch_size`.
-            if "batch_size" not in str(exc):
-                raise
-            scores = self.model.compute_score(pairs, normalize=True)
-
-        score_list = _scores_to_list(scores)
-        if len(score_list) != len(hits):
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                body = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")[:300]
             raise RuntimeError(
-                "reranker returned "
-                f"{len(score_list)} scores for {len(hits)} candidates"
-            )
+                f"SiliconFlow rerank request failed: HTTP {exc.code} {detail}"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise RuntimeError(
+                f"SiliconFlow rerank request failed: {type(exc).__name__}"
+            ) from exc
+        try:
+            result = json.loads(body)
+            items = result["results"]
+            return {
+                int(item["index"]): float(item["relevance_score"])
+                for item in items
+            }
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("SiliconFlow rerank response is unusable") from exc
 
-        ranked = sorted(
-            zip(hits, score_list),
-            key=lambda item: item[1],
-            reverse=True,
-        )[:top_n]
 
-        reranked_hits: list[Hit] = []
-        for rank, (hit, score) in enumerate(ranked, start=1):
-            reranked_hit = copy(hit)
-            reranked_hit.score = float(score)
-            reranked_hit.rank = int(rank)
-            metadata: dict[str, Any] = dict(getattr(hit, "metadata", None) or {})
-            metadata["rerank_score"] = float(score)
-            metadata["stage"] = STAGE_RERANK
-            reranked_hit.metadata = metadata
-            reranked_hits.append(reranked_hit)
+Reranker = SiliconFlowReranker
 
-        return reranked_hits
+__all__ = ["Reranker", "SiliconFlowReranker", "STAGE_RERANK"]

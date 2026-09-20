@@ -19,14 +19,9 @@ python-docx>=1.1,<2
 openpyxl>=3.1,<4
 ezdxf>=1.3,<2
 
-# --- models (bge-m3 embedder + bge-reranker-v2-m3) ---
-FlagEmbedding>=1.3.0
-sentence-transformers>=3.0,<4
-numpy>=1.26.0
-# torch is required by FlagEmbedding / sentence-transformers; install the CUDA
-# build matching the host driver when the reranker is meant to run on GPU
-# (settings.reranker_device).
-torch>=2.1.0
+# --- remote embedding / reranking ---
+# BGE-M3 embeddings and bge-reranker-v2-m3 reranking are called through
+# SiliconFlow's HTTP API; no local model runtime is required.
 
 # --- generation (online) ---
 openai>=1.40.0

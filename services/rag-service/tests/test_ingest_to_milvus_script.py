@@ -128,10 +128,10 @@ class IngestToMilvusScriptTests(unittest.TestCase):
         self.assertTrue(collection_name.startswith("industry_rag_doc_123_custom_manual_txt_"))
         self.assertEqual(len(collection_name.rsplit("_", 1)[-1]), 10)
 
-    def test_parser_accepts_local_embedding_model_path(self) -> None:
+    def test_parser_accepts_siliconflow_embedding_options(self) -> None:
         args = build_argument_parser().parse_args([
-            "--embedding-model-path",
-            "models/bge-m3",
+            "--embedding-model",
+            "BAAI/bge-m3",
             "--chunk-max-characters",
             "900",
             "--chunk-overlap-characters",
@@ -150,7 +150,7 @@ class IngestToMilvusScriptTests(unittest.TestCase):
             "DEBUG",
         ])
 
-        self.assertEqual(args.embedding_model_path, "models/bge-m3")
+        self.assertEqual(args.embedding_model, "BAAI/bge-m3")
         self.assertEqual(args.chunk_max_characters, 900)
         self.assertEqual(args.chunk_overlap_characters, 90)
         self.assertTrue(args.skip_unchanged)
@@ -195,7 +195,7 @@ class IngestToMilvusScriptTests(unittest.TestCase):
             )
 
             with patch("scripts.ingest_to_milvus.MySQLRagWriter", FakeMySQLWriter), \
-                patch("scripts.ingest_to_milvus.BGEM3EmbeddingClient", return_value=FakeEmbeddingClient()), \
+                patch("scripts.ingest_to_milvus.SiliconFlowEmbeddingClient", return_value=FakeEmbeddingClient()), \
                 patch("scripts.ingest_to_milvus.MilvusVectorWriter", FakeMilvusWriter), \
                 patch("scripts.ingest_to_milvus.parse_document", return_value=document), \
                 patch("scripts.ingest_to_milvus.build_chunks", return_value=[]), \
@@ -228,7 +228,7 @@ class IngestToMilvusScriptTests(unittest.TestCase):
             (data_dir / "manual.txt").write_text("主轴维护步骤。", encoding="utf-8")
 
             with patch("scripts.ingest_to_milvus.MySQLRagWriter", FakeMySQLWriter), \
-                patch("scripts.ingest_to_milvus.BGEM3EmbeddingClient", return_value=FakeEmbeddingClient()), \
+                patch("scripts.ingest_to_milvus.SiliconFlowEmbeddingClient", return_value=FakeEmbeddingClient()), \
                 patch("scripts.ingest_to_milvus.MilvusVectorWriter", FakeMilvusWriter), \
                 patch("scripts.ingest_to_milvus.parse_document", side_effect=AssertionError("parse should be skipped")):
                 result = ingest_directory(
@@ -253,7 +253,7 @@ class IngestToMilvusScriptTests(unittest.TestCase):
 
             with patch("scripts.ingest_to_milvus.MySQLRagWriter", FakeMySQLWriter), \
                 patch("scripts.ingest_to_milvus.ObjectStorageClient", FakeStorageClient), \
-                patch("scripts.ingest_to_milvus.BGEM3EmbeddingClient", return_value=FakeEmbeddingClient()), \
+                patch("scripts.ingest_to_milvus.SiliconFlowEmbeddingClient", return_value=FakeEmbeddingClient()), \
                 patch("scripts.ingest_to_milvus.MilvusVectorWriter", FakeMilvusWriter), \
                 patch("scripts.ingest_to_milvus.parse_document", side_effect=RuntimeError("parse error")):
                 result = ingest_directory(
@@ -279,7 +279,7 @@ class IngestToMilvusScriptTests(unittest.TestCase):
             (data_dir / "manual.txt").write_text("主轴维护步骤。", encoding="utf-8")
 
             with patch("scripts.ingest_to_milvus.MySQLRagWriter", FakeMySQLWriter), \
-                patch("scripts.ingest_to_milvus.BGEM3EmbeddingClient", return_value=FakeEmbeddingClient()), \
+                patch("scripts.ingest_to_milvus.SiliconFlowEmbeddingClient", return_value=FakeEmbeddingClient()), \
                 patch("scripts.ingest_to_milvus.MilvusVectorWriter", FakeMilvusWriter), \
                 patch("scripts.ingest_to_milvus.parse_document", side_effect=RuntimeError("parse error")):
                 with self.assertRaises(RuntimeError):

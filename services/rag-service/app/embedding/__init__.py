@@ -1,17 +1,16 @@
 """Embedding pipeline for retrieval-ready chunks.
 
-``models`` / ``bge_m3`` / ``pipeline`` belong to the offline half (chunk ->
-vector records), ``model`` to the shared factory
-(:func:`~app.embedding.model.get_embedder`) the online dense route uses so that
-documents and queries are encoded with the same weights.
+``models`` / ``pipeline`` belong to the offline half (chunk -> vector records),
+``model`` to the shared factory (:func:`~app.embedding.model.get_embedder`) the
+online dense route uses so documents and queries share SiliconFlow BGE-M3.
 """
 
 from .models import (
-    BGEM3EmbeddingClient,
     EmbeddingClient,
     EmbeddingConfig,
     EmbeddingError,
     QueryEmbedder,
+    SiliconFlowEmbeddingClient,
     VectorRecord,
     get_embedder,
     reset_embedder,
@@ -20,11 +19,11 @@ from .models import (
 from .pipeline import embed_chunks, iter_embed_chunks, should_embed_chunk
 
 __all__ = [
-    "BGEM3EmbeddingClient",
     "EmbeddingClient",
     "EmbeddingConfig",
     "EmbeddingError",
     "QueryEmbedder",
+    "SiliconFlowEmbeddingClient",
     "VectorRecord",
     "embed_chunks",
     "get_embedder",

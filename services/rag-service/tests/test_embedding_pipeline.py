@@ -1,6 +1,6 @@
 import unittest
 
-from app.embedding.bge_m3 import BGEM3EmbeddingClient
+from app.embedding.models import SiliconFlowEmbeddingClient
 
 from app.chunk import IndustrialChunk
 from app.embedding import (
@@ -107,29 +107,25 @@ class EmbeddingPipelineTests(unittest.TestCase):
         self.assertFalse(record.contains_cad)
         self.assertEqual(record.to_dict()["metadata"]["source_name"], "manual.pdf")
 
-    def test_bge_client_normalizes_legacy_model_output(self) -> None:
-        class LegacyModel:
-            def encode(self, texts: list[str], **kwargs: object) -> list[list[float]]:
-                if kwargs:
-                    raise TypeError("legacy encode signature")
-                return [[3.0, 4.0] for _ in texts]
+    def test_siliconflow_client_returns_vectors_in_index_order(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
 
-        client = BGEM3EmbeddingClient(
-            EmbeddingConfig(normalize_embeddings=True),
-            model=LegacyModel(),
-        )
+            def __exit__(self, exc_type, exc, traceback):
+                return False
 
-        vectors = client.embed_texts(["工业文本"])
+            def read(self) -> bytes:
+                return b'{"data":[{"index":1,"embedding":[0.3,0.4]},{"index":0,"embedding":[0.1,0.2]}]}'
 
-        self.assertEqual(vectors, [[0.6, 0.8]])
-    def test_embedding_config_accepts_local_model_path(self) -> None:
-        config = EmbeddingConfig(model_path="models/bge-m3")
+        from unittest.mock import patch
 
-        self.assertEqual(config.model_path, "models/bge-m3")
+        with patch("app.embedding.models.urllib.request.urlopen", return_value=FakeResponse()):
+            client = SiliconFlowEmbeddingClient(api_key="test", base_url="https://example.test")
+            vectors = client.embed_texts(["first", "second"])
 
-    def test_embedding_config_rejects_empty_local_model_path(self) -> None:
-        with self.assertRaises(ValueError):
-            EmbeddingConfig(model_path=" ")
+        self.assertEqual(vectors, [[0.1, 0.2], [0.3, 0.4]])
+        self.assertEqual(client.dimension, 2)
 
 
 if __name__ == "__main__":

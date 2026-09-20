@@ -20,7 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.chunk import ChunkerConfig, build_chunks
-from app.embedding import BGEM3EmbeddingClient, EmbeddingConfig, embed_chunks
+from app.embedding import EmbeddingConfig, SiliconFlowEmbeddingClient, embed_chunks
 from app.ingestion import (
     DocumentSource,
     LocalOcrClient,
@@ -107,7 +107,6 @@ def ingest_directory(
     use_vision: bool = False,
     use_local_ocr: bool = False,
     embedding_model: str = "BAAI/bge-m3",
-    embedding_model_path: str | None = None,
     embedding_batch_size: int = 16,
     chunk_max_characters: int = ChunkerConfig.max_characters,
     chunk_overlap_characters: int = ChunkerConfig.overlap_characters,
@@ -142,14 +141,13 @@ def ingest_directory(
 
     embed_config = EmbeddingConfig(
         model_name=embedding_model,
-        model_path=embedding_model_path,
         batch_size=embedding_batch_size,
     )
     chunk_config = ChunkerConfig(
         max_characters=chunk_max_characters,
         overlap_characters=chunk_overlap_characters,
     )
-    embed_client = BGEM3EmbeddingClient(embed_config)
+    embed_client = SiliconFlowEmbeddingClient(model=embed_config.model_name)
     if drop_all_collections:
         admin_writer = MilvusVectorWriter(
             MilvusConfig(uri=milvus_uri, database=milvus_database, collection_name=ADMIN_COLLECTION)
@@ -405,11 +403,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tenant-id", default=None, help="Tenant identifier used for retrieval filtering.")
     parser.add_argument("--version-label", default=None, help="Human-readable drawing version label.")
     parser.add_argument("--embedding-model", default="BAAI/bge-m3")
-    parser.add_argument(
-        "--embedding-model-path",
-        default=None,
-        help="Load embeddings from a local sentence-transformers model directory.",
-    )
     parser.add_argument("--embedding-batch-size", type=int, default=16)
     parser.add_argument("--chunk-max-characters", type=int, default=ChunkerConfig.max_characters)
     parser.add_argument("--chunk-overlap-characters", type=int, default=ChunkerConfig.overlap_characters)
@@ -457,7 +450,6 @@ def main() -> int:
         use_vision=args.vision,
         use_local_ocr=args.local_ocr,
         embedding_model=args.embedding_model,
-        embedding_model_path=args.embedding_model_path,
         embedding_batch_size=args.embedding_batch_size,
         chunk_max_characters=args.chunk_max_characters,
         chunk_overlap_characters=args.chunk_overlap_characters,

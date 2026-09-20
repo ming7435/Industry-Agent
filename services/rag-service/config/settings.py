@@ -149,8 +149,17 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Models
     # ------------------------------------------------------------------
-    embedding_model_path: str = "D:/models/bge-m3"
-    """Local path or HF id of the bge-m3 embedding model."""
+    siliconflow_api_key: str = ""
+    """SiliconFlow API key used for remote embeddings and reranking."""
+
+    siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
+    """OpenAI-compatible SiliconFlow API base URL."""
+
+    siliconflow_embedding_model: str = "BAAI/bge-m3"
+    """SiliconFlow embedding model id."""
+
+    siliconflow_reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    """SiliconFlow reranker model id."""
 
     embedding_dim: int = 1024
     """Dense vector dimension produced by bge-m3."""
@@ -164,14 +173,8 @@ class Settings(BaseSettings):
     embedding_normalize: bool = True
     """Whether embeddings are L2-normalised (required for COSINE/IP metric)."""
 
-    reranker_model_path: str = "D:/models/bge-reranker-v2-m3"
-    """Local path or HF id of the bge-reranker-v2-m3 model."""
-
     reranker_batch_size: int = 16
     """Batch size used when scoring query/passage pairs."""
-
-    reranker_device: str = "cpu"
-    """Requested device; automatically falls back to CPU when CUDA is absent."""
 
     # ------------------------------------------------------------------
     # Offline corpus

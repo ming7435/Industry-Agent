@@ -94,14 +94,11 @@ _STAGE_DENSE: Literal["dense"] = "dense"
 
 _EMBEDDING_HINTS: tuple[str, ...] = (
     "app.embedding",
-    "flagembedding",
-    "sentence_transformers",
-    "bgem3",
-    "bge_m3",
+    "siliconflow embedding",
+    "embedding",
 )
 _MILVUS_HINTS: tuple[str, ...] = ("pymilvus", "milvus", "grpc")
 _WHOOSH_HINTS: tuple[str, ...] = ("whoosh",)
-_TORCH_HINTS: tuple[str, ...] = ("torch", "cuda", "out of memory")
 
 
 class RouteUnavailable(RuntimeError):
@@ -165,8 +162,6 @@ def _classify_route_error(exc: BaseException, default: str) -> str:
         return REASON_MILVUS_UNAVAILABLE
     if any(hint in haystack for hint in _WHOOSH_HINTS):
         return REASON_WHOOSH_UNAVAILABLE
-    if any(hint in haystack for hint in _TORCH_HINTS):
-        return REASON_EMBEDDING_UNAVAILABLE
     return default
 
 

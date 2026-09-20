@@ -1,43 +1,60 @@
-import tempfile
+import json
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-from app.reranker.model import _validate_local_model_path
+from app.embedding.models import SiliconFlowEmbeddingClient
+from app.reranker.model import SiliconFlowReranker
+from app.retrieval import Hit
 
 
-class RerankerModelValidationTests(unittest.TestCase):
-    def test_incomplete_local_checkout_reports_missing_files(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            model_dir = Path(temp_dir)
-            (model_dir / "config.json").write_text("{}", encoding="utf-8")
+class _FakeResponse:
+    def __init__(self, payload: dict):
+        self.payload = payload
 
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "model.safetensors, tokenizer.json, sentencepiece.bpe.model",
-            ):
-                _validate_local_model_path(str(model_dir))
+    def __enter__(self):
+        return self
 
-    def test_complete_local_checkout_passes_validation(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            model_dir = Path(temp_dir)
-            for name in (
-                "config.json",
-                "model.safetensors",
-                "tokenizer.json",
-                "sentencepiece.bpe.model",
-            ):
-                (model_dir / name).write_bytes(b"model")
+    def __exit__(self, exc_type, exc, traceback):
+        return False
 
-            with patch(
-                "app.reranker.model._EXPECTED_LOCAL_FILE_SIZES",
-                {
-                    "model.safetensors": 5,
-                    "tokenizer.json": 5,
-                    "sentencepiece.bpe.model": 5,
-                },
-            ):
-                _validate_local_model_path(str(model_dir))
+    def read(self) -> bytes:
+        return json.dumps(self.payload).encode("utf-8")
+
+
+class SiliconFlowClientTests(unittest.TestCase):
+    def test_embedding_client_returns_vectors_in_index_order(self) -> None:
+        response = {
+            "data": [
+                {"index": 1, "embedding": [0.3, 0.4]},
+                {"index": 0, "embedding": [0.1, 0.2]},
+            ]
+        }
+        with patch("app.embedding.models.urllib.request.urlopen", return_value=_FakeResponse(response)):
+            client = SiliconFlowEmbeddingClient(api_key="test", base_url="https://example.test", model="BAAI/bge-m3")
+            vectors = client.embed_texts(["first", "second"])
+
+        self.assertEqual(vectors, [[0.1, 0.2], [0.3, 0.4]])
+        self.assertEqual(client.dimension, 2)
+
+    def test_reranker_sorts_hits_by_remote_score(self) -> None:
+        response = {
+            "results": [
+                {"index": 0, "relevance_score": 0.2},
+                {"index": 1, "relevance_score": 0.9},
+            ]
+        }
+        hits = [
+            Hit(chunk_id="a", text="low", score=0.0, source="test"),
+            Hit(chunk_id="b", text="high", score=0.0, source="test"),
+        ]
+        with patch("app.reranker.model.urllib.request.urlopen", return_value=_FakeResponse(response)):
+            client = SiliconFlowReranker(api_key="test", base_url="https://example.test", model="BAAI/bge-reranker-v2-m3")
+            reranked = client.rerank("query", hits, top_n=2)
+
+        self.assertEqual([hit.chunk_id for hit in reranked], ["b", "a"])
+        self.assertEqual(reranked[0].metadata["stage"], "rerank")
+        self.assertEqual(reranked[0].metadata["rerank_score"], 0.9)
+        self.assertEqual(hits[0].metadata, {})
 
 
 if __name__ == "__main__":

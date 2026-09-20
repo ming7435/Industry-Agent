@@ -5,8 +5,8 @@ One service, two halves that share a single configuration file
 
 | half | what it does | entry point |
 | --- | --- | --- |
-| **offline** | parse -> clean -> chunk -> embed (bge-m3) -> write Milvus + MySQL + Whoosh | `scripts/ingest_to_milvus.py`, `scripts/build_whoosh_index.py` |
-| **online** | BM25 + dense retrieval -> RRF fusion -> bge-reranker-v2-m3 -> evidence & citations -> DeepSeek generation | `app/main.py` (`uvicorn app.main:app`) |
+| **offline** | parse -> clean -> chunk -> embed (SiliconFlow BGE-M3) -> write Milvus + MySQL + Whoosh | `scripts/ingest_to_milvus.py`, `scripts/build_whoosh_index.py` |
+| **online** | BM25 + dense retrieval -> RRF fusion -> SiliconFlow rerank -> evidence & citations -> DeepSeek generation | `app/main.py` (`uvicorn app.main:app`) |
 
 The online half adapts to the data the offline half already produces -- no
 schema change, no re-ingestion:
@@ -39,12 +39,12 @@ config/settings.py      merged settings (online budgets + offline stores) — th
 app/ingestion/          multi-format parsers (PDF/VL, DOCX, XLSX, CSV, TXT/MD, images, DWG/DXF)
 app/clean/              boilerplate removal, block quality scoring
 app/chunk/              retrieval-ready chunking
-app/embedding/          bge-m3 client, chunk pipeline, and the shared embedder factory
+app/embedding/          SiliconFlow BGE-M3 client, chunk pipeline, and shared embedder factory
 app/milvus/             collection schema + writer (offline) and DenseRetriever/Hit (online)
 app/mysql/              document / chunk metadata tables
 app/whoosh/             index schema + builder (offline) and BM25Retriever (online)
 app/fusion/             reciprocal rank fusion
-app/reranker/           bge-reranker-v2-m3
+app/reranker/           SiliconFlow bge-reranker-v2-m3 client
 app/evidence/           evidence grouping, de-duplication, citations
 app/llm/                DeepSeek client and prompts
 app/corpus.py            corpus label derived at read time from the offline fields (online)
@@ -57,7 +57,7 @@ tests/                  offline unit tests (no network, no GPU, no Milvus requir
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env      # then fill in DEEPSEEK_API_KEY and, optionally, MySQL / Qwen-VL
+cp .env.example .env      # then fill in SILICONFLOW_API_KEY, DEEPSEEK_API_KEY and, optionally, MySQL / Qwen-VL
 ```
 
 ## Offline: build the indexes
