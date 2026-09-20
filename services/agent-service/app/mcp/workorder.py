@@ -134,6 +134,33 @@ class WorkOrderMcpAdapter:
             "findings": ["工单状态已完成" if passed else "工单仍未完成"],
         }
 
+    def query_technicians(self, device_id: str = "", component: str = "", priority: str = "", **_: Any) -> Dict[str, Any]:
+        items = [
+            {"technician_id": "TECH-001", "name": "张工", "skills": ["主轴", "电气", "冷却系统"], "area": "A区", "workload": 1, "available": True},
+            {"technician_id": "TECH-002", "name": "李工", "skills": ["机械", "轴承", "振动"], "area": "B区", "workload": 2, "available": True},
+            {"technician_id": "TECH-003", "name": "王工", "skills": ["PLC", "伺服", "报警诊断"], "area": "A区", "workload": 0, "available": True},
+        ]
+        if component:
+            matched = [item for item in items if any(str(component).lower() in str(skill).lower() or str(skill).lower() in str(component).lower() for skill in item["skills"])]
+            if matched:
+                items = matched + [item for item in items if item not in matched]
+        items.sort(key=lambda item: (not item["available"], item["workload"]))
+        return {"success": True, "items": items, "total": len(items), "device_id": device_id, "priority": priority}
+
+    def query_technician_skills(self, technician_id: str = "", **_: Any) -> Dict[str, Any]:
+        items = self.query_technicians()["items"]
+        return {"success": True, "items": [{"technician_id": item["technician_id"], "skills": item["skills"]} for item in items if not technician_id or item["technician_id"] == technician_id]}
+
+    def query_technician_workload(self, technician_id: str = "", **_: Any) -> Dict[str, Any]:
+        items = self.query_technicians()["items"]
+        return {"success": True, "items": [{"technician_id": item["technician_id"], "workload": item["workload"]} for item in items if not technician_id or item["technician_id"] == technician_id]}
+
+    def query_shift(self, **_: Any) -> Dict[str, Any]:
+        return {"success": True, "shift": "白班", "start": "08:00", "end": "20:00"}
+
+    def query_team_availability(self, **_: Any) -> Dict[str, Any]:
+        return {"success": True, "available": True, "team": "设备维修一组", "available_count": 3}
+
     @property
     def orders(self) -> Dict[str, Dict[str, Any]]:
         return {key: dict(value) for key, value in self._orders.items()}

@@ -1,0 +1,16 @@
+name: auto_assignment
+version: 1.0
+goal: 基于技能、班次、区域和负载选择维修人员
+trigger: assign
+steps:
+  - collect_dispatch_context
+  - select_assignee
+  - assign_order
+tools:
+  - query_technicians
+  - query_technician_skills
+  - query_technician_workload
+  - query_shift
+  - query_team_availability
+  - assign_workorder
+output: WorkOrderResult

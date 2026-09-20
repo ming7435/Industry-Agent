@@ -1,4 +1,4 @@
-"""最终 Agent Registry：只注册七个核心 Agent。"""
+"""最终 Agent Registry：注册九个核心 Agent。"""
 
 from __future__ import annotations
 
@@ -8,9 +8,11 @@ from .cad import CADAgent
 from .diagnosis import DiagnosisAgent
 from .knowledge import KnowledgeAgent
 from .maintenance import MaintenanceAgent
+from .memory import MemoryAgent
 from .quality import QualityAgent
 from .report import ReportAgent
 from .router import RouterAgent
+from .workorder import WorkOrderAgent
 
 
 CORE_AGENT_REGISTRY = {
@@ -19,8 +21,10 @@ CORE_AGENT_REGISTRY = {
     "knowledge": KnowledgeAgent,
     "cad": CADAgent,
     "maintenance": MaintenanceAgent,
+    "workorder": WorkOrderAgent,
     "quality": QualityAgent,
     "report": ReportAgent,
+    "memory": MemoryAgent,
 }
 
 
@@ -37,9 +41,17 @@ def build_agent_registry(**dependencies: Any) -> dict[str, Any]:
             knowledge_provider=dependencies.get("maintenance_knowledge_provider"),
             cad_provider=dependencies.get("maintenance_cad_provider"),
         ),
+        "workorder": WorkOrderAgent(
+            dependencies["tools"],
+            service=dependencies.get("workorder_service"),
+        ),
         "quality": QualityAgent(
             dependencies["tools"],
             knowledge_provider=dependencies.get("quality_knowledge_provider"),
         ),
         "report": ReportAgent(dependencies["tools"]),
+        "memory": MemoryAgent(
+            experience_module=dependencies.get("experience_module"),
+            tools=dependencies["tools"],
+        ),
     }

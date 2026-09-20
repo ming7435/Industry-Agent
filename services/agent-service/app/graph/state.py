@@ -19,11 +19,14 @@ class AgentState(TypedDict, total=False):
     cad: Dict[str, Any]
     maintenance_plan: Dict[str, Any]
     workorder: Dict[str, Any]
+    workorder_result: Dict[str, Any]
     quality: Dict[str, Any]
     rework_via: str
     report: Dict[str, Any]
     experience: Dict[str, Any]
     memory: Dict[str, Any]
+    memory_result: Dict[str, Any]
+    repair_feedback: Dict[str, Any]
     status: str
     pending_workorder_id: str
     errors: List[str]

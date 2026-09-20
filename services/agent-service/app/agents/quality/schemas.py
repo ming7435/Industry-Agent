@@ -20,7 +20,7 @@ class QualityQuery(BaseModel):
     workorder: Dict[str, Any] = Field(default_factory=dict)
     pre_metrics: Dict[str, Any] = Field(default_factory=dict)
     post_metrics: Dict[str, Any] = Field(default_factory=dict)
-    manage_workorder: bool = True
+    manage_workorder: bool = False
 
     @classmethod
     def from_payload(cls, payload: Any) -> "QualityQuery":

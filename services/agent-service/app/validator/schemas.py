@@ -23,6 +23,8 @@ class RouteResult(BaseModel):
         "maintenance",
         "quality",
         "report",
+        "workorder",
+        "memory",
         "workorder_action",
         "workorder_query",
         "unknown",
@@ -190,6 +192,21 @@ class WorkOrder(BaseModel):
     assignee: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class WorkOrderResultView(BaseModel):
+    action: str = ""
+    success: bool = False
+    workorder_id: str = ""
+    status: str = ""
+    priority: str = "normal"
+    assignee: str = ""
+    workorder: Dict[str, Any] = Field(default_factory=dict)
+    candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    dispatch_context: Dict[str, Any] = Field(default_factory=dict)
+    validation_findings: List[str] = Field(default_factory=list)
+    stop_reason: str = ""
+    error: str = ""
 
 
 class QualityResult(BaseModel):

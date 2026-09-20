@@ -87,10 +87,10 @@ def test_quality_pass_closes_workorder_and_uses_knowledge_provider() -> None:
     assert result.status == "pass"
     assert result.sop_compliance is True
     assert result.stop_reason == "validator_pass"
-    assert workorders.get(order["workorder_id"])["status"] == "closed"
+    assert workorders.get(order["workorder_id"])["status"] == "completed"
     assert provider_calls and provider_calls[0]["context"]["required_sources"] == ["sop"]
     tool_names = {item.get("name") for item in trace.list() if item.get("type") == "tool"}
-    assert {"get_workorder", "get_repair_feedback", "get_device_status", "get_active_alarms", "check_workorder_compliance", "verify_alarm_clearance", "compare_pre_post_metrics", "close_workorder"}.issubset(tool_names)
+    assert {"get_workorder", "get_repair_feedback", "get_device_status", "get_active_alarms", "check_workorder_compliance", "verify_alarm_clearance", "compare_pre_post_metrics"}.issubset(tool_names)
 
 
 def test_quality_reopens_workorder_when_alarm_remains_active() -> None:
@@ -101,5 +101,5 @@ def test_quality_reopens_workorder_when_alarm_remains_active() -> None:
     assert result.status == "fail"
     assert result.alarm_cleared is False
     assert "alarm_still_active" in result.failed_checks
-    assert tools.workorder["status"] == "open"
-    assert "reopen_workorder" in tools.calls
+    assert tools.workorder["status"] == "completed"
+    assert "reopen_workorder" not in tools.calls

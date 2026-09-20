@@ -61,7 +61,7 @@ class RouterAgent:
             or entities.get("target_agent")
             or ""
         ).strip().lower()
-        if context_hint in {"diagnosis", "knowledge", "cad", "maintenance", "quality", "report", "workorder_action", "workorder_query"}:
+        if context_hint in {"diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "memory", "workorder_action", "workorder_query"}:
             return context_hint, "根据上游上下文 route_hint 完成路由：%s" % context_hint
         if entities.get("alarm_code") and any(keyword in text for keyword in ("什么", "含义", "处理", "步骤", "说明", "手册", "sop")):
             return "knowledge", "识别到报警码知识问答，路由到 Knowledge Agent"
@@ -71,6 +71,7 @@ class RouterAgent:
             ("report", ("报告", "日报", "维修记录")),
             ("workorder_query", ("查询工单", "工单状态", "维修状态", "查看工单", "获取工单")),
             ("workorder_action", ("创建工单", "新建工单", "生成工单", "派工", "关闭工单", "更新工单", "重新打开工单")),
+            ("memory", ("历史维修经验", "维修经验", "经验库", "类似案例", "历史案例")),
             ("maintenance", ("维修方案", "怎么修", "怎么维修", "维修步骤", "检修", "维修", "修理", "维护", "保养")),
             ("knowledge", ("手册", "sop", "规范", "案例", "怎么检查")),
             ("diagnosis", ("诊断", "故障", "报警", "异常", "为什么")),
@@ -116,8 +117,8 @@ class RouterAgent:
     @staticmethod
     def _target_agent(intent: str) -> str:
         if intent in {"workorder_action", "workorder_query"}:
-            return "router"
-        if intent in {"diagnosis", "knowledge", "cad", "maintenance", "quality", "report"}:
+            return "workorder"
+        if intent in {"diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "memory"}:
             return intent
         return "router"
 

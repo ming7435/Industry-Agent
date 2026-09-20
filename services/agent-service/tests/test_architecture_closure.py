@@ -37,8 +37,8 @@ def test_orchestrator_executes_workorder_business_node():
     )
 
     assert result["route"] == "workorder_action"
-    assert result["workorder"]["repair_target"]["part_no"] == "SP-001"
-    assert result["workorder"]["drawing_context"]["drawing_url"] == "/cad/drawings/SP-001.pdf"
+    assert result["workorder_result"]["workorder"]["repair_target"]["part_no"] == "SP-001"
+    assert result["workorder_result"]["workorder"]["drawing_context"]["drawing_url"] == "/cad/drawings/SP-001.pdf"
     assert any(item.get("node") == "workorder_action" for item in result["trace"])
 
 

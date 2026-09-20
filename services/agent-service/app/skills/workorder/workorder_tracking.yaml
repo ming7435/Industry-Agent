@@ -1,0 +1,17 @@
+name: workorder_tracking
+version: 1.0
+goal: 查询和更新工单生命周期状态
+trigger: query
+steps:
+  - initialize
+  - load_skill
+  - validate_plan
+  - execute_action
+  - validate
+  - final
+tools:
+  - get_workorder
+  - query_workorder
+  - update_workorder
+  - list_workorders
+output: WorkOrderResult

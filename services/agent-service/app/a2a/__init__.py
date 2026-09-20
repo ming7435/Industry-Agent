@@ -5,12 +5,14 @@ from .registry import ALLOWED_A2A_ROUTES, CORE_A2A_AGENT_TARGETS, is_allowed_a2a
 from .models import (
     A2ARequest, A2AResponse, CADRequest, CADResponse, DiagnosisRequest, DiagnosisResponse,
     KnowledgeRequest, KnowledgeResponse, MaintenanceRequest, MaintenanceResponse,
-    QualityRequest, QualityResponse,
+    QualityRequest, QualityResponse, WorkOrderRequest, WorkOrderResponse,
+    MemoryRequest, MemoryResponse,
 )
 
 __all__ = [
     "A2AClient", "A2AError", "A2ARequest", "A2AResponse", "CADRequest", "CADResponse",
     "DiagnosisRequest", "DiagnosisResponse", "KnowledgeRequest", "KnowledgeResponse",
     "MaintenanceRequest", "MaintenanceResponse", "QualityRequest", "QualityResponse",
+    "WorkOrderRequest", "WorkOrderResponse", "MemoryRequest", "MemoryResponse",
     "ALLOWED_A2A_ROUTES", "CORE_A2A_AGENT_TARGETS", "is_allowed_a2a_route",
 ]

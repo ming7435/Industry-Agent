@@ -1,0 +1,24 @@
+name: workorder_create
+version: 1.0
+goal: 根据已验证维修计划创建并派发维修工单
+trigger: repair_plan
+steps:
+  - initialize
+  - load_skill
+  - validate_plan
+  - create_order
+  - collect_dispatch_context
+  - select_assignee
+  - assign_order
+  - validate
+  - final
+tools:
+  - create_workorder
+  - get_workorder_template
+  - query_technicians
+  - query_technician_skills
+  - query_technician_workload
+  - query_shift
+  - query_team_availability
+  - assign_workorder
+output: WorkOrderResult

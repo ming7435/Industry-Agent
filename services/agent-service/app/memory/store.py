@@ -44,9 +44,9 @@ class LongMemoryStore:
         with self._lock:
             self._items.append(dict(item))
 
-    def search(self, device_id: str = "", limit: int = 20) -> List[Dict[str, Any]]:
+    def search(self, device_id: str = "", limit: int = 20, **filters: Any) -> List[Dict[str, Any]]:
         with self._lock:
-            values = [item for item in self._items if not device_id or item.get("device_id") == device_id]
+            values = [item for item in self._items if _matches(item, device_id=device_id, **filters)]
             return values[-limit:]
 
 
@@ -127,7 +127,7 @@ class MySQLLongMemoryStore:
                 self.connection.rollback()
         cursor.close()
 
-    def search(self, device_id: str = "", limit: int = 20) -> List[Dict[str, Any]]:
+    def search(self, device_id: str = "", limit: int = 20, **filters: Any) -> List[Dict[str, Any]]:
         cursor = self.connection.cursor()
         if device_id:
             cursor.execute("SELECT payload FROM maintenance_experience WHERE device_id = %s ORDER BY id DESC LIMIT %s", (device_id, limit))
@@ -135,7 +135,20 @@ class MySQLLongMemoryStore:
             cursor.execute("SELECT payload FROM maintenance_experience ORDER BY id DESC LIMIT %s", (limit,))
         values = [json.loads(row[0]) for row in cursor.fetchall()]
         cursor.close()
-        return values
+        return [item for item in values if _matches(item, device_id=device_id, **filters)][:limit]
+
+
+def _matches(item: Dict[str, Any], device_id: str = "", **filters: Any) -> bool:
+    criteria = {"device_id": device_id, **filters}
+    for key, expected in criteria.items():
+        if not expected:
+            continue
+        actual = item.get(key)
+        if actual is None and isinstance(item.get("diagnosis"), dict):
+            actual = item["diagnosis"].get(key)
+        if str(expected).lower() not in str(actual or "").lower() and str(expected).lower() not in str(item.get("content") or "").lower():
+            return False
+    return True
 
 
 def build_memory_stores() -> tuple[Any, Any]:

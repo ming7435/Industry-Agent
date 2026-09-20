@@ -1,0 +1,16 @@
+name: experience_extraction
+version: 1.0
+goal: 从已关闭且质检通过的工单提取维修经验
+trigger: learn
+steps:
+  - initialize
+  - load_skill
+  - validate_admission
+  - extract_experience
+  - dedup_experience
+  - validate_experience
+  - persist
+  - final
+tools:
+  - get_workorder
+output: MemoryResult

@@ -91,21 +91,18 @@ class AllAgentTests(unittest.TestCase):
             "timestamp": "2026-09-15T10:00:05",
         })
 
-        for key in ("diagnosis", "knowledge", "cad", "maintenance_plan", "workorder", "quality", "report", "experience", "memory", "trace"):
+        for key in ("diagnosis", "knowledge", "cad", "maintenance_plan", "workorder", "workorder_result", "pending_workorder_id", "trace"):
             self.assertIn(key, result)
-        self.assertEqual(result["report"]["report_type"], "full_case_report")
-        self.assertEqual(result["report"]["status"], "completed")
-        self.assertTrue(result["report"]["source_refs"])
-        self.assertEqual(result["workorder"]["status"], "closed")
-        self.assertTrue(result["quality"]["passed"])
-        self.assertTrue(result["experience"]["memory_saved"])
+        self.assertEqual(result["workorder"]["status"], "open")
+        self.assertEqual(result["status"], "waiting_repair")
+        self.assertTrue(result["workorder_result"]["assignee"])
         self.assertEqual(
             set(orchestrator.nodes.harnesses),
-            {"router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"},
+            {"router", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "memory"},
         )
         node_names = {item.get("name") for item in result["trace"] if item.get("type") == "node"}
-        self.assertEqual(node_names, {"route", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"})
-        self.assertTrue({"agent", "node", "tool", "module"}.issubset({item.get("type") for item in result["trace"]}))
+        self.assertEqual(node_names, {"route", "diagnosis", "knowledge", "cad", "maintenance", "workorder"})
+        self.assertTrue({"agent", "node", "tool"}.issubset({item.get("type") for item in result["trace"]}))
 
     def test_workorder_intent_is_a_business_node_action(self):
         result = self.tools.intent_classifier_tool("请查询工单 WO-001 的维修状态")
@@ -342,7 +339,7 @@ class AllAgentTests(unittest.TestCase):
         self.assertNotIn("根因已确认", report.summary)
 
     def test_core_agent_registry_and_experience_module(self):
-        self.assertEqual(set(CORE_AGENT_REGISTRY), {"router", "diagnosis", "knowledge", "cad", "maintenance", "quality", "report"})
+        self.assertEqual(set(CORE_AGENT_REGISTRY), {"router", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "memory"})
         skill_files = {path.name for path in (SERVICE_ROOT / "app" / "skills").glob("*_skill.yaml")}
         self.assertEqual(skill_files, {
             "router_skill.yaml",

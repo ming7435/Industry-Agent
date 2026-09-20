@@ -1,0 +1,10 @@
+name: memory_write
+version: 1.0
+goal: 将确认后的维修经验写入短期、长期和可选知识检索层
+trigger: learn
+steps:
+  - validate_admission
+  - validate_experience
+  - persist
+tools: []
+output: MemoryResult

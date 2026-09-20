@@ -1,0 +1,9 @@
+name: memory_dedup
+version: 1.0
+goal: 避免同一工单经验重复写入
+trigger: always
+steps:
+  - dedup
+  - dedup_experience
+tools: []
+output: MemoryResult

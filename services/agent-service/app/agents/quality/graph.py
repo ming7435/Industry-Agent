@@ -153,7 +153,7 @@ def decision(state: QualityWorkflowState) -> Dict[str, Any]:
     quality = state["decision"]
     workorder_id = str((state.get("workorder") or {}).get("workorder_id") or "")
     action: Dict[str, Any] = {}
-    if request.get("manage_workorder", True) and workorder_id:
+    if request.get("manage_workorder", False) and workorder_id:
         action_name = "close_workorder" if quality.get("passed") else "reopen_workorder"
         action = agent._safe_tool(action_name, {"workorder_id": workorder_id})
     return {"workorder_action": action, "route": "final"}

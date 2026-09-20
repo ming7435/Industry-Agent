@@ -26,6 +26,8 @@ class SkillRegistryTests(unittest.TestCase):
             "maintenance": 3,
             "quality": 2,
             "report": 2,
+            "workorder": 5,
+            "memory": 4,
         }
         for agent, minimum in expected.items():
             with self.subTest(agent=agent):

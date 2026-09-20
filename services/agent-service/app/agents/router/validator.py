@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-VALID_TARGETS = frozenset({"diagnosis", "knowledge", "cad", "maintenance", "quality", "report", "router"})
+VALID_TARGETS = frozenset({"diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "memory", "router"})
 
 
 class RouterValidator:

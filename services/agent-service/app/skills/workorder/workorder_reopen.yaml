@@ -1,0 +1,15 @@
+name: workorder_reopen
+version: 1.0
+goal: 质检不通过时重新打开工单并返回返工入口
+trigger: reopen
+steps:
+  - initialize
+  - load_skill
+  - validate_plan
+  - execute_action
+  - validate
+  - final
+tools:
+  - reopen_workorder
+  - get_workorder
+output: WorkOrderResult

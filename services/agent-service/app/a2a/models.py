@@ -160,6 +160,53 @@ class MaintenanceResponse(A2AResponse):
     workorder_draft: Dict[str, Any] = Field(default_factory=dict)
 
 
+class WorkOrderRequest(A2ARequest):
+    action: str = "create"
+    workorder_id: str = ""
+    device_id: str = ""
+    maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
+    workorder: Dict[str, Any] = Field(default_factory=dict)
+    repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
+    status: str = ""
+    assignee: str = ""
+    fault_level: str = ""
+    idempotency_key: str = ""
+
+
+class WorkOrderResponse(A2AResponse):
+    workorder_result: Dict[str, Any] = Field(default_factory=dict)
+    workorder: Dict[str, Any] = Field(default_factory=dict)
+    status: str = ""
+    validation_findings: List[str] = Field(default_factory=list)
+    stop_reason: str = ""
+
+
+class MemoryRequest(A2ARequest):
+    action: str = "search"
+    device_id: str = ""
+    device_model: str = ""
+    alarm_code: str = ""
+    fault_type: str = ""
+    component: str = ""
+    part_no: str = ""
+    query: str = ""
+    limit: int = Field(default=20, ge=1, le=100)
+    diagnosis: Dict[str, Any] = Field(default_factory=dict)
+    maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
+    workorder: Dict[str, Any] = Field(default_factory=dict)
+    repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
+    quality: Dict[str, Any] = Field(default_factory=dict)
+    report: Dict[str, Any] = Field(default_factory=dict)
+
+
+class MemoryResponse(A2AResponse):
+    memory_result: Dict[str, Any] = Field(default_factory=dict)
+    items: List[Dict[str, Any]] = Field(default_factory=list)
+    experience: Dict[str, Any] = Field(default_factory=dict)
+    validation_findings: List[str] = Field(default_factory=list)
+    stop_reason: str = ""
+
+
 class QualityRequest(A2ARequest):
     workorder_id: str = ""
     device_id: str = ""

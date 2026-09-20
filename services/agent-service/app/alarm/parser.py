@@ -28,6 +28,7 @@ class AlarmCodeParser:
     """从报警码或报警原文提取标准码并隐藏控制器底层乱码。"""
 
     STANDARD_CODE = re.compile(r"(?<![A-Z0-9])([A-Z]\d+[A-Z]\d+)(?![A-Z0-9])", re.I)
+    SIMPLE_CODE = re.compile(r"(?<![A-Z0-9])([A-Z]\d{2,8})(?![A-Z0-9])", re.I)
     NUMERIC_CODE = re.compile(r"(?<![A-Z0-9])(\d{3,8})(?![A-Z0-9])")
     NAMED_CODE = re.compile(r"(?<![A-Z0-9])([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+)(?![A-Z0-9])", re.I)
     PLACEHOLDER = re.compile(r"\s*[<{\[][^>\]}]*[>\]}]\s*", re.I)
@@ -47,7 +48,7 @@ class AlarmCodeParser:
         text = str(value or "").strip().upper()
         if not text:
             return ""
-        for pattern in (cls.STANDARD_CODE, cls.NUMERIC_CODE, cls.NAMED_CODE):
+        for pattern in (cls.STANDARD_CODE, cls.SIMPLE_CODE, cls.NUMERIC_CODE, cls.NAMED_CODE):
             match = pattern.search(text)
             if match:
                 return match.group(1).upper()

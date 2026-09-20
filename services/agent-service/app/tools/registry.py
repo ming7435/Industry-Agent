@@ -42,6 +42,11 @@ from app.tools.maintenance import (
     submit_repair_feedback as submit_repair_feedback_tool,
     submit_workorder_draft as submit_workorder_draft_tool,
     update_workorder as update_workorder_tool,
+    query_shift as query_shift_tool,
+    query_team_availability as query_team_availability_tool,
+    query_technician_skills as query_technician_skills_tool,
+    query_technician_workload as query_technician_workload_tool,
+    query_technicians as query_technicians_tool,
 )
 from app.tools.knowledge import (
     document_parser as document_parser_tool,
@@ -132,6 +137,11 @@ class ToolRegistry:
             "mark_repair_completed": self.mark_repair_completed,
             "close_workorder": self.close_workorder,
             "reopen_workorder": self.reopen_workorder,
+            "query_technicians": self.query_technicians,
+            "query_technician_skills": self.query_technician_skills,
+            "query_technician_workload": self.query_technician_workload,
+            "query_shift": self.query_shift,
+            "query_team_availability": self.query_team_availability,
             "verify_repair": self.verify_repair,
             "check_sop": self.check_sop,
             "get_repair_feedback": self.get_repair_feedback,
@@ -315,6 +325,21 @@ class ToolRegistry:
     def reopen_workorder(self, **arguments: Any) -> Dict[str, Any]:
         return reopen_workorder_tool(self.workorder_mcp, **arguments)
 
+    def query_technicians(self, **arguments: Any) -> Dict[str, Any]:
+        return query_technicians_tool(self.workorder_mcp, **arguments)
+
+    def query_technician_skills(self, **arguments: Any) -> Dict[str, Any]:
+        return query_technician_skills_tool(self.workorder_mcp, **arguments)
+
+    def query_technician_workload(self, **arguments: Any) -> Dict[str, Any]:
+        return query_technician_workload_tool(self.workorder_mcp, **arguments)
+
+    def query_shift(self, **arguments: Any) -> Dict[str, Any]:
+        return query_shift_tool(self.workorder_mcp, **arguments)
+
+    def query_team_availability(self, **arguments: Any) -> Dict[str, Any]:
+        return query_team_availability_tool(self.workorder_mcp, **arguments)
+
     def verify_repair(self, **arguments: Any) -> Dict[str, Any]:
         return verify_repair_tool(self.workorder_mcp, **arguments)
 
@@ -332,6 +357,7 @@ class ToolRegistry:
             "list_workorders": "mes", "assign_workorder": "mes", "submit_repair_feedback": "mes",
             "get_workorder_template": "mes", "submit_workorder_draft": "mes",
             "mark_repair_completed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
+            "query_technicians": "mes", "query_technician_skills": "mes", "query_technician_workload": "mes", "query_shift": "mes", "query_team_availability": "mes",
             "verify_repair": "qms", "check_sop": "qms", "verify_alarm_clearance": "qms",
             "get_repair_feedback": "mes", "check_workorder_compliance": "mes", "compare_pre_post_metrics": "plc",
             "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory",
@@ -428,6 +454,11 @@ class ToolRegistry:
             "mark_repair_completed": "标记维修完成",
             "close_workorder": "关闭维修工单",
             "reopen_workorder": "重新打开维修工单",
+            "query_technicians": "查询可派工维修人员",
+            "query_technician_skills": "查询维修人员技能",
+            "query_technician_workload": "查询维修人员负载",
+            "query_shift": "查询当前班次",
+            "query_team_availability": "查询班组可用性",
             "verify_repair": "验证维修结果",
             "check_sop": "检查维修步骤是否符合SOP",
             "get_repair_feedback": "获取维修反馈",

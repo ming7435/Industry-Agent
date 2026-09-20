@@ -15,6 +15,8 @@ from app.agents.maintenance import MaintenanceAgent
 from app.agents.quality import QualityAgent
 from app.agents.report import ReportAgent
 from app.agents.router import RouterAgent
+from app.agents.memory import MemoryAgent
+from app.agents.workorder import WorkOrderAgent
 from app.tools.registry import ToolRegistry
 
 
@@ -27,6 +29,8 @@ def test_every_core_agent_uses_a_dedicated_langgraph_module() -> None:
         MaintenanceAgent(ToolRegistry()),
         QualityAgent(ToolRegistry()),
         ReportAgent(ToolRegistry()),
+        WorkOrderAgent(ToolRegistry()),
+        MemoryAgent(tools=ToolRegistry()),
     ]
 
     for agent in agents:
@@ -47,4 +51,3 @@ def test_router_graph_keeps_documented_nodes() -> None:
         "final",
         "fallback",
     }.issubset(node_names)
-

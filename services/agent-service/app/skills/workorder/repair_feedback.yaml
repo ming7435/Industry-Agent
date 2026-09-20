@@ -1,0 +1,15 @@
+name: repair_feedback
+version: 1.0
+goal: 接收现场维修反馈并标记维修完成
+trigger: feedback
+steps:
+  - initialize
+  - load_skill
+  - validate_plan
+  - execute_action
+  - validate
+  - final
+tools:
+  - submit_repair_feedback
+  - mark_repair_completed
+output: WorkOrderResult

@@ -1,0 +1,15 @@
+name: experience_retrieval
+version: 1.0
+goal: 检索已验证的历史维修经验
+trigger: search
+steps:
+  - initialize
+  - load_skill
+  - retrieve_memory
+  - dedup
+  - rerank
+  - validate
+  - final
+tools:
+  - search_semantic_memory
+output: MemoryResult
