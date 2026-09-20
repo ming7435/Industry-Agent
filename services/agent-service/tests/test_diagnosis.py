@@ -11,6 +11,7 @@ if str(SERVICE_ROOT) not in sys.path:
 
 from app.agents.diagnosis import DiagnosisAgent, DiagnosisRunCache, build_diagnosis_graph
 from app.agents.diagnosis.tool_policy import requires_history, select_skill
+from app.alarm import AlarmCodeParser
 from app.mcp.registry import LocalMcpToolRegistry
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
 from app.monitor.presentation import cycle_state_label
@@ -224,7 +225,14 @@ class DiagnosisAgentTests(unittest.TestCase):
         self.assertNotIn("Pointer with value zero", result["description"])
 
     def test_internal_cycle_state_has_operator_label(self):
-        self.assertEqual(cycle_state_label("fault_injection"), "故障模拟中")
+        self.assertEqual(cycle_state_label("fault_injection"), "故障注入状态")
+
+    def test_alarm_parser_extracts_code_and_hides_controller_text(self):
+        parsed = AlarmCodeParser.parse("E11S3 Pointer with value zero is freed: {hex}")
+        self.assertEqual(parsed.code, "E11S3")
+        self.assertEqual(parsed.display_text, "指针值为零时被释放")
+        self.assertNotIn("Pointer", parsed.display_text)
+        self.assertNotIn("hex}", parsed.display_text)
 
     def test_device_status_normalizes_factory_snapshot(self):
         payload = {
@@ -305,7 +313,8 @@ class DiagnosisAgentTests(unittest.TestCase):
 
         self.assertEqual(result.status.value, "completed")
         self.assertEqual(result.source, "llm-test")
-        self.assertEqual(result.confidence, 0.82)
+        self.assertEqual(result.confidence, 0.946)
+        self.assertEqual(result.confidence_details["weights"]["retrieval_match"], 0.4)
         self.assertEqual(result.alarm_definition["name"], "主轴温度异常")
         self.assertEqual(len(result.tool_calls), 2)
         self.assertEqual(result.tool_calls[0]["name"], "get_alarm_definition")

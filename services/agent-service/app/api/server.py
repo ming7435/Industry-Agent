@@ -57,6 +57,8 @@ class WorkOrderCreateRequest(BaseModel):
     assignee: str = ""
     repair_target: Dict[str, Any] = Field(default_factory=dict)
     drawing_context: Dict[str, Any] = Field(default_factory=dict)
+    alarm_code: str = ""
+    diagnosis_context: Dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkOrderActionRequest(BaseModel):
@@ -137,6 +139,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             assignee=request.assignee,
             repair_target=request.repair_target,
             drawing_context=request.drawing_context,
+            alarm_code=request.alarm_code,
+            diagnosis_context=request.diagnosis_context,
         )
 
     @app.get("/api/workorders/{workorder_id}")

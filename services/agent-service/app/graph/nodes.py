@@ -562,6 +562,8 @@ class OrchestratorNodes:
                     assignee=str(target_input.get("assignee") or ""),
                     repair_target=target_input.get("repair_target") or target_input.get("target_part") or {},
                     drawing_context=target_input.get("drawing_context") or target_input.get("engineering_context") or {},
+                    alarm_code=str(target_input.get("alarm_code") or (state.get("diagnosis") or {}).get("alarm_code") or ""),
+                    diagnosis_context=state.get("diagnosis") or {},
                 )
             elif action == "assign":
                 order = self.workorder_service.assign(workorder_id, str(target_input.get("assignee") or ""))

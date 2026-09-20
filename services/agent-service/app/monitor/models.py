@@ -47,6 +47,8 @@ class DeviceSample:
     vibration: Optional[float]
     rpm: Optional[float]
     alarm_code: Optional[str] = None
+    alarm_label: Optional[str] = None
+    raw_alarm_text: Optional[str] = None
     temperature_point: str = "spindle_bearing_housing"
     vibration_point: str = "spindle_velocity_rms"
     alarm_level: Optional[AlertLevel] = None
@@ -69,6 +71,8 @@ class DeviceSample:
             "vibration": self.vibration,
             "rpm": self.rpm,
             "alarm_code": self.alarm_code,
+            "alarm_label": self.alarm_label,
+            "raw_alarm_text": self.raw_alarm_text,
             "temperature_point": self.temperature_point,
             "vibration_point": self.vibration_point,
             "alarm_level": self.alarm_level.value if self.alarm_level else None,

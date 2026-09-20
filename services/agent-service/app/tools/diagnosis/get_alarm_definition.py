@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from app.alarm import AlarmCodeParser
+
 
 ALARM_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "E102": {
@@ -101,13 +103,21 @@ ALARM_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "description": "控制器检测到指针值异常，属于控制器软件或内存管理异常。",
         "recommended_action": "先停止危险动作并重启控制器；若重复出现，升级控制器软件并联系设备厂家检查。",
     },
+    "E12S101": {
+        "alarm_code": "E12S101",
+        "name": "控制器报警 E12S101",
+        "severity": "high",
+        "description": "控制器报警 E12S101，请根据设备手册和现场控制器版本确认具体原因。",
+        "recommended_action": "停止危险动作，记录控制器状态和报警上下文，再按设备手册执行复位或联系厂家确认。",
+    },
 }
 
 
 def get_alarm_definition(alarm_code: str) -> Dict[str, Any]:
     """查询 Mock 报警字典，返回稳定的工具结果。"""
 
-    normalized = str(alarm_code or "").strip().upper()
+    parsed = AlarmCodeParser.parse(alarm_code)
+    normalized = parsed.code or str(alarm_code or "").strip().upper()
     definition = ALARM_DEFINITIONS.get(normalized)
     if definition is None:
         return {
@@ -119,6 +129,7 @@ def get_alarm_definition(alarm_code: str) -> Dict[str, Any]:
             "severity_label": "未知",
             "description": "当前 Mock 报警字典中没有找到该报警码。",
             "recommended_action": "记录报警码，并查询设备维修手册或真实报警服务。",
+            "raw_alarm_text": parsed.raw_text,
             "source": "mock_alarm_dictionary",
         }
     severity_labels = {
@@ -131,6 +142,8 @@ def get_alarm_definition(alarm_code: str) -> Dict[str, Any]:
         "found": True,
         "success": True,
         "source": "mock_alarm_dictionary",
+        "raw_alarm_text": parsed.raw_text,
+        "operator_description": parsed.description,
         "severity_label": severity_labels.get(definition.get("severity"), "未知"),
         **definition,
     }

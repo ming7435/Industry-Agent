@@ -185,6 +185,8 @@ class WorkOrder(BaseModel):
         "mesh_name": "",
         "location": "",
     })
+    alarm_code: str = ""
+    diagnosis_context: Dict[str, Any] = Field(default_factory=dict)
     assignee: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -194,6 +196,7 @@ class QualityResult(BaseModel):
     workorder_id: str
     passed: bool
     status: Literal["pass", "fail", "review"] = "fail"
+    recent_acceptance_status: Literal["PASSED", "FAILED", "REVIEW"] = "REVIEW"
     device_recovered: bool
     alarm_cleared: bool
     parameters_recovered: bool = False
@@ -246,4 +249,8 @@ class ExperienceResult(BaseModel):
     collection: str = "maint_fault_events"
     memory_saved: bool = False
     rag_saved: bool = False
+    alarm_code: str = ""
+    diagnosis: str = ""
+    treatment: str = ""
+    duration_seconds: float = 0.0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

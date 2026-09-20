@@ -46,8 +46,7 @@ class QualityValidator:
 
         feedback = str(feedback_result.get("repair_feedback") or feedback_result.get("feedback") or workorder.get("repair_feedback") or "").strip()
         if not feedback and workorder_compliance:
-            failed.append("repair_feedback_missing")
-            findings.append("维修反馈为空，无法确认现场执行记录")
+            findings.append("警告：维修反馈为空，建议补充现场执行记录；不阻断本次验收")
 
         alarm_result = dict(alarm_check or {})
         if device_status.get("found") is False or device_status.get("success") is False:
@@ -76,10 +75,14 @@ class QualityValidator:
             failed.append("sop_not_compliant")
             findings.append("未找到或未满足维修 SOP 证据")
 
-        passed = not failed and bool(repair_check.get("passed", workorder_compliance))
+        # 设备恢复、报警清除、SOP 合规是验收的三个核心业务条件。
+        # 维修反馈和工单步骤属于追溯信息，缺失时给出警告但不覆盖核心验收结果。
+        passed = bool(device_recovered and alarm_cleared and sop_compliant)
+        acceptance_status = "PASSED" if passed else "FAILED"
         return {
             "passed": passed,
             "status": "pass" if passed else "fail",
+            "recent_acceptance_status": acceptance_status,
             "device_recovered": device_recovered,
             "alarm_cleared": alarm_cleared,
             "parameters_recovered": parameters_recovered,

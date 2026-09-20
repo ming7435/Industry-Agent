@@ -80,30 +80,59 @@ class MySQLLongMemoryStore:
             self.connection = mysql.connector.connect(**config)
             cursor = self.connection.cursor()
             cursor.execute(
-                "CREATE TABLE IF NOT EXISTS industrial_experiences ("
+                "CREATE TABLE IF NOT EXISTS maintenance_experience ("
                 "id BIGINT AUTO_INCREMENT PRIMARY KEY, device_id VARCHAR(128), "
-                "payload JSON NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+                "alarm_code VARCHAR(64), diagnosis TEXT, treatment TEXT, "
+                "duration_seconds DOUBLE DEFAULT 0, payload JSON NOT NULL, "
+                "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             )
             self.connection.commit()
             cursor.close()
+            self._ensure_columns()
         except Exception as error:
             raise MemoryBackendError("MySQL 不可用：%s" % error) from error
 
     def save(self, item: Dict[str, Any]) -> None:
         cursor = self.connection.cursor()
         cursor.execute(
-            "INSERT INTO industrial_experiences (device_id, payload) VALUES (%s, %s)",
-            (str(item.get("device_id", "")), json.dumps(item, ensure_ascii=False, default=str)),
+            "INSERT INTO maintenance_experience "
+            "(device_id, alarm_code, diagnosis, treatment, duration_seconds, payload) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                str(item.get("device_id", "")),
+                str(item.get("alarm_code", "")),
+                str(item.get("diagnosis", "")),
+                str(item.get("treatment", "")),
+                float(item.get("duration_seconds") or 0),
+                json.dumps(item, ensure_ascii=False, default=str),
+            ),
         )
         self.connection.commit()
+        cursor.close()
+
+    def _ensure_columns(self) -> None:
+        """兼容已有旧表，首次升级时补齐结构化经验字段。"""
+
+        cursor = self.connection.cursor()
+        for statement in (
+            "ALTER TABLE maintenance_experience ADD COLUMN alarm_code VARCHAR(64)",
+            "ALTER TABLE maintenance_experience ADD COLUMN diagnosis TEXT",
+            "ALTER TABLE maintenance_experience ADD COLUMN treatment TEXT",
+            "ALTER TABLE maintenance_experience ADD COLUMN duration_seconds DOUBLE DEFAULT 0",
+        ):
+            try:
+                cursor.execute(statement)
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback()
         cursor.close()
 
     def search(self, device_id: str = "", limit: int = 20) -> List[Dict[str, Any]]:
         cursor = self.connection.cursor()
         if device_id:
-            cursor.execute("SELECT payload FROM industrial_experiences WHERE device_id = %s ORDER BY id DESC LIMIT %s", (device_id, limit))
+            cursor.execute("SELECT payload FROM maintenance_experience WHERE device_id = %s ORDER BY id DESC LIMIT %s", (device_id, limit))
         else:
-            cursor.execute("SELECT payload FROM industrial_experiences ORDER BY id DESC LIMIT %s", (limit,))
+            cursor.execute("SELECT payload FROM maintenance_experience ORDER BY id DESC LIMIT %s", (limit,))
         values = [json.loads(row[0]) for row in cursor.fetchall()]
         cursor.close()
         return values

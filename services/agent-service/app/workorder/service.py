@@ -20,6 +20,11 @@ class WorkOrderService:
         payload = plan.model_dump() if isinstance(plan, MaintenancePlan) else dict(plan or {})
         WorkOrderValidator.validate_plan(payload)
         diagnosis = payload.get("diagnosis") or {}
+        alarm_code = str(
+            diagnosis.get("alarm_code")
+            or payload.get("alarm_code")
+            or ""
+        )
         raw = self.tools.execute("create_workorder", {
             "device_id": str(diagnosis.get("device_id") or payload.get("device_id") or "unknown"),
             "title": "设备维修：%s" % (diagnosis.get("fault") or "设备异常"),
@@ -27,10 +32,16 @@ class WorkOrderService:
             "steps": payload.get("repair_steps", []),
             "repair_target": dict(payload.get("target_part") or payload.get("repair_target_detail") or {}),
             "drawing_context": self._drawing_context(payload.get("engineering_context") or {}),
+            "alarm_code": alarm_code,
+            "diagnosis_context": {
+                "summary": diagnosis.get("summary", ""),
+                "diagnosis": diagnosis.get("diagnosis") or diagnosis.get("fault", ""),
+                "recommendation": diagnosis.get("recommendation", ""),
+            },
         })
         return WorkOrder(**raw)
 
-    def create(self, device_id: str, title: str, plan_id: str = "", steps: list[str] | None = None, assignee: str = "", repair_target: Mapping[str, Any] | None = None, drawing_context: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def create(self, device_id: str, title: str, plan_id: str = "", steps: list[str] | None = None, assignee: str = "", repair_target: Mapping[str, Any] | None = None, drawing_context: Mapping[str, Any] | None = None, alarm_code: str = "", diagnosis_context: Mapping[str, Any] | None = None) -> dict[str, Any]:
         order = self.tools.execute("create_workorder", {
             "device_id": device_id,
             "title": title,
@@ -38,6 +49,8 @@ class WorkOrderService:
             "steps": steps or [],
             "repair_target": dict(repair_target or {}),
             "drawing_context": dict(drawing_context or {}),
+            "alarm_code": alarm_code,
+            "diagnosis_context": dict(diagnosis_context or {}),
         })
         if assignee:
             order = self.assign(str(order["workorder_id"]), assignee)

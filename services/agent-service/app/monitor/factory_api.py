@@ -9,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from app.alarm import AlarmCodeParser
+
 from .models import AlertLevel, DeviceSample
 from .presentation import cycle_state_label
 
@@ -108,11 +110,15 @@ class FactorySnapshotProvider:
             or device.get("device_id")
             or self.device_id
         )
-        alarm_code = (
+        raw_alarm_code = (
             monitor.get("alarm_code")
             or device.get("alarm_code")
+            or monitor.get("alarm_message")
+            or device.get("alarm_message")
             or None
         )
+        parsed_alarm = AlarmCodeParser.parse(raw_alarm_code)
+        alarm_code = parsed_alarm.code or None
         active_scenario = (payload.get("scenarios") or {}).get("active_scenario")
         scenario = self._find_matching_scenario(payload, active_scenario, alarm_code)
         alarm_level = self._map_scenario_severity(scenario)
@@ -125,6 +131,8 @@ class FactorySnapshotProvider:
             vibration=self._first_available_number(metrics, self._VIBRATION_KEYS),
             rpm=self._to_optional_number(metrics.get("spindle_rpm")),
             alarm_code=alarm_code,
+            alarm_label=parsed_alarm.display_text or None,
+            raw_alarm_text=parsed_alarm.raw_text or None,
             temperature_point="spindle_bearing_housing",
             vibration_point="spindle_velocity_rms",
             alarm_level=alarm_level,

@@ -272,8 +272,9 @@ class AllAgentTests(unittest.TestCase):
 
         self.assertFalse(open_quality.passed)
         self.assertIn("workorder_not_completed", open_quality.failed_checks)
-        self.assertFalse(missing_feedback.passed)
-        self.assertIn("repair_feedback_missing", missing_feedback.failed_checks)
+        self.assertTrue(missing_feedback.passed)
+        self.assertEqual(missing_feedback.recent_acceptance_status, "PASSED")
+        self.assertTrue(any("维修反馈为空" in item for item in missing_feedback.findings))
         self.assertTrue(passed.passed)
         self.assertTrue(passed.alarm_cleared)
         self.assertTrue(passed.parameters_recovered)

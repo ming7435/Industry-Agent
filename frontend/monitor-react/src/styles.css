@@ -1211,6 +1211,7 @@ h2 {
   font-size: 16px;
   font-weight: 900;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .diagnosis-grid {
@@ -1248,6 +1249,47 @@ h2 {
 
 .diagnosis-detail p {
   margin-top: 7px;
+  line-height: 1.7;
+}
+
+.diagnosis-detail p + p { margin-top: 9px; }
+
+.diagnosis-detail.recommendation {
+  border-left: 3px solid var(--amber);
+  background: #fffaf0;
+}
+
+.evidence-details {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.evidence-details summary {
+  cursor: pointer;
+  color: var(--teal-dark, #176c69);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.evidence-details[open] summary { margin-bottom: 10px; }
+
+.raw-diagnosis-details {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.raw-diagnosis-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.raw-diagnosis-details p {
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.7;
 }
 
@@ -1458,7 +1500,14 @@ h2 {
   color: var(--ink);
   font-size: 13px;
   line-height: 1.65;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
 }
+
+.document-list.compact article { padding: 10px; }
+.document-list.compact p { -webkit-line-clamp: 3; }
 
 .document-list span {
   margin-top: 8px;
@@ -1477,6 +1526,8 @@ h2 {
 .trace-list span {
   color: var(--muted);
   font-size: 12px;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .json-block {
@@ -1558,6 +1609,19 @@ h2 {
   border: 1px solid #e9b5b0;
   background: var(--red-soft);
   color: var(--red);
+  font-size: 13px;
+}
+
+.toast-message {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 20;
+  padding: 12px 16px;
+  border: 1px solid #9ed8ce;
+  background: #f0fbf8;
+  color: #087f73;
+  box-shadow: 0 8px 24px rgba(17, 45, 61, .14);
   font-size: 13px;
 }
 

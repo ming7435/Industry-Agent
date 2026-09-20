@@ -106,6 +106,11 @@ class DiagnosisResult:
     validation_errors: List[str] = field(default_factory=list)
     stop_reason: str = ""
     cached: bool = False
+    alarm_code: str = ""
+    cycle_state: str = ""
+    cycle_state_label: str = ""
+    confidence_details: Dict[str, Any] = field(default_factory=dict)
+    knowledge_warning: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -135,4 +140,9 @@ class DiagnosisResult:
             "validation_errors": list(self.validation_errors),
             "stop_reason": self.stop_reason,
             "cached": self.cached,
+            "alarm_code": self.alarm_code,
+            "cycle_state": self.cycle_state,
+            "cycle_state_label": self.cycle_state_label,
+            "confidence_details": dict(self.confidence_details),
+            "knowledge_warning": self.knowledge_warning,
         }

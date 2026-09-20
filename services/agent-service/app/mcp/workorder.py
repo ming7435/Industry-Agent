@@ -31,6 +31,8 @@ class WorkOrderMcpAdapter:
         steps: list[str] | None = None,
         repair_target: Dict[str, Any] | None = None,
         drawing_context: Dict[str, Any] | None = None,
+        alarm_code: str = "",
+        diagnosis_context: Dict[str, Any] | None = None,
         **_: Any,
     ) -> Dict[str, Any]:
         now = self._now()
@@ -43,6 +45,8 @@ class WorkOrderMcpAdapter:
             "steps": steps or [],
             "repair_target": dict(repair_target or {}),
             "drawing_context": dict(drawing_context or {}),
+            "alarm_code": alarm_code,
+            "diagnosis_context": dict(diagnosis_context or {}),
             "created_at": now,
             "updated_at": now,
         }

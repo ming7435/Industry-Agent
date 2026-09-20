@@ -22,6 +22,7 @@ from .schemas import (
     DiagnosisState,
 )
 
+from app.alarm import AlarmCodeParser
 from app.llm import get_default_llm_client
 from app.mcp.registry import LocalMcpToolRegistry
 
@@ -88,9 +89,7 @@ class DiagnosisAgent:
         一次 run = 一次 Diagnosis Agent Run。
         """
 
-        event = self._event_dict(
-            abnormal_event
-        )
+        event = AlarmCodeParser.normalize_mapping(self._event_dict(abnormal_event))
 
         cached = self.run_cache.get(event)
         if cached is not None:
@@ -375,12 +374,10 @@ class DiagnosisAgent:
             )
         )
 
-        confidence = (
-            self._confidence(
-                parsed.get(
-                    "confidence"
-                )
-            )
+        confidence, confidence_details, knowledge_warning = self._confidence_assessment(
+            state,
+            parsed.get("confidence"),
+            definition,
         )
 
         state.confidence = confidence
@@ -422,6 +419,8 @@ class DiagnosisAgent:
             "confidence":
             confidence,
 
+            "confidence_details": confidence_details,
+
             "next_action":
             state.next_action,
         }
@@ -457,6 +456,11 @@ class DiagnosisAgent:
             active_skills=list(state.active_skills or [state.active_skill]),
             validation_errors=list(state.validation_errors),
             stop_reason=state.stop_reason,
+            alarm_code=str(definition.get("alarm_code") or AlarmCodeParser.extract(alarm_code) or ""),
+            cycle_state=str((state.abnormal_event.get("realtime_snapshot") or {}).get("cycle_state") or state.abnormal_event.get("cycle_state") or ""),
+            cycle_state_label=str((state.abnormal_event.get("realtime_snapshot") or {}).get("cycle_state_label") or state.abnormal_event.get("cycle_state_label") or ""),
+            confidence_details=confidence_details,
+            knowledge_warning=knowledge_warning,
         )
 
     # ==========================================================
@@ -563,13 +567,13 @@ class DiagnosisAgent:
 
         state.error = error
 
-        state.confidence = (
-            0.65
-            if self._definition_found(
-                definition
-            )
-            else 0.35
+        state.confidence, confidence_details, knowledge_warning = self._confidence_assessment(
+            state,
+            0.65 if self._definition_found(definition) else 0.35,
+            definition,
         )
+        if knowledge_warning:
+            state.validation_errors.append(knowledge_warning)
 
         state.diagnosis = {
             "summary":
@@ -580,6 +584,8 @@ class DiagnosisAgent:
 
             "confidence":
             state.confidence,
+
+            "confidence_details": confidence_details,
         }
 
         evidence = self._result_evidence(state, event)
@@ -643,6 +649,11 @@ class DiagnosisAgent:
             active_skills=list(state.active_skills or [state.active_skill]),
             validation_errors=list(state.validation_errors),
             stop_reason=state.stop_reason,
+            alarm_code=str(definition.get("alarm_code") or AlarmCodeParser.extract(alarm_code) or ""),
+            cycle_state=str((event.get("realtime_snapshot") or {}).get("cycle_state") or event.get("cycle_state") or ""),
+            cycle_state_label=str((event.get("realtime_snapshot") or {}).get("cycle_state_label") or event.get("cycle_state_label") or ""),
+            confidence_details=confidence_details,
+            knowledge_warning=knowledge_warning,
         )
 
     # ==========================================================
@@ -706,6 +717,62 @@ class DiagnosisAgent:
         value: Any,
     ) -> Optional[float]:
         return parsing.confidence(value)
+
+    @classmethod
+    def _confidence_assessment(
+        cls,
+        state: DiagnosisState,
+        llm_value: Any,
+        definition: Mapping[str, Any],
+    ) -> tuple[float, Dict[str, Any], str]:
+        """按检索、模型和历史证据计算诊断置信度。"""
+
+        llm_probability = float(cls._confidence(llm_value) or 0.0)
+        retrieval_match = 1.0 if cls._definition_found(definition) else 0.0
+        historical_resolution = 0.5
+        knowledge_degraded = False
+        knowledge_seen = False
+
+        for record in state.tool_calls:
+            if not isinstance(record, Mapping):
+                continue
+            name = str(record.get("name") or record.get("tool_name") or "")
+            result = record.get("result") or record.get("output") or {}
+            if not isinstance(result, Mapping):
+                continue
+            if name in {"search_knowledge", "search_alarm_knowledge", "search_sop", "search_manual", "search_fault_cases", "search_semantic_memory"}:
+                knowledge_seen = True
+                if result.get("degraded") or result.get("warning") or result.get("error"):
+                    knowledge_degraded = True
+                documents = result.get("documents") or result.get("items") or result.get("evidence") or []
+                if result.get("confidence") is not None:
+                    try:
+                        retrieval_match = max(retrieval_match, min(1.0, max(0.0, float(result["confidence"]))))
+                    except (TypeError, ValueError):
+                        pass
+                elif documents:
+                    retrieval_match = max(retrieval_match, 0.8)
+                else:
+                    knowledge_degraded = True
+            if name in {"get_device_history", "get_device_logs"}:
+                if result.get("success", result.get("found", False)) and (result.get("series") or result.get("sample_count") or result.get("logs")):
+                    historical_resolution = 1.0
+
+        overall = (retrieval_match * 0.4) + (llm_probability * 0.3) + (historical_resolution * 0.3)
+        warning = ""
+        if knowledge_degraded or (knowledge_seen and retrieval_match <= 0):
+            overall = min(0.5, overall)
+            warning = "知识库缺失，请人工介入"
+        details = {
+            "overall": round(max(0.0, min(1.0, overall)), 4),
+            "retrieval_match": round(retrieval_match, 4),
+            "llm_probability": round(llm_probability, 4),
+            "historical_resolution": round(historical_resolution, 4),
+            "weights": {"retrieval_match": 0.4, "llm_probability": 0.3, "historical_resolution": 0.3},
+            "knowledge_degraded": knowledge_degraded,
+            "warning": warning,
+        }
+        return details["overall"], details, warning
 
     # ==========================================================
     # Datetime

@@ -14,7 +14,7 @@ CYCLE_STATE_LABELS = {
     "stopped": "已停止",
     "completed": "加工完成",
     "fault": "故障停机",
-    "fault_injection": "故障模拟中",
+    "fault_injection": "故障注入状态",
     "emergency_stop": "急停状态",
     "offline": "离线",
 }
@@ -25,4 +25,3 @@ def cycle_state_label(value: Any) -> str:
 
     raw = str(value or "").strip().lower()
     return CYCLE_STATE_LABELS.get(raw, str(value or "未知状态"))
-

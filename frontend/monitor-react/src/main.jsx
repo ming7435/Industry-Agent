@@ -215,7 +215,7 @@ const equipmentValueLabels = {
   overload: "过载",
   high_pressure_low: "高压不足",
   vibration_high: "振动过高",
-  fault_injection: "故障模拟中",
+  fault_injection: "故障注入状态",
   processing: "加工中",
   fault: "故障停机",
   emergency_stop: "急停状态",
@@ -231,13 +231,21 @@ const cycleStateLabels = {
   stopped: "已停止",
   completed: "加工完成",
   fault: "故障停机",
-  fault_injection: "故障模拟中",
+  fault_injection: "故障注入状态",
   emergency_stop: "急停状态",
   offline: "离线",
 };
 
 function displayCycleState(sample) {
   return sample?.cycle_state_label || labelFor(cycleStateLabels, sample?.cycle_state) || "未知状态";
+}
+
+function displayAlarm(sample) {
+  if (!sample) return "无";
+  const code = sample.alarm_code || "";
+  const label = sample.alarm_label || sample.alarm_description || "";
+  if (code && label) return `${code} · ${label}`;
+  return label || code || "无";
 }
 
 function displayToolName(item) {
@@ -251,6 +259,57 @@ function displayToolSummary(item) {
   if (item?.name === "get_device_logs") return result.logs?.length ? `已获取 ${result.logs.length} 条设备日志` : "未发现可用设备日志";
   if (item?.name?.startsWith("search_")) return result.documents?.length ? `命中 ${result.documents.length} 条知识证据` : "未命中知识证据";
   return item?.success === false ? "工具执行失败" : "已完成取证";
+}
+
+function readableDiagnosisText(value) {
+  return String(value || "")
+    .replace(/\bcycle_state\b/gi, "设备运行状态")
+    .replace(/\bfault_injection\b/gi, "故障注入状态")
+    .replace(/\bAUTO\b/g, "自动运行")
+    .replace(/\bvalidator_pass\b/g, "证据校验通过")
+    .replace(/\bunknown\b/gi, "未知");
+}
+
+function diagnosisParagraphs(value) {
+  const text = readableDiagnosisText(value).trim();
+  if (!text) return [];
+  return text
+    .split(/(?<=[。！？；])\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function confidenceText(value) {
+  if (value === null || value === undefined || value === "") return "--";
+  return `${(Number(value) * 100).toFixed(0)}%`;
+}
+
+function alarmLevelText(latest) {
+  const definition = latest?.alarm_definition || {};
+  const dictionaryLabel = definition.severity_label || definition.severity;
+  if (dictionaryLabel && !["unknown", "未知"].includes(dictionaryLabel)) return dictionaryLabel;
+  const match = String(latest?.summary || "").match(/报警等级(?:由[^，。]+)?升级为([^，。]+)/);
+  return match?.[1] || "待确认";
+}
+
+function compactDiagnosisSummary(latest) {
+  const raw = String(latest?.summary || "").trim();
+  if (!raw) return "等待异常事件";
+  const alarmCode = latest?.alarm_code
+    || latest?.alarm_definition?.alarm_code
+    || raw.match(/报警码\s*([A-Z0-9-]+)/i)?.[1]
+    || "未知";
+  const rule = raw.match(/触发规则为“([^”]+)”/)?.[1];
+  const state = raw.match(/cycle_state\s*为“([^”]+)”/)?.[1];
+  const health = raw.match(/健康评分\s*(\d+)/)?.[1];
+  const conclusion = String(latest?.diagnosis || "")
+    .match(/综合判断：(.+?)(?=；|。|$)/)?.[1];
+  const parts = [`检测到报警 ${alarmCode}`];
+  if (rule) parts.push(`触发规则：${rule}`);
+  if (state) parts.push(`设备状态：${state}`);
+  if (health) parts.push(`健康评分：${health}`);
+  if (conclusion) parts.push(`当前判断：${conclusion}`);
+  return readableDiagnosisText(`${parts.join("；")}。`);
 }
 
 async function request(path, options = {}) {
@@ -393,6 +452,7 @@ function useMetricHistory(machines) {
 
 function App() {
   const [activeView, setActiveView] = useState("monitor");
+  const [toast, setToast] = useState("");
   const [selectedMachineId, setSelectedMachineId] = useState(workshopMachines[0].id);
   const [bigScreen, setBigScreen] = useState(false);
   const { snapshot, error, control, resetStats } = useMonitorSnapshot();
@@ -406,6 +466,11 @@ function App() {
     ? "--"
     : `${Number(sample.health_score).toFixed(0)} / 100`;
   const connectionText = error || runner.last_error ? "接口异常" : "连接正常";
+
+  function showToast(message) {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2400);
+  }
 
   useEffect(() => {
     if (machines.length && !machines.some((machine) => machine.id === selectedMachineId)) {
@@ -440,11 +505,12 @@ function App() {
         )}
         {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} />}
         {!bigScreen && activeView === "maintenance" && <MaintenanceWorkspace snapshot={snapshot} />}
-        {!bigScreen && activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} />}
+        {!bigScreen && activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "report" && <ReportWorkspace snapshot={snapshot} />}
         {!bigScreen && activeView === "trace" && <TraceWorkspace snapshot={snapshot} />}
+        {toast && <div className="toast-message" role="status">{toast}</div>}
         {(error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
       </main>
     </div>
@@ -1802,7 +1868,7 @@ function MachineDetailHeader({ machine, isLiveMachine, sample, result, healthTex
       <div className="machine-detail-stats">
         <div><span>状态</span><strong className={status}>{machineStatusLabel(status)}</strong></div>
         <div><span>运行阶段</span><strong>{isLiveMachine ? displayCycleState(sample) : "--"}</strong></div>
-        <div><span>告警</span><strong>{isLiveMachine ? (sample?.alarm_code || "无") : "--"}</strong></div>
+        <div><span>告警</span><strong>{isLiveMachine ? displayAlarm(sample) : "--"}</strong></div>
         <div><span>健康度</span><strong>{isLiveMachine ? healthText : "--"}</strong></div>
       </div>
     </section>
@@ -1814,7 +1880,7 @@ function StatusStrip({ snapshot, sample, runner, healthText }) {
     ["监测状态", runner.enabled ? "开启" : "暂停"],
     ["设备状态", labelFor(statusLabels, sample?.status)],
     ["运行阶段", displayCycleState(sample)],
-    ["当前告警", sample?.alarm_code || "无"],
+    ["当前告警", displayAlarm(sample)],
     ["采样次数", snapshot?.result_count ?? "--"],
     ["告警事件次数", snapshot?.alarm_event_count ?? "--"],
     ["Agent诊断任务", snapshot?.diagnosis_task_count ?? "--"],
@@ -1943,7 +2009,7 @@ function MachineDetailDrawer({ machine, result, sample, history, onClose }) {
         <div className="drawer-status">
           <div><span>状态</span><strong className={status}>{machineStatusLabel(status)}</strong></div>
           <div><span>健康度</span><strong>{formatHealthValue(sample?.health_score)}</strong></div>
-          <div><span>报警</span><strong>{sample?.alarm_code || "无"}</strong></div>
+          <div><span>报警</span><strong>{displayAlarm(sample)}</strong></div>
         </div>
         <div className="drawer-section">
           <span className="eyebrow">设备关注点</span>
@@ -2157,30 +2223,27 @@ function DiagnosisResult({ latest }) {
   if (!latest || latest.status === "idle") {
     return <div className="diagnosis-result"><div className="empty-state">满足触发条件后自动生成诊断结果</div></div>;
   }
-  const confidence = latest.confidence === null || latest.confidence === undefined
-    ? "--"
-    : `${(Number(latest.confidence) * 100).toFixed(0)}%`;
+  const confidence = confidenceText(latest.confidence);
   const definition = latest.alarm_definition || {};
-  const evidence = (latest.tool_calls || []).map(displayToolName).join("、") || "等待诊断依据";
+  const evidence = (latest.tool_calls || []).slice(0, 4).map(displayToolName).join("、") || "等待诊断依据";
+  const diagnosis = diagnosisParagraphs(latest.diagnosis);
   const cells = [
     ["设备", latest.device_id || "--"],
-    ["诊断任务", latest.task_id || "--"],
-    ["异常事件", latest.event_id || "--"],
-    ["事件轮次", `第 ${latest.event_revision || 1} 次`],
-    ["触发时间", formatTime(latest.triggered_at)],
-    ["报警定义", definition.name || "未查询到"],
+    ["报警信息", latest.alarm_label || definition.name || latest.alarm_code || definition.alarm_code || "--"],
+    ["报警级别", alarmLevelText(latest)],
+    ["运行状态", readableDiagnosisText(latest.cycle_state_label || latest.cycle_state || "--")],
     ["置信度", confidence],
-    ["诊断依据", evidence],
+    ["取证工具", evidence],
   ];
   return (
     <div className="diagnosis-result">
-      <div className="diagnosis-summary">{latest.summary || "正在生成诊断结果"}</div>
+      <div className="diagnosis-summary">{compactDiagnosisSummary(latest)}</div>
       <div className="diagnosis-grid">
         {cells.map(([label, value]) => (
           <div key={label}><span>{label}</span><strong>{value}</strong></div>
         ))}
       </div>
-      <div className="diagnosis-detail"><span>诊断说明</span><p>{latest.diagnosis || "暂无详细诊断"}</p></div>
+      <div className="diagnosis-detail"><span>诊断说明</span>{diagnosis.length ? diagnosis.map((item, index) => <p key={`${item}-${index}`}>{item}</p>) : <p>暂无详细诊断</p>}</div>
       {latest.error && <div className="diagnosis-error">{latest.error}</div>}
     </div>
   );
@@ -2195,6 +2258,8 @@ function DiagnosisWorkspace({ snapshot }) {
   const pipeline = PipelineData({ snapshot });
   const knowledge = pipeline.knowledge || {};
   const evidence = latest.tool_calls || [];
+  const diagnosis = diagnosisParagraphs(latest.diagnosis);
+  const recommendation = diagnosisParagraphs(latest.recommendation);
   return (
     <section className="workspace-view active module-board" aria-label="智能诊断中心">
       <ModuleHero eyebrow="Diagnosis Agent" title="智能诊断中心" text="查看异常事件、诊断结论、报警定义、历史证据和知识检索结果。" />
@@ -2205,20 +2270,25 @@ function DiagnosisWorkspace({ snapshot }) {
       </div>
       <div className="ops-grid">
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">最终诊断</span><h2>{latest.summary || "等待异常事件"}</h2></div><span className={`severity-pill ${latest.status === "failed" ? "fault" : "normal"}`}>{labelFor(diagnosisStatusLabels, latest.status)}</span></div>
+          <div className="panel-heading"><div><span className="eyebrow">最终诊断</span><h2>维修人员诊断结论</h2></div><span className={`severity-pill ${latest.status === "failed" ? "fault" : "normal"}`}>{labelFor(diagnosisStatusLabels, latest.status)}</span></div>
+          <div className="diagnosis-summary">{compactDiagnosisSummary(latest)}</div>
           <div className="detail-grid">
             <DetailCell label="设备" value={latest.device_id} />
-            <DetailCell label="异常事件" value={latest.event_id} />
-            <DetailCell label="事件轮次" value={latest.event_revision ? `第 ${latest.event_revision} 次` : "--"} />
-            <DetailCell label="触发原因" value={latest.trigger_cause} />
+            <DetailCell label="报警信息" value={latest.alarm_label || latest.alarm_definition?.name || latest.alarm_code || latest.alarm_definition?.alarm_code} />
+            <DetailCell label="报警级别" value={alarmLevelText(latest)} />
+            <DetailCell label="置信度" value={confidenceText(latest.confidence)} />
           </div>
-          <div className="diagnosis-detail"><span>诊断说明</span><p>{latest.diagnosis || "暂无诊断说明"}</p></div>
-          {latest.recommendation && <div className="diagnosis-detail"><span>下一步建议</span><p>{latest.recommendation}</p></div>}
+          <div className="diagnosis-detail"><span>诊断说明</span>{diagnosis.length ? diagnosis.map((item, index) => <p key={`${item}-${index}`}>{item}</p>) : <p>暂无诊断说明</p>}</div>
+          {recommendation.length > 0 && <div className="diagnosis-detail recommendation"><span>下一步建议</span>{recommendation.map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</div>}
+          {latest.summary && <details className="raw-diagnosis-details"><summary>查看完整事件描述</summary><p>{readableDiagnosisText(latest.summary)}</p></details>}
         </section>
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">工具证据</span><h2>Reason · Act · Observe</h2></div></div>
-          <TraceList items={evidence.map((item) => ({ event: displayToolName(item), summary: displayToolSummary(item), agent: "Diagnosis Agent", tool: item.name }))} />
-          <DocumentList documents={knowledge.documents || []} />
+          <div className="panel-heading"><div><span className="eyebrow">诊断依据</span><h2>已完成的取证</h2></div><span className="muted">{evidence.length} 项工具</span></div>
+          <TraceList items={evidence.slice(0, 6).map((item) => ({ event: displayToolName(item), summary: displayToolSummary(item), agent: "Diagnosis Agent", tool: item.name }))} />
+          <details className="evidence-details">
+            <summary>查看知识库证据（{(knowledge.documents || []).length} 条）</summary>
+            <DocumentList documents={knowledge.documents || []} compact limit={4} />
+          </details>
         </section>
       </div>
     </section>
@@ -2270,7 +2340,7 @@ function TraceWorkspace({ snapshot }) {
   );
 }
 
-function WorkorderView({ snapshot, sample }) {
+function WorkorderView({ snapshot, sample, onClosed }) {
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [assignee, setAssignee] = useState("维修一组");
@@ -2306,6 +2376,8 @@ function WorkorderView({ snapshot, sample }) {
           title,
           steps: latestDiagnosis.recommendation ? [latestDiagnosis.recommendation] : sampleWorkorderSteps,
           assignee,
+          alarm_code: sample?.alarm_code || "",
+          diagnosis_context: latestDiagnosis,
         }),
       });
       await loadOrders();
@@ -2329,6 +2401,7 @@ function WorkorderView({ snapshot, sample }) {
       });
       setOrders((items) => items.map((item) => item.workorder_id === order.workorder_id ? order : item));
       setError("");
+      if (status === "closed") onClosed?.();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -2578,9 +2651,10 @@ function StepList({ steps = [] }) {
   return <ol className="step-list">{steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol>;
 }
 
-function DocumentList({ documents }) {
+function DocumentList({ documents, limit = null, compact = false }) {
   if (!documents.length) return <div className="empty-state">暂无命中文档</div>;
-  return <div className="document-list">{documents.map((doc, index) => <article key={doc.document_id || index}><strong>{doc.title || doc.document_id}</strong><p>{doc.content}</p><span>{doc.source || doc.metadata?.collection || "知识库"} · 相关度 {doc.score ?? "--"}</span></article>)}</div>;
+  const visibleDocuments = limit ? documents.slice(0, limit) : documents;
+  return <div className={`document-list ${compact ? "compact" : ""}`}>{visibleDocuments.map((doc, index) => <article key={doc.document_id || index}><strong>{doc.title || doc.document_id}</strong><p>{doc.content}</p><span>{doc.source || doc.metadata?.collection || "知识库"} · 相关度 {doc.score ?? "--"}</span></article>)}</div>;
 }
 
 function QualityResultView({ quality }) {

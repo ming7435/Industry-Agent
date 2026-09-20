@@ -15,6 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from app.alarm import AlarmCodeParser
 from app.monitor.presentation import cycle_state_label
 
 
@@ -102,6 +103,9 @@ def get_device_status(
     ) if isinstance(summary, Mapping) else device.get("checked_at")
 
     raw_cycle_state = device.get("cycle_state", "")
+    parsed_alarm = AlarmCodeParser.parse(
+        device.get("alarm_code") or device.get("alarm_message") or device.get("alarm")
+    )
     return {
         "found": True,
         "success": True,
@@ -112,7 +116,10 @@ def get_device_status(
         "mode": device.get("mode", ""),
         "cycle_state": raw_cycle_state,
         "cycle_state_label": cycle_state_label(raw_cycle_state),
-        "alarm_code": device.get("alarm_code"),
+        "alarm_code": parsed_alarm.code or None,
+        "alarm_label": parsed_alarm.display_text or None,
+        "alarm_description": parsed_alarm.description or None,
+        "raw_alarm_text": parsed_alarm.raw_text or None,
         "health_score": device.get("health_score"),
         "metrics": dict(device.get("metrics") or {}),
         "metric_details": dict(device.get("metric_details") or {}),
