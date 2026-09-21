@@ -17,6 +17,8 @@ class ReportQuery(BaseModel):
     diagnosis: Dict[str, Any] = Field(default_factory=dict)
     maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
     workorder: Dict[str, Any] = Field(default_factory=dict)
+    repair_feedback: Dict[str, Any] = Field(default_factory=dict)
+    repair_verification: Dict[str, Any] = Field(default_factory=dict)
     quality: Dict[str, Any] = Field(default_factory=dict)
     knowledge: Dict[str, Any] = Field(default_factory=dict)
     event: Dict[str, Any] = Field(default_factory=dict)
@@ -31,7 +33,7 @@ class ReportQuery(BaseModel):
         if hasattr(payload, "model_dump"):
             payload = payload.model_dump(mode="json")
         values = dict(payload or {}) if isinstance(payload, dict) else {}
-        for key in ("diagnosis", "maintenance_plan", "workorder", "quality", "knowledge", "event"):
+        for key in ("diagnosis", "maintenance_plan", "workorder", "repair_feedback", "repair_verification", "quality", "knowledge", "event"):
             value = values.get(key)
             if hasattr(value, "model_dump"):
                 values[key] = value.model_dump(mode="json")

@@ -24,10 +24,15 @@ class WorkOrderQuery(BaseModel):
     plan: Dict[str, Any] = Field(default_factory=dict)
     workorder: Dict[str, Any] = Field(default_factory=dict)
     repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
+    repair_verification: Dict[str, Any] = Field(default_factory=dict)
     status: str = ""
     assignee: str = ""
     fault_level: str = ""
     idempotency_key: str = ""
+    closure_reason: str = ""
+    priority: str = "normal"
+    risk_level: str = ""
+    source: str = ""
     context: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod

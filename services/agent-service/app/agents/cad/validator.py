@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from app.validator import CADComponent
+from app.contracts import CADComponent
 
 
 class CADEngineeringValidator:

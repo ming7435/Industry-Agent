@@ -66,7 +66,7 @@ def validate(state: MemoryGraphState) -> Dict[str, Any]:
 def extract_experience(state: MemoryGraphState) -> Dict[str, Any]:
     request = state["request"]
     experience = state["agent"].experience_module.extractor.extract(
-        workorder=dict(request.get("workorder") or {}), quality=dict(request.get("quality") or {}),
+        workorder=dict(request.get("workorder") or {}), repair_feedback=request.get("repair_feedback") or (request.get("workorder") or {}).get("repair_feedback") or {},
         diagnosis=dict(request.get("diagnosis") or {}), maintenance_plan=dict(request.get("maintenance_plan") or {}), report=dict(request.get("report") or {}),
     )
     return {"experience": experience, "route": "dedup_experience"}

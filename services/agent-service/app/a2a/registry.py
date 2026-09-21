@@ -7,7 +7,7 @@ ALLOWED_A2A_ROUTES = {
     "router": frozenset({"diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "memory"}),
     "diagnosis": frozenset({"knowledge", "cad", "memory", "maintenance"}),
     "maintenance": frozenset({"knowledge", "cad", "memory", "workorder"}),
-    "workorder": frozenset({"quality", "maintenance"}),
+    "workorder": frozenset({"quality", "maintenance", "memory"}),
     "quality": frozenset({"knowledge", "maintenance", "workorder", "memory"}),
     "report": frozenset({"memory"}),
     "memory": frozenset(),

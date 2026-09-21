@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from app.alarm import AlarmCodeParser
+from app.common import AlarmCodeParser
 
 
 ALARM_DEFINITIONS: Dict[str, Dict[str, Any]] = {

@@ -167,10 +167,15 @@ class WorkOrderRequest(A2ARequest):
     maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
     workorder: Dict[str, Any] = Field(default_factory=dict)
     repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
+    repair_verification: Dict[str, Any] = Field(default_factory=dict)
     status: str = ""
     assignee: str = ""
     fault_level: str = ""
     idempotency_key: str = ""
+    closure_reason: str = ""
+    priority: str = "normal"
+    risk_level: str = ""
+    source: str = ""
 
 
 class WorkOrderResponse(A2AResponse):
@@ -195,6 +200,7 @@ class MemoryRequest(A2ARequest):
     maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
     workorder: Dict[str, Any] = Field(default_factory=dict)
     repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
+    repair_verification: Dict[str, Any] = Field(default_factory=dict)
     quality: Dict[str, Any] = Field(default_factory=dict)
     report: Dict[str, Any] = Field(default_factory=dict)
 

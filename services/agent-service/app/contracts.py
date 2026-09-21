@@ -173,7 +173,7 @@ class MaintenancePlan(BaseModel):
 class WorkOrder(BaseModel):
     workorder_id: str
     device_id: str
-    status: Literal["open", "in_progress", "completed", "closed"] = "open"
+    status: Literal["open", "in_progress", "completed", "closed", "rejected", "timeout"] = "open"
     title: str
     plan_id: str = ""
     steps: List[str] = Field(default_factory=list)
@@ -190,6 +190,18 @@ class WorkOrder(BaseModel):
     })
     alarm_code: str = ""
     diagnosis_context: Dict[str, Any] = Field(default_factory=dict)
+    repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
+    repair_verification: Dict[str, Any] = Field(default_factory=dict)
+    status_history: List[Dict[str, Any]] = Field(default_factory=list)
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    priority: str = "normal"
+    risk_level: str = ""
+    source: str = ""
+    closure_reason: str = ""
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    closed_at: datetime | None = None
+    quality_check_id: str = ""
     assignee: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -233,6 +245,7 @@ class QualityResult(BaseModel):
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     recommendation: str = ""
     findings: List[str] = Field(default_factory=list)
+    quality_check_id: str = ""
     stop_reason: str = ""
     checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

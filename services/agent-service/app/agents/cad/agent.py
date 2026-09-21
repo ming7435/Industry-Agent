@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.tools.registry import ToolRegistry
-from app.validator import CADResult
+from app.contracts import CADResult
 
 from .graph import build_cad_graph
 from .schemas import CADQuery

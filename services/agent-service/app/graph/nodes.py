@@ -15,13 +15,15 @@ from app.a2a import (
 )
 from app.agents.diagnosis import DiagnosisAgent
 from app.agents.registry import build_agent_registry
-from app.experience import ExperienceLearningModule
+from app.memory import ExperienceLearningModule
 from app.graph.state import AgentState
 from app.harness import AgentHarness
 from app.memory import build_memory_stores
 from app.tools.registry import ToolRegistry
-from app.trace import TraceRecorder
+from app.harness import TraceRecorder
 from app.workorder import WorkOrderService
+from app.workorder.validator import WorkOrderValidator
+from app.closure import ClosureService
 
 
 def _serialize_agent_result(value: Any) -> Dict[str, Any]:
@@ -45,6 +47,7 @@ class OrchestratorNodes:
         self.a2a = A2AClient(trace=self.trace)
         self.short_memory, self.long_memory = build_memory_stores()
         self.workorder_service = WorkOrderService(registry)
+        self.closure_service = ClosureService(trace=self.trace)
         self.experience_module = ExperienceLearningModule(
             self.short_memory,
             self.long_memory,
@@ -422,6 +425,7 @@ class OrchestratorNodes:
         state: AgentState,
         from_agent: str = "router",
         quality_payload: Mapping[str, Any] | None = None,
+        persist: bool = False,
     ) -> Dict[str, Any]:
         context = state.get("context") or {}
         values = {**context, **dict(quality_payload or {})}
@@ -450,7 +454,26 @@ class OrchestratorNodes:
             ),
             QualityResponse,
         )
-        return response.quality_result
+        result = dict(response.quality_result or {})
+        if persist and (result.get("part_id") or result.get("part_no")):
+            check = self.closure_service.record_part_quality(
+                {
+                    "part_id": result.get("part_id") or values.get("part_id") or "",
+                    "part_no": result.get("part_no") or values.get("part_no") or "",
+                    "part_name": result.get("part_name") or values.get("part_name") or "",
+                    "batch_id": result.get("batch_id") or values.get("batch_id") or "",
+                    "production_order_id": result.get("production_order_id") or values.get("production_order_id") or "",
+                    "result": "passed" if bool(result.get("passed") or result.get("qualified")) else "failed",
+                    "score": result.get("score") or result.get("quality_score"),
+                    "findings": list(result.get("findings") or result.get("defects") or result.get("failed_checks") or []),
+                    "items": list(result.get("inspection_items") or []),
+                    "reviewer": str(values.get("reviewer") or "quality-agent"),
+                    "risk_level": str(values.get("risk_level") or "R1"),
+                },
+                operator=str(values.get("reviewer") or "quality-agent"),
+            )
+            result["quality_check_id"] = check["quality_check_id"]
+        return result
 
     def _workorder_request(
         self,
@@ -475,10 +498,15 @@ class OrchestratorNodes:
                 maintenance_plan=plan,
                 workorder=order,
                 repair_feedback=state.get("repair_feedback") or {},
+                repair_verification=state.get("repair_verification") or order.get("repair_verification") or {},
                 status=str(order.get("status") or ""),
                 assignee=str(context.get("assignee") or ""),
                 fault_level=str((state.get("diagnosis") or {}).get("severity") or plan.get("risk_level") or ""),
                 idempotency_key=str(context.get("idempotency_key") or state.get("task_id") or ""),
+                closure_reason=str(context.get("closure_reason") or order.get("closure_reason") or ""),
+                priority=str(context.get("priority") or plan.get("priority") or "normal"),
+                risk_level=str(context.get("risk_level") or plan.get("risk_level") or ""),
+                source=str(context.get("source") or plan.get("source") or ""),
             ),
             WorkOrderResponse,
         )
@@ -511,6 +539,7 @@ class OrchestratorNodes:
                 maintenance_plan=state.get("maintenance_plan") or {},
                 workorder=state.get("workorder") or {},
                 repair_feedback=state.get("repair_feedback") or {},
+                repair_verification=state.get("repair_verification") or {},
                 quality=state.get("quality") or {},
                 report=state.get("report") or {},
             ),
@@ -534,6 +563,10 @@ class OrchestratorNodes:
                 "alarm_code": values.get("alarm_code") or "",
                 "diagnosis": {"device_id": values.get("device_id") or "unknown", "fault": values.get("title") or "设备异常", **dict(values.get("diagnosis_context") or {})},
                 "workorder_ready": True,
+                "priority": values.get("priority") or "normal",
+                "risk_level": values.get("risk_level") or "",
+                "source": values.get("source") or "manual",
+                "idempotency_key": values.get("idempotency_key") or "",
             }
         state: AgentState = {
             "entry": "user",
@@ -542,8 +575,34 @@ class OrchestratorNodes:
             "context": values,
             "workorder": dict(values.get("workorder") or {}),
             "repair_feedback": values.get("repair_feedback") or {},
+            "repair_verification": dict(values.get("verification") or values.get("repair_verification") or {}),
         }
-        return self._workorder_request(state, action=action, workorder=values.get("workorder"), from_agent=from_agent)
+        result = self._workorder_request(state, action=action, workorder=values.get("workorder"), from_agent=from_agent)
+        if action == "close":
+            order = dict(result.get("workorder") or {})
+            feedback = order.get("repair_feedback") or values.get("repair_feedback") or {}
+            if order.get("status") == "closed" and WorkOrderValidator.can_learn(order, feedback):
+                learning_state: AgentState = {
+                    **state,
+                    "workorder": order,
+                    "repair_feedback": feedback,
+                    "repair_verification": dict(order.get("repair_verification") or {}),
+                    "diagnosis": dict(values.get("diagnosis") or {}),
+                    "maintenance_plan": dict(values.get("maintenance_plan") or {}),
+                }
+                try:
+                    result["memory_result"] = self._memory_request(
+                        learning_state,
+                        action="learn",
+                        from_agent="workorder",
+                    )
+                except Exception as error:
+                    result["memory_result"] = {
+                        "success": False,
+                        "error": str(error),
+                        "stop_reason": "memory_learning_failed",
+                    }
+        return result
 
     def execute_memory(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router") -> Dict[str, Any]:
         """API/事件入口：所有经验检索和学习动作都通过 Memory Agent。"""
@@ -783,7 +842,7 @@ class OrchestratorNodes:
         self._node_start("quality", state)
         route = state.get("route_result") or {}
         target_input = dict(route.get("target_input") or state.get("context") or {})
-        result = self._quality_request(state, from_agent="router", quality_payload=target_input)
+        result = self._quality_request(state, from_agent="router", quality_payload=target_input, persist=True)
         return self._finish("quality", state, {"quality": result})
 
 

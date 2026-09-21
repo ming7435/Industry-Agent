@@ -9,7 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from app.alarm import AlarmCodeParser
+from app.common import AlarmCodeParser
 
 from .models import AlertLevel, DeviceSample
 from .presentation import cycle_state_label

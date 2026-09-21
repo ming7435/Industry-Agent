@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from app.experience.validator import ExperienceValidator
+from app.memory.validator import ExperienceValidator
 
 
 class MemoryAgentValidator:
@@ -24,9 +24,9 @@ class MemoryAgentValidator:
     @staticmethod
     def validate_admission(request: Mapping[str, Any]) -> list[str]:
         workorder = request.get("workorder") or {}
-        quality = request.get("quality") or {}
-        if not ExperienceValidator().is_valid(workorder, quality):
-            return ["仅允许质量通过且工单已关闭的经验进入长期记忆"]
+        feedback = request.get("repair_feedback") or workorder.get("repair_feedback") or {}
+        if not ExperienceValidator().is_valid(workorder, feedback):
+            return ["仅允许已关闭且具有有效维修反馈的工单沉淀为维修经验"]
         return []
 
     @staticmethod

@@ -6,7 +6,7 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from app.tools.registry import ToolRegistry
-from app.validator import DiagnosisView, MaintenancePlan
+from app.contracts import DiagnosisView, MaintenancePlan
 
 from .graph import build_maintenance_graph
 from .validator import MaintenancePlanValidator

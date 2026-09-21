@@ -7,7 +7,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.validator import QualityResult
+from app.contracts import QualityResult
 
 from .schemas import QualityQuery, QualityWorkflowState
 from .validator import QualityValidator

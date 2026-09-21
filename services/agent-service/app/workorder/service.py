@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.tools.registry import ToolRegistry
-from app.validator import MaintenancePlan, WorkOrder
+from app.contracts import MaintenancePlan, WorkOrder
 
 from .validator import WorkOrderValidator
 
@@ -38,10 +38,13 @@ class WorkOrderService:
                 "diagnosis": diagnosis.get("diagnosis") or diagnosis.get("fault", ""),
                 "recommendation": diagnosis.get("recommendation", ""),
             },
+            "priority": payload.get("priority") or "normal",
+            "risk_level": payload.get("risk_level") or "",
+            "source": payload.get("source") or "agent",
         })
         return WorkOrder(**raw)
 
-    def create(self, device_id: str, title: str, plan_id: str = "", steps: list[str] | None = None, assignee: str = "", repair_target: Mapping[str, Any] | None = None, drawing_context: Mapping[str, Any] | None = None, alarm_code: str = "", diagnosis_context: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def create(self, device_id: str, title: str, plan_id: str = "", steps: list[str] | None = None, assignee: str = "", repair_target: Mapping[str, Any] | None = None, drawing_context: Mapping[str, Any] | None = None, alarm_code: str = "", diagnosis_context: Mapping[str, Any] | None = None, priority: str = "normal", risk_level: str = "", source: str = "") -> dict[str, Any]:
         order = self.tools.execute("create_workorder", {
             "device_id": device_id,
             "title": title,
@@ -51,6 +54,9 @@ class WorkOrderService:
             "drawing_context": dict(drawing_context or {}),
             "alarm_code": alarm_code,
             "diagnosis_context": dict(diagnosis_context or {}),
+            "priority": priority,
+            "risk_level": risk_level,
+            "source": source,
         })
         if assignee:
             order = self.assign(str(order["workorder_id"]), assignee)
@@ -91,14 +97,14 @@ class WorkOrderService:
     def assign(self, workorder_id: str, assignee: str) -> dict[str, Any]:
         return self.tools.execute("assign_workorder", {"workorder_id": workorder_id, "assignee": assignee})
 
-    def submit_repair_feedback(self, workorder_id: str, feedback: str) -> dict[str, Any]:
+    def submit_repair_feedback(self, workorder_id: str, feedback: Any) -> dict[str, Any]:
         return self.tools.execute("submit_repair_feedback", {"workorder_id": workorder_id, "feedback": feedback})
 
-    def mark_repair_completed(self, workorder_id: str, feedback: str = "") -> dict[str, Any]:
-        return self.tools.execute("mark_repair_completed", {"workorder_id": workorder_id, "feedback": feedback})
+    def mark_repair_completed(self, workorder_id: str, feedback: Any = "", repair_verification: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        return self.tools.execute("mark_repair_completed", {"workorder_id": workorder_id, "feedback": feedback, "repair_verification": dict(repair_verification or {})})
 
-    def close(self, workorder_id: str) -> dict[str, Any]:
-        return self.tools.execute("close_workorder", {"workorder_id": workorder_id})
+    def close(self, workorder_id: str, reason: str = "") -> dict[str, Any]:
+        return self.tools.execute("close_workorder", {"workorder_id": workorder_id, "reason": reason})
 
     def reopen(self, workorder_id: str) -> dict[str, Any]:
         return self.tools.execute("reopen_workorder", {"workorder_id": workorder_id})
@@ -117,12 +123,12 @@ class WorkOrderService:
             return self.update(workorder_id, str(task.get("status", "in_progress")), assignee=str(task.get("assignee") or ""))
         if action == "submit_feedback":
             feedback = task.get("repair_feedback")
-            return self.submit_repair_feedback(workorder_id, str(feedback.get("feedback") if isinstance(feedback, Mapping) else feedback or ""))
+            return self.submit_repair_feedback(workorder_id, feedback)
         if action == "mark_repair_completed":
             feedback = task.get("repair_feedback")
-            return self.mark_repair_completed(workorder_id, str(feedback.get("feedback") if isinstance(feedback, Mapping) else feedback or ""))
+            return self.mark_repair_completed(workorder_id, feedback, task.get("repair_verification") or task.get("verification") or {})
         if action == "close":
-            return self.close(workorder_id)
+            return self.close(workorder_id, str(task.get("closure_reason") or ""))
         if action == "reopen":
             return self.reopen(workorder_id)
         return self.create_from_plan(task.get("maintenance_plan") or task.get("plan") or task)

@@ -60,6 +60,10 @@ class WorkOrderCreateRequest(BaseModel):
     drawing_context: Dict[str, Any] = Field(default_factory=dict)
     alarm_code: str = ""
     diagnosis_context: Dict[str, Any] = Field(default_factory=dict)
+    priority: str = "normal"
+    risk_level: str = ""
+    source: str = "manual"
+    idempotency_key: str = ""
 
 
 class WorkOrderActionRequest(BaseModel):
@@ -68,6 +72,7 @@ class WorkOrderActionRequest(BaseModel):
     assignee: str = ""
     feedback: str = ""
     repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
+    repair_verification: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ExperienceSearchRequest(BaseModel):
@@ -92,6 +97,46 @@ class PartQualityRequest(BaseModel):
     measurements: Dict[str, Any] = Field(default_factory=dict)
     specifications: Dict[str, Any] = Field(default_factory=dict)
     production_context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class QualityCheckRequest(BaseModel):
+    target_type: str = "workorder"
+    target_id: str = Field(min_length=1)
+    workorder_id: str = ""
+    part_id: str = ""
+    part_no: str = ""
+    batch_id: str = ""
+    production_order_id: str = ""
+    inspection_type: str = ""
+    score: float | None = Field(default=None, ge=0, le=100)
+    result: str = ""
+    findings: list[str] = Field(default_factory=list)
+    items: list[Dict[str, Any]] = Field(default_factory=list)
+    reviewer: str = ""
+    risk_level: str = "R1"
+
+
+class QualityAppealRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    evidence: list[Dict[str, Any]] = Field(default_factory=list)
+    applicant: str = ""
+
+
+class ClosureTaskRequest(BaseModel):
+    workorder_id: str = ""
+    quality_check_id: str = ""
+    title: str = Field(min_length=1)
+    owner: str = ""
+    actions: list[str] = Field(default_factory=list)
+    due_at: str = ""
+
+
+class RepairFeedbackRequest(BaseModel):
+    feedback: str = Field(min_length=1)
+    result: str = ""
+    operator: str = ""
+    duration_seconds: float | None = Field(default=None, ge=0)
+    verification: Dict[str, Any] = Field(default_factory=dict)
 
 
 def serialize_api_response(value: Any) -> Dict[str, Any]:
@@ -187,6 +232,55 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         payload["repair_feedback"] = payload.get("repair_feedback") or payload.get("feedback") or ""
         return runtime.nodes.execute_workorder(request.action, payload, from_agent="router")
 
+    @app.post("/api/v1/workorders/{workorder_id}/feedback")
+    def submit_feedback_v1(workorder_id: str, request: RepairFeedbackRequest) -> Dict[str, Any]:
+        feedback = request.model_dump(mode="json")
+        return runtime.nodes.execute_workorder("submit_feedback", {"workorder_id": workorder_id, "repair_feedback": feedback}, from_agent="router")
+
+    @app.post("/api/v1/workorders/{workorder_id}/complete")
+    def complete_workorder_v1(workorder_id: str, request: RepairFeedbackRequest) -> Dict[str, Any]:
+        feedback = request.model_dump(mode="json")
+        return runtime.nodes.execute_workorder(
+            "mark_repair_completed",
+            {
+                "workorder_id": workorder_id,
+                "repair_feedback": feedback,
+                "repair_verification": feedback.get("verification") or {},
+            },
+            from_agent="router",
+        )
+
+    @app.post("/api/v1/quality/checks")
+    def create_quality_check(request: QualityCheckRequest) -> Dict[str, Any]:
+        return runtime.nodes.closure_service.create_quality_check(request.model_dump(mode="json"))
+
+    @app.get("/api/v1/quality/checks")
+    def list_quality_checks(target_id: str = "", status: str = "") -> Dict[str, Any]:
+        items = runtime.nodes.closure_service.list_quality_checks(target_id=target_id, status=status)
+        return {"items": items, "count": len(items)}
+
+    @app.post("/api/v1/quality/checks/{check_id}/appeal")
+    def appeal_quality_check(check_id: str, request: QualityAppealRequest) -> Dict[str, Any]:
+        return runtime.nodes.closure_service.submit_appeal(check_id, request.model_dump(mode="json"))
+
+    @app.post("/api/v1/closure-tasks")
+    def create_closure_task(request: ClosureTaskRequest) -> Dict[str, Any]:
+        return runtime.nodes.closure_service.create_closure_task(request.model_dump(mode="json"))
+
+    @app.get("/api/v1/closure-tasks")
+    def list_closure_tasks(status: str = "") -> Dict[str, Any]:
+        items = runtime.nodes.closure_service.list_closure_tasks(status=status)
+        return {"items": items, "count": len(items)}
+
+    @app.post("/api/v1/closure-tasks/{task_id}/complete")
+    def complete_closure_task(task_id: str, note: str = "") -> Dict[str, Any]:
+        return runtime.nodes.closure_service.complete_closure_task(task_id, note=note)
+
+    @app.get("/api/v1/audit-logs")
+    def audit_logs(object_id: str = "", action: str = "") -> Dict[str, Any]:
+        items = runtime.nodes.closure_service.audit_logs(object_id=object_id, action=action)
+        return {"items": items, "count": len(items)}
+
     @app.post("/api/workorders/{workorder_id}/quality")
     def workorder_quality(workorder_id: str) -> Dict[str, Any]:
         return {
@@ -210,7 +304,9 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             "diagnosis": {},
             "maintenance_plan": {},
         }
-        return runtime.nodes._quality_request(state, from_agent="router", quality_payload=values)
+        quality_result = runtime.nodes._quality_request(state, from_agent="router", quality_payload=values, persist=True)
+        result = serialize_api_response(quality_result)
+        return result
 
     @app.post("/api/experience/search")
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:

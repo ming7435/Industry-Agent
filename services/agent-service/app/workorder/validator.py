@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 
 class WorkOrderValidator:
-    VALID_STATUSES = {"open", "in_progress", "completed", "closed"}
+    VALID_STATUSES = {"open", "in_progress", "completed", "closed", "rejected", "timeout"}
 
     @classmethod
     def validate_status(cls, status: str) -> str:
@@ -23,5 +23,14 @@ class WorkOrderValidator:
             raise ValueError("维修计划缺少 device_id")
 
     @staticmethod
-    def can_learn(order: Mapping[str, Any], quality: Mapping[str, Any]) -> bool:
-        return order.get("status") == "closed" and bool(quality.get("passed"))
+    def can_learn(order: Mapping[str, Any], repair_feedback: Any) -> bool:
+        """经验沉淀只依赖已关闭工单和有效维修反馈。"""
+        feedback = repair_feedback or order.get("repair_feedback")
+        if isinstance(feedback, Mapping):
+            valid = any(
+                str(feedback.get(key) or "").strip()
+                for key in ("feedback", "summary", "result", "content", "repair_feedback")
+            )
+        else:
+            valid = bool(str(feedback or "").strip())
+        return order.get("status") == "closed" and valid

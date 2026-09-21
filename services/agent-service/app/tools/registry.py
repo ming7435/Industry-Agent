@@ -81,7 +81,7 @@ from app.tools.report import (
 )
 from app.tools.report import generate_report as generate_report_tool
 from app.tools.router import intent_classifier_tool as intent_classifier_tool_fn
-from app.trace import TraceRecorder
+from app.harness import TraceRecorder
 
 
 class ToolRegistry:

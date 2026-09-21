@@ -8,7 +8,7 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from app.trace import TraceRecorder
+from .trace import TraceRecorder
 
 
 class AgentExecutionError(RuntimeError):

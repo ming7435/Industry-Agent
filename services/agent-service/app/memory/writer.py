@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from app.memory import LongMemoryStore, ShortMemoryStore
 from app.rag import RAGServiceClient
 
 from .dedup import ExperienceDeduplicator

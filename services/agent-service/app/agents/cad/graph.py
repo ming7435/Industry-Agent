@@ -7,7 +7,7 @@ from typing import Any, Dict, List, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.validator import CADComponent, CADResult
+from app.contracts import CADComponent, CADResult
 
 from .schemas import CADQuery
 from .validator import CADEngineeringValidator

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-from app.validator import RouteResult
+from app.contracts import RouteResult
 
 from .graph import build_router_graph
 
@@ -19,7 +19,7 @@ _REPORT_TYPES = {
     "诊断报告": "diagnosis_report",
     "维修报告": "maintenance_report",
     "质检报告": "quality_report",
-    "验收报告": "quality_report",
+    "验收报告": "maintenance_report",
     "事件报告": "incident_report",
     "案例报告": "full_case_report",
     "完整报告": "full_case_report",
@@ -66,7 +66,7 @@ class RouterAgent:
         if entities.get("alarm_code") and any(keyword in text for keyword in ("什么", "含义", "处理", "步骤", "说明", "手册", "sop")):
             return "knowledge", "识别到报警码知识问答，路由到 Knowledge Agent"
         rules = [
-            ("quality", ("零件质量", "质量检测", "尺寸检测", "外观检测", "材料检测", "功能检测", "生产出来", "成品质检", "零件质检", "质检", "验收", "是否恢复", "复测")),
+            ("quality", ("零件质量", "质量检测", "尺寸检测", "外观检测", "材料检测", "功能检测", "生产出来", "成品质检", "零件质检")),
             ("cad", ("cad", "bom", "图纸", "结构", "零件", "物料", "位置", "在哪里", "部件", "组件", "传感器", "装配", "关系")),
             ("report", ("报告", "日报", "维修记录")),
             ("workorder_query", ("查询工单", "工单状态", "维修状态", "查看工单", "获取工单")),

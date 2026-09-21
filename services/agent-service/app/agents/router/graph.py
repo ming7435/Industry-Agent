@@ -7,7 +7,7 @@ from typing import Any, Dict, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.validator import RouteResult
+from app.contracts import RouteResult
 
 from .validator import RouterValidator
 

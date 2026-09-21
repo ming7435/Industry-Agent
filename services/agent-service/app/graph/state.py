@@ -27,6 +27,7 @@ class AgentState(TypedDict, total=False):
     memory: Dict[str, Any]
     memory_result: Dict[str, Any]
     repair_feedback: Dict[str, Any]
+    repair_verification: Dict[str, Any]
     status: str
     pending_workorder_id: str
     errors: List[str]

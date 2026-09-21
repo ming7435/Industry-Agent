@@ -21,7 +21,7 @@ from .schemas import (
     DiagnosisState,
 )
 
-from app.alarm import AlarmCodeParser
+from app.common import AlarmCodeParser
 from app.llm import get_default_llm_client
 from app.tools.registry import ToolRegistry
 

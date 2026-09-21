@@ -7,7 +7,7 @@ from typing import Any, Dict, List, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.validator import ReportResult
+from app.contracts import ReportResult
 
 from .schemas import ReportQuery
 
@@ -21,6 +21,8 @@ class ReportWorkflowState(TypedDict, total=False):
     diagnosis: Dict[str, Any]
     maintenance_plan: Dict[str, Any]
     workorder: Dict[str, Any]
+    repair_feedback: Dict[str, Any]
+    repair_verification: Dict[str, Any]
     quality: Dict[str, Any]
     knowledge: Dict[str, Any]
     event: Dict[str, Any]
@@ -66,6 +68,8 @@ def collect_sources(state: ReportWorkflowState) -> Dict[str, Any]:
     order = dict(request.get("workorder") or {})
     if not order and request.get("workorder_id"):
         order = agent._safe_tool("get_workorder", {"workorder_id": request["workorder_id"]})
+    feedback = agent._mapping(request.get("repair_feedback") or order.get("repair_feedback"))
+    verification = agent._mapping(request.get("repair_verification") or order.get("repair_verification"))
     quality_raw = agent._safe_tool("get_quality_record", {"record": request.get("quality"), "workorder_id": request.get("workorder_id", "")})
     trace_raw = agent._safe_tool("get_trace_summary", {"trace": request.get("trace") or [], "trace_id": request.get("trace_id", "")})
 
@@ -73,6 +77,8 @@ def collect_sources(state: ReportWorkflowState) -> Dict[str, Any]:
         "diagnosis": agent._record(diagnosis_raw),
         "maintenance_plan": agent._record(plan_raw),
         "workorder": order,
+        "repair_feedback": feedback,
+        "repair_verification": verification,
         "quality": agent._record(quality_raw),
         "knowledge": dict(request.get("knowledge") or {}),
         "event": dict(request.get("event") or {}),
@@ -84,11 +90,13 @@ def collect_sources(state: ReportWorkflowState) -> Dict[str, Any]:
 def check_completeness(state: ReportWorkflowState) -> Dict[str, Any]:
     agent = state["agent"]
     request = state["request"]
-    report_type = agent._report_type(request, state.get("diagnosis") or {}, state.get("maintenance_plan") or {}, state.get("workorder") or {}, state.get("quality") or {})
+    report_type = agent._report_type(request, state.get("diagnosis") or {}, state.get("maintenance_plan") or {}, state.get("workorder") or {}, state.get("repair_feedback") or {}, state.get("repair_verification") or {}, state.get("quality") or {})
     sections = {key: value for key, value in {
         "diagnosis": state.get("diagnosis") or {},
         "maintenance_plan": state.get("maintenance_plan") or {},
         "workorder": state.get("workorder") or {},
+        "repair_feedback": state.get("repair_feedback") or {},
+        "repair_verification": state.get("repair_verification") or {},
         "quality": state.get("quality") or {},
         "knowledge": state.get("knowledge") or {},
         "event": state.get("event") or {},
@@ -108,7 +116,7 @@ def compose(state: ReportWorkflowState) -> Dict[str, Any]:
 def validate(state: ReportWorkflowState) -> Dict[str, Any]:
     agent = state["agent"]
     report = state["report"]
-    findings = agent._validate_report(state.get("sections") or {}, state.get("source_refs") or [], state.get("report_type") or "full_case_report", state.get("completeness_findings") or [])
+    findings = agent._validate_report(state.get("sections") or {}, state.get("source_refs") or [], state.get("report_type") or "maintenance_report", state.get("completeness_findings") or [])
     status = "completed" if not findings else "incomplete"
     report = report.model_copy(update={"status": status, "validation_findings": findings, "stop_reason": "validator_pass" if not findings else "validation_failed"})
     return {"report": report, "validation_findings": findings, "route": "persist"}

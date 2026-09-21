@@ -6,7 +6,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from app.tools.registry import ToolRegistry
-from app.validator import ReportResult
+from app.contracts import ReportResult
 
 from .graph import build_report_graph
 from .validator import ReportValidator
@@ -46,11 +46,17 @@ class ReportAgent:
         required = {
             "diagnosis_report": ("diagnosis",),
             "maintenance_report": ("diagnosis", "maintenance_plan", "workorder"),
-            "quality_report": ("workorder", "quality"),
+            "quality_report": ("quality",),
             "incident_report": ("event",),
-            "full_case_report": ("diagnosis", "maintenance_plan", "workorder", "quality"),
-        }.get(report_type, ("diagnosis", "maintenance_plan", "workorder", "quality"))
-        return ["报告缺少 %s 必需记录" % name for name in required if not cls._mapping(sections.get(name))]
+            "full_case_report": ("diagnosis", "maintenance_plan", "workorder"),
+        }.get(report_type, ("diagnosis", "maintenance_plan", "workorder"))
+        findings = ["报告缺少 %s 必需记录" % name for name in required if not cls._mapping(sections.get(name))]
+        if report_type == "full_case_report" and not (
+            cls._mapping(sections.get("repair_feedback"))
+            or cls._mapping(sections.get("repair_verification"))
+        ):
+            findings.append("报告缺少 repair_feedback 或 repair_verification 必需记录")
+        return findings
 
     def _compose_result(
         self,
@@ -63,6 +69,8 @@ class ReportAgent:
         diagnosis = self._mapping(sections.get("diagnosis"))
         plan = self._mapping(sections.get("maintenance_plan"))
         order = self._mapping(sections.get("workorder"))
+        repair_feedback = self._mapping(sections.get("repair_feedback"))
+        repair_verification = self._mapping(sections.get("repair_verification"))
         quality = self._mapping(sections.get("quality"))
         event = self._mapping(sections.get("event"))
         device_id = self._device_id(payload, diagnosis, order, event)
@@ -71,7 +79,7 @@ class ReportAgent:
             report_id="RPT-" + uuid4().hex[:10].upper(),
             report_type=report_type,
             title="%s设备运维案例报告" % device_id,
-            summary=self._summary(device_id, diagnosis, plan, quality, status, findings),
+            summary=self._summary(device_id, diagnosis, plan, repair_feedback, repair_verification, quality, status, findings),
             status=status,
             sections=dict(sections),
             source_refs=source_refs,
@@ -125,7 +133,7 @@ class ReportAgent:
         )
 
     @staticmethod
-    def _report_type(payload: Mapping[str, Any], diagnosis: Mapping[str, Any], plan: Mapping[str, Any], order: Mapping[str, Any], quality: Mapping[str, Any]) -> str:
+    def _report_type(payload: Mapping[str, Any], diagnosis: Mapping[str, Any], plan: Mapping[str, Any], order: Mapping[str, Any], repair_feedback: Mapping[str, Any], repair_verification: Mapping[str, Any], quality: Mapping[str, Any]) -> str:
         requested = str(payload.get("report_type") or "").strip().lower()
         aliases = {
             "diagnosis": "diagnosis_report",
@@ -137,7 +145,7 @@ class ReportAgent:
             return aliases[requested]
         if requested in {"diagnosis_report", "maintenance_report", "quality_report", "incident_report", "full_case_report"}:
             return requested
-        if diagnosis and plan and order and quality:
+        if diagnosis and plan and order and (repair_feedback or repair_verification):
             return "full_case_report"
         if quality:
             return "quality_report"
@@ -148,13 +156,19 @@ class ReportAgent:
         return "incident_report"
 
     @staticmethod
-    def _summary(device_id: str, diagnosis: Mapping[str, Any], plan: Mapping[str, Any], quality: Mapping[str, Any], status: str, findings: list[str]) -> str:
+    def _summary(device_id: str, diagnosis: Mapping[str, Any], plan: Mapping[str, Any], repair_feedback: Mapping[str, Any], repair_verification: Mapping[str, Any], quality: Mapping[str, Any], status: str, findings: list[str]) -> str:
         fault = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or "").strip()
         if quality and "passed" in quality:
             quality_text = "通过" if bool(quality.get("passed")) else "未通过"
-            base = "%s设备维修质检%s。" % (device_id, quality_text)
+            base = "%s零件质量检测%s。" % (quality.get("part_name") or quality.get("part_no") or device_id, quality_text)
             if fault:
                 base += "诊断记录：%s" % fault
+        elif repair_feedback or repair_verification:
+            base = "%s设备维修闭环记录已汇总。" % device_id
+            feedback = repair_feedback or repair_verification
+            feedback_text = str(feedback.get("feedback") or feedback.get("summary") or feedback.get("result") or feedback.get("conclusion") or "").strip()
+            if feedback_text:
+                base += "现场反馈：%s" % feedback_text
         elif fault:
             base = "%s设备已汇总诊断与维修记录，诊断记录：%s" % (device_id, fault)
         elif plan:
@@ -211,6 +225,14 @@ class ReportAgent:
                 add("workorder", "plan", order.get("plan_id"), "workorder", "工单关联计划")
             if order.get("repair_feedback"):
                 add("workorder", "repair_feedback", order.get("workorder_id"), "workorder", "维修反馈")
+
+        repair_feedback = cls._mapping(sections.get("repair_feedback"))
+        if repair_feedback:
+            add("repair_feedback", "repair_feedback", repair_feedback.get("workorder_id") or repair_feedback.get("id"), "workorder", "维修反馈")
+
+        repair_verification = cls._mapping(sections.get("repair_verification"))
+        if repair_verification:
+            add("repair_verification", "repair_verification", repair_verification.get("workorder_id") or repair_verification.get("id"), "workorder", "维修验证")
 
         quality = cls._mapping(sections.get("quality"))
         if quality:

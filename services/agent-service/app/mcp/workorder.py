@@ -7,14 +7,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 from uuid import uuid4
 
 
 class WorkOrderMcpAdapter:
     """提供工单工具所需的最小 MES 操作集合。"""
 
-    VALID_STATUSES = {"open", "in_progress", "completed", "closed"}
+    VALID_STATUSES = {"open", "in_progress", "completed", "closed", "rejected", "timeout"}
 
     def __init__(self) -> None:
         self._orders: Dict[str, Dict[str, Any]] = {}
@@ -33,6 +33,9 @@ class WorkOrderMcpAdapter:
         drawing_context: Dict[str, Any] | None = None,
         alarm_code: str = "",
         diagnosis_context: Dict[str, Any] | None = None,
+        priority: str = "normal",
+        risk_level: str = "",
+        source: str = "",
         **_: Any,
     ) -> Dict[str, Any]:
         now = self._now()
@@ -47,10 +50,18 @@ class WorkOrderMcpAdapter:
             "drawing_context": dict(drawing_context or {}),
             "alarm_code": alarm_code,
             "diagnosis_context": dict(diagnosis_context or {}),
+            "repair_feedback": {},
+            "repair_verification": {},
+            "status_history": [],
+            "events": [],
+            "priority": priority or "normal",
+            "risk_level": risk_level,
+            "source": source,
             "created_at": now,
             "updated_at": now,
         }
         self._orders[order["workorder_id"]] = order
+        self._record_event(order, "created", "", "open", {})
         return dict(order)
 
     def update_workorder(self, workorder_id: str, status: str = "in_progress", **fields: Any) -> Dict[str, Any]:
@@ -59,9 +70,18 @@ class WorkOrderMcpAdapter:
         order = self._orders.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
+        previous_status = str(order.get("status") or "")
         order.update(fields)
         order["status"] = status
         order["updated_at"] = self._now()
+        if status == "in_progress" and not order.get("started_at"):
+            order["started_at"] = order["updated_at"]
+        if status == "completed":
+            order["completed_at"] = order["updated_at"]
+        if status == "closed":
+            order["closed_at"] = order["updated_at"]
+        if status != previous_status or fields:
+            self._record_event(order, "status_changed" if status != previous_status else "updated", previous_status, status, fields)
         return dict(order)
 
     def get_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
@@ -81,45 +101,88 @@ class WorkOrderMcpAdapter:
         order = self._orders.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
+        previous = str(order.get("assignee") or "")
         order["assignee"] = assignee
         order["updated_at"] = self._now()
+        self._record_event(order, "assigned", str(order.get("status") or ""), str(order.get("status") or ""), {"from": previous, "to": assignee})
         return dict(order)
 
-    def submit_repair_feedback(self, workorder_id: str, feedback: str = "", **_: Any) -> Dict[str, Any]:
+    def submit_repair_feedback(self, workorder_id: str, feedback: Any = "", **_: Any) -> Dict[str, Any]:
         order = self._orders.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
-        order["repair_feedback"] = feedback
+        normalized = self._normalize_feedback(feedback)
+        order["repair_feedback"] = normalized
         order["updated_at"] = self._now()
+        self._record_event(order, "repair_feedback_submitted", str(order.get("status") or ""), str(order.get("status") or ""), normalized)
         return dict(order)
 
     def get_repair_feedback(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
         order = self._orders.get(workorder_id)
         if order is None:
             return {"found": False, "success": False, "workorder_id": workorder_id, "repair_feedback": "", "complete": False, "source": "mes-mcp"}
-        feedback = str(order.get("repair_feedback") or "").strip()
+        feedback = self._normalize_feedback(order.get("repair_feedback"))
         return {
             "found": True,
             "success": True,
             "workorder_id": workorder_id,
             "repair_feedback": feedback,
-            "feedback": feedback,
-            "complete": bool(feedback),
+            "feedback": feedback.get("feedback", ""),
+            "complete": bool(feedback.get("feedback") or feedback.get("summary") or feedback.get("result")),
             "source": "mes-mcp",
         }
 
-    def mark_repair_completed(self, workorder_id: str, feedback: str = "", **_: Any) -> Dict[str, Any]:
+    def mark_repair_completed(self, workorder_id: str, feedback: Any = "", repair_verification: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
+        order = self._orders.get(workorder_id)
+        if order is None:
+            raise KeyError("工单不存在：%s" % workorder_id)
+        normalized = self._normalize_feedback(feedback) if feedback else self._normalize_feedback(order.get("repair_feedback"))
+        verification = dict(repair_verification or {})
+        verification.setdefault("passed", True)
+        verification.setdefault("status", "verified")
+        verification.setdefault("feedback", normalized.get("feedback") or normalized.get("summary") or normalized.get("result") or "")
+        verification.setdefault("operator", normalized.get("operator") or "")
+        verification.setdefault("duration_seconds", normalized.get("duration_seconds"))
+        verification.setdefault("verified_at", self._now())
         return self.update_workorder(
             workorder_id,
             status="completed",
-            repair_feedback=feedback,
+            repair_feedback=normalized,
+            repair_verification=verification,
         )
 
-    def close_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
-        return self.update_workorder(workorder_id, status="closed")
+    def close_workorder(self, workorder_id: str, reason: str = "", **_: Any) -> Dict[str, Any]:
+        return self.update_workorder(workorder_id, status="closed", closure_reason=reason)
 
     def reopen_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
         return self.update_workorder(workorder_id, status="open")
+
+    @staticmethod
+    def _normalize_feedback(feedback: Any) -> Dict[str, Any]:
+        if isinstance(feedback, Mapping):
+            return {str(key): value for key, value in feedback.items()}
+        value = str(feedback or "").strip()
+        return {"feedback": value} if value else {}
+
+    def _record_event(
+        self,
+        order: Dict[str, Any],
+        action: str,
+        from_status: str,
+        to_status: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        event = {
+            "event_id": "WO-EVT-" + uuid4().hex[:12].upper(),
+            "workorder_id": order["workorder_id"],
+            "action": action,
+            "from_status": from_status,
+            "to_status": to_status,
+            "payload": dict(payload or {}),
+            "created_at": self._now(),
+        }
+        order.setdefault("events", []).append(event)
+        order.setdefault("status_history", []).append(event)
 
     def query_technicians(self, device_id: str = "", component: str = "", priority: str = "", **_: Any) -> Dict[str, Any]:
         items = [

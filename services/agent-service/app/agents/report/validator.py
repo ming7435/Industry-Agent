@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 
 class ReportValidator:
-    """确保报告只引用已有结果，并区分计划、执行和验收事实。"""
+    """确保报告只引用已有结果，并区分计划、执行和维修验证事实。"""
 
     @classmethod
     def validate(
@@ -19,6 +19,8 @@ class ReportValidator:
         diagnosis = cls._mapping(sections.get("diagnosis"))
         plan = cls._mapping(sections.get("maintenance_plan"))
         order = cls._mapping(sections.get("workorder"))
+        repair_feedback = cls._mapping(sections.get("repair_feedback"))
+        repair_verification = cls._mapping(sections.get("repair_verification"))
         quality = cls._mapping(sections.get("quality"))
 
         if diagnosis and not cls._first(diagnosis, "fault", "summary", "diagnosis"):
@@ -30,23 +32,25 @@ class ReportValidator:
         if quality:
             if "passed" not in quality:
                 findings.append("质检记录缺少 QualityResult.passed")
-            if order and quality.get("workorder_id") and order.get("workorder_id") != quality.get("workorder_id"):
-                findings.append("质检记录与工单编号不一致")
         required_sections = {
             "diagnosis_report": ("diagnosis",),
             "maintenance_report": ("diagnosis", "maintenance_plan", "workorder"),
-            "quality_report": ("workorder", "quality"),
+            "quality_report": ("quality",),
             "incident_report": ("event",),
-            "full_case_report": ("diagnosis", "maintenance_plan", "workorder", "quality"),
-        }.get(report_type, ("diagnosis", "maintenance_plan", "workorder", "quality"))
+            "full_case_report": ("diagnosis", "maintenance_plan", "workorder"),
+        }.get(report_type, ("diagnosis", "maintenance_plan", "workorder"))
         for section in required_sections:
             if not cls._mapping(sections.get(section)):
                 findings.append("报告缺少 %s 必需记录" % section)
+        if report_type == "full_case_report" and not (repair_feedback or repair_verification):
+            findings.append("报告缺少 repair_feedback 或 repair_verification 必需记录")
 
         expected_sections = [name for name, value in {
             "diagnosis": diagnosis,
             "maintenance_plan": plan,
             "workorder": order,
+            "repair_feedback": repair_feedback,
+            "repair_verification": repair_verification,
             "quality": quality,
             "event": cls._mapping(sections.get("event")),
         }.items() if value]

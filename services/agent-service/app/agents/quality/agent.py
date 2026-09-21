@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.tools.registry import ToolRegistry
-from app.validator import QualityResult
+from app.contracts import QualityResult
 
 from .graph import build_quality_graph
 

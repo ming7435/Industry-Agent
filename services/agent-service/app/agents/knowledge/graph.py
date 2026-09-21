@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Mapping, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.validator import KnowledgeResult
+from app.contracts import KnowledgeResult
 
 from .schemas import KnowledgeQuery
 from .validator import KnowledgeEvidenceValidator, normalize_source

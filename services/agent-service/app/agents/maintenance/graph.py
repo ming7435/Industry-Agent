@@ -7,7 +7,7 @@ from typing import Any, Dict, List, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.validator import DiagnosisView, MaintenancePlan
+from app.contracts import DiagnosisView, MaintenancePlan
 
 from .schemas import MaintenanceQuery
 from .validator import MaintenancePlanValidator

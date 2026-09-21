@@ -23,6 +23,7 @@ class MemoryQuery(BaseModel):
     maintenance_plan: Dict[str, Any] = Field(default_factory=dict)
     workorder: Dict[str, Any] = Field(default_factory=dict)
     repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
+    repair_verification: Dict[str, Any] = Field(default_factory=dict)
     quality: Dict[str, Any] = Field(default_factory=dict)
     report: Dict[str, Any] = Field(default_factory=dict)
     context: Dict[str, Any] = Field(default_factory=dict)

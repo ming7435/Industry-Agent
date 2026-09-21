@@ -6,7 +6,7 @@ import re
 from typing import Any, Mapping
 
 from app.tools.registry import ToolRegistry
-from app.validator import KnowledgeDocument, KnowledgeResult
+from app.contracts import KnowledgeDocument, KnowledgeResult
 
 from .graph import build_knowledge_graph
 from .confidence import calculate_confidence
