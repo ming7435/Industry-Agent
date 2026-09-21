@@ -1,173 +1,417 @@
-# 工业设备实时监测与智能诊断
+# 工业智能运维 Multi-Agent 平台
 
-当前版本实现了完整的单服务多 Agent 运维闭环：
+本项目是一个面向工业设备运维和生产零件质检的本地演示平台，包含模拟工厂、实时监控工作台、Agent 编排服务、RAG 检索服务和 CAD 工程数据服务。
 
-```text
-模拟工厂 API -> 实时 Monitor -> 六类规则 -> AbnormalEvent
--> Agent Runtime -> Diagnosis -> Knowledge / CAD -> Maintenance
--> WorkOrder -> Report / Memory；生产零件质检独立进入 Quality 闭环
-```
+当前主链路：
 
-监测器接入模拟工厂 `http://127.0.0.1:8000`，默认每 0.5 秒读取一次设备快照。Diagnosis Agent 按事件变化触发：首次确认异常、等级升级、严重故障、新独立故障或恢复后再次发生；同一事件同等级持续期间不会重复调用。
+~~~text
+模拟工厂
+  -> Monitor 采集设备快照
+  -> 规则确认异常事件
+  -> Agent Orchestrator
+  -> Diagnosis
+  -> Knowledge / CAD
+  -> Maintenance
+  -> WorkOrder
+  -> waiting_repair
 
-## 当前范围
+维修完成事件
+  -> WorkOrder
+  -> Repair Verification / Memory
+  -> Report
 
-- 实时采集整机指标：温度、振动、主轴、液压、润滑、冷却、气压、刀塔等
-- 六类规则：Critical、Threshold、Duration、Count、Trend、MultiMetric
-- 统一异常事件 `AbnormalEvent`
-- Diagnosis Agent 与 DeepSeek Tool Calling
-- 九个核心 Agent：Router、Diagnosis、Knowledge、CAD、Maintenance、WorkOrder、Quality、Report、Memory
-- Diagnosis 工具：`get_device_status`、`get_alarm_definition`、`get_device_history`、`search_knowledge`
-- 全量 Tool Registry：设备状态、生产状态、知识检索、文档解析、CAD/BOM、维修计划、备件、工单、SOP、维修验证、报告
-- RAG JSONL 入库、中文检索、集合/部件/报警码元数据过滤
-- MCP Client 适配层：PLC、RAG、CAD、MES 的统一调用边界
-- 短期 Memory、长期 Memory、维修经验提取与沉淀；工单关闭且存在有效维修反馈后才允许学习
-- 生产零件 Quality Agent：尺寸、外观、材料、功能、工艺检测，以及质检记录、申诉、整改和审计闭环
-- 质检闭环可自动建 MySQL 表并持久化，未配置数据库时保留内存回退
-- Pydantic 结构化输入输出和调用 Trace
-- LangGraph Reason-Act-Observe 工作流
-- Agent Runtime Harness：超时、重试和统一执行入口
-- 中文实时监测页面、诊断中心、维修决策、工单、质检、报告和 AI 运行追踪
+生产零件质检
+  -> Quality Agent
+  -> Closure Service
+  -> 质检记录、申诉、整改任务、审计日志
+~~~
 
-## 启动
+Quality Agent 的业务定义是**生产出来的零件质量检测**，不是设备维修验收。维修工单的创建、派工、反馈、完成、关闭和重开由 WorkOrder Agent 管理。
 
-先启动模拟工厂，再启动监控服务：
+## 当前能力
 
-```powershell
-L:\anaconda\python.exe services\agent-service\monitor_web_server.py
-```
+- 模拟工厂设备快照采集和多设备实时监控。
+- Critical、Threshold、Duration、Count、Trend、MultiMetric 六类异常规则。
+- 异常事件去重和按首次确认、等级升级、严重故障、恢复后再次发生触发诊断。
+- 九个核心 Agent：Router、Diagnosis、Knowledge、CAD、Maintenance、WorkOrder、Quality、Report、Memory。
+- LangGraph 编排、AgentState 与 Agent 内部 State、A2A 请求和 Tool Calling。
+- Diagnosis 的 Reason -> Tool Guard -> Act -> Observe -> Loop Guard -> Validate -> Final/Fallback 闭环。
+- 统一 Tool Registry 和 MCP 风格本地/远程适配边界。
+- 报警码清洗、标准报警码提取和中文业务描述转换。
+- RAG 的 PDF/DOCX/XLSX/CSV/TXT/MD/图片/CAD 解析、清洗、分块、向量检索、BM25 检索、RRF 融合、重排、证据和引用。
+- SiliconFlow BGE-M3 向量化、bge-reranker-v2-m3 重排、DeepSeek 生成。
+- Milvus 向量集合、Whoosh BM25 索引和 MySQL 文档/分块元数据。
+- CAD 图纸、BOM、部件、装配关系和部件位置查询。
+- 维修计划中的 target_part、drawing_context 和 viewer_context 数据契约。
+- WorkOrder 生命周期、维修反馈、维修完成、派工和进程内幂等。
+- 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。
+- TraceRecorder 记录 Agent、Node、Tool、模块和 A2A 调用轨迹。
+- React + Vite 监控工作台和内置静态前端。
 
-打开 `http://127.0.0.1:8001` 查看工业智能运维工作台。
+## 目录结构
 
-启动 Agent Service API：
+~~~text
+services/
+├── agent-service/              Agent 编排、工具、监控和 API
+│   ├── app/agents/             九个核心 Agent
+│   ├── app/graph/              Orchestrator 和 AgentState
+│   ├── app/tools/              按工具拆分的 Tool Calling 入口
+│   ├── app/mcp/                外部系统适配器
+│   ├── app/rag/                RAG HTTP 客户端和本地回退
+│   ├── app/workorder/          工单业务服务
+│   ├── app/closure/            生产零件质检闭环服务
+│   ├── app/memory/             维修经验检索和沉淀
+│   └── monitor_web_server.py   监控工作台和后台采集器
+├── rag-service/                RAG 在线服务和离线入库流水线
+│   ├── app/                    解析、清洗、分块、检索、融合和生成
+│   ├── config/settings.py      RAG 服务唯一配置源
+│   ├── scripts/                Milvus、Whoosh、CAD 入库脚本
+│   └── data/                   RAG 服务本地语料和索引目录
+└── document-cad-service/       CAD 工程数据 MCP 风格服务
 
-```powershell
-L:\anaconda\python.exe -m uvicorn app.api.server:app --app-dir services\agent-service --host 127.0.0.1 --port 8010
-```
+frontend/monitor-react/         React + Vite 前端源码
+frontend/monitor/               监控工作台构建输出
+data/                           根目录数据挂载点和目录占位
+tests/                          根目录测试
+~~~
 
-启动 CAD 工程数据服务：
+## 服务和端口
 
-```powershell
-L:\anaconda\python.exe -m uvicorn app.main:app --app-dir services\document-cad-service --host 127.0.0.1 --port 8011
-```
+| 服务 | 当前本地地址 | 启动入口 | 说明 |
+| --- | --- | --- | --- |
+| 模拟工厂 | http://127.0.0.1:8000 | 外部模拟工厂服务 | 提供设备、状态、历史和日志 |
+| 监控工作台 | http://127.0.0.1:8001 | services/agent-service/monitor_web_server.py | 采集设备并提供页面/API |
+| RAG Service | http://127.0.0.1:8020 | services/rag-service/app/main.py | 当前根目录 .env 配置的 RAG 地址 |
+| CAD Service | http://127.0.0.1:8011 | services/document-cad-service/app/main.py | 图纸、BOM、部件和关系查询 |
+| Agent Service | http://127.0.0.1:8010 | app.api.server:app | 用户入口、异常入口和业务 API |
+| Vite 开发服务 | http://127.0.0.1:5173 | npm run dev:monitor | 前端开发调试，/api 代理到 8001 |
 
-Agent Service 配置 `MCP_CAD_URL=http://127.0.0.1:8011` 后，CAD Agent 会通过 MCP 风格的 `query_drawing`、`query_bom`、`query_part`、`query_relation` 和 `fetch_engineering_record` 访问 CAD 服务；未配置时使用本地兼容数据并在结果中标记 `degraded=true`。
+RAG Service 默认代码端口是 8000；如果要使用根目录当前配置的独立 RAG 服务，请在 services/rag-service/.env 中设置 SERVICE_PORT=8020，并保持根目录 .env 的 RAG_SERVICE_BASE_URL=http://127.0.0.1:8020。
 
-接口：
+## 环境配置
 
-```text
-POST http://127.0.0.1:8010/api/agent/question
-POST http://127.0.0.1:8010/api/agent/event
-GET  http://127.0.0.1:8010/api/rag/status
-GET  http://127.0.0.1:8010/api/rag/search?query=主轴温度&limit=5
-POST http://127.0.0.1:8010/api/rag/ingest
-GET  http://127.0.0.1:8010/api/trace
-GET  http://127.0.0.1:8010/api/memory/recent
-GET  http://127.0.0.1:8010/api/memory/search?device_id=TRAK-TC820LTYSI-001
-GET  http://127.0.0.1:8010/api/workorders
-POST http://127.0.0.1:8010/api/quality/parts/{part_id}
-GET  http://127.0.0.1:8010/api/v1/quality/checks
-GET  http://127.0.0.1:8010/api/v1/closure/status
-POST http://127.0.0.1:8010/api/v1/quality/checks/{quality_check_id}/appeal
-GET  http://127.0.0.1:8010/api/v1/closure-tasks
-GET  http://127.0.0.1:8010/api/v1/audit-logs
-POST http://127.0.0.1:8010/api/experience/search
-```
+复制 .env.example 为根目录 .env。密钥只放在本地 .env，不要提交到 Git。
 
-`POST /api/workorders/{workorder_id}/quality` 已废弃，不再表示维修验收；维修完成和工单关闭统一经过 WorkOrder Agent。生产零件质量检测使用 `/api/quality/parts/{part_id}`，返回值包含 `quality_check_id`。
+### 根目录 Agent/监控配置
 
-RAG 入库接口接收一个 JSONL 文件路径。文件名包含 `SOP`、`报警码`、`故障诊断`、`BOM`、`保养维护` 或 `安全规程` 时，会自动映射到字段设计中的目标集合；也可以在请求体中显式传入 `collection`。
-
-```json
-{"path":"D:/QQ/维修手册_TC820LTYsi_报警码数据.jsonl"}
-```
-
-当前本地后端是可运行的关键词混合检索实现，输出会保留 `collection`、`device_model`、`component`、`knowledge_type`、`alarm_code`、页码和原始字段等元数据。后续接入 Milvus 时，Knowledge Agent 和 API 契约不需要改变。
-
-用户提问入口会经过 `Router -> Orchestrator -> 目标Agent`；异常事件入口会经过 `Diagnosis -> Knowledge -> CAD -> Maintenance -> WorkOrder -> waiting_repair`，维修完成事件再经过 `Quality/Report/Memory` 等后续能力。生产零件质检入口独立经过 `Router/Orchestrator -> Quality -> ClosureService`。
-
-## 架构收敛
-
-当前 Agent Registry 包含：`router`、`diagnosis`、`knowledge`、`cad`、`maintenance`、`workorder`、`quality`、`report`、`memory`。
-
-WorkOrder Agent 负责工单生命周期：
-
-- 工具和 MES MCP 适配位于 `services/agent-service/app/mcp/workorder.py`
-- 业务服务位于 `services/agent-service/app/workorder/service.py`
-- API、Orchestrator 和其他 Agent 都通过 WorkOrder Agent/A2A 调用工单动作
-
-Memory Agent 负责维修经验检索和沉淀：
-
-- 代码位于 `services/agent-service/app/memory`
-- 包含提取、准入校验、去重、写入和检索
-- 只有工单状态为 `closed` 且存在有效 `repair_feedback` 时才允许沉淀
-
-Quality Agent 只负责生产零件质量检测，不承担维修验收；WorkOrder Agent 负责维修工单生命周期。
-
-Trace 使用 `type` 区分 `agent`、`node`、`tool`、`module`；A2A 允许九个核心 Agent 按协作矩阵通信。
-
-## 配置
-
-本地 `.env` 中可配置以下项：
-
-```dotenv
+~~~dotenv
 FACTORY_API_BASE_URL=http://127.0.0.1:8000
+FACTORY_DEVICE_IDS=
 FACTORY_DEVICE_ID=TRAK-TC820LTYSI-001
 MONITOR_INTERVAL_SECONDS=0.5
 MONITOR_WEB_HOST=127.0.0.1
 MONITOR_WEB_PORT=8001
-AGENT_TIMEOUT_SECONDS=45
-AGENT_MAX_RETRIES=1
+AGENT_SERVICE_BASE_URL=http://127.0.0.1:8010
 
-# 质检闭环和长期维修经验的 MySQL 配置
-# MYSQL_HOST 为空时，质检闭环和长期 Memory 使用进程内存回退
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+
+RAG_SERVICE_BASE_URL=http://127.0.0.1:8020
+RAG_SERVICE_TIMEOUT_SECONDS=15
+RAG_ALLOW_LOCAL_FALLBACK=false
+MCP_CAD_URL=http://127.0.0.1:8011
+
+MYSQL_HOST=
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=industrial_maintenance
+~~~
+
+FACTORY_DEVICE_IDS 为空时，监控服务会从模拟工厂的设备接口发现全部设备；设置它可以只监控逗号分隔的设备。FACTORY_DEVICE_ID 是兼容旧配置的单设备回退项。
+
+### RAG 配置
+
+RAG 配置文件是 services/rag-service/.env，模板是 services/rag-service/.env.example。重要配置如下：
+
+~~~dotenv
+SERVICE_HOST=0.0.0.0
+SERVICE_PORT=8020
+
+SILICONFLOW_API_KEY=
+SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
+SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-m3
+SILICONFLOW_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+
+MILVUS_URI=http://127.0.0.1:19530
+MILVUS_DATABASE=industry_rag_documents
+MILVUS_COLLECTION=industry_rag_alarm_codes
+MILVUS_COLLECTIONS=
+
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306
 MYSQL_USER=root
-MYSQL_PASSWORD=your-password
-MYSQL_DATABASE=industrial_maintenance
-```
+MYSQL_PASSWORD=
+MYSQL_DATABASE=industry_rag
 
-`MONITOR_INTERVAL_SECONDS` 控制采样频率；改为 `0.5` 即每 0.5 秒采样一次。DeepSeek 相关密钥仅保存在本地 `.env`，不提交到仓库。
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_MODEL=deepseek-chat
+~~~
 
-Agent 的调用入口在 `services/agent-service/app/harness`，多 Agent 图在 `services/agent-service/app/graph`。监测服务只把确认后的 `AbnormalEvent` 交给 Agent Orchestrator，不直接管理模型循环。外部能力统一从 `services/agent-service/app/tools` 进入，再由 `mcp` 层适配真实系统或本地实现。前端源码在 `frontend/monitor-react`，生产构建输出到 `frontend/monitor`。
+向量模型和重排模型通过 SiliconFlow API 调用；L:/models/bge-m3、L:/models/bge-reranker-v2-m3 不是当前 RAG 在线代码默认读取的本地模型目录。Milvus 数据库名为 industry_rag_documents，集合由 MILVUS_COLLECTIONS 或入库时依据语料目录自动生成，不是只有一张表。
 
-### 质检闭环入库
+## 启动顺序
 
-当 `.env` 配置 `MYSQL_HOST` 后，Agent Service 启动时会自动连接 `MYSQL_DATABASE`，并创建以下表：
+以下命令以 Windows PowerShell 和项目使用的 Python 路径为例。先确认模拟工厂已经运行。
 
-- `quality_checks`：生产零件质检记录
-- `quality_appeals`：质检申诉
-- `closure_tasks`：整改任务
-- `closure_audit_logs`：闭环审计日志
-- `maintenance_experience`：维修经验（由长期 Memory 复用同一 MySQL 配置）
+### 一键启动本地演示服务
 
-启动后使用以下接口确认是否真正启用数据库：
+~~~powershell
+L:/anaconda/python.exe scripts/start_all.py
+~~~
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8010/api/v1/closure/status
-```
+也可以使用 npm 脚本调用当前环境中的 Python：
 
-返回 `backend=mysql` 且 `persistent=true` 才表示质检闭环已经入库；返回 `backend=memory` 表示当前仍是本地回退。
+~~~powershell
+npm run start:all
+~~~
 
-前端开发/构建：
+该脚本会依次启动 RAG Service、CAD Service、Agent Service API 和监控工作台，并把日志按服务名前缀输出到同一个终端。默认地址如下：
 
-```powershell
+| 服务 | 地址 |
+| --- | --- |
+| RAG Service | http://127.0.0.1:8020 |
+| CAD Service | http://127.0.0.1:8011 |
+| Agent Service API | http://127.0.0.1:8010 |
+| 监控工作台 | http://127.0.0.1:8001 |
+
+按 Ctrl+C 会统一停止这些子进程。模拟工厂仍需单独提前启动。
+
+### 1. 启动 RAG Service
+
+~~~powershell
+Push-Location services/rag-service
+L:/anaconda/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8020
+Pop-Location
+~~~
+
+检查：
+
+~~~powershell
+Invoke-RestMethod http://127.0.0.1:8020/health
+~~~
+
+### 2. 启动 CAD Service
+
+~~~powershell
+L:/anaconda/python.exe -m uvicorn app.main:app --app-dir services/document-cad-service --host 127.0.0.1 --port 8011
+~~~
+
+检查：
+
+~~~powershell
+Invoke-RestMethod http://127.0.0.1:8011/health
+~~~
+
+### 3. 启动 Agent Service API
+
+~~~powershell
+L:/anaconda/python.exe -m uvicorn app.api.server:app --app-dir services/agent-service --host 127.0.0.1 --port 8010
+~~~
+
+检查 Agent API：
+
+~~~powershell
+Invoke-RestMethod http://127.0.0.1:8010/api/rag/status
+~~~
+
+### 4. 启动监控工作台
+
+~~~powershell
+L:/anaconda/python.exe services/agent-service/monitor_web_server.py
+~~~
+
+打开 http://127.0.0.1:8001。监控服务会按照 MONITOR_INTERVAL_SECONDS 采样，并异步提交确认后的异常事件，避免页面轮询被诊断模型阻塞。
+
+### 5. 前端开发服务（可选）
+
+~~~powershell
 npm install
 npm run dev:monitor
-npm run build:monitor
-```
+~~~
+
+打开 http://127.0.0.1:5173。生产/静态页面由监控工作台直接提供，前端源码和构建输出分别位于 frontend/monitor-react 和 frontend/monitor。
+
+## RAG 入库
+
+RAG 离线流水线位于 services/rag-service/scripts，处理链路为：
+
+~~~text
+PDF/DOCX/XLSX/CSV/TXT/MD/图片/CAD
+  -> ingestion 解析
+  -> clean 清洗
+  -> chunk 分块
+  -> BGE-M3 向量化
+  -> Milvus 向量集合
+  -> Whoosh BM25 索引
+  -> MySQL 文档/分块元数据
+~~~
+
+默认扫描 services/rag-service/.env 的 RAG_DATA_DIR。当前仓库中的可用语料位于 services/rag-service/data，包含报警码、案例、手册、SOP 和 CAD 数据。
+
+### 使用仓库语料入库
+
+~~~powershell
+Push-Location services/rag-service
+L:/anaconda/python.exe scripts/ingest_to_milvus.py --data-dir data
+Pop-Location
+~~~
+
+常用选项：
+
+~~~powershell
+# 重建本次数据涉及的类型集合和 Whoosh 索引
+L:/anaconda/python.exe scripts/ingest_to_milvus.py --data-dir data --drop-collection
+
+# 只重建 Whoosh
+L:/anaconda/python.exe scripts/build_whoosh_index.py --all-configured
+
+# 禁用 MySQL 文档元数据
+L:/anaconda/python.exe scripts/ingest_to_milvus.py --data-dir data --no-mysql
+
+# 使用本地 OCR 处理扫描页
+L:/anaconda/python.exe scripts/ingest_to_milvus.py --data-dir data --local-ocr
+~~~
+
+危险操作 --drop-all-collections 会删除当前 Milvus 数据库中的全部集合，只适用于可丢弃的本地环境。
+
+### 在线 RAG 接口
+
+~~~text
+POST http://127.0.0.1:8020/search
+GET  http://127.0.0.1:8020/health
+~~~
+
+Agent Service 对 RAG 的代理接口：
+
+~~~text
+GET  http://127.0.0.1:8010/api/rag/status
+GET  http://127.0.0.1:8010/api/rag/search?query=主轴温度&limit=5
+POST http://127.0.0.1:8010/api/rag/ingest
+~~~
+
+RAG 不可用时，RAG_ALLOW_LOCAL_FALLBACK=true 才会使用 Agent Service 的本地演示索引；生产联调建议配置独立 RAG 地址并将其设为 false，这样可以明确暴露 RAG 服务不可用问题。
+
+## Agent 和业务接口
+
+### 用户问题和异常事件
+
+~~~text
+POST /api/agent/question
+POST /api/agent/event
+~~~
+
+### 工单生命周期
+
+~~~text
+GET  /api/workorders
+POST /api/workorders
+GET  /api/workorders/{workorder_id}
+POST /api/workorders/{workorder_id}/action
+POST /api/v1/workorders/{workorder_id}/feedback
+POST /api/v1/workorders/{workorder_id}/complete
+~~~
+
+/action 支持 assign、update、submit_feedback、mark_repair_completed、close、reopen。这些操作最终进入 WorkOrder Agent，不直接由 API 操作底层工单存储。
+
+### 生产零件质检和闭环
+
+~~~text
+POST /api/quality/parts/{part_id}
+POST /api/v1/quality/checks
+GET  /api/v1/quality/checks
+POST /api/v1/quality/checks/{quality_check_id}/appeal
+POST /api/v1/closure-tasks
+GET  /api/v1/closure-tasks
+POST /api/v1/closure-tasks/{task_id}/complete
+GET  /api/v1/audit-logs
+GET  /api/v1/closure/status
+~~~
+
+当 MYSQL_HOST 为空时，质检闭环和长期 Memory 使用进程内存回退；配置后会自动初始化 quality_checks、quality_appeals、closure_tasks、closure_audit_logs 和 maintenance_experience 等表。通过下面接口确认是否真正启用持久化：
+
+~~~powershell
+Invoke-RestMethod http://127.0.0.1:8010/api/v1/closure/status
+~~~
+
+返回 backend=mysql 且 persistent=true 才表示已接入 MySQL。
+
+### 其他接口
+
+~~~text
+GET /api/trace
+GET /api/memory/recent
+GET /api/memory/search
+POST /api/experience/search
+~~~
+
+## 架构边界
+
+~~~text
+API / Monitor
+    -> Agent Orchestrator / Agent
+    -> Service
+    -> Tool Registry
+    -> MCP Client / 外部系统适配器
+~~~
+
+- Agent 负责意图理解、LangGraph 编排、A2A 协作和结果组织。
+- Service 负责确定性业务规则和持久化边界。
+- Tool Registry 负责工具注册、参数和调用记录。
+- MCP 层负责 PLC、MES、RAG、CAD 等外部能力适配；未配置远程地址时使用本地兼容处理器。
+- WorkOrder Agent 负责工单生命周期；Quality Agent 只负责生产零件质量检测。
+- Memory Agent 负责有效维修经验的检索和沉淀，工单关闭且存在有效维修反馈后才允许学习。
+- RAG_SERVICE_BASE_URL 配置远程 RAG；MCP_RAG_URL 是可选 MCP 风格地址，二者不是同一个配置项。
+- 当前 WorkOrder 幂等是进程内实现，多实例生产环境应替换为 Redis 或数据库唯一键。
 
 ## 测试
 
-```powershell
-Push-Location services\agent-service
-L:\anaconda\python.exe -m pytest -q
+Agent Service 测试：
+
+~~~powershell
+Push-Location services/agent-service
+L:/anaconda/python.exe -m pytest -q
 Pop-Location
-```
+~~~
 
-依赖安装：
+RAG Service 测试：
 
-```powershell
-L:\anaconda\python.exe -m pip install -r services\agent-service\requirements.txt
-```
+~~~powershell
+Push-Location services/rag-service
+L:/anaconda/python.exe -m pytest -q
+Pop-Location
+~~~
+
+前端构建：
+
+~~~powershell
+npm run build:monitor
+~~~
+
+测试不要求调用真实大模型；联调 RAG、Milvus、MySQL、模拟工厂时，需要分别启动对应依赖并配置相应 .env。
+
+## 常见问题
+
+### 页面能打开但设备不更新
+
+确认模拟工厂地址可访问，并检查 FACTORY_API_BASE_URL。多设备场景不要把 FACTORY_DEVICE_ID 配成单台设备；清空 FACTORY_DEVICE_IDS 后监控服务会自动发现模拟工厂返回的全部设备。
+
+### 诊断结果慢
+
+监控采样和诊断提交是两个线程路径。检查 AGENT_TIMEOUT_SECONDS、DeepSeek 网络、RAG 服务响应和 GET /api/trace；不要在监控线程中同步执行模型调用。
+
+### RAG 显示降级
+
+依次检查 http://127.0.0.1:8020/health、根目录 RAG_SERVICE_BASE_URL、RAG 服务的 SiliconFlow 密钥、Milvus 连接和 MILVUS_COLLECTIONS。如果集合名配置了不存在的集合，dense health 会失败。
+
+### 质检结果没有入库
+
+检查 MYSQL_HOST、账号权限和数据库连接，再调用 /api/v1/closure/status。返回 backend=memory 说明当前是内存回退，并不是 MySQL 持久化。
+
+## 安全和提交约定
+
+- .env、服务本地 .env 和 API 密钥不得提交。
+- 只提交 .env.example、源码、测试、文档和必要的示例数据。
+- Milvus、MySQL、Whoosh 的运行时数据不要作为源码提交。
