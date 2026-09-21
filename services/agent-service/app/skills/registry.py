@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 import yaml
 
@@ -76,6 +76,38 @@ class SkillRegistry:
 
     def get(self, agent: str, name: str) -> SkillDefinition | None:
         return next((item for item in self.list(agent) if item.name == name), None)
+
+    def validate_tools(self, available_tools: Iterable[str]) -> None:
+        """校验活动 Skill 的名称和工具引用。"""
+
+        registered = {str(name) for name in available_tools}
+        findings: list[str] = []
+        directories = sorted(
+            path
+            for path in self.root.iterdir()
+            if path.is_dir() and not path.name.startswith((".", "__"))
+        )
+        for directory in directories:
+            paths_by_name: dict[str, str] = {}
+            for skill in self.list(directory.name):
+                previous_path = paths_by_name.get(skill.name)
+                if previous_path:
+                    findings.append(
+                        "agent=%s duplicate skill=%s files=%s,%s"
+                        % (skill.agent, skill.name, previous_path, skill.path)
+                    )
+                else:
+                    paths_by_name[skill.name] = skill.path
+
+                missing = sorted(set(skill.tools) - registered)
+                if missing:
+                    findings.append(
+                        "agent=%s skill=%s file=%s missing tools=%s"
+                        % (skill.agent, skill.name, skill.path, ",".join(missing))
+                    )
+
+        if findings:
+            raise ValueError("Invalid Skill catalog:\n" + "\n".join(sorted(findings)))
 
     def select(
         self,

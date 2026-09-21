@@ -12,6 +12,7 @@ from app.agents.registry import build_agent_registry
 from app.closure import ClosureService
 from app.harness import AgentHarness, TraceRecorder
 from app.memory import ExperienceLearningModule, build_memory_stores
+from app.skills import get_skill_registry
 from app.tools.registry import ToolRegistry
 from app.workorder import WorkOrderService
 
@@ -28,6 +29,7 @@ class AgentContainer:
         tools: ToolRegistry | None = None,
     ) -> None:
         registry = tools or ToolRegistry(rag_base_url=os.getenv("RAG_SERVICE_BASE_URL", ""))
+        get_skill_registry().validate_tools(registry.mcp.handlers)
         self.registry = registry
         self.tools = registry
         self.trace = TraceRecorder()
