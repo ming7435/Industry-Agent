@@ -1,4 +1,4 @@
-"""Chunk builders for retrieval-ready industrial documents."""
+"""面向检索的工业文档分块构建器。"""
 
 from .industrial_chunker import (
     ChunkType,

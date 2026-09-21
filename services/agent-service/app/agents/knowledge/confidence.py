@@ -1,8 +1,6 @@
-"""Evidence-quality confidence scoring for Knowledge Agent.
+"""Knowledge Agent 的证据质量置信度评分。
 
-Retrieval scores are not comparable across BM25, dense, RRF and reranker
-stages.  This module deliberately scores the *evidence pack* instead of
-passing one backend score through as a user-facing confidence value.
+BM25、稠密检索、RRF 和重排阶段的分数不可直接比较。本模块有意对 *证据包* 评分，而不是把某个后端分数直接作为面向用户的置信度。
 """
 
 from __future__ import annotations
@@ -17,8 +15,7 @@ _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._/-]*|[\u4e00-\u9fff]{2,}", re.IGNORECA
 def _tokens(value: Any) -> set[str]:
     text = str(value or "").lower()
     tokens = set(_TOKEN_RE.findall(text))
-    # Chinese queries are often short phrases.  Character bigrams preserve
-    # useful partial matches without requiring a third-party tokenizer.
+    # 中文查询经常是短语。字符二元组可以保留有用的局部匹配，且不依赖第三方分词器。
     for phrase in re.findall(r"[\u4e00-\u9fff]+", text):
         tokens.update(phrase[index : index + 2] for index in range(len(phrase) - 1))
     return tokens
@@ -50,8 +47,7 @@ def _relevance(document: Mapping[str, Any], position: int) -> float:
     if stage == "rerank" or metadata.get("rerank_score") is not None:
         return score
     if stage in {"fusion", "rrf"} or metadata.get("fusion_score") is not None:
-        # RRF scores are rank signals, not probabilities.  Convert rank and
-        # route agreement into a stable relevance estimate.
+        # RRF 分数是排名信号，不是概率。将排名和检索路径一致性转换为稳定的相关性估计。
         detail = metadata.get("rrf_detail") or {}
         agreement = min(1.0, len(detail) / 2.0) if isinstance(detail, Mapping) else 0.0
         rank_quality = max(0.0, 1.0 - 0.08 * max(position - 1, 0))
@@ -65,12 +61,9 @@ def calculate_confidence(
     query: str = "",
     degraded: bool = False,
 ) -> dict[str, Any]:
-    """Return an explainable confidence score for a retrieved evidence pack.
+    """返回检索证据包的可解释置信度分数。
 
-    The result is intentionally conservative: a high score requires relevant
-    content, source coverage and more than one supporting signal.  A missing
-    reranker applies a small quality penalty, but does not turn valid RRF/BM25
-    evidence into an artificially near-zero confidence.
+    结果有意保持保守：高分需要相关内容、来源覆盖，以及不止一个支撑信号。缺少重排器只会施加小幅质量惩罚，不会把有效的 RRF/BM25 证据人为压到接近零置信度。
     """
 
     if not documents:

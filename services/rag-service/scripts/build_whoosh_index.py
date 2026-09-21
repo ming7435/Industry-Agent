@@ -1,11 +1,8 @@
-"""Rebuild the Whoosh BM25 index from the Milvus collection.
+"""从 Milvus 集合重建 Whoosh BM25 索引。
 
-Use this when the lexical route is empty or stale but the vectors are already in
-Milvus -- for example after ingesting with ``--no-whoosh``, or after re-building
-the collection on another machine. Reading from Milvus keeps both stores in sync
-without re-parsing the manuals.
+当词法检索路径为空或过期，但向量已经写入 Milvus 时使用本脚本；例如使用 ``--no-whoosh`` 入库后，或在另一台机器上重建集合后。从 Milvus 读取可以让两个存储保持同步，且无需重新解析手册。
 
-Usage::
+用法::
 
     python scripts/build_whoosh_index.py --all-configured
     python scripts/build_whoosh_index.py --collection industry_rag_alarm_codes
@@ -41,10 +38,10 @@ OUTPUT_FIELDS: tuple[str, ...] = (
     "quality",
     "metadata_json",
 )
-"""Columns the offline writer actually stores; the corpus is derived from them."""
+"""离线写入器实际存储的列；corpus 会从这些列派生。"""
 
 _PAGE_SIZE = 1000
-"""Number of rows fetched per Milvus ``query`` call."""
+"""每次 Milvus ``query`` 调用获取的行数。"""
 
 
 def iter_collection_rows(
@@ -52,29 +49,29 @@ def iter_collection_rows(
     uri: str | None = None,
     database: str | None = None,
 ) -> list[dict]:
-    """Fetch every chunk row of a collection.
+    """获取某个集合中的所有分块行。
 
-    Args:
-        collection_name: Milvus collection to read.
-        uri: Milvus URI; defaults to ``settings.milvus_uri``.
+    参数：
+        collection_name：要读取的 Milvus 集合。
+        uri：Milvus URI；默认使用 ``settings.milvus_uri``。
 
-    Returns:
-        One mapping per chunk, with the :data:`OUTPUT_FIELDS` columns.
+    返回：
+        每个分块对应一个映射，包含 :data:`OUTPUT_FIELDS` 中的列。
 
-    Raises:
-        RuntimeError: If ``pymilvus`` is missing or the collection is absent.
+    异常：
+        RuntimeError：缺少 ``pymilvus`` 或集合不存在。
     """
     try:
         from pymilvus import MilvusClient
     except (ImportError, ModuleNotFoundError) as exc:
-        raise RuntimeError("pymilvus is not installed") from exc
+        raise RuntimeError("未安装 pymilvus") from exc
 
     client = MilvusClient(
         uri=uri or settings.milvus_uri,
         db_name=database or settings.milvus_database,
     )
     if not client.has_collection(collection_name):
-        raise RuntimeError(f"collection {collection_name!r} does not exist at {uri or settings.milvus_uri}")
+        raise RuntimeError(f"集合 {collection_name!r} 在 {uri or settings.milvus_uri} 中不存在")
 
     rows: list[dict] = []
     offset = 0
@@ -89,11 +86,10 @@ def iter_collection_rows(
                 offset=offset,
             )
         except TypeError:
-            # Older MilvusClient builds have no ``offset``: fall back to a single
-            # page and warn when the collection is larger than one page.
+            # 较旧的 MilvusClient 没有 ``offset``：退回到单页读取，并在集合超过一页时给出警告。
             if paged:
                 logger.warning(
-                    "this pymilvus build has no query offset; reading at most {} rows",
+                    "当前 pymilvus 版本没有 query offset；最多读取 {} 行",
                     _PAGE_SIZE,
                 )
             paged = False
@@ -109,7 +105,7 @@ def iter_collection_rows(
             break
         offset += len(page)
 
-    logger.info("fetched {} rows from collection={}", len(rows), collection_name)
+    logger.info("已从 collection={} 获取 {} 行", collection_name, len(rows))
     return rows
 
 
@@ -121,17 +117,15 @@ def rebuild(
     *,
     append: bool = False,
 ) -> int:
-    """Rebuild the BM25 index from Milvus.
+    """从 Milvus 重建 BM25 索引。
 
-    Args:
-        collection_name: Source collection; defaults to
-            ``settings.milvus_collection``.
-        index_dir: Base Whoosh directory; the collection index is written under
-            ``index_dir/<collection_name>``.
-        uri: Milvus URI; defaults to ``settings.milvus_uri``.
+    参数：
+        collection_name：源集合；默认使用 ``settings.milvus_collection``。
+        index_dir：Whoosh 基础目录；集合索引会写入 ``index_dir/<collection_name>``。
+        uri：Milvus URI；默认使用 ``settings.milvus_uri``。
 
-    Returns:
-        The number of indexed documents.
+    返回：
+        已索引的文档数量。
     """
     target_collection = collection_name or settings.milvus_collection
     target_index_dir = index_dir_for_collection(
@@ -140,12 +134,12 @@ def rebuild(
     )
     rows = iter_collection_rows(target_collection, uri, database)
     if not rows:
-        logger.warning("collection={} is empty, nothing to index", target_collection)
+        logger.warning("collection={} 为空，无需建立索引", target_collection)
         return 0
 
     written = build_index(rows, target_index_dir, recreate=not append)
     logger.info(
-        "whoosh index rebuilt collection={} dir={} documents={}",
+        "Whoosh 索引已重建 collection={} dir={} documents={}",
         target_collection,
         target_index_dir,
         written,
@@ -160,7 +154,7 @@ def rebuild_all_configured(
     *,
     append: bool = False,
 ) -> dict[str, int]:
-    """Rebuild BM25 indexes for every configured typed collection."""
+    """为每个已配置的类型化集合重建 BM25 索引。"""
 
     results: dict[str, int] = {}
     for collection_name in settings.milvus_search_collections:
@@ -173,13 +167,13 @@ def rebuild_all_configured(
                 append=append,
             )
         except RuntimeError as exc:
-            logger.warning("skip collection={} reason={}", collection_name, exc)
+            logger.warning("跳过 collection={}，原因：{}", collection_name, exc)
             results[collection_name] = 0
     return results
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Rebuild the Whoosh BM25 index from Milvus.")
+    parser = argparse.ArgumentParser(description="从 Milvus 重建 Whoosh BM25 索引。")
     parser.add_argument("--collection", default=settings.milvus_collection)
     parser.add_argument("--index-dir", default=None)
     parser.add_argument("--milvus-uri", default=settings.milvus_uri)
@@ -187,12 +181,12 @@ def main() -> int:
     parser.add_argument(
         "--all-configured",
         action="store_true",
-        help="Rebuild one Whoosh sub-index per collection in MILVUS_COLLECTIONS.",
+        help="为 MILVUS_COLLECTIONS 中的每个集合重建一个 Whoosh 子索引。",
     )
     parser.add_argument(
         "--append",
         action="store_true",
-        help="Update the existing Whoosh index instead of recreating it.",
+        help="更新已有 Whoosh 索引，而不是重新创建。",
     )
     args = parser.parse_args()
 

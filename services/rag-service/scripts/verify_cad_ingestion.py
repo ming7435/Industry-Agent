@@ -1,4 +1,4 @@
-"""Verify that the DXF ingestion landed in MySQL, Milvus, and MinIO."""
+"""校验 DXF 入库结果是否已写入 MySQL、Milvus 和 MinIO。"""
 
 from __future__ import annotations
 

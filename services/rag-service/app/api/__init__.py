@@ -1,4 +1,4 @@
-"""HTTP layer of the RAG service: models, wiring, orchestration and routes."""
+"""RAG 服务的 HTTP 层：模型、装配、编排和路由。"""
 
 from .models import (
     ErrorResponse,

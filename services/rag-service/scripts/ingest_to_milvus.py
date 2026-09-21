@@ -1,8 +1,8 @@
-"""Run the multi-format offline ingestion pipeline into Milvus.
+"""运行多格式离线入库流水线并写入 Milvus。
 
-Pipeline:
-Supported files -> StructuredDocument -> CleanedBlock -> IndustrialChunk ->
-VectorRecord -> typed Milvus collections + MySQL manifest + Whoosh BM25 index.
+流水线：
+支持文件 -> StructuredDocument -> CleanedBlock -> IndustrialChunk ->
+VectorRecord -> 类型化 Milvus 集合 + MySQL 清单 + Whoosh BM25 索引。
 """
 
 from __future__ import annotations
@@ -56,11 +56,9 @@ COLLECTION_BY_KEYWORD = {
 
 
 def collection_name_for_document(path: Path, *, prefix: str = "industry_rag", data_root: Path | None = None) -> str:
-    """Return the typed Milvus collection for a source document.
+    """返回源文档对应的类型化 Milvus 集合。
 
-    The directory under ``data/`` is authoritative. Filename keywords are a
-    secondary refinement for manual-like corpora where BOM/SOP/maintenance files
-    may share a directory.
+    ``data/`` 下的目录具有最高优先级。对于 BOM/SOP/保养等可能共用目录的手册类语料，文件名关键词作为二级细分规则。
     """
 
     root = Path(data_root or DEFAULT_DATA_DIR)
@@ -88,13 +86,13 @@ def collection_name_for_pdf(
     prefix: str = "industry_rag",
     data_root: Path | None = None,
 ) -> str:
-    """Backward-compatible alias for the former PDF-only API."""
+    """兼容旧 PDF 专用 API 的别名。"""
 
     return collection_name_for_document(pdf_path, prefix=prefix, data_root=data_root)
 
 
 def _normalize_extensions(extensions: Iterable[str] | None) -> set[str] | None:
-    """Normalize a user supplied extension filter into lowercase suffixes."""
+    """将用户提供的扩展名过滤器归一化为小写后缀集合。"""
 
     if extensions is None:
         return None
@@ -147,24 +145,24 @@ def ingest_directory(
     mysql_config: MySQLConfig | None = None,
     continue_on_error: bool = True,
 ) -> dict[str, int]:
-    """Ingest supported files into Milvus and MySQL metadata tables."""
+    """将受支持文件入库到 Milvus 和 MySQL 元数据表。"""
 
     paths = _supported_files(data_dir, extensions)
     if not paths:
         supported = ", ".join(sorted(_normalize_extensions(extensions) or SUPPORTED_EXTENSIONS))
-        raise FileNotFoundError(f"No supported files found in {data_dir}. Supported: {supported}")
+        raise FileNotFoundError(f"在 {data_dir} 中未找到受支持文件。支持类型：{supported}")
     if skip_unchanged and (drop_all_collections or drop_collection):
-        LOGGER.warning("skip_unchanged disabled because the target vector store is being rebuilt.")
+        LOGGER.warning("目标向量存储正在重建，已禁用 skip_unchanged。")
         skip_unchanged = False
 
     image_describer = None
     if use_vision and use_local_ocr:
-        raise ValueError("Use either Qwen-VL vision or local OCR, not both.")
+        raise ValueError("只能选择 Qwen-VL 视觉识别或本地 OCR，不能同时启用。")
     if use_vision:
         try:
             image_describer = QwenVLClient.from_env()
         except VisionError as exc:
-            raise RuntimeError(f"Unable to initialize Qwen-VL: {exc}") from exc
+            raise RuntimeError(f"无法初始化 Qwen-VL：{exc}") from exc
     elif use_local_ocr:
         image_describer = LocalOcrClient()
 
@@ -356,9 +354,7 @@ def ingest_directory(
                 inserted = 0
                 stale_deleted = 0
                 if records:
-                    # Calling this for every document also validates an existing
-                    # collection's vector dimension when the process is resumed
-                    # or the embedding model has changed.
+                    # 每个文档都调用一次，也能在进程恢复或嵌入模型变更时校验已有集合的向量维度。
                     writer.recreate_collection(dimension=len(records[0].vector))
                     created_collections.add(target_collection)
                     inserted = writer.insert_records(records)

@@ -59,9 +59,7 @@ def iter_embed_chunks(
     config = config or EmbeddingConfig()
     expected_dimension = config.expected_dimension or client.dimension
 
-    # Keep only one embedding batch in memory.  The previous implementation
-    # first materialized every valid chunk, which made large document imports
-    # needlessly consume memory before the model was called.
+    # 内存中只保留一个嵌入批次。旧实现会先物化所有有效分块，导致大文档导入在调用模型前就不必要地消耗内存。
     batch: list[IndustrialChunk] = []
     for chunk in chunks:
         if not should_embed_chunk(chunk, config):

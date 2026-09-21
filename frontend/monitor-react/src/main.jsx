@@ -1166,7 +1166,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       }
     };
 
-    // Raw stock stops at the feeder; finished parts leave through a separate conveyor.
+    // 原料停在送料机处，成品通过独立输送线离开。
     addConveyorSegment([-5.68, 2.45], [-5.68, .72], .55, 0);
     addConveyorSegment([2.45, 1.12], [4.85, 1.12], .55, 0);
 
@@ -1616,7 +1616,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     loadingArm.add(armFingerB);
 
     addTowerLamp("TRAK-TC820LTYSI-001", -1.35, 2.05, -.08);
-    // Feed tube and discharge chute share the machine axis, but serve opposite ends.
+    // 送料管和出料滑槽共用机床轴线，但分别服务两端。
     addSceneBox([1.2, .12, .17], [-1.93, .98, .56], railMat);
     addSceneBox([1.1, .055, .27], [2.37, .31, 1.02], innerMat, [0, 0, -.16]);
     addSceneBox([.09, .14, .28], [2.82, .28, 1.02], railMat);

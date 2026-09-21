@@ -1,4 +1,4 @@
-"""Serialize Agent results at orchestration boundaries."""
+"""在编排边界序列化 Agent 结果。"""
 from __future__ import annotations
 from typing import Any, Dict
 

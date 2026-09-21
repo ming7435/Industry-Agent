@@ -69,7 +69,7 @@ class ClosureService:
         return dict(record)
 
     def record_part_quality(self, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
-        """Persist one production-part inspection using the shared quality schema."""
+        """使用共享质量 Schema 持久化一次生产零件检验。"""
 
         values = dict(payload)
         part_id = str(values.get("part_id") or values.get("target_id") or "")

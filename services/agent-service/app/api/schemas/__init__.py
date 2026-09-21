@@ -1,1 +1,1 @@
-"""FastAPI request schemas grouped by domain."""
+"""按领域分组的 FastAPI 请求 Schema。"""

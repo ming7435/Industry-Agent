@@ -1,4 +1,4 @@
-"""Cleaning utilities for parsed industrial documents."""
+"""已解析工业文档的清洗工具。"""
 
 from .industrial_cleaner import (
     ChunkQuality,

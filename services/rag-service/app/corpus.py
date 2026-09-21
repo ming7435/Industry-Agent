@@ -1,21 +1,15 @@
-"""Corpus labelling on the online side of the service.
+"""服务在线侧的语料标签推断。
 
-The offline pipeline was left untouched: it writes ``source_name``,
-``source_path`` and a ``metadata_json`` blob, nothing else. The online chain
-still needs a corpus label per hit -- it is what
-:mod:`app.evidence.builder` groups citations by (``alarms`` / ``cases`` /
-``manuals`` / ``sop``, in that reading order).
+离线流水线保持不变：只写入 ``source_name``、``source_path`` 和 ``metadata_json`` blob。在线链路仍需要为每个命中结果提供语料标签，因为 :mod:`app.evidence.builder` 会按标签对引用分组（``alarms`` / ``cases`` / ``manuals`` / ``sop``，并按这个顺序读取）。
 
-So the label is derived **here**, at read time, from what the offline half
-already produced:
+因此标签在**读取时**从离线部分已经产出的字段派生：
 
-1. an explicit ``corpus`` key in ``metadata_json``, if the document declared one;
-2. the parent directory of ``source_path`` (``data/alarms/...``);
-3. a keyword in ``source_name`` (``..._报警码数据.pdf`` -> ``alarms``);
-4. ``settings.default_corpus``.
+1. ``metadata_json`` 中显式声明的 ``corpus`` 键；
+2. ``source_path`` 的父目录（例如 ``data/alarms/...``）；
+3. ``source_name`` 中的关键词（例如 ``..._报警码数据.pdf`` -> ``alarms``）；
+4. ``settings.default_corpus``。
 
-Deriving instead of storing means an already-ingested collection is labelled
-correctly without re-running ingestion, and the offline writer keeps its schema.
+采用派生而不是存储，意味着已入库的集合无需重新入库也能得到正确标签，同时离线写入器可以保持现有 Schema。
 """
 
 from __future__ import annotations
@@ -26,7 +20,7 @@ from typing import Any
 from config.settings import settings
 
 CONTROLLED_CORPORA: tuple[str, ...] = ("alarms", "cases", "manuals", "sop")
-"""Corpus labels the evidence layer knows how to order."""
+"""证据层已知如何排序的语料标签。"""
 
 CORPUS_BY_KEYWORD: dict[str, str] = {
     "报警码": "alarms",
@@ -44,20 +38,20 @@ CORPUS_BY_KEYWORD: dict[str, str] = {
     "manual": "manuals",
     "bom": "manuals",
 }
-"""Filename keywords mapped to a corpus, longest/first match wins."""
+"""文件名关键词到语料标签的映射，最长/最先命中的规则生效。"""
 
 DEVICE_MODEL_PATTERN = re.compile(r"[A-Za-z]{1,5}\d{2,6}[A-Za-z0-9]*")
-"""Loose ``letters + digits`` device-model pattern, e.g. ``TC820LTYsi``."""
+"""宽松的 ``字母 + 数字`` 设备型号模式，例如 ``TC820LTYsi``。"""
 
 
 def _from_metadata(metadata: dict[str, Any] | None) -> str:
-    """Return the corpus declared by the document metadata, if any.
+    """返回文档元数据声明的语料标签（如果存在）。
 
-    Args:
-        metadata: Parsed ``metadata_json`` of a chunk.
+    参数：
+        metadata：分块解析后的 ``metadata_json``。
 
-    Returns:
-        The lower-cased corpus label, or an empty string when absent.
+    返回：
+        小写语料标签；不存在时返回空字符串。
     """
     if not isinstance(metadata, dict):
         return ""
@@ -66,13 +60,13 @@ def _from_metadata(metadata: dict[str, Any] | None) -> str:
 
 
 def _from_path(source_path: str | None) -> str:
-    """Return the corpus implied by the directory of a document.
+    """返回文档目录暗示的语料标签。
 
-    Args:
-        source_path: Path of the source document.
+    参数：
+        source_path：源文档路径。
 
-    Returns:
-        The corpus label when a parent directory matches, else an empty string.
+    返回：
+        父目录匹配时返回语料标签，否则返回空字符串。
     """
     if not source_path:
         return ""
@@ -83,13 +77,13 @@ def _from_path(source_path: str | None) -> str:
 
 
 def _from_name(source_name: str | None) -> str:
-    """Return the corpus implied by the filename of a document.
+    """返回文档文件名暗示的语料标签。
 
-    Args:
-        source_name: File name (or any display name) of the document.
+    参数：
+        source_name：文档文件名或任意展示名。
 
-    Returns:
-        The corpus label of the first matching keyword, else an empty string.
+    返回：
+        第一个匹配关键词对应的语料标签，否则返回空字符串。
     """
     if not source_name:
         return ""
@@ -107,16 +101,16 @@ def infer_corpus(
     metadata: dict[str, Any] | None = None,
     default: str | None = None,
 ) -> str:
-    """Return the corpus label of a chunk, derived from offline fields.
+    """返回从离线字段派生出的分块语料标签。
 
-    Args:
-        source_name: File name of the source document.
-        source_path: Path of the source document.
-        metadata: Parsed ``metadata_json`` of the chunk.
-        default: Fallback label; ``settings.default_corpus`` when omitted.
+    参数：
+        source_name：源文档文件名。
+        source_path：源文档路径。
+        metadata：分块解析后的 ``metadata_json``。
+        default：兜底标签；省略时使用 ``settings.default_corpus``。
 
-    Returns:
-        One of :data:`CONTROLLED_CORPORA` (or the fallback when nothing matches).
+    返回：
+        :data:`CONTROLLED_CORPORA` 之一；均未匹配时返回兜底值。
     """
     for candidate in (
         _from_metadata(metadata),
@@ -129,14 +123,14 @@ def infer_corpus(
 
 
 def infer_device_model(source_name: str | None, source_path: str | None = None) -> str:
-    """Return a plausible device model for a document.
+    """返回文档中可能的设备型号。
 
-    Args:
-        source_name: File name of the source document.
-        source_path: Path of the source document, used as a fallback.
+    参数：
+        source_name：源文档文件名。
+        source_path：源文档路径，用作兜底。
 
-    Returns:
-        The first ``letters + digits`` token (``TC820LTYsi``), or an empty string.
+    返回：
+        第一个 ``字母 + 数字`` 标记（例如 ``TC820LTYsi``）；未命中时返回空字符串。
     """
     for candidate in (source_name, source_path):
         if not candidate:

@@ -1,3 +1,3 @@
-"""Offline entry points of the RAG service: ingestion and index maintenance."""
+"""RAG 服务离线入口：入库和索引维护。"""
 
 __all__: list[str] = []
