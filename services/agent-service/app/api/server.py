@@ -257,7 +257,12 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/v1/quality/checks")
     def list_quality_checks(target_id: str = "", status: str = "") -> Dict[str, Any]:
         items = runtime.nodes.closure_service.list_quality_checks(target_id=target_id, status=status)
-        return {"items": items, "count": len(items)}
+        return {"items": items, "count": len(items), "backend": runtime.nodes.closure_service.backend}
+
+    @app.get("/api/v1/closure/status")
+    def closure_status() -> Dict[str, Any]:
+        backend = runtime.nodes.closure_service.backend
+        return {"backend": backend, "persistent": backend == "mysql"}
 
     @app.post("/api/v1/quality/checks/{check_id}/appeal")
     def appeal_quality_check(check_id: str, request: QualityAppealRequest) -> Dict[str, Any]:
@@ -270,7 +275,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/v1/closure-tasks")
     def list_closure_tasks(status: str = "") -> Dict[str, Any]:
         items = runtime.nodes.closure_service.list_closure_tasks(status=status)
-        return {"items": items, "count": len(items)}
+        return {"items": items, "count": len(items), "backend": runtime.nodes.closure_service.backend}
 
     @app.post("/api/v1/closure-tasks/{task_id}/complete")
     def complete_closure_task(task_id: str, note: str = "") -> Dict[str, Any]:
@@ -279,7 +284,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/v1/audit-logs")
     def audit_logs(object_id: str = "", action: str = "") -> Dict[str, Any]:
         items = runtime.nodes.closure_service.audit_logs(object_id=object_id, action=action)
-        return {"items": items, "count": len(items)}
+        return {"items": items, "count": len(items), "backend": runtime.nodes.closure_service.backend}
 
     @app.post("/api/workorders/{workorder_id}/quality")
     def workorder_quality(workorder_id: str) -> Dict[str, Any]:

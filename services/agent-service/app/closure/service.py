@@ -1,7 +1,6 @@
-"""质检、整改和审计的最小闭环服务。
+"""质检、整改和审计的闭环服务。
 
-当前实现使用进程内存，字段和状态设计与后续 MySQL 表保持一致。
-生产部署时将存储替换为数据库适配器即可，不改变 API 契约。
+配置 MYSQL_HOST 后自动使用 MySQL；未配置时保留进程内存回退，便于本地演示。
 """
 
 from __future__ import annotations
@@ -11,12 +10,16 @@ from threading import Lock
 from typing import Any, Mapping
 from uuid import uuid4
 
+from .store import build_closure_store
+
 
 class ClosureService:
     """统一管理质检记录、质检申诉、整改任务和审计事件。"""
 
-    def __init__(self, trace: Any | None = None) -> None:
+    def __init__(self, trace: Any | None = None, store: Any | None = None) -> None:
         self.trace = trace
+        self.store = store or build_closure_store()
+        self.backend = getattr(self.store, "backend", "memory")
         self._lock = Lock()
         self._quality_checks: dict[str, dict[str, Any]] = {}
         self._appeals: dict[str, list[dict[str, Any]]] = {}
@@ -60,6 +63,8 @@ class ClosureService:
         }
         with self._lock:
             self._quality_checks[check_id] = record
+        if self.store:
+            self.store.create_quality_check(record)
         self._audit("quality_check_created", check_id, operator, {"result": result, "target_id": record["target_id"]})
         return dict(record)
 
@@ -74,6 +79,8 @@ class ClosureService:
         return self.create_quality_check(values, operator=operator)
 
     def list_quality_checks(self, target_id: str = "", status: str = "") -> list[dict[str, Any]]:
+        if self.store:
+            return self.store.list_quality_checks(target_id=target_id, status=status)
         with self._lock:
             values = list(self._quality_checks.values())
         return [
@@ -84,15 +91,17 @@ class ClosureService:
         ]
 
     def get_quality_check(self, check_id: str) -> dict[str, Any] | None:
+        if self.store:
+            return self.store.get_quality_check(check_id)
         with self._lock:
             item = self._quality_checks.get(check_id)
             return dict(item) if item else None
 
     def submit_appeal(self, check_id: str, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
+        check = self.get_quality_check(check_id)
+        if check is None:
+            raise KeyError("质检记录不存在：%s" % check_id)
         with self._lock:
-            check = self._quality_checks.get(check_id)
-            if check is None:
-                raise KeyError("质检记录不存在：%s" % check_id)
             appeal_id = self._id("APPEAL")
             appeal = {
                 "appeal_id": appeal_id,
@@ -107,6 +116,10 @@ class ClosureService:
             check["appeal_ids"] = list(check.get("appeal_ids") or []) + [appeal_id]
             check["status"] = "appealed"
             check["updated_at"] = self._now()
+            self._quality_checks[check_id] = dict(check)
+        if self.store:
+            self.store.create_appeal(appeal)
+            self.store.update_quality_check(check_id, {"appeal_ids": check["appeal_ids"], "status": "appealed", "updated_at": check["updated_at"]})
         self._audit("quality_appeal_submitted", check_id, operator, {"appeal_id": appeal_id})
         return dict(appeal)
 
@@ -128,29 +141,38 @@ class ClosureService:
         }
         with self._lock:
             self._closure_tasks[task_id] = record
+        if self.store:
+            self.store.create_closure_task(record)
         self._audit("closure_task_created", task_id, operator, {"workorder_id": record["workorder_id"]})
         return dict(record)
 
     def list_closure_tasks(self, status: str = "") -> list[dict[str, Any]]:
+        if self.store:
+            return self.store.list_closure_tasks(status=status)
         with self._lock:
             values = list(self._closure_tasks.values())
         return [dict(item) for item in values if not status or item.get("status") == status]
 
     def complete_closure_task(self, task_id: str, operator: str = "", note: str = "") -> dict[str, Any]:
+        task = self.store.get_closure_task(task_id) if self.store else self._closure_tasks.get(task_id)
+        if task is None:
+            raise KeyError("闭环整改任务不存在：%s" % task_id)
         with self._lock:
-            task = self._closure_tasks.get(task_id)
-            if task is None:
-                raise KeyError("闭环整改任务不存在：%s" % task_id)
             task["status"] = "completed"
             task["completion_note"] = note
             task["completed_by"] = operator
             task["completed_at"] = self._now()
             task["updated_at"] = task["completed_at"]
             result = dict(task)
+            self._closure_tasks[task_id] = dict(task)
+        if self.store:
+            self.store.update_closure_task(task_id, {"status": task["status"], "completion_note": task["completion_note"], "completed_by": task["completed_by"], "completed_at": task["completed_at"], "updated_at": task["updated_at"]})
         self._audit("closure_task_completed", task_id, operator, {"note": note})
         return result
 
     def audit_logs(self, object_id: str = "", action: str = "") -> list[dict[str, Any]]:
+        if self.store:
+            return self.store.list_audit_logs(object_id=object_id, action=action)
         with self._lock:
             values = list(self._audit_logs)
         return [
@@ -171,5 +193,7 @@ class ClosureService:
         }
         with self._lock:
             self._audit_logs.append(record)
+        if self.store:
+            self.store.create_audit(record)
         if self.trace:
             self.trace.record(type="audit", name=action, agent="closure", object_id=object_id, operator=operator, changes=dict(changes))
