@@ -1466,6 +1466,459 @@ h2 {
 .check-grid .normal strong { color: var(--teal); }
 .check-grid .fault strong { color: var(--red); }
 
+.workorder-page {
+  display: grid;
+  gap: 14px;
+  min-height: calc(100vh - 120px);
+  padding: 0;
+  background: #f5f7f8;
+}
+
+.workorder-detail-page,
+.workorder-admin-card,
+.workorder-empty-shell {
+  border: 1px solid rgba(27, 45, 53, .08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 18px 45px rgba(27, 45, 53, .08);
+}
+
+.workorder-detail-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: calc(100vh - 132px);
+  padding: 14px;
+  overflow: hidden;
+}
+
+.workorder-empty-shell {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+}
+
+.workorder-titlebar,
+.sheet-heading,
+.admin-card-head,
+.sheet-subhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.workorder-titlebar h1,
+.sheet-heading h2,
+.workorder-admin-card h2 {
+  margin: 6px 0 0;
+  color: #10242c;
+  letter-spacing: -.03em;
+}
+
+.workorder-titlebar h1 {
+  font-size: clamp(22px, 2.6vw, 34px);
+  line-height: 1.05;
+}
+
+.workorder-titlebar p,
+.workorder-admin-card p {
+  margin-top: 6px;
+  max-width: 760px;
+  color: #6b7c84;
+  line-height: 1.5;
+}
+
+.workorder-status-badge,
+.sheet-heading > span {
+  flex: 0 0 auto;
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: #f2f5f6;
+  color: #52656f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.workorder-status-badge.pending {
+  background: #fff2e2;
+  color: #a35d0c;
+}
+
+.workorder-status-badge.done {
+  background: #e8f7f2;
+  color: #147254;
+}
+
+.repair-visual-panel {
+  min-height: 0;
+  border: 1px solid rgba(27, 45, 53, .08);
+  border-radius: 16px;
+  background: #f7fafb;
+  overflow: hidden;
+}
+
+.repair-visual-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(27, 45, 53, .08);
+  background: rgba(255, 255, 255, .94);
+}
+
+.repair-visual-head h2 {
+  margin: 3px 0 0;
+  color: #10242c;
+  font-size: 20px;
+  letter-spacing: -.02em;
+}
+
+.repair-visual-head p {
+  margin-top: 4px;
+  color: #6b7c84;
+  font-size: 12px;
+}
+
+.repair-visual-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.repair-visual-actions .button {
+  border-radius: 999px;
+  background: #fff;
+}
+
+.repair-visual-actions .button.active {
+  border-color: rgba(183, 55, 50, .35);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.repair-visual-body {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at 48% 38%, #ffffff 0, #eef4f6 42%, #dce7eb 100%);
+}
+
+.repair-cad-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: #fff;
+}
+
+.repair-visual-body.is-exploded .repair-cad-frame {
+  filter: saturate(1.06) contrast(1.03);
+}
+
+.cad-target-chip {
+  position: absolute;
+  z-index: 4;
+  left: 16px;
+  top: 16px;
+  display: grid;
+  grid-template-columns: 18px auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  align-items: center;
+  min-width: 190px;
+  padding: 9px 12px 9px 8px;
+  border: 1px solid rgba(183, 55, 50, .28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 12px 28px rgba(27, 45, 53, .12);
+  color: #8f2d2a;
+  pointer-events: none;
+  backdrop-filter: blur(12px);
+}
+
+.cad-target-chip strong,
+.cad-target-chip small {
+  grid-column: 2;
+}
+
+.cad-target-chip strong { font-size: 13px; }
+.cad-target-chip small { color: #ae5751; font-size: 11px; }
+
+.fault-pulse {
+  grid-row: 1 / span 2;
+  width: 15px;
+  height: 15px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 0 6px rgba(183, 55, 50, .18), 0 0 0 13px rgba(183, 55, 50, .08);
+}
+
+.repair-view-legend,
+.cad-load-state {
+  position: absolute;
+  z-index: 5;
+  bottom: 16px;
+  padding: 9px 12px;
+  border: 1px solid rgba(27, 45, 53, .1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .88);
+  color: #52656f;
+  font-size: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.repair-view-legend { left: 16px; }
+.cad-load-state { right: 16px; }
+.cad-load-state.ready { color: var(--teal); }
+.legend-red { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--red); }
+
+.workorder-bigscreen-grid {
+  display: grid;
+  grid-template-rows: minmax(0, 58fr) minmax(0, 42fr);
+  gap: 12px;
+  min-height: 0;
+  height: 100%;
+}
+
+.workorder-bigscreen-grid.cad-only {
+  display: block;
+  height: min(78vh, 900px);
+  min-height: 620px;
+}
+
+.workorder-bigscreen-grid.cad-only .repair-visual-panel {
+  height: 100%;
+}
+
+.workorder-bigscreen-grid .repair-visual-panel,
+.workorder-bigscreen-grid .maintenance-sheet {
+  min-height: 0;
+}
+
+.workorder-bigscreen-grid .repair-visual-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.maintenance-sheet {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, auto) minmax(0, 1fr);
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(27, 45, 53, .08);
+  border-radius: 16px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.basic-grid,
+.sheet-section-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.basic-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.basic-grid > div,
+.sheet-section {
+  border: 1px solid rgba(27, 45, 53, .08);
+  border-radius: 12px;
+  background: #fbfcfd;
+}
+
+.basic-grid > div {
+  min-height: 58px;
+  padding: 10px;
+}
+
+.basic-grid span,
+.section-kicker,
+.evidence-card dt {
+  display: block;
+  color: #7d8d94;
+  font-size: 12px;
+}
+
+.basic-grid strong {
+  display: block;
+  margin-top: 8px;
+  color: #10242c;
+  overflow-wrap: anywhere;
+}
+
+.sheet-section-grid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
+}
+
+.sheet-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.sheet-section {
+  padding: 12px;
+  overflow: hidden;
+}
+
+.sheet-section h3 {
+  margin: 4px 0 0;
+  color: #10242c;
+  font-size: 18px;
+}
+
+.fault-meta-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.fault-meta-list span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #f0f4f5;
+  color: #52656f;
+  font-size: 11px;
+}
+
+.fault-summary-card p {
+  margin-top: 8px;
+  color: #40555e;
+  line-height: 1.5;
+}
+
+.fault-summary-card > strong {
+  display: block;
+  margin-top: 8px;
+  color: #b73732;
+  line-height: 1.45;
+}
+
+.evidence-card dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.evidence-card div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(27, 45, 53, .08);
+}
+
+.evidence-card div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.evidence-card dd {
+  margin: 0;
+  color: #10242c;
+  font-weight: 800;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.workorder-checklist {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workorder-checklist li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(27, 45, 53, .08);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.workorder-checklist span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #edf4f5;
+  color: #52656f;
+  font-weight: 900;
+  font-size: 11px;
+}
+
+.workorder-checklist p {
+  margin: 0;
+  color: #233941;
+  line-height: 1.35;
+  font-size: 12px;
+}
+
+.feedback-card textarea {
+  width: 100%;
+  min-height: 76px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid rgba(27, 45, 53, .1);
+  border-radius: 10px;
+  background: #fff;
+  color: #10242c;
+  resize: none;
+}
+
+.sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.workorder-admin-strip {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.workorder-admin-card {
+  padding: 18px;
+}
+
+.compact-form-row {
+  align-items: flex-end;
+}
+
+.compact-order-list {
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.compact-order-list .order-row {
+  border-radius: 12px;
+  border-left-width: 3px;
+}
+
 .step-list {
   margin: 14px 0 0;
   padding-left: 22px;
@@ -1682,6 +2135,9 @@ h2 {
   .machine-detail-header { flex-direction: column; }
   .machine-detail-stats { min-width: 0; width: 100%; }
   .map-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .repair-visual-head { align-items: flex-start; flex-direction: column; }
+  .repair-visual-actions { justify-content: flex-start; }
+  .target-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trigger-row { grid-template-columns: 1fr; gap: 5px; }
   .threshold-note { flex-direction: column; gap: 7px; }
   .threshold-note strong { text-align: left; }
@@ -1709,4 +2165,10 @@ h2 {
     gap: 6px;
   }
   .asset-list strong { text-align: left; }
+  .repair-cad-frame,
+  .repair-visual-body { height: 390px; min-height: 390px; }
+  .workorder-bigscreen-grid.cad-only { height: 520px; min-height: 520px; }
+  .target-detail-grid { grid-template-columns: 1fr; }
+  .repair-view-legend { left: 8px; bottom: 8px; }
+  .cad-load-state { right: 8px; bottom: 8px; max-width: 42%; }
 }

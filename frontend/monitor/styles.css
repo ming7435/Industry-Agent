@@ -1,0 +1,133 @@
+/* 页面配色、字体和基础变量。 */
+:root {
+  color-scheme: light;
+  --ink: #17232b;
+  --muted: #6a7880;
+  --line: #d8e0e3;
+  --paper: #f4f7f6;
+  --panel: #ffffff;
+  --teal: #087f75;
+  --teal-soft: #e3f2ef;
+  --amber: #b96d00;
+  --amber-soft: #fff1d6;
+  --red: #b73732;
+  --red-soft: #fde7e4;
+  font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+}
+
+/* 全局布局和常用控件。 */
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); }
+button, input { font: inherit; }
+button { cursor: pointer; }
+.app-shell { width: min(1320px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 42px; }
+.topbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 28px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.eyebrow { color: var(--teal); font-size: 11px; font-weight: 800; letter-spacing: 1.4px; }
+h1, h2, p { margin: 0; }
+h1 { margin-top: 7px; font-size: 40px; line-height: 1.1; letter-spacing: 0; }
+h2 { margin-top: 5px; font-size: 21px; letter-spacing: 0; }
+.subline, .muted { color: var(--muted); font-size: 13px; }
+.subline { margin-top: 10px; }
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.button { border: 1px solid #bfcacd; background: #fff; color: var(--ink); padding: 10px 14px; border-radius: 5px; }
+.button:hover { border-color: var(--teal); color: var(--teal); }
+.button-danger { border-color: var(--red); color: var(--red); }
+
+/* 自定义监测开关。 */
+.switch-control { display: inline-flex; align-items: center; gap: 9px; color: var(--ink); font-size: 13px; user-select: none; }
+.switch-control input { position: absolute; opacity: 0; pointer-events: none; }
+.switch-track { display: inline-flex; align-items: center; width: 42px; height: 24px; padding: 3px; border-radius: 14px; background: #aab7bb; transition: background .15s ease; }
+.switch-thumb { width: 18px; height: 18px; background: #fff; border-radius: 50%; transition: transform .15s ease; }
+.switch-control input:checked + .switch-track { background: var(--teal); }
+.switch-control input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
+
+/* 顶部运行状态条。 */
+.status-strip { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)) auto; gap: 1px; margin: 24px 0; background: var(--line); border: 1px solid var(--line); }
+.status-item, .connection-badge { background: #fff; padding: 15px 16px; min-height: 74px; }
+.status-item span { display: block; color: var(--muted); font-size: 12px; }
+.status-item strong { display: block; margin-top: 7px; font-size: 19px; }
+.connection-badge { display: flex; align-items: center; color: var(--teal); font-weight: 700; white-space: nowrap; }
+.connection-badge.bad { color: var(--red); }
+
+/* 主体面板和指标卡片。 */
+.main-grid { display: grid; grid-template-columns: 1.45fr 1fr; gap: 18px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.metrics-panel, .decision-panel, .trigger-panel, .diagnosis-panel { padding: 21px; }
+.trigger-panel { margin-top: 18px; }
+.diagnosis-panel { margin-top: 18px; }
+.panel-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding-top: 16px; }
+.metric { min-height: 108px; padding: 14px; border: 1px solid var(--line); border-left: 4px solid var(--teal); background: #fbfcfc; }
+.metric.warning, .metric.alarm { border-left-color: var(--amber); background: var(--amber-soft); }
+.metric.fault { border-left-color: var(--red); background: var(--red-soft); }
+.metric-group { display: block; color: var(--teal); font-size: 10px; font-weight: 800; }
+.metric-name { color: var(--muted); font-size: 12px; }
+.metric-value { display: block; margin-top: 13px; font-size: 22px; font-weight: 800; }
+.metric-unit { color: var(--muted); font-size: 12px; }
+.notice { margin-top: 14px; padding: 11px 12px; color: var(--amber); background: var(--amber-soft); border-left: 3px solid var(--amber); font-size: 13px; }
+.subsection-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 20px; padding: 12px 0 9px; border-top: 1px solid var(--line); }
+.subsection-heading strong { font-size: 15px; }
+.equipment-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.equipment-state { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-left: 3px solid var(--teal); background: #fbfcfc; }
+.equipment-state.fault { border-left-color: var(--red); background: var(--red-soft); }
+.equipment-state span { display: block; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.equipment-state strong { display: block; overflow: hidden; margin-top: 5px; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.equipment-state.normal strong { color: var(--teal); }
+.equipment-state.fault strong { color: var(--red); }
+
+/* 监测判定和异常列表。 */
+.severity-pill { padding: 5px 9px; border-radius: 4px; font-size: 11px; font-weight: 800; }
+.severity-pill.normal { color: var(--teal); background: var(--teal-soft); }
+.severity-pill.warning, .severity-pill.alarm { color: var(--amber); background: var(--amber-soft); }
+.severity-pill.fault { color: var(--red); background: var(--red-soft); }
+.observation-list { min-height: 174px; padding-top: 12px; }
+.observation { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid #edf1f1; }
+.observation:last-child { border-bottom: 0; }
+.observation-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--teal); }
+.observation-dot.warning, .observation-dot.alarm { background: var(--amber); }
+.observation-dot.fault { background: var(--red); }
+.observation-title { font-weight: 700; font-size: 14px; }
+.observation-meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.observation-level { font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.threshold-note { display: flex; justify-content: space-between; gap: 16px; padding-top: 15px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.threshold-note strong { color: var(--ink); text-align: right; }
+
+/* 诊断触发记录和错误提示。 */
+.trigger-list { padding-top: 10px; }
+.trigger-row { display: grid; grid-template-columns: 160px 120px 190px 1fr; gap: 14px; align-items: start; padding: 13px 0; border-bottom: 1px solid #edf1f1; }
+.trigger-row:last-child { border-bottom: 0; }
+.trigger-time, .trigger-rules, .trigger-reason { color: var(--muted); font-size: 12px; }
+.trigger-device { font-weight: 800; font-size: 13px; }
+.empty-state { color: var(--muted); padding: 30px 0; text-align: center; font-size: 13px; }
+.diagnosis-result { padding-top: 15px; }
+.diagnosis-summary { padding: 15px; border-left: 4px solid var(--teal); background: var(--teal-soft); font-size: 17px; font-weight: 800; line-height: 1.6; }
+.diagnosis-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.diagnosis-grid > div { padding: 12px; border: 1px solid var(--line); background: #fbfcfc; }
+.diagnosis-grid span, .diagnosis-detail > span { display: block; color: var(--muted); font-size: 12px; }
+.diagnosis-grid strong { display: block; margin-top: 6px; font-size: 14px; overflow-wrap: anywhere; }
+.diagnosis-detail { margin-top: 12px; padding: 13px; border-top: 1px solid var(--line); }
+.diagnosis-detail p { margin-top: 7px; line-height: 1.7; }
+.diagnosis-error { margin-top: 10px; color: var(--amber); font-size: 12px; }
+.error-bar { margin-top: 18px; padding: 12px 14px; border: 1px solid #e9b5b0; background: var(--red-soft); color: var(--red); font-size: 13px; }
+
+/* 窄屏适配。 */
+@media (max-width: 980px) {
+  .topbar { align-items: flex-start; flex-direction: column; }
+  h1 { font-size: 32px; }
+  .toolbar { justify-content: flex-start; }
+  .status-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .connection-badge { min-height: 56px; }
+  .main-grid { grid-template-columns: 1fr; }
+  .equipment-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .diagnosis-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .app-shell { width: min(100% - 24px, 1320px); padding-top: 18px; }
+  .status-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trigger-row { grid-template-columns: 1fr; gap: 5px; }
+  .threshold-note { flex-direction: column; gap: 7px; }
+  .threshold-note strong { text-align: left; }
+  .equipment-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .diagnosis-grid { grid-template-columns: 1fr; }
+}

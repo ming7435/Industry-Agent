@@ -180,6 +180,188 @@ const workorderStatusLabels = {
   closed: "已关闭",
 };
 
+const repairTargetCatalog = {
+  "700001": {
+    component: "LUBRICATION-PUMP",
+    part_no: "LP-TC820-001",
+    part_name: "润滑泵",
+    system: "自动润滑系统",
+    location: "机床后侧润滑单元",
+    description: "向主轴轴承、导轨和丝杠提供定量润滑。压力未达到时，应优先检查泵体、油路、过滤器和压力开关。",
+    relation: "上接润滑油箱，下接分配器和主轴/导轨润滑回路",
+    symptom: "润滑压力未达到设定值",
+    check: "检查油位、泵出口压力、过滤器和压力开关",
+    marker: { left: "20%", top: "68%" },
+  },
+  "700010": {
+    component: "HYDRAULIC-UNIT",
+    part_no: "HY-TC820-002",
+    part_name: "液压站",
+    system: "液压系统",
+    location: "机床后侧液压单元",
+    description: "为卡盘、尾座和夹紧机构提供液压动力。压力不足会导致夹紧、松开或尾座动作异常。",
+    relation: "连接液压泵、溢流阀、压力传感器和卡盘/尾座执行机构",
+    symptom: "液压压力未达到设定值",
+    check: "检查液压油位、泵站压力、溢流阀和泄漏点",
+    marker: { left: "25%", top: "64%" },
+  },
+  "700032": {
+    component: "COOLING-PUMP",
+    part_no: "CP-TC820-015",
+    part_name: "冷却泵",
+    system: "冷却系统",
+    location: "机床后侧冷却单元",
+    description: "将冷却液输送至刀具和主轴加工区域，用于带走切削热并维持加工温度。过载通常与泵体堵塞、叶轮卡滞、过滤器堵塞或电机异常有关。",
+    relation: "连接冷却箱、过滤器、冷却管路和主轴冷却回路",
+    symptom: "冷却泵电机过载，冷却流量可能下降",
+    check: "检查泵体、入口过滤器、出口压力、电机电流和叶轮阻塞",
+    marker: { left: "24%", top: "72%" },
+  },
+  "700029": {
+    component: "LUBRICATION-PUMP",
+    part_no: "LP-TC820-001",
+    part_name: "润滑泵",
+    system: "自动润滑系统",
+    location: "机床后侧润滑单元",
+    description: "监测润滑油箱液位并向主轴、导轨和丝杠供油。液位低时应先确认油箱、泵体和液位开关。",
+    relation: "连接润滑油箱、润滑泵、液位开关和分配器",
+    symptom: "润滑油液位低",
+    check: "检查油箱液位、加油口、液位开关和是否存在泄漏",
+    marker: { left: "20%", top: "68%" },
+  },
+  "700223": {
+    component: "TEMP-PT100",
+    part_no: "TS-PT100-008",
+    part_name: "主轴温度传感器",
+    system: "主轴温度监测",
+    location: "主轴电机壳体测温孔",
+    description: "采集主轴电机壳体温度并反馈给控制系统，用于过温保护和趋势监测。",
+    relation: "安装于主轴电机壳体，信号接入 PLC 模拟量模块",
+    symptom: "主轴温度超过报警阈值",
+    check: "检查传感器安装、线缆、接插件和实际温度读数",
+    marker: { left: "58%", top: "31%" },
+  },
+  "700006": {
+    component: "TURRET-ASSY",
+    part_no: "TR-TC820-006",
+    part_name: "刀塔组件",
+    system: "刀塔系统",
+    location: "主轴箱前侧刀塔区域",
+    description: "完成刀具选择、旋转定位和夹紧。动作超时可能由伺服、夹紧开关、机械卡滞或润滑不足引起。",
+    relation: "连接刀塔伺服、电磁阀、夹紧/松开检测开关和刀具座",
+    symptom: "刀塔未在规定时间内完成旋转",
+    check: "检查刀塔参考位置、伺服负载、夹紧开关和机械干涉",
+    marker: { left: "61%", top: "52%" },
+  },
+  "700509": {
+    component: "TAILSTOCK-ASSY",
+    part_no: "TS-TC820-009",
+    part_name: "尾座夹紧机构",
+    system: "尾座系统",
+    location: "机床右侧尾座区域",
+    description: "用于工件端部支撑和夹紧，夹紧压力不足时会影响加工稳定性和人身安全。",
+    relation: "连接尾座液压缸、压力开关和夹紧执行机构",
+    symptom: "尾座夹紧压力未达到设定值",
+    check: "检查尾座压力、液压缸、夹紧开关和工件支撑状态",
+    marker: { left: "78%", top: "52%" },
+  },
+  "700240": {
+    component: "TOOL-PROBE",
+    part_no: "TP-TC820-010",
+    part_name: "刀具测头",
+    system: "刀具检测系统",
+    location: "刀塔/加工区测量位置",
+    description: "用于确认刀具位置和刀具状态，未到位时禁止进入相关加工流程。",
+    relation: "连接测头本体、到位开关和控制系统输入",
+    symptom: "刀具测头未处于规定位置",
+    check: "检查测头机构、到位开关、线缆和机械干涉",
+    marker: { left: "55%", top: "58%" },
+  },
+  "700009": {
+    component: "PART-CATCHER",
+    part_no: "PC-TC820-011",
+    part_name: "接料器",
+    system: "下料系统",
+    location: "主轴下方接料区域",
+    description: "接收加工完成的零件并完成上下动作，位置异常时可能造成碰撞或下料失败。",
+    relation: "连接升降执行机构、位置检测开关和下料托盘",
+    symptom: "接料器上下动作异常",
+    check: "检查位置开关、执行机构、导轨和是否存在工件干涉",
+    marker: { left: "53%", top: "78%" },
+  },
+  "700015": {
+    component: "BARFEEDER",
+    part_no: "BF-QL80S2-001",
+    part_name: "棒料送料机",
+    system: "上料系统",
+    location: "机床左侧上料单元",
+    description: "将棒料按设定长度稳定送入主轴，报警时应检查送料准备信号、伺服和推料机构。",
+    relation: "连接棒料通道、推料伺服、送料控制器和车床接口",
+    symptom: "送料机未就绪或送料报警",
+    check: "检查棒料通道、推料位置、伺服状态和车床联锁信号",
+    marker: { left: "12%", top: "48%" },
+  },
+};
+
+function resolveRepairTarget(order, sample) {
+  const diagnosisSample = order?.diagnosis_context?.current_sample || order?.diagnosis_context?.sample || {};
+  const codes = [
+    order?.alarm_code,
+    order?.diagnosis_context?.alarm_code,
+    diagnosisSample?.alarm_code,
+    ...(Array.isArray(sample?.alarm_codes) ? sample.alarm_codes : []),
+    sample?.alarm_code,
+  ].map((value) => String(value || "").trim()).filter(Boolean);
+  const alarmCode = codes.find((code) => repairTargetCatalog[code]) || codes[0] || "";
+  const catalogTarget = repairTargetCatalog[alarmCode];
+  const stored = order?.repair_target;
+  const storedLooksPlaceholder = !stored || typeof stored !== "object"
+    || ["待确认故障部件", "UNMAPPED-COMPONENT", "待补充"].includes(String(stored.part_name || stored.component || stored.part_no || ""));
+  if (catalogTarget) {
+    const supplemental = storedLooksPlaceholder ? {} : {
+      cad_node_id: stored.cad_node_id,
+      cad_node_name: stored.cad_node_name,
+    };
+    return { ...catalogTarget, ...supplemental, alarm_code: alarmCode };
+  }
+  if (!storedLooksPlaceholder) return { ...stored, alarm_code: alarmCode };
+  return {
+    alarm_code: alarmCode,
+    component: "UNMAPPED-COMPONENT",
+    part_no: "待补充",
+    part_name: "待确认故障部件",
+    system: "待确认",
+    location: "CAD 组件树中人工确认",
+    description: "当前报警已经进入工单，但还没有与具体 CAD 部件建立映射。维修人员需要先在组件树中确认目标。",
+    relation: "暂无装配关系数据",
+    symptom: order?.title || "设备异常",
+    check: "查看报警定义、现场状态和 CAD 组件树",
+    marker: { left: "50%", top: "50%" },
+  };
+}
+
+function buildWorkorderTitle(latest, target, sample, snapshot) {
+  const partName = target?.part_name && target.part_name !== "待确认故障部件" ? target.part_name : "设备";
+  const alarmText = sample?.alarm_label || latest?.alarm_definition?.label || latest?.fault || latest?.summary;
+  if (alarmText && !String(alarmText).includes("{")) return `${partName}${String(alarmText).includes("维修") ? "" : "维修"}`;
+  return `${sample?.device_id || snapshot?.device_id || "设备"}${partName}维修`;
+}
+
+function buildRepairSteps(latest, target) {
+  const recommendation = String(latest?.recommendation || "").trim();
+  const dynamicSteps = recommendation
+    ? recommendation.split(/[；;。\n]/).map((item) => item.trim()).filter(Boolean)
+    : [];
+  const targetStep = target?.check ? [`${target.check}，确认故障原因`] : [];
+  return [...new Set([...sampleWorkorderSteps.slice(0, 2), ...targetStep, ...dynamicSteps, ...sampleWorkorderSteps.slice(2)])].slice(0, 7);
+}
+
+function normalizeWorkorderSteps(order, target) {
+  const sourceSteps = Array.isArray(order?.steps) ? order.steps.filter(Boolean) : [];
+  if (sourceSteps.length >= 3) return sourceSteps;
+  return buildRepairSteps(order?.diagnosis_context || {}, target);
+}
+
 const quickQuestions = [
   "主轴温度过高怎么检查？",
   "报警 ALM-1001 的处理步骤是什么？",
@@ -187,9 +369,11 @@ const quickQuestions = [
 ];
 
 const sampleWorkorderSteps = [
-  "执行设备断电和挂牌上锁",
-  "检查冷却液液位、流量和冷却泵",
-  "空载运行并复测主轴温度",
+  "停机、断电并执行挂牌上锁",
+  "检查冷却液液位和入口过滤器",
+  "检查故障部件是否堵塞、卡滞或过载",
+  "测量电机电流、出口压力和相关反馈信号",
+  "复位保护后空载复测，确认状态恢复正常",
 ];
 
 const equipmentValueLabels = {
@@ -320,6 +504,13 @@ async function request(path, options = {}) {
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || `请求失败：${response.status}`);
+  return body;
+}
+
+function normalizeWorkorderResponse(body) {
+  if (body?.workorder && typeof body.workorder === "object") {
+    return { ...body.workorder, dispatch_context: body.dispatch_context, candidates: body.candidates };
+  }
   return body;
 }
 
@@ -2346,43 +2537,115 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   const [assignee, setAssignee] = useState("维修一组");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const autoSyncingRef = useRef(false);
   const latestDiagnosis = snapshot?.diagnosis?.latest || {};
   const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
+  const liveSample = sample
+    || snapshot?.latest_result?.current_sample
+    || snapshot?.devices?.find((device) => device.device_id === snapshot?.device_id)?.current_sample
+    || {};
 
   async function loadOrders() {
     try {
       const body = await request("/api/workorders");
-      const items = body.items || [];
+      const items = (body.items || []).map(normalizeWorkorderResponse);
       setOrders(items);
       if (!selectedId && items.length) setSelectedId(items[0].workorder_id);
       setError("");
+      return items;
     } catch (err) {
       setError(err.message);
+      return [];
     }
   }
 
   useEffect(() => {
-    loadOrders();
-  }, []);
+    let cancelled = false;
+    async function syncCurrentFault() {
+      const items = await loadOrders();
+      const faultCode = String(liveSample?.alarm_code || latestDiagnosis?.alarm_code || "").trim();
+      const deviceId = liveSample?.device_id || snapshot?.device_id || "";
+      const faultStatus = String(liveSample?.status || latestDiagnosis?.status || "").toLowerCase();
+      const faultActive = Boolean(faultCode) && ["alarm", "fault", "warning"].includes(faultStatus);
+      if (cancelled || !faultActive || !deviceId || autoSyncingRef.current) return;
+
+      const existing = items.find((item) => (
+        String(item.device_id || "") === String(deviceId)
+        && String(item.alarm_code || "") === faultCode
+      ));
+      if (existing) {
+        setSelectedId(existing.workorder_id);
+        return;
+      }
+
+      autoSyncingRef.current = true;
+      try {
+        const target = resolveRepairTarget({ alarm_code: faultCode, diagnosis_context: latestDiagnosis }, liveSample);
+        const title = buildWorkorderTitle(latestDiagnosis, target, liveSample, snapshot);
+        const response = await request("/api/workorders", {
+          method: "POST",
+          body: JSON.stringify({
+            device_id: deviceId,
+            title,
+            steps: buildRepairSteps(latestDiagnosis, target),
+            assignee,
+            alarm_code: faultCode,
+            diagnosis_context: latestDiagnosis,
+            repair_target: target,
+            drawing_context: {
+              model_url: "http://127.0.0.1:8023/",
+              mesh_name: target.component,
+              location: target.location,
+              drawing_url: "TC820si.html",
+            },
+          }),
+        });
+        const order = normalizeWorkorderResponse(response);
+        if (!cancelled) {
+          setOrders((current) => [...current.filter((item) => item.workorder_id !== order.workorder_id), order]);
+          setSelectedId(order.workorder_id);
+          setError("");
+        }
+      } catch (err) {
+        if (!cancelled) setError(`故障工单自动生成失败：${err.message}`);
+      } finally {
+        autoSyncingRef.current = false;
+      }
+    }
+
+    syncCurrentFault();
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    return () => { cancelled = true; };
+  }, [liveSample?.device_id, liveSample?.alarm_code, liveSample?.status, latestDiagnosis?.alarm_code]);
 
   async function createOrder() {
     setBusy(true);
     try {
-      const title = latestDiagnosis.summary || latestDiagnosis.fault || `${sample?.device_id || snapshot?.device_id || "unknown"} 设备维修`;
-      const order = await request("/api/workorders", {
+      const target = resolveRepairTarget({ alarm_code: sample?.alarm_code }, sample);
+      const title = buildWorkorderTitle(latestDiagnosis, target, sample, snapshot);
+      const response = await request("/api/workorders", {
         method: "POST",
         body: JSON.stringify({
           device_id: sample?.device_id || snapshot?.device_id || "unknown",
           title,
-          steps: latestDiagnosis.recommendation ? [latestDiagnosis.recommendation] : sampleWorkorderSteps,
+          steps: buildRepairSteps(latestDiagnosis, target),
           assignee,
-          alarm_code: sample?.alarm_code || "",
+          alarm_code: sample?.alarm_code || latestDiagnosis.alarm_code || "",
           diagnosis_context: latestDiagnosis,
+          repair_target: target,
+          drawing_context: {
+            model_url: "http://127.0.0.1:8023/",
+            mesh_name: target.component,
+            location: target.location,
+            drawing_url: "TC820si.html",
+          },
         }),
       });
+      const order = normalizeWorkorderResponse(response);
       await loadOrders();
       setSelectedId(order.workorder_id);
       setError("");
+      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -2390,15 +2653,16 @@ function WorkorderView({ snapshot, sample, onClosed }) {
     }
   }
 
-  async function updateOrder(status) {
+  async function updateOrder(status, fields = {}) {
     if (!selectedOrder) return;
     setBusy(true);
     try {
       const action = status === "closed" ? "close" : "update";
-      const order = await request(`/api/workorders/${selectedOrder.workorder_id}/action`, {
+      const response = await request(`/api/workorders/${selectedOrder.workorder_id}/action`, {
         method: "POST",
-        body: JSON.stringify({ action, status, assignee }),
+        body: JSON.stringify({ action, status, assignee, ...fields }),
       });
+      const order = normalizeWorkorderResponse(response);
       setOrders((items) => items.map((item) => item.workorder_id === order.workorder_id ? order : item));
       setError("");
       if (status === "closed") onClosed?.();
@@ -2410,65 +2674,148 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   }
 
   return (
-    <section className="workspace-view active module-board" aria-label="工单系统">
-      <ModuleHero eyebrow="MES 工单系统" title="维修工单闭环" text="把诊断结果转成维修任务，跟踪处理人、步骤和状态，并为质检验收提供入口。" />
-      <div className="module-grid">
-        <ModuleStat label="当前工单" value={orders.length} text="Agent Service 内存工单池" />
-        <ModuleStat label="选中状态" value={labelFor(workorderStatusLabels, selectedOrder?.status)} text={selectedOrder?.workorder_id || "暂无工单"} />
-        <ModuleStat label="关联设备" value={selectedOrder?.device_id || sample?.device_id || snapshot?.device_id || "--"} text="来自实时监测上下文" />
-      </div>
-      <div className="ops-grid">
-        <section className="panel module-panel">
-          <div className="panel-heading">
-            <div><span className="eyebrow">创建工单</span><h2>诊断转派</h2></div>
-            <span className="muted">{latestDiagnosis.summary || "可先创建演示工单"}</span>
+    <section className="workspace-view active workorder-page" aria-label="工单系统">
+      <WorkorderDetail order={selectedOrder} sample={sample} busy={busy} onUpdate={updateOrder} />
+      <section className="workorder-admin-strip" aria-label="工单辅助管理">
+        <div className="workorder-admin-card">
+          <div>
+            <span className="eyebrow">诊断转派</span>
+            <h2>生成维修工单</h2>
+            <p>{compactDiagnosisSummary(latestDiagnosis)}</p>
           </div>
-          <div className="form-row">
-            <label>处理人<input value={assignee} onChange={(event) => setAssignee(event.target.value)} /></label>
-            <button className="button primary" type="button" disabled={busy} onClick={createOrder}>{busy ? "处理中" : "创建工单"}</button>
+          <div className="form-row compact-form-row">
+            <label>处理班组<input value={assignee} onChange={(event) => setAssignee(event.target.value)} /></label>
+            <button className="button primary" type="button" disabled={busy} onClick={createOrder}>{busy ? "生成中" : "创建工单"}</button>
           </div>
           {error && <div className="inline-error">{error}</div>}
-        </section>
-        <section className="panel module-panel">
-          <div className="panel-heading">
-            <div><span className="eyebrow">工单列表</span><h2>任务队列</h2></div>
-            <button className="button" type="button" onClick={loadOrders}>刷新</button>
+        </div>
+        <div className="workorder-admin-card">
+          <div className="admin-card-head">
+            <div><span className="eyebrow">任务队列</span><h2>{orders.length} 张工单</h2></div>
+            <button className="button ghost-button" type="button" onClick={loadOrders}>刷新</button>
           </div>
-          <div className="order-list">
+          <div className="order-list compact-order-list">
             {!orders.length && <div className="empty-state">暂无工单，点击创建工单生成第一条任务</div>}
             {orders.map((order) => (
               <button key={order.workorder_id} type="button" className={`order-row ${order.workorder_id === selectedOrder?.workorder_id ? "active" : ""}`} onClick={() => setSelectedId(order.workorder_id)}>
-                <span><strong>{order.title}</strong><em>{order.workorder_id}</em></span>
+                <span><strong>{order.title}</strong><em>{order.workorder_id} · {order.device_id}</em></span>
                 <b>{labelFor(workorderStatusLabels, order.status)}</b>
               </button>
             ))}
           </div>
-        </section>
-      </div>
-      <WorkorderDetail order={selectedOrder} busy={busy} onUpdate={updateOrder} />
+        </div>
+      </section>
     </section>
   );
 }
 
-function WorkorderDetail({ order, busy, onUpdate }) {
-  if (!order) return <section className="panel module-panel"><div className="empty-state">暂无工单详情</div></section>;
+function WorkorderDetail({ order, sample, busy, onUpdate }) {
+  const [repairFeedback, setRepairFeedback] = useState("");
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [order?.workorder_id]);
+  if (!order) {
+    return (
+      <section className="workorder-empty-shell">
+        <div className="empty-state">暂无工单详情，等待虚拟工厂触发故障或手动创建维修工单。</div>
+      </section>
+    );
+  }
+  const target = resolveRepairTarget(order, sample);
+  const statusLabel = labelFor(workorderStatusLabels, order.status);
   return (
-    <section className="panel module-panel detail-panel">
-      <div className="panel-heading">
-        <div><span className="eyebrow">工单详情</span><h2>{order.title}</h2></div>
-        <span className={`severity-pill ${order.status === "closed" || order.status === "completed" ? "normal" : "warning"}`}>{labelFor(workorderStatusLabels, order.status)}</span>
+    <section className="workorder-detail-page">
+      <header className="workorder-titlebar">
+        <div>
+          <span className="eyebrow">维修工单详情</span>
+          <h1>{order.title}</h1>
+          <p>{order.workorder_id} · {order.device_id} · {order.assignee || "未分配"} · {formatTime(order.updated_at)}</p>
+        </div>
+        <span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span>
+      </header>
+
+      <div className="workorder-bigscreen-grid cad-only">
+        <RepairCadPanel order={order} target={target} />
       </div>
-      <div className="detail-grid">
-        <DetailCell label="工单编号" value={order.workorder_id} />
-        <DetailCell label="设备" value={order.device_id} />
-        <DetailCell label="处理人" value={order.assignee || "未分配"} />
-        <DetailCell label="更新时间" value={formatTime(order.updated_at)} />
+    </section>
+  );
+}
+
+function RepairCadPanel({ order, target }) {
+  const [exploded, setExploded] = useState(true);
+  const [resetView, setResetView] = useState(false);
+  const [cadReady, setCadReady] = useState(false);
+  const cadFrameRef = useRef(null);
+  const targetComponent = target.component || target.part_no || target.part_name || "";
+  const viewerParams = new URLSearchParams({
+    fault: targetComponent,
+    component: targetComponent,
+    part: target.part_name || "",
+    part_no: target.part_no || "",
+    alarm_code: target.alarm_code || order?.alarm_code || "",
+    device_id: order?.device_id || "TRAK-TC820LTYSI-001",
+    mode: "workorder",
+    highlight: "1",
+    action: "explode",
+  });
+  const viewerUrl = `http://127.0.0.1:8023/?${viewerParams.toString()}`;
+
+  function sendViewerCommand(command, extra = {}) {
+    const payload = {
+      type: "tc820si-cad-command",
+      command,
+      target: targetComponent,
+      component: targetComponent,
+      part: target.part_name,
+      part_no: target.part_no,
+      alarm_code: target.alarm_code || order?.alarm_code || "",
+      device_id: order?.device_id || "TRAK-TC820LTYSI-001",
+      keepHighlight: true,
+      ...extra,
+    };
+    if (cadFrameRef.current?.contentWindow) {
+      cadFrameRef.current.contentWindow.postMessage(payload, "http://127.0.0.1:8023");
+      return;
+    }
+    window.open(`${viewerUrl}&action=${encodeURIComponent(command)}`, "tc820si-repair-view");
+  }
+
+  function focusFaultPart() {
+    sendViewerCommand("focus", { action: "focus" });
+  }
+
+  function openFullscreen() {
+    if (cadFrameRef.current?.requestFullscreen) {
+      cadFrameRef.current.requestFullscreen();
+      return;
+    }
+    window.open(viewerUrl, "tc820si-repair-view");
+  }
+
+  return (
+    <section className="repair-visual-panel" aria-label="3D 故障定位">
+      <div className="repair-visual-head">
+        <div>
+          <span className="eyebrow">3D 故障定位</span>
+          <h2>{target.part_name}</h2>
+          <p>{target.location} · CAD 对应：{targetComponent}</p>
+        </div>
+        <div className="repair-visual-actions">
+          <button className="button" type="button" onClick={focusFaultPart}>故障定位</button>
+          <button className={`button ${exploded ? "active" : ""}`} type="button" onClick={() => { const next = !exploded; setExploded(next); setResetView(false); sendViewerCommand(next ? "explode" : "collapse", { action: next ? "explode" : "collapse" }); }}>{exploded ? "收回部件" : "爆炸查看"}</button>
+          <button className="button" type="button" onClick={() => { setExploded(false); setResetView(true); sendViewerCommand("reset", { action: "reset", keepHighlight: true }); }}>恢复装配</button>
+          <button className="button ghost-button" type="button" onClick={openFullscreen}>全屏</button>
+        </div>
       </div>
-      <StepList steps={order.steps} />
-      <div className="action-row">
-        <button className="button" type="button" disabled={busy} onClick={() => onUpdate("in_progress")}>标记处理中</button>
-        <button className="button" type="button" disabled={busy} onClick={() => onUpdate("completed")}>标记完成</button>
-        <button className="button primary" type="button" disabled={busy} onClick={() => onUpdate("closed")}>关闭工单</button>
+      <div className={`repair-visual-body ${exploded ? "is-exploded" : ""} ${resetView ? "is-reset" : ""}`}>
+        <iframe
+          className="repair-cad-frame"
+          title={`${target.part_name} CAD 维修视图`}
+          src={viewerUrl}
+          ref={cadFrameRef}
+          onLoad={() => { setCadReady(true); }}
+        />
+        <div className={`cad-load-state ${cadReady ? "ready" : ""}`}>{cadReady ? "TC820si CAD 已加载" : "正在加载 CAD 模型..."}</div>
       </div>
     </section>
   );
