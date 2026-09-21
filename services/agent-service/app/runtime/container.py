@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from app.a2a.client import A2AClient
 from app.a2a.endpoints import A2AEndpoints
 from app.a2a.requests import A2ARequests
@@ -15,6 +13,7 @@ from app.memory import ExperienceLearningModule, build_memory_stores
 from app.skills import get_skill_registry
 from app.tools.registry import ToolRegistry
 from app.workorder import WorkOrderService
+from app.config import Settings, get_settings
 
 from .operations import RuntimeOperations
 from .tracing import NodeTrace
@@ -27,8 +26,10 @@ class AgentContainer:
         self,
         diagnosis_agent: DiagnosisAgent | None = None,
         tools: ToolRegistry | None = None,
+        settings: Settings | None = None,
     ) -> None:
-        registry = tools or ToolRegistry(rag_base_url=os.getenv("RAG_SERVICE_BASE_URL", ""))
+        settings = settings or get_settings()
+        registry = tools or ToolRegistry(rag_base_url=settings.rag_service_base_url)
         get_skill_registry().validate_tools(registry.mcp.handlers)
         self.registry = registry
         self.tools = registry
@@ -64,7 +65,7 @@ class AgentContainer:
             experience_module=self.experience_module,
         )
         self.harnesses = {
-            name: AgentHarness(agent, trace=self.trace)
+            name: AgentHarness(agent, timeout_seconds=settings.agent_timeout_seconds, max_retries=settings.agent_max_retries, trace=self.trace)
             for name, agent in self.agents.items()
         }
         self.endpoints = A2AEndpoints(self.harnesses)

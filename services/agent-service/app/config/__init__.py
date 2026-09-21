@@ -1,4 +1,4 @@
-"""Centralized Agent Service settings."""
+"""Agent Service 集中配置。"""
 
 from .settings import Settings, get_settings
 

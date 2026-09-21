@@ -7,7 +7,7 @@ from pathlib import Path
 
 try:
     from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - optional for library-only usage
+except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时触发
     load_dotenv = None
 
 from fastapi import FastAPI
@@ -18,12 +18,10 @@ from app.graph import AgentOrchestrator, build_orchestrator
 
 
 def _load_project_env() -> None:
-    """Load the repository environment before constructing the orchestrator.
+    """构造编排器前加载仓库环境变量。
 
-    The Agent service is often launched with ``--app-dir`` from the repository
-    root, but ``uvicorn`` does not load ``.env`` by itself. Without this step a
-    restart silently drops ``RAG_SERVICE_BASE_URL`` and falls back to the demo
-    index even though the project is configured for the remote RAG service.
+    Agent Service 经常从仓库根目录使用 ``--app-dir`` 启动，但 ``uvicorn`` 不会自动加载 ``.env``。
+    如果缺少这一步，重启后即使项目配置了远程 RAG 服务，也会静默丢失 ``RAG_SERVICE_BASE_URL`` 并回退到演示索引。
     """
 
     if load_dotenv is None:
@@ -159,29 +157,35 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     )
     runtime = orchestrator or build_orchestrator()
 
-    @app.post("/api/agent/question")
+    @app.post("/api/agent/question", deprecated=True)
+    @app.post("/api/v1/agent/question")
     def question(request: UserQuestionRequest) -> Dict[str, Any]:
         return runtime.run_user(request.user_text, request.context)
 
-    @app.post("/api/agent/event")
+    @app.post("/api/agent/event", deprecated=True)
+    @app.post("/api/v1/agent/event")
     def abnormal_event(request: AbnormalEventRequest) -> Dict[str, Any]:
         return runtime.run_abnormal_event(request.event)
 
-    @app.get("/api/rag/status")
+    @app.get("/api/rag/status", deprecated=True)
+    @app.get("/api/v1/rag/status")
     def rag_status() -> Dict[str, Any]:
         return runtime.container.registry.rag_status()
 
-    @app.get("/api/rag/search")
+    @app.get("/api/rag/search", deprecated=True)
+    @app.get("/api/v1/rag/search")
     def rag_search(query: str, limit: int = 5) -> Dict[str, Any]:
         return runtime.container.registry.search_knowledge(query, limit=limit)
 
-    @app.post("/api/rag/ingest")
+    @app.post("/api/rag/ingest", deprecated=True)
+    @app.post("/api/v1/rag/ingest")
     def rag_ingest(request: RAGIngestRequest) -> Dict[str, Any]:
         return runtime.container.registry.ingest_knowledge(request.path, request.collection)
 
-    @app.get("/api/trace")
-    def trace() -> Dict[str, Any]:
-        return {"trace": runtime.container.trace.list()}
+    @app.get("/api/trace", deprecated=True)
+    @app.get("/api/v1/trace")
+    def trace(trace_id: str | None = None, task_id: str | None = None, limit: int = 100) -> Dict[str, Any]:
+        return {"trace": runtime.container.trace.list(trace_id=trace_id, task_id=task_id, limit=max(1, min(limit, 5000)))}
 
     @app.get("/api/memory/recent")
     def memory_recent(limit: int = 20) -> Dict[str, Any]:

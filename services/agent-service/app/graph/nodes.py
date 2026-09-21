@@ -39,11 +39,11 @@ class OrchestratorNodes:
                 "realtime_snapshot": {},
                 "timestamp": state.get("task_id", ""),
             }
-        output = {"diagnosis": self.requests._diagnosis_request(state, event)}
+        output = {"diagnosis": self.requests.diagnose(state, event)}
         diagnosis = output["diagnosis"]
         memory_query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or event.get("event_type") or "设备维修经验")
         try:
-            memory = self.requests._memory_request(
+            memory = self.requests.access_memory(
                 {**state, "diagnosis": diagnosis, "context": {**dict(state.get("context") or {}), **event}},
                 action="search",
                 query=memory_query,
@@ -67,7 +67,7 @@ class OrchestratorNodes:
             else:
                 query = str(diagnosis.get("diagnosis") or diagnosis.get("summary") or "设备故障维修")
                 try:
-                    output["knowledge"] = self.requests._knowledge_request(state, query)
+                    output["knowledge"] = self.requests.retrieve_knowledge(state, query)
                 except A2AError as error:
                     output["errors"] = [str(error)]
         return self.tracing.finish("diagnosis", state, output)
@@ -78,7 +78,7 @@ class OrchestratorNodes:
             return self.tracing.finish("knowledge", state, {"knowledge": state["knowledge"]})
         diagnosis = state.get("diagnosis") or {}
         query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or state.get("user_text") or "工业设备维修")
-        return self.tracing.finish("knowledge", state, {"knowledge": self.requests._knowledge_request(state, query)})
+        return self.tracing.finish("knowledge", state, {"knowledge": self.requests.retrieve_knowledge(state, query)})
 
     def cad(self, state: AgentState) -> Dict[str, Any]:
         self.tracing.start("cad", state)
@@ -86,7 +86,7 @@ class OrchestratorNodes:
         context = state.get("context") or {}
         query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "主轴组件")
         from_agent = "diagnosis" if state.get("entry") == "trigger" else "router"
-        result = self.requests._cad_request(state, query, from_agent, context={**context, "device_id": diagnosis.get("device_id") or context.get("device_id", "")})
+        result = self.requests.retrieve_cad(state, query, from_agent, context={**context, "device_id": diagnosis.get("device_id") or context.get("device_id", "")})
         return self.tracing.finish("cad", state, {"cad": result})
 
     def maintenance(self, state: AgentState) -> Dict[str, Any]:
@@ -96,11 +96,11 @@ class OrchestratorNodes:
         cad = state.get("cad") or {}
         if not cad:
             query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "设备维修")
-            cad = self.requests._cad_request(state, query, "maintenance", context=context)
+            cad = self.requests.retrieve_cad(state, query, "maintenance", context=context)
         memory_query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or context.get("query") or "设备维修经验")
         memory = state.get("memory") or {}
         try:
-            memory = self.requests._memory_request(
+            memory = self.requests.access_memory(
                 {**state, "diagnosis": diagnosis, "context": {**dict(context), "device_id": diagnosis.get("device_id") or context.get("device_id", "")}},
                 action="search",
                 query=memory_query,
@@ -109,7 +109,7 @@ class OrchestratorNodes:
         except A2AError as error:
             memory = {"success": False, "validation_findings": [str(error)], "items": []}
         planning_state = {**state, "memory": memory}
-        plan = self.requests._maintenance_request(
+        plan = self.requests.create_maintenance_plan(
             planning_state,
             state.get("diagnosis", {}),
             state.get("knowledge", {}),
@@ -124,7 +124,7 @@ class OrchestratorNodes:
         """Maintenance 完成后创建并派工；后续维修由外部反馈入口驱动。"""
 
         self.tracing.start("workorder", state)
-        result = self.requests._workorder_request(state, action="create", from_agent="maintenance")
+        result = self.requests.execute_workorder(state, action="create", from_agent="maintenance")
         return self.tracing.finish("workorder", state, {
             "workorder_result": result,
             "workorder": result.get("workorder", {}),
@@ -136,7 +136,7 @@ class OrchestratorNodes:
         self.tracing.start("memory", state)
         route = state.get("route_result") or {}
         query = str((route.get("target_input") or {}).get("query") or state.get("user_text") or "")
-        result = self.requests._memory_request(state, action="search", query=query, from_agent="router")
+        result = self.requests.access_memory(state, action="search", query=query, from_agent="router")
         return self.tracing.finish("memory", state, {"memory_result": result, "memory": result, "status": "completed" if result.get("success") else "insufficient_evidence"})
 
     def workorder_action(self, state: AgentState) -> Dict[str, Any]:
@@ -158,7 +158,7 @@ class OrchestratorNodes:
                     "target_part": enriched.get("repair_target") or enriched.get("target_part") or {},
                     "engineering_context": enriched.get("drawing_context") or enriched.get("engineering_context") or {},
                 }
-            result = self.requests._workorder_request({**state, "context": enriched}, action=action, from_agent="router")
+            result = self.requests.execute_workorder({**state, "context": enriched}, action=action, from_agent="router")
             return self.tracing.finish("workorder_action", state, {
                 "workorder_result": result,
                 "workorder": result.get("workorder", {}),
@@ -179,7 +179,7 @@ class OrchestratorNodes:
         target_input = dict(route.get("target_input") or state.get("context") or {})
         workorder_id = str(target_input.get("workorder_id") or "")
         try:
-            result = self.requests._workorder_request({**state, "context": target_input}, action="query", workorder={"workorder_id": workorder_id}, from_agent="router")
+            result = self.requests.execute_workorder({**state, "context": target_input}, action="query", workorder={"workorder_id": workorder_id}, from_agent="router")
             return self.tracing.finish("workorder_query", state, {
                 "workorder_result": result,
                 "workorder": result.get("workorder", result),
@@ -205,7 +205,7 @@ class OrchestratorNodes:
         report = _serialize_agent_result(result)
         payload = {"report": report}
         if state.get("entry") == "trigger":
-            memory_result = self.requests._memory_request({**state, "report": report}, action="learn")
+            memory_result = self.requests.access_memory({**state, "report": report}, action="learn")
             payload["experience"] = memory_result.get("experience", {})
             payload["memory"] = memory_result
         return self.tracing.finish("report", state, payload)

@@ -1,4 +1,4 @@
-"""Typed A2A request construction for orchestration and Agent providers."""
+"""用于编排和 Agent 提供方的类型化 A2A 请求构造。"""
 from __future__ import annotations
 from typing import Any, Dict, Mapping
 from .client import A2AClient
@@ -13,7 +13,7 @@ class A2ARequests:
     def __init__(self, client: A2AClient) -> None:
         self.a2a = client
 
-    def _knowledge_request(self, state: Mapping[str, Any], query: str) -> Dict[str, Any]:
+    def retrieve_knowledge(self, state: Mapping[str, Any], query: str) -> Dict[str, Any]:
         context = state.get("context") or {}
         return self._knowledge_a2a(
             state.get("task_id", ""),
@@ -74,7 +74,7 @@ class A2ARequests:
     def _maintenance_cad_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
         return self._cad_a2a(str(context.get("task_id") or ""), "maintenance", query, context)
 
-    def _cad_request(self, state: Mapping[str, Any], query: str, from_agent: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    def retrieve_cad(self, state: Mapping[str, Any], query: str, from_agent: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         return self._cad_a2a(state.get("task_id", ""), from_agent, query, context or state.get("context") or {})
 
     def _cad_a2a(self, task_id: str, from_agent: str, query: str, context: Mapping[str, Any] | None = None) -> Dict[str, Any]:
@@ -97,7 +97,7 @@ class A2ARequests:
         )
         return response.result or response.model_dump(mode="json")
 
-    def _maintenance_request(
+    def create_maintenance_plan(
         self,
         state: Mapping[str, Any],
         diagnosis: Dict[str, Any],
@@ -127,7 +127,7 @@ class A2ARequests:
         )
         return response.maintenance_plan
 
-    def _quality_request(
+    def inspect_quality(
         self,
         state: Mapping[str, Any],
         from_agent: str = "router",
@@ -162,7 +162,7 @@ class A2ARequests:
         )
         return dict(response.quality_result or {})
 
-    def _workorder_request(
+    def execute_workorder(
         self,
         state: Mapping[str, Any],
         action: str = "create",
@@ -199,7 +199,7 @@ class A2ARequests:
         )
         return response.workorder_result or response.payload
 
-    def _memory_request(
+    def access_memory(
         self,
         state: Mapping[str, Any],
         action: str = "search",
@@ -234,7 +234,7 @@ class A2ARequests:
         )
         return response.memory_result or response.payload
 
-    def _diagnosis_request(self, state: Mapping[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
+    def diagnose(self, state: Mapping[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
         request = DiagnosisRequest(
             request_id=self.a2a.new_request_id(),
             task_id=state.get("task_id", ""),

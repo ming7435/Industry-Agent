@@ -19,7 +19,7 @@ class RuntimeOperations:
         persist: bool = False,
     ) -> Dict[str, Any]:
         values = {**dict(state.get("context") or {}), **dict(quality_payload or {})}
-        result = self.requests._quality_request(state, from_agent=from_agent, quality_payload=quality_payload)
+        result = self.requests.inspect_quality(state, from_agent=from_agent, quality_payload=quality_payload)
         if persist and (result.get("part_id") or result.get("part_no")):
             check = self.closure_service.record_part_quality(
                 {
@@ -70,7 +70,7 @@ class RuntimeOperations:
             "repair_feedback": values.get("repair_feedback") or {},
             "repair_verification": dict(values.get("verification") or values.get("repair_verification") or {}),
         }
-        result = self.requests._workorder_request(state, action=action, workorder=values.get("workorder"), from_agent=from_agent)
+        result = self.requests.execute_workorder(state, action=action, workorder=values.get("workorder"), from_agent=from_agent)
         if action == "close":
             order = dict(result.get("workorder") or {})
             feedback = order.get("repair_feedback") or values.get("repair_feedback") or {}
@@ -84,7 +84,7 @@ class RuntimeOperations:
                     "maintenance_plan": dict(values.get("maintenance_plan") or {}),
                 }
                 try:
-                    result["memory_result"] = self.requests._memory_request(
+                    result["memory_result"] = self.requests.access_memory(
                         learning_state,
                         action="learn",
                         from_agent="workorder",
@@ -114,7 +114,7 @@ class RuntimeOperations:
             "quality": dict(values.get("quality") or {}),
             "report": dict(values.get("report") or {}),
         }
-        return self.requests._memory_request(state, action=action, query=str(values.get("query") or ""), from_agent=from_agent)
+        return self.requests.access_memory(state, action=action, query=str(values.get("query") or ""), from_agent=from_agent)
 
     def inspect_part(self, part_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         values = dict(payload)

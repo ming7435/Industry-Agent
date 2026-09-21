@@ -1,4 +1,4 @@
-"""Centralized environment-backed settings for Agent Service."""
+"""由环境变量驱动的 Agent Service 集中配置。"""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ from pathlib import Path
 
 try:
     from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - optional for library-only usage
+except ImportError:  # pragma: no cover - 仅在缺少可选依赖时触发
     load_dotenv = None
 
 
 def _load_project_env() -> None:
+    """加载仓库根目录的 .env，且不覆盖已有进程环境变量。"""
+
     if load_dotenv is None:
         return
     project_root = Path(__file__).resolve().parents[4]
@@ -21,6 +23,8 @@ def _load_project_env() -> None:
 
 
 def _csv_env(name: str, default: str) -> list[str]:
+    """把逗号分隔的环境变量解析为字符串列表。"""
+
     value = os.getenv(name, default)
     return [item.strip() for item in value.split(",") if item.strip()]
 
@@ -30,6 +34,8 @@ _load_project_env()
 
 @dataclass(frozen=True)
 class Settings:
+    """Agent Service 运行时配置。"""
+
     rag_service_base_url: str = field(default_factory=lambda: os.getenv("RAG_SERVICE_BASE_URL", "").rstrip("/"))
     cad_service_base_url: str = field(default_factory=lambda: (os.getenv("MCP_CAD_URL") or os.getenv("CAD_SERVICE_BASE_URL") or "").rstrip("/"))
     model_service_base_url: str = field(default_factory=lambda: os.getenv("MODEL_SERVICE_BASE_URL", "").rstrip("/"))
@@ -40,10 +46,18 @@ class Settings:
     trace_max_records: int = field(default_factory=lambda: max(100, int(os.getenv("TRACE_MAX_RECORDS", "5000"))))
     cors_origins: list[str] = field(default_factory=lambda: _csv_env(
         "AGENT_CORS_ORIGINS",
-        "http://127.0.0.1:8001,http://localhost:8001",
+        os.getenv("CORS_ORIGINS", "http://127.0.0.1:8001,http://localhost:8001"),
     ))
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        """兼容旧调用方的环境变量构造入口。"""
+
+        return cls()
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    """返回进程内缓存的配置对象。"""
+
+    return Settings.from_env()
