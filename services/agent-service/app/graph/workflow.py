@@ -10,12 +10,14 @@ from langgraph.graph import END, START, StateGraph
 from app.agents.diagnosis import DiagnosisAgent
 from app.graph.nodes import OrchestratorNodes
 from app.graph.state import AgentState
+from app.runtime.container import AgentContainer
 from app.tools.registry import ToolRegistry
 
 
 class AgentOrchestrator:
     def __init__(self, diagnosis_agent: DiagnosisAgent | None = None, tools: ToolRegistry | None = None) -> None:
-        self.nodes = OrchestratorNodes(diagnosis_agent=diagnosis_agent, tools=tools)
+        self.container = AgentContainer(diagnosis_agent=diagnosis_agent, tools=tools)
+        self.nodes = OrchestratorNodes(self.container)
         graph = StateGraph(AgentState)
         for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "workorder_action", "workorder_query", "memory", "report"):
             graph.add_node(name, getattr(self.nodes, name))
@@ -75,7 +77,7 @@ class AgentOrchestrator:
             **payload,
         }
         result = dict(self.graph.invoke(state))
-        result["trace"] = self.nodes.trace_records()
+        result["trace"] = self.container.trace.list()
         return result
 
 

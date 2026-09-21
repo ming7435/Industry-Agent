@@ -1,0 +1,71 @@
+"""Construct shared Agent, tool, service, harness, and A2A dependencies."""
+
+from __future__ import annotations
+
+import os
+
+from app.a2a.client import A2AClient
+from app.a2a.endpoints import A2AEndpoints
+from app.a2a.requests import A2ARequests
+from app.agents.diagnosis import DiagnosisAgent
+from app.agents.registry import build_agent_registry
+from app.closure import ClosureService
+from app.harness import AgentHarness, TraceRecorder
+from app.memory import ExperienceLearningModule, build_memory_stores
+from app.tools.registry import ToolRegistry
+from app.workorder import WorkOrderService
+
+from .operations import RuntimeOperations
+from .tracing import NodeTrace
+
+
+class AgentContainer:
+    """Own one orchestrator's shared resources and Agent bindings."""
+
+    def __init__(
+        self,
+        diagnosis_agent: DiagnosisAgent | None = None,
+        tools: ToolRegistry | None = None,
+    ) -> None:
+        registry = tools or ToolRegistry(rag_base_url=os.getenv("RAG_SERVICE_BASE_URL", ""))
+        self.registry = registry
+        self.tools = registry
+        self.trace = TraceRecorder()
+        self.registry.trace = self.trace
+        self.a2a = A2AClient(trace=self.trace)
+        self.short_memory, self.long_memory = build_memory_stores()
+        self.workorder_service = WorkOrderService(registry)
+        self.closure_service = ClosureService(trace=self.trace)
+        self.experience_module = ExperienceLearningModule(
+            self.short_memory,
+            self.long_memory,
+            registry.rag,
+            trace=self.trace,
+        )
+        self.requests = A2ARequests(self.a2a)
+
+        diagnosis_runtime = diagnosis_agent or DiagnosisAgent(
+            tools=registry,
+            knowledge_provider=self.requests._diagnosis_knowledge_request,
+        )
+        if getattr(diagnosis_runtime, "knowledge_provider", None) is None:
+            diagnosis_runtime.knowledge_provider = self.requests._diagnosis_knowledge_request
+        if hasattr(diagnosis_runtime.tools, "trace"):
+            diagnosis_runtime.tools.trace = self.trace
+
+        self.agents = build_agent_registry(
+            tools=registry,
+            diagnosis=diagnosis_runtime,
+            maintenance_knowledge_provider=self.requests._maintenance_knowledge_request,
+            maintenance_cad_provider=self.requests._maintenance_cad_request,
+            workorder_service=self.workorder_service,
+            experience_module=self.experience_module,
+        )
+        self.harnesses = {
+            name: AgentHarness(agent, trace=self.trace)
+            for name, agent in self.agents.items()
+        }
+        self.endpoints = A2AEndpoints(self.harnesses)
+        self.endpoints.register(self.a2a)
+        self.operations = RuntimeOperations(self.requests, self.closure_service)
+        self.tracing = NodeTrace(self.trace)

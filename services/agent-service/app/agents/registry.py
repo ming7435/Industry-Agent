@@ -29,7 +29,7 @@ CORE_AGENT_REGISTRY = {
 
 
 def build_agent_registry(**dependencies: Any) -> dict[str, Any]:
-    """按核心 Agent 名称构造实例，依赖由编排层注入。"""
+    """按核心 Agent 名称构造实例，依赖由 Runtime 容器注入。"""
 
     return {
         "router": RouterAgent(),

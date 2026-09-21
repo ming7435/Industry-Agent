@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 from pathlib import Path
-from uuid import uuid4
 
 try:
     from dotenv import load_dotenv
@@ -170,23 +169,23 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/rag/status")
     def rag_status() -> Dict[str, Any]:
-        return runtime.nodes.registry.rag_status()
+        return runtime.container.registry.rag_status()
 
     @app.get("/api/rag/search")
     def rag_search(query: str, limit: int = 5) -> Dict[str, Any]:
-        return runtime.nodes.registry.search_knowledge(query, limit=limit)
+        return runtime.container.registry.search_knowledge(query, limit=limit)
 
     @app.post("/api/rag/ingest")
     def rag_ingest(request: RAGIngestRequest) -> Dict[str, Any]:
-        return runtime.nodes.registry.ingest_knowledge(request.path, request.collection)
+        return runtime.container.registry.ingest_knowledge(request.path, request.collection)
 
     @app.get("/api/trace")
     def trace() -> Dict[str, Any]:
-        return {"trace": runtime.nodes.trace_records()}
+        return {"trace": runtime.container.trace.list()}
 
     @app.get("/api/memory/recent")
     def memory_recent(limit: int = 20) -> Dict[str, Any]:
-        result = runtime.nodes.execute_memory("recent", {"limit": max(1, min(limit, 100))}, from_agent="router")
+        result = runtime.container.operations.execute_memory("recent", {"limit": max(1, min(limit, 100))}, from_agent="router")
         return {"items": result.get("items", []), "count": result.get("count", 0), "backend": result.get("backend", "")}
 
     @app.get("/api/memory/search")
@@ -200,7 +199,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         query: str = "",
         limit: int = 20,
     ) -> Dict[str, Any]:
-        result = runtime.nodes.execute_memory("search", {
+        result = runtime.container.operations.execute_memory("search", {
             "device_id": device_id,
             "device_model": device_model,
             "alarm_code": alarm_code,
@@ -214,33 +213,33 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/workorders")
     def workorders() -> Dict[str, Any]:
-        result = runtime.nodes.execute_workorder("query", {}, from_agent="router")
+        result = runtime.container.operations.execute_workorder("query", {}, from_agent="router")
         return {"items": result.get("items", []), "count": len(result.get("items", [])), "backend": "workorder-agent"}
 
     @app.post("/api/workorders")
     def workorder_create(request: WorkOrderCreateRequest) -> Dict[str, Any]:
-        return runtime.nodes.execute_workorder("create", request.model_dump(mode="json"), from_agent="router")
+        return runtime.container.operations.execute_workorder("create", request.model_dump(mode="json"), from_agent="router")
 
     @app.get("/api/workorders/{workorder_id}")
     def workorder(workorder_id: str) -> Dict[str, Any]:
-        return runtime.nodes.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router")
+        return runtime.container.operations.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router")
 
     @app.post("/api/workorders/{workorder_id}/action")
     def workorder_action(workorder_id: str, request: WorkOrderActionRequest) -> Dict[str, Any]:
         payload = request.model_dump(mode="json")
         payload["workorder_id"] = workorder_id
         payload["repair_feedback"] = payload.get("repair_feedback") or payload.get("feedback") or ""
-        return runtime.nodes.execute_workorder(request.action, payload, from_agent="router")
+        return runtime.container.operations.execute_workorder(request.action, payload, from_agent="router")
 
     @app.post("/api/v1/workorders/{workorder_id}/feedback")
     def submit_feedback_v1(workorder_id: str, request: RepairFeedbackRequest) -> Dict[str, Any]:
         feedback = request.model_dump(mode="json")
-        return runtime.nodes.execute_workorder("submit_feedback", {"workorder_id": workorder_id, "repair_feedback": feedback}, from_agent="router")
+        return runtime.container.operations.execute_workorder("submit_feedback", {"workorder_id": workorder_id, "repair_feedback": feedback}, from_agent="router")
 
     @app.post("/api/v1/workorders/{workorder_id}/complete")
     def complete_workorder_v1(workorder_id: str, request: RepairFeedbackRequest) -> Dict[str, Any]:
         feedback = request.model_dump(mode="json")
-        return runtime.nodes.execute_workorder(
+        return runtime.container.operations.execute_workorder(
             "mark_repair_completed",
             {
                 "workorder_id": workorder_id,
@@ -252,39 +251,39 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.post("/api/v1/quality/checks")
     def create_quality_check(request: QualityCheckRequest) -> Dict[str, Any]:
-        return runtime.nodes.closure_service.create_quality_check(request.model_dump(mode="json"))
+        return runtime.container.closure_service.create_quality_check(request.model_dump(mode="json"))
 
     @app.get("/api/v1/quality/checks")
     def list_quality_checks(target_id: str = "", status: str = "") -> Dict[str, Any]:
-        items = runtime.nodes.closure_service.list_quality_checks(target_id=target_id, status=status)
-        return {"items": items, "count": len(items), "backend": runtime.nodes.closure_service.backend}
+        items = runtime.container.closure_service.list_quality_checks(target_id=target_id, status=status)
+        return {"items": items, "count": len(items), "backend": runtime.container.closure_service.backend}
 
     @app.get("/api/v1/closure/status")
     def closure_status() -> Dict[str, Any]:
-        backend = runtime.nodes.closure_service.backend
+        backend = runtime.container.closure_service.backend
         return {"backend": backend, "persistent": backend == "mysql"}
 
     @app.post("/api/v1/quality/checks/{check_id}/appeal")
     def appeal_quality_check(check_id: str, request: QualityAppealRequest) -> Dict[str, Any]:
-        return runtime.nodes.closure_service.submit_appeal(check_id, request.model_dump(mode="json"))
+        return runtime.container.closure_service.submit_appeal(check_id, request.model_dump(mode="json"))
 
     @app.post("/api/v1/closure-tasks")
     def create_closure_task(request: ClosureTaskRequest) -> Dict[str, Any]:
-        return runtime.nodes.closure_service.create_closure_task(request.model_dump(mode="json"))
+        return runtime.container.closure_service.create_closure_task(request.model_dump(mode="json"))
 
     @app.get("/api/v1/closure-tasks")
     def list_closure_tasks(status: str = "") -> Dict[str, Any]:
-        items = runtime.nodes.closure_service.list_closure_tasks(status=status)
-        return {"items": items, "count": len(items), "backend": runtime.nodes.closure_service.backend}
+        items = runtime.container.closure_service.list_closure_tasks(status=status)
+        return {"items": items, "count": len(items), "backend": runtime.container.closure_service.backend}
 
     @app.post("/api/v1/closure-tasks/{task_id}/complete")
     def complete_closure_task(task_id: str, note: str = "") -> Dict[str, Any]:
-        return runtime.nodes.closure_service.complete_closure_task(task_id, note=note)
+        return runtime.container.closure_service.complete_closure_task(task_id, note=note)
 
     @app.get("/api/v1/audit-logs")
     def audit_logs(object_id: str = "", action: str = "") -> Dict[str, Any]:
-        items = runtime.nodes.closure_service.audit_logs(object_id=object_id, action=action)
-        return {"items": items, "count": len(items), "backend": runtime.nodes.closure_service.backend}
+        items = runtime.container.closure_service.audit_logs(object_id=object_id, action=action)
+        return {"items": items, "count": len(items), "backend": runtime.container.closure_service.backend}
 
     @app.post("/api/workorders/{workorder_id}/quality")
     def workorder_quality(workorder_id: str) -> Dict[str, Any]:
@@ -299,23 +298,12 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def part_quality(part_id: str, request: PartQualityRequest) -> Dict[str, Any]:
         """通过 Orchestrator 的 A2A 入口检测生产零件质量。"""
 
-        values = request.model_dump(mode="json")
-        values.update({"part_id": part_id, "inspection_type": "part_quality", "action": "inspect_part"})
-        state = {
-            "entry": "user",
-            "task_id": "TASK-PART-QUALITY-" + uuid4().hex[:12].upper(),
-            "trace_id": "TRACE-PART-QUALITY-" + uuid4().hex[:12].upper(),
-            "context": values,
-            "diagnosis": {},
-            "maintenance_plan": {},
-        }
-        quality_result = runtime.nodes._quality_request(state, from_agent="router", quality_payload=values, persist=True)
-        result = serialize_api_response(quality_result)
-        return result
+        quality_result = runtime.container.operations.inspect_part(part_id, request.model_dump(mode="json"))
+        return serialize_api_response(quality_result)
 
     @app.post("/api/experience/search")
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:
-        return runtime.nodes.execute_memory("search", request.model_dump(mode="json"), from_agent="router")
+        return runtime.container.operations.execute_memory("search", request.model_dump(mode="json"), from_agent="router")
 
     return app
 
