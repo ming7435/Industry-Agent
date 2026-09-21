@@ -33,7 +33,7 @@ from app.monitor import (  # noqa: E402，路径注入后再导入本地应用�
 from app.agents.diagnosis import DiagnosisAgent  # noqa: E402，路径注入后再导入本地应用包。
 from app.harness import AgentHarness  # noqa: E402，路径注入后再导入本地应用包。
 from app.graph import build_orchestrator  # noqa: E402，路径注入后再导入本地应用包。
-from app.mcp.registry import LocalMcpToolRegistry  # noqa: E402，路径注入后再导入本地应用包。
+from app.tools.registry import ToolRegistry  # noqa: E402，路径注入后再导入本地应用包。
 
 
 class MonitorWebState:
@@ -65,7 +65,7 @@ class MonitorWebState:
         self._last_alarm_codes: Dict[str, Optional[str]] = {}
         self.trigger_history = deque(maxlen=30)
         self.diagnosis_agent = DiagnosisAgent(
-            tools=LocalMcpToolRegistry(base_url=self.base_url)
+            tools=ToolRegistry(base_url=self.base_url)
         )
         self.orchestrator = build_orchestrator(diagnosis_agent=self.diagnosis_agent)
         self.diagnosis_harness = AgentHarness(
