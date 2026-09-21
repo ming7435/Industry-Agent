@@ -2744,7 +2744,6 @@ function WorkorderDetail({ order, sample, busy, onUpdate }) {
 function RepairCadPanel({ order, target }) {
   const [exploded, setExploded] = useState(true);
   const [resetView, setResetView] = useState(false);
-  const [cadReady, setCadReady] = useState(false);
   const cadFrameRef = useRef(null);
   const targetComponent = target.component || target.part_no || target.part_name || "";
   const viewerParams = new URLSearchParams({
@@ -2813,9 +2812,7 @@ function RepairCadPanel({ order, target }) {
           title={`${target.part_name} CAD 维修视图`}
           src={viewerUrl}
           ref={cadFrameRef}
-          onLoad={() => { setCadReady(true); }}
         />
-        <div className={`cad-load-state ${cadReady ? "ready" : ""}`}>{cadReady ? "TC820si CAD 已加载" : "正在加载 CAD 模型..."}</div>
       </div>
     </section>
   );

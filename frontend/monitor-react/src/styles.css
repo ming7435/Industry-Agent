@@ -1621,64 +1621,6 @@ h2 {
   filter: saturate(1.06) contrast(1.03);
 }
 
-.cad-target-chip {
-  position: absolute;
-  z-index: 4;
-  left: 16px;
-  top: 16px;
-  display: grid;
-  grid-template-columns: 18px auto;
-  grid-template-rows: auto auto;
-  column-gap: 8px;
-  align-items: center;
-  min-width: 190px;
-  padding: 9px 12px 9px 8px;
-  border: 1px solid rgba(183, 55, 50, .28);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, .9);
-  box-shadow: 0 12px 28px rgba(27, 45, 53, .12);
-  color: #8f2d2a;
-  pointer-events: none;
-  backdrop-filter: blur(12px);
-}
-
-.cad-target-chip strong,
-.cad-target-chip small {
-  grid-column: 2;
-}
-
-.cad-target-chip strong { font-size: 13px; }
-.cad-target-chip small { color: #ae5751; font-size: 11px; }
-
-.fault-pulse {
-  grid-row: 1 / span 2;
-  width: 15px;
-  height: 15px;
-  border: 3px solid #fff;
-  border-radius: 50%;
-  background: var(--red);
-  box-shadow: 0 0 0 6px rgba(183, 55, 50, .18), 0 0 0 13px rgba(183, 55, 50, .08);
-}
-
-.repair-view-legend,
-.cad-load-state {
-  position: absolute;
-  z-index: 5;
-  bottom: 16px;
-  padding: 9px 12px;
-  border: 1px solid rgba(27, 45, 53, .1);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, .88);
-  color: #52656f;
-  font-size: 12px;
-  backdrop-filter: blur(10px);
-}
-
-.repair-view-legend { left: 16px; }
-.cad-load-state { right: 16px; }
-.cad-load-state.ready { color: var(--teal); }
-.legend-red { display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--red); }
-
 .workorder-bigscreen-grid {
   display: grid;
   grid-template-rows: minmax(0, 58fr) minmax(0, 42fr);
@@ -2169,6 +2111,4 @@ h2 {
   .repair-visual-body { height: 390px; min-height: 390px; }
   .workorder-bigscreen-grid.cad-only { height: 520px; min-height: 520px; }
   .target-detail-grid { grid-template-columns: 1fr; }
-  .repair-view-legend { left: 8px; bottom: 8px; }
-  .cad-load-state { right: 8px; bottom: 8px; max-width: 42%; }
 }
