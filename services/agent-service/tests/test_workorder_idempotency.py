@@ -36,3 +36,15 @@ def test_auto_workorder_keeps_diagnosis_and_plan_snapshots():
     assert order["idempotency_key"] == "monitor:EVT-2"
     assert order["diagnosis_snapshot"]["fault"] == "f"
     assert order["maintenance_plan_snapshot"]["repair_steps"] == ["replace"]
+
+
+def test_close_requires_completed_workorder():
+    import pytest
+
+    from app.mcp.workorder import WorkOrderMcpAdapter
+
+    adapter = WorkOrderMcpAdapter()
+    order = adapter.create_workorder("D-1", "fault", idempotency_key="monitor:EVT-3")
+
+    with pytest.raises(ValueError, match="completed"):
+        adapter.close_workorder(order["workorder_id"])

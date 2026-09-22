@@ -37,3 +37,17 @@ def test_rag_partial_backend_failure_is_visible(tmp_path, monkeypatch):
     ).json()
     assert result["success"] is False
     assert result["backends"]["whoosh"]["success"] is False
+
+
+def test_legacy_document_routes_remain_compatible(tmp_path, monkeypatch):
+    from app.api import documents, routes
+    from app.main import app
+
+    store = documents.DocumentStore(str(tmp_path / "rag.sqlite3"))
+    monkeypatch.setattr(routes, "get_document_store", lambda: store)
+    client = TestClient(app)
+    upsert = client.post("/upsert", json={"record": {"id": "EXP-LEGACY", "content": "fixed"}, "collection": "cases"})
+    assert upsert.status_code == 200
+    fetched = client.post("/fetch_document", json={"document_id": "EXP-LEGACY"})
+    assert fetched.status_code == 200
+    assert fetched.json()["document"]["document_id"] == "EXP-LEGACY"

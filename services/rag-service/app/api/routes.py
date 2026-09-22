@@ -20,7 +20,7 @@ import asyncio
 from typing import Any, Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from loguru import logger
 
@@ -251,6 +251,19 @@ async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
     return {"success": success, "backends": backends, "document": document, "loaded": 1 if success else 0}
 
 
+@router.post("/upsert", include_in_schema=False)
+async def legacy_upsert(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    record = dict(payload.get("record") or payload)
+    return await upsert_document(
+        DocumentUpsertRequest(
+            document_id=str(record.get("document_id") or record.get("experience_id") or record.get("id") or ""),
+            content=str(record.get("content") or ""),
+            metadata={key: value for key, value in record.items() if key not in {"document_id", "experience_id", "id", "content"}},
+            collection=str(payload.get("collection") or record.get("collection") or "maint_fault_events"),
+        )
+    )
+
+
 @router.post("/documents/ingest")
 async def ingest_document(request: DocumentIngestRequest) -> dict[str, Any]:
     return {"success": False, "backends": {"metadata": {"success": False, "error": "path ingestion must be performed by offline pipeline"}}, "path": request.path, "collection": request.collection, "loaded": 0}
@@ -264,9 +277,19 @@ async def fetch_document(document_id: str) -> dict[str, Any]:
     return {"success": True, "document": document}
 
 
+@router.post("/fetch_document", include_in_schema=False)
+async def legacy_fetch_document(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    return await fetch_document(str(payload.get("document_id") or ""))
+
+
 @router.get("/documents/{document_id}/chunks/{chunk_id}")
 async def fetch_chunk(document_id: str, chunk_id: str) -> dict[str, Any]:
     chunk = get_document_store().get_chunk(document_id, chunk_id)
     if chunk is None:
         raise HTTPException(status_code=404, detail="chunk not found")
     return {"success": True, "chunk": chunk}
+
+
+@router.post("/fetch_chunk", include_in_schema=False)
+async def legacy_fetch_chunk(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    return await fetch_chunk(str(payload.get("document_id") or ""), str(payload.get("chunk_id") or ""))

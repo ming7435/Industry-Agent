@@ -168,6 +168,11 @@ class WorkOrderMcpAdapter:
         )
 
     def close_workorder(self, workorder_id: str, reason: str = "", **_: Any) -> Dict[str, Any]:
+        order = self._orders.get(workorder_id)
+        if order is None:
+            raise KeyError("工单不存在：%s" % workorder_id)
+        if str(order.get("status") or "") != "completed":
+            raise ValueError("工单必须先完成维修（completed）后才能关闭")
         return self.update_workorder(workorder_id, status="closed", closure_reason=reason)
 
     def reopen_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
