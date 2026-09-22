@@ -44,7 +44,11 @@ class RAGServiceClient:
         configured_base_url = "" if base_url is None else base_url
         self.base_url = str(configured_base_url).strip().rstrip("/")
         self.timeout = float(os.getenv("RAG_SERVICE_TIMEOUT_SECONDS", "15"))
-        self.allow_fallback = os.getenv("RAG_ALLOW_LOCAL_FALLBACK", "true").lower() in {"1", "true", "yes"}
+        explicit_fallback = os.getenv("RAG_ALLOW_LOCAL_FALLBACK")
+        if explicit_fallback is None:
+            self.allow_fallback = os.getenv("APP_ENV", "development").strip().lower() not in {"prod", "production"}
+        else:
+            self.allow_fallback = explicit_fallback.lower() in {"1", "true", "yes"}
         self.fallback = fallback or build_default_index()
 
     def search(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None) -> Dict[str, Any]:
@@ -70,6 +74,8 @@ class RAGServiceClient:
                 result["remote_base_url"] = self.base_url
                 result["warning"] = "%s: %s" % (type(error).__name__, error)
                 return result
+        if not self.allow_fallback:
+            raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
         result = self._humanize_result(self.fallback.search(query, limit=limit, filters=filters))
         result["connection_status"] = "local_fallback"
         result["degraded"] = True
@@ -196,6 +202,8 @@ class RAGServiceClient:
             except Exception:
                 if not self.allow_fallback:
                     raise
+        if not self.allow_fallback:
+            raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
         return self.fallback.ingest_jsonl(path, collection=collection)
 
     def upsert(self, record: Mapping[str, Any], collection: str = "") -> Dict[str, Any]:
@@ -213,6 +221,8 @@ class RAGServiceClient:
             except Exception:
                 if not self.allow_fallback:
                     raise
+        if not self.allow_fallback:
+            raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
         loaded = self.fallback.upsert([record], collection=collection)
         return {"loaded": loaded, "backend": self.fallback.backend}
 
@@ -224,6 +234,8 @@ class RAGServiceClient:
             except Exception:
                 if not self.allow_fallback:
                     raise
+        if not self.allow_fallback:
+            raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
         return self.fallback.fetch_document(payload["document_id"])
 
     def fetch_chunk(self, document_id: str, chunk_id: str = "") -> Dict[str, Any]:
@@ -234,6 +246,8 @@ class RAGServiceClient:
             except Exception:
                 if not self.allow_fallback:
                     raise
+        if not self.allow_fallback:
+            raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
         return self.fallback.fetch_chunk(payload["document_id"], payload["chunk_id"])
 
     def status(self) -> Dict[str, Any]:

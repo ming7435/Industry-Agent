@@ -8,6 +8,8 @@ from typing import Any, Dict, List
 import json
 import os
 
+from app.config.settings import allow_degraded_storage
+
 
 class MemoryBackendError(RuntimeError):
     """Memory 外部后端不可用。"""
@@ -168,7 +170,10 @@ def build_memory_stores() -> tuple[Any, Any]:
         try:
             short = RedisShortMemoryStore(redis_url)
         except MemoryBackendError:
-            pass
+            if not allow_degraded_storage():
+                raise
+    elif not allow_degraded_storage():
+        raise MemoryBackendError("生产模式要求配置 REDIS_URL")
     mysql_host = os.getenv("MYSQL_HOST", "").strip()
     if mysql_host:
         try:
@@ -180,5 +185,8 @@ def build_memory_stores() -> tuple[Any, Any]:
                 "database": os.getenv("MYSQL_DATABASE", "industrial_maintenance"),
             })
         except (MemoryBackendError, ValueError):
-            pass
+            if not allow_degraded_storage():
+                raise
+    elif not allow_degraded_storage():
+        raise MemoryBackendError("生产模式要求配置 MYSQL_HOST")
     return short, long

@@ -9,6 +9,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping
 from uuid import uuid4
+import os
+
+from app.workorder.repository import build_workorder_repository
 
 
 class WorkOrderMcpAdapter:
@@ -16,9 +19,8 @@ class WorkOrderMcpAdapter:
 
     VALID_STATUSES = {"open", "in_progress", "completed", "closed", "rejected", "timeout"}
 
-    def __init__(self) -> None:
-        self._orders: Dict[str, Dict[str, Any]] = {}
-        self._idempotency_index: Dict[str, str] = {}
+    def __init__(self, repository: Any | None = None, path: str | None = None) -> None:
+        self.repository = repository or build_workorder_repository(path or os.getenv("WORKORDER_STORE_PATH", ""))
 
     @staticmethod
     def _now() -> str:
@@ -45,9 +47,9 @@ class WorkOrderMcpAdapter:
     ) -> Dict[str, Any]:
         key = str(idempotency_key or "").strip()
         if key:
-            existing_id = self._idempotency_index.get(key)
-            if existing_id and existing_id in self._orders:
-                return dict(self._orders[existing_id])
+            for existing in self.repository.list():
+                if str(existing.get("idempotency_key") or "") == key:
+                    return dict(existing)
         now = self._now()
         order = {
             "workorder_id": "WO-" + uuid4().hex[:10].upper(),
@@ -74,16 +76,15 @@ class WorkOrderMcpAdapter:
             "created_at": now,
             "updated_at": now,
         }
-        self._orders[order["workorder_id"]] = order
-        if key:
-            self._idempotency_index[key] = order["workorder_id"]
+        order = self.repository.create(order)
         self._record_event(order, "created", "", "open", {})
+        order = self.repository.update(order)
         return dict(order)
 
     def update_workorder(self, workorder_id: str, status: str = "in_progress", **fields: Any) -> Dict[str, Any]:
         if status not in self.VALID_STATUSES:
             raise ValueError("无效工单状态：%s" % status)
-        order = self._orders.get(workorder_id)
+        order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
         previous_status = str(order.get("status") or "")
@@ -98,43 +99,43 @@ class WorkOrderMcpAdapter:
             order["closed_at"] = order["updated_at"]
         if status != previous_status or fields:
             self._record_event(order, "status_changed" if status != previous_status else "updated", previous_status, status, fields)
-        return dict(order)
+        return self.repository.update(order)
 
     def get_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
-        order = self._orders.get(workorder_id)
+        order = self.repository.get(workorder_id)
         return dict(order) if order else {"found": False, "workorder_id": workorder_id}
 
     def list_workorders(self, device_id: str = "", status: str = "", **_: Any) -> Dict[str, Any]:
         values = [
             dict(order)
-            for order in self._orders.values()
+            for order in self.repository.list()
             if (not device_id or order.get("device_id") == device_id)
             and (not status or order.get("status") == status)
         ]
         return {"items": values, "total": len(values)}
 
     def assign_workorder(self, workorder_id: str, assignee: str = "", **_: Any) -> Dict[str, Any]:
-        order = self._orders.get(workorder_id)
+        order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
         previous = str(order.get("assignee") or "")
         order["assignee"] = assignee
         order["updated_at"] = self._now()
         self._record_event(order, "assigned", str(order.get("status") or ""), str(order.get("status") or ""), {"from": previous, "to": assignee})
-        return dict(order)
+        return self.repository.update(order)
 
     def submit_repair_feedback(self, workorder_id: str, feedback: Any = "", **_: Any) -> Dict[str, Any]:
-        order = self._orders.get(workorder_id)
+        order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
         normalized = self._normalize_feedback(feedback)
         order["repair_feedback"] = normalized
         order["updated_at"] = self._now()
         self._record_event(order, "repair_feedback_submitted", str(order.get("status") or ""), str(order.get("status") or ""), normalized)
-        return dict(order)
+        return self.repository.update(order)
 
     def get_repair_feedback(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
-        order = self._orders.get(workorder_id)
+        order = self.repository.get(workorder_id)
         if order is None:
             return {"found": False, "success": False, "workorder_id": workorder_id, "repair_feedback": "", "complete": False, "source": "mes-mcp"}
         feedback = self._normalize_feedback(order.get("repair_feedback"))
@@ -149,7 +150,7 @@ class WorkOrderMcpAdapter:
         }
 
     def mark_repair_completed(self, workorder_id: str, feedback: Any = "", repair_verification: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        order = self._orders.get(workorder_id)
+        order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
         normalized = self._normalize_feedback(feedback) if feedback else self._normalize_feedback(order.get("repair_feedback"))
@@ -168,7 +169,7 @@ class WorkOrderMcpAdapter:
         )
 
     def close_workorder(self, workorder_id: str, reason: str = "", **_: Any) -> Dict[str, Any]:
-        order = self._orders.get(workorder_id)
+        order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
         if str(order.get("status") or "") != "completed":
@@ -234,4 +235,4 @@ class WorkOrderMcpAdapter:
 
     @property
     def orders(self) -> Dict[str, Dict[str, Any]]:
-        return {key: dict(value) for key, value in self._orders.items()}
+        return {str(value["workorder_id"]): dict(value) for value in self.repository.list()}

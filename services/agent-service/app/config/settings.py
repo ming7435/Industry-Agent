@@ -29,6 +29,15 @@ def _csv_env(name: str, default: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def allow_degraded_storage() -> bool:
+    """Return whether local/in-memory fallbacks are allowed for this process."""
+
+    explicit = os.getenv("ALLOW_DEGRADED_STORAGE")
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("APP_ENV", "development").strip().lower() not in {"prod", "production"}
+
+
 _load_project_env()
 
 
@@ -37,6 +46,8 @@ class Settings:
     """Agent Service 运行时配置。"""
 
     rag_service_base_url: str = field(default_factory=lambda: os.getenv("RAG_SERVICE_BASE_URL", "").rstrip("/"))
+    app_env: str = field(default_factory=lambda: os.getenv("APP_ENV", "development").strip().lower())
+    allow_degraded_storage: bool = field(default_factory=allow_degraded_storage)
     cad_service_base_url: str = field(default_factory=lambda: (os.getenv("MCP_CAD_URL") or os.getenv("CAD_SERVICE_BASE_URL") or "").rstrip("/"))
     model_service_base_url: str = field(default_factory=lambda: os.getenv("MODEL_SERVICE_BASE_URL", "").rstrip("/"))
     factory_api_base_url: str = field(default_factory=lambda: os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:4529").rstrip("/"))

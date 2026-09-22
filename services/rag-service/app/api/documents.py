@@ -93,15 +93,29 @@ class DocumentStore:
     def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         terms = [part.lower() for part in str(query or "").split() if part]
         with self._connect() as connection:
-            rows = connection.execute("SELECT document_id, content, collection, metadata_json FROM rag_documents ORDER BY updated_at DESC").fetchall()
+            rows = connection.execute(
+                "SELECT d.document_id, d.content, d.collection, d.metadata_json, "
+                "c.chunk_id, c.text, c.metadata_json AS chunk_metadata "
+                "FROM rag_documents d LEFT JOIN rag_chunks c ON c.document_id = d.document_id "
+                "ORDER BY d.updated_at DESC, c.chunk_id"
+            ).fetchall()
         hits = []
         for row in rows:
-            text = str(row["content"] or "")
-            haystack = text.lower()
+            text = str(row["text"] if row["text"] is not None else row["content"] or "")
+            document_metadata = json.loads(row["metadata_json"] or "{}")
+            chunk_metadata = json.loads(row["chunk_metadata"] or "{}") if row["chunk_metadata"] else {}
+            haystack = (text + " " + json.dumps({**document_metadata, **chunk_metadata}, ensure_ascii=False)).lower()
             score = sum(1 for term in terms if term in haystack) if terms else 0
             if terms and score == 0:
                 continue
-            hits.append({"chunk_id": f"{row['document_id']}:0", "text": text, "score": float(score or 0.1), "source": "standalone-document-store", "metadata": {**json.loads(row["metadata_json"] or "{}"), "collection": row["collection"], "document_id": row["document_id"]}})
+            hits.append({
+                "chunk_id": str(row["chunk_id"] or f"{row['document_id']}:0"),
+                "text": text,
+                "score": float(score or 0.1),
+                "source": "standalone-document-store",
+                "metadata": {**document_metadata, **chunk_metadata, "collection": row["collection"], "document_id": row["document_id"]},
+            })
+        hits.sort(key=lambda item: (float(item.get("score") or 0), str(item.get("chunk_id") or "")), reverse=True)
         return hits[: max(1, int(limit))]
 
 
@@ -110,4 +124,3 @@ _document_store = DocumentStore()
 
 def get_document_store() -> DocumentStore:
     return _document_store
-
