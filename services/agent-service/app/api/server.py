@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.graph import AgentOrchestrator, build_orchestrator
+from app.runtime.event_store import EventResultStore
 
 
 def _load_project_env() -> None:
@@ -156,6 +157,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     runtime = orchestrator or build_orchestrator()
+    event_results = EventResultStore()
 
     @app.post("/api/agent/question", deprecated=True)
     @app.post("/api/v1/agent/question")
@@ -165,7 +167,9 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.post("/api/agent/event", deprecated=True)
     @app.post("/api/v1/agent/event")
     def abnormal_event(request: AbnormalEventRequest) -> Dict[str, Any]:
-        return runtime.run_abnormal_event(request.event)
+        event = dict(request.event or {})
+        event_id = str(event.get("event_id") or "")
+        return event_results.get_or_create(event_id, lambda: runtime.run_abnormal_event(event))
 
     @app.get("/api/rag/status", deprecated=True)
     @app.get("/api/v1/rag/status")

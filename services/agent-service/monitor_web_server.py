@@ -25,60 +25,12 @@ if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
 
-def build_auto_workorder_payload(
-    event: Dict[str, Any],
-    diagnosis: Dict[str, Any],
-    plan: Dict[str, Any],
-) -> Dict[str, Any]:
-    """把自动诊断结果转换为 Agent Service 可幂等创建的工单请求。"""
+def dispatch_agent_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """把原始异常事件交给唯一的 Agent Service Runtime。"""
 
-    event = dict(event or {})
-    diagnosis = dict(diagnosis or {})
-    plan = dict(plan or {})
-    target = plan.get("target_part") or plan.get("repair_target") or {}
-    target = dict(target) if isinstance(target, dict) else {"part_name": str(target)}
-    engineering = dict(plan.get("engineering_context") or {})
-    viewer = dict(engineering.get("viewer_context") or {})
-    drawing_refs = list(engineering.get("drawing_refs") or [])
-    first_ref = drawing_refs[0] if drawing_refs and isinstance(drawing_refs[0], dict) else {}
-    device_id = str(diagnosis.get("device_id") or event.get("device_id") or "unknown")
-    alarm_code = str(diagnosis.get("alarm_code") or event.get("alarm_code") or "")
-    part_name = str(target.get("part_name") or target.get("name") or "设备")
-    fault = str(diagnosis.get("fault") or diagnosis.get("diagnosis") or event.get("event_type") or "设备异常")
-    drawing_context = {
-        "drawing_url": str(engineering.get("drawing_url") or first_ref.get("drawing_url") or "TC820si.html"),
-        "model_url": str(engineering.get("model_url") or viewer.get("model_url") or "http://127.0.0.1:8023/"),
-        "mesh_name": str(engineering.get("mesh_name") or viewer.get("mesh_name") or target.get("component") or ""),
-        "location": str(engineering.get("location") or viewer.get("location") or target.get("location") or ""),
-    }
-    return {
-        "device_id": device_id,
-        "title": str(plan.get("title") or "%s维修" % part_name),
-        "steps": list(plan.get("repair_steps") or []),
-        "alarm_code": alarm_code,
-        "diagnosis_context": {
-            "device_id": device_id,
-            "alarm_code": alarm_code,
-            "fault": fault,
-            "summary": str(diagnosis.get("summary") or ""),
-            "diagnosis": str(diagnosis.get("diagnosis") or fault),
-            "recommendation": str(diagnosis.get("recommendation") or ""),
-        },
-        "repair_target": target,
-        "drawing_context": drawing_context,
-        "priority": str(plan.get("priority") or "normal"),
-        "risk_level": str(plan.get("risk_level") or ""),
-        "source": "monitor",
-        "idempotency_key": "monitor:%s" % str(event.get("event_id") or "%s:%s" % (device_id, alarm_code)),
-    }
-
-
-def dispatch_auto_workorder(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """通过 8010 Agent Service 创建自动工单，避免与 8001 监控进程各存一份。"""
-
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    body = json.dumps({"event": dict(event or {})}, ensure_ascii=False).encode("utf-8")
     request = Request(
-        AGENT_SERVICE_BASE_URL.rstrip("/") + "/api/workorders",
+        AGENT_SERVICE_BASE_URL.rstrip("/") + "/api/v1/agent/event",
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -95,10 +47,6 @@ from app.monitor import (  # noqa: E402，路径注入后再导入本地应用�
     FactorySnapshotProvider,
     MonitorRunner,
 )
-from app.agents.diagnosis import DiagnosisAgent  # noqa: E402，路径注入后再导入本地应用包。
-from app.harness import AgentHarness  # noqa: E402，路径注入后再导入本地应用包。
-from app.graph import build_orchestrator  # noqa: E402，路径注入后再导入本地应用包。
-from app.tools.registry import ToolRegistry  # noqa: E402，路径注入后再导入本地应用包。
 
 
 class MonitorWebState:
@@ -129,15 +77,6 @@ class MonitorWebState:
         self.diagnosis_task_count = 0
         self._last_alarm_codes: Dict[str, Optional[str]] = {}
         self.trigger_history = deque(maxlen=30)
-        self.diagnosis_agent = DiagnosisAgent(
-            tools=ToolRegistry(base_url=self.base_url)
-        )
-        self.orchestrator = build_orchestrator(diagnosis_agent=self.diagnosis_agent)
-        self.diagnosis_harness = AgentHarness(
-            agent=self.diagnosis_agent,
-            timeout_seconds=float(os.getenv("AGENT_TIMEOUT_SECONDS", "45")),
-            max_retries=int(os.getenv("AGENT_MAX_RETRIES", "1")),
-        )
         self.diagnosis_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="diagnosis-agent",
@@ -226,10 +165,7 @@ class MonitorWebState:
         with self.lock:
             generation = self._diagnosis_generation
             self.diagnosis_pending += 1
-        future = self.diagnosis_executor.submit(
-            self.orchestrator.run_abnormal_event,
-            event,
-        )
+        future = self.diagnosis_executor.submit(dispatch_agent_event, event)
         future.add_done_callback(
             lambda completed: self._on_diagnosis_done(completed, generation, event)
         )
@@ -238,34 +174,22 @@ class MonitorWebState:
         """保存异步诊断结果；统计归零后完成的旧任务不会污染新会话。"""
 
         try:
-            pipeline = future.result()
+            pipeline = dict(future.result() or {})
             diagnosis = dict(pipeline.get("diagnosis") or {})
             if not diagnosis:
                 diagnosis = {
                     "status": "failed",
-                    "summary": "诊断编排未返回结果",
+                    "summary": "Agent Service 未返回诊断结果",
                     "diagnosis": "无法生成诊断结果。",
                 }
-        except Exception as error:  # pragma: no cover，Agent 自身已有降级边界。
+        except Exception as error:  # pragma: no cover，Agent Service 自身已有降级边界。
             pipeline = {}
             diagnosis = {
                 "status": "failed",
-                "summary": "诊断智能体执行失败",
+                "summary": "Agent Service 调用失败",
                 "diagnosis": "无法生成诊断结果。",
                 "error": "%s: %s" % (type(error).__name__, error),
             }
-        event = dict(event or pipeline.get("event") or {})
-        plan = dict(pipeline.get("maintenance_plan") or {})
-        try:
-            auto_payload = build_auto_workorder_payload(event, diagnosis, plan)
-            remote_workorder_result = dispatch_auto_workorder(auto_payload)
-            remote_workorder = dict(remote_workorder_result.get("workorder") or remote_workorder_result)
-            if remote_workorder:
-                pipeline["workorder"] = remote_workorder
-                pipeline["workorder_result"] = remote_workorder_result
-                pipeline["pending_workorder_id"] = remote_workorder.get("workorder_id", "")
-        except Exception as error:
-            pipeline["workorder_sync_error"] = "%s: %s" % (type(error).__name__, error)
         with self.lock:
             self.diagnosis_pending = max(0, self.diagnosis_pending - 1)
             if generation != self._diagnosis_generation:
