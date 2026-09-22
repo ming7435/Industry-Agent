@@ -192,7 +192,7 @@ class RAGServiceClient:
         payload = {"path": path, "collection": collection}
         if self.base_url:
             try:
-                return self._post("/ingest", payload)
+                return self._post("/documents/ingest", payload)
             except Exception:
                 if not self.allow_fallback:
                     raise
@@ -204,7 +204,12 @@ class RAGServiceClient:
         payload = {"record": dict(record), "collection": collection}
         if self.base_url:
             try:
-                return self._post("/upsert", payload)
+                normalized = dict(record)
+                normalized.setdefault("document_id", str(normalized.get("experience_id") or normalized.get("id") or ""))
+                normalized.setdefault("content", str(normalized.get("content") or ""))
+                normalized.setdefault("metadata", {key: value for key, value in normalized.items() if key not in {"content", "document_id"}})
+                normalized["collection"] = collection or normalized.get("collection") or "maint_fault_events"
+                return self._post("/documents/upsert", normalized)
             except Exception:
                 if not self.allow_fallback:
                     raise
@@ -215,7 +220,7 @@ class RAGServiceClient:
         payload = {"document_id": str(document_id or "")}
         if self.base_url:
             try:
-                return self._post("/fetch_document", payload)
+                return self._get("/documents/%s" % payload["document_id"])
             except Exception:
                 if not self.allow_fallback:
                     raise
@@ -225,7 +230,7 @@ class RAGServiceClient:
         payload = {"document_id": str(document_id or ""), "chunk_id": str(chunk_id or "")}
         if self.base_url:
             try:
-                return self._post("/fetch_chunk", payload)
+                return self._get("/documents/%s/chunks/%s" % (payload["document_id"], payload["chunk_id"]))
             except Exception:
                 if not self.allow_fallback:
                     raise

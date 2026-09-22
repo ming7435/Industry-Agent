@@ -21,6 +21,7 @@ build/
 
 # Local data / indexes
 services/rag-service/data/index/
+services/rag-service/data/*.sqlite3
 *.log
 
 # Editors / OS

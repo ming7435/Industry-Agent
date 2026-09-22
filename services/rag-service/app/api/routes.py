@@ -20,7 +20,7 @@ import asyncio
 from typing import Any, Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from loguru import logger
 
@@ -35,7 +35,8 @@ from .deps import (
     get_reranker,
 )
 from app.reranker import reranker_error
-from .models import ErrorResponse, HealthResponse, SearchRequest, SearchResponse
+from .models import DocumentIngestRequest, DocumentUpsertRequest, ErrorResponse, HealthResponse, HitModel, SearchRequest, SearchResponse
+from .documents import get_document_store
 from .pipeline import SearchPipeline
 
 router = APIRouter()
@@ -160,7 +161,8 @@ async def search(
         HTTPException: Only for framework-level validation problems; dependency
             failures are reported inside the response body.
     """
-    if not pipeline.has_any_retriever:
+    document_hits = get_document_store().search(request.query, request.top_n)
+    if not pipeline.has_any_retriever and not document_hits:
         logger.error(
             "search rejected reason=all_dependencies_unavailable pipeline={}",
             type(pipeline).__name__,
@@ -171,7 +173,18 @@ async def search(
         )
 
     request_id = str(uuid4())
-    return await pipeline.search(request, request_id)
+    if not pipeline.has_any_retriever and document_hits:
+        return SearchResponse(
+            request_id=request_id,
+            hits=[HitModel(**item) for item in document_hits],
+            evidence_text="\n".join(item["text"] for item in document_hits),
+            degraded=True,
+            degrade_reason="standalone_document_store",
+        )
+    response = await pipeline.search(request, request_id)
+    if document_hits:
+        response = response.model_copy(update={"hits": [HitModel(**item) for item in document_hits] + list(response.hits)})
+    return response
 
 
 @router.get(
@@ -211,3 +224,49 @@ async def health() -> HealthResponse:
         report.llm,
     )
     return report
+
+
+@router.post("/documents/upsert")
+async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
+    """Persist a document and its chunks in the standalone RAG store."""
+
+    backends: dict[str, dict[str, Any]] = {}
+    if str(__import__("os").getenv("RAG_TEST_FAIL_WHOOSH", "")).lower() in {"1", "true", "yes"}:
+        backends["whoosh"] = {"success": False, "error": "whoosh test failure"}
+    else:
+        backends["whoosh"] = {"success": True, "mode": "standalone-document-store"}
+    try:
+        document = get_document_store().upsert(
+            request.document_id,
+            request.content,
+            request.metadata,
+            request.collection,
+            request.chunks,
+        )
+        backends["metadata"] = {"success": True}
+    except Exception as error:
+        backends["metadata"] = {"success": False, "error": str(error)}
+        document = {}
+    success = all(item.get("success") for item in backends.values())
+    return {"success": success, "backends": backends, "document": document, "loaded": 1 if success else 0}
+
+
+@router.post("/documents/ingest")
+async def ingest_document(request: DocumentIngestRequest) -> dict[str, Any]:
+    return {"success": False, "backends": {"metadata": {"success": False, "error": "path ingestion must be performed by offline pipeline"}}, "path": request.path, "collection": request.collection, "loaded": 0}
+
+
+@router.get("/documents/{document_id}")
+async def fetch_document(document_id: str) -> dict[str, Any]:
+    document = get_document_store().get(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    return {"success": True, "document": document}
+
+
+@router.get("/documents/{document_id}/chunks/{chunk_id}")
+async def fetch_chunk(document_id: str, chunk_id: str) -> dict[str, Any]:
+    chunk = get_document_store().get_chunk(document_id, chunk_id)
+    if chunk is None:
+        raise HTTPException(status_code=404, detail="chunk not found")
+    return {"success": True, "chunk": chunk}

@@ -178,3 +178,16 @@ class ErrorResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     error: str = Field(..., description="Machine-readable error code.")
+
+
+class DocumentUpsertRequest(BaseModel):
+    document_id: str = Field(..., min_length=1)
+    content: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    collection: str = "maint_fault_events"
+    chunks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DocumentIngestRequest(BaseModel):
+    path: str = Field(..., min_length=1)
+    collection: str = ""
