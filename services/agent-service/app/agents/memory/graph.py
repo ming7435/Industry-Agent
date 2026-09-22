@@ -75,6 +75,19 @@ def extract_experience(state: MemoryGraphState) -> Dict[str, Any]:
 def dedup_experience(state: MemoryGraphState) -> Dict[str, Any]:
     existing = state["agent"].experience_module.long_memory.search(device_id=str((state.get("request") or {}).get("workorder", {}).get("device_id") or ""), limit=100)
     if state["agent"].experience_module.writer.deduplicator.contains(state.get("experience") or {}, existing):
+        experience_id = str((state.get("experience") or {}).get("experience_id") or "")
+        existing_item = next(
+            (
+                item for item in existing
+                if str(item.get("experience_id") or "") == experience_id
+            ),
+            None,
+        )
+        # A memory row may already exist while its remote RAG upsert failed.
+        # Keep the duplicate out of long memory, but send it through the writer
+        # again so the stable experience id can be retried safely.
+        if existing_item is not None and not bool(existing_item.get("rag_saved")):
+            return {"route": "validate_experience"}
         return {"validation_findings": ["相同工单经验已存在"], "route": "final"}
     return {"route": "validate_experience"}
 

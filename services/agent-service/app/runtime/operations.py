@@ -2,17 +2,75 @@
 from __future__ import annotations
 from typing import Any, Dict, Mapping
 from uuid import uuid4
+import os
 from app.workorder.validator import WorkOrderValidator
 from app.a2a.requests import A2ARequests
 from app.closure import ClosureService
 from app.common.serialization import _serialize_agent_result
+from app.runtime.durable_store import DurableJsonStore
+
+
+class _IncompleteLearningStage(RuntimeError):
+    """Carry a failed stage result without committing it as completed."""
+
+    def __init__(self, result: Mapping[str, Any], message: str) -> None:
+        super().__init__(message)
+        self.result = dict(result)
+
 
 class RuntimeOperations:
-    def __init__(self, requests: A2ARequests, closure_service: ClosureService, report_harness: Any | None = None) -> None:
+    def __init__(
+        self,
+        requests: A2ARequests,
+        closure_service: ClosureService,
+        report_harness: Any | None = None,
+        learning_store_path: str | None = None,
+    ) -> None:
         self.requests = requests
         self.closure_service = closure_service
         self.report_harness = report_harness
         self._learning_results: dict[str, Dict[str, Any]] = {}
+        self._learning_stages: dict[tuple[str, str], Dict[str, Any]] = {}
+        from threading import Lock
+        self._learning_lock = Lock()
+        configured_path = str(learning_store_path or os.getenv("LEARNING_RESULT_STORE_PATH", "")).strip()
+        self._learning_store = DurableJsonStore(configured_path) if configured_path else None
+
+    def _cached_learning(self, key: str) -> Dict[str, Any] | None:
+        cached = self._learning_results.get(key)
+        if cached is not None:
+            return dict(cached)
+        if self._learning_store is not None:
+            cached = self._learning_store.get("workorder_learning", key)
+            if cached is not None:
+                self._learning_results[key] = dict(cached)
+                return dict(cached)
+        return None
+
+    def _save_learning(self, key: str, value: Mapping[str, Any]) -> None:
+        payload = dict(value)
+        self._learning_results[key] = payload
+        if self._learning_store is not None:
+            self._learning_store.set("workorder_learning", key, payload)
+
+    def _run_learning_stage(
+        self,
+        namespace: str,
+        key: str,
+        producer: Any,
+    ) -> Dict[str, Any]:
+        """Run one close stage once, including across concurrent processes."""
+
+        if self._learning_store is not None:
+            return self._learning_store.get_or_create(namespace, key, producer)
+        cache_key = (namespace, key)
+        with self._learning_lock:
+            cached = self._learning_stages.get(cache_key)
+            if cached is not None:
+                return dict(cached)
+            value = dict(producer() or {})
+            self._learning_stages[cache_key] = value
+            return value
 
     def inspect_quality(
         self,
@@ -79,10 +137,6 @@ class RuntimeOperations:
             feedback = order.get("repair_feedback") or values.get("repair_feedback") or {}
             if order.get("status") == "closed" and WorkOrderValidator.can_learn(order, feedback):
                 learning_key = "workorder:%s" % str(order.get("workorder_id") or values.get("workorder_id") or "")
-                cached = self._learning_results.get(learning_key)
-                if cached is not None:
-                    result.update(cached)
-                    return result
                 learning_state: dict[str, Any] = {
                     **state,
                     "workorder": order,
@@ -103,11 +157,25 @@ class RuntimeOperations:
                     "source_event_id": str(order.get("event_id") or values.get("event_id") or ""),
                 }
                 try:
-                    memory_result = self.requests.access_memory(
-                        learning_state,
-                        action="learn",
-                        from_agent="workorder",
-                    )
+                    def produce_memory() -> Dict[str, Any]:
+                        memory = self.requests.access_memory(
+                            learning_state,
+                            action="learn",
+                            from_agent="workorder",
+                        )
+                        experience = dict(memory.get("experience") or {})
+                        rag_saved = memory.get("rag_saved")
+                        if rag_saved is None:
+                            rag_saved = experience.get("rag_saved", True)
+                        if not memory.get("success") or not bool(rag_saved):
+                            raise _IncompleteLearningStage(memory, "memory learning or RAG upsert incomplete")
+                        return dict(memory)
+
+                    try:
+                        memory_result = self._run_learning_stage("workorder_memory", learning_key, produce_memory)
+                    except _IncompleteLearningStage as stage_error:
+                        result["memory_result"] = stage_error.result
+                        return result
                     result["memory_result"] = memory_result
                     experience = dict(memory_result.get("experience") or {})
                     rag_saved = memory_result.get("rag_saved")
@@ -119,11 +187,28 @@ class RuntimeOperations:
                             "report_type": "full_case_report",
                             "report": dict(memory_result.get("experience") or {}),
                         }
-                        result["report"] = _serialize_agent_result(self.report_harness.execute_agent(report_state))
-                    self._learning_results[learning_key] = {
-                        "memory_result": result.get("memory_result", {}),
-                        **({"report": result["report"]} if result.get("report") else {}),
-                    }
+                        try:
+                            def produce_report() -> Dict[str, Any]:
+                                report = _serialize_agent_result(self.report_harness.execute_agent(report_state))
+                                if str(report.get("status") or "completed") != "completed" or report.get("persisted") is False:
+                                    raise _IncompleteLearningStage(report, "full case report is incomplete or not persisted")
+                                return report
+
+                            result["report"] = self._run_learning_stage("workorder_report", learning_key, produce_report)
+                        except Exception as report_error:
+                            if isinstance(report_error, _IncompleteLearningStage):
+                                result["report"] = {
+                                    **report_error.result,
+                                    "success": False,
+                                    "stop_reason": "report_generation_failed",
+                                }
+                            else:
+                                result["report"] = {
+                                    "success": False,
+                                    "report_type": "full_case_report",
+                                    "error": str(report_error),
+                                    "stop_reason": "report_generation_failed",
+                                }
                 except Exception as error:
                     result["memory_result"] = {
                         "success": False,

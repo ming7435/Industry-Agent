@@ -86,7 +86,68 @@ class MySQLCADRepository:
                 rows = cursor.fetchall()
         except Exception as error:
             raise CADRepositoryError("CAD metadata query failed: %s" % error) from error
-        return [self._normalize(row) for row in rows]
+        values = [self._normalize(row) for row in rows]
+        relations = self._relations_for_many([value["component_id"] for value in values])
+        for value in values:
+            value["part_relations"] = relations.get(value["component_id"], [])
+        return values
+
+    def _relations_for(self, component_id: str) -> list[dict[str, Any]]:
+        """Load persisted CAD entity relations when the parser populated them."""
+
+        return self._relations_for_many([component_id]).get(str(component_id), [])
+
+    def _relations_for_many(self, component_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Load relations in one query and keep them scoped to the result set."""
+
+        ids = list(dict.fromkeys(str(item) for item in component_ids if str(item)))
+        if not ids:
+            return {}
+        placeholders = ",".join(["%s"] * len(ids))
+        sql = (
+            "SELECT source_entity_id, target_entity_id, relation_type, evidence_text, metadata_json "
+            f"FROM cad_entity_relations WHERE source_entity_id IN ({placeholders}) "
+            f"OR target_entity_id IN ({placeholders})"
+        )
+
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(sql, tuple(ids) + tuple(ids))
+                rows = cursor.fetchall()
+        except Exception as error:
+            # Older engineering databases may not have relation rows yet. The
+            # component query remains usable; only the relation sub-resource is
+            # empty until the offline parser populates it.
+            if "doesn't exist" in str(error).lower() or "unknown table" in str(error).lower():
+                return {}
+            raise CADRepositoryError("CAD relation query failed: %s" % error) from error
+        values: dict[str, list[dict[str, Any]]] = {item: [] for item in ids}
+        for row in rows:
+            metadata = row.get("metadata_json") or {}
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except ValueError:
+                    metadata = {}
+            source = str(row.get("source_entity_id") or "")
+            target = str(row.get("target_entity_id") or "")
+            relation = {
+                "component_id": source or target,
+                "part_no": target,
+                "relation": str(row.get("relation_type") or ""),
+                "assembly_relation": str(row.get("relation_type") or ""),
+                "location": str(row.get("evidence_text") or ""),
+                "source_entity_id": source,
+                "target_entity_id": target,
+                "relation_type": str(row.get("relation_type") or ""),
+                "evidence_text": str(row.get("evidence_text") or ""),
+                "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
+            }
+            if source in values:
+                values[source].append(relation)
+            if target in values and target != source:
+                values[target].append(relation)
+        return values
 
     def count(self) -> int:
         with self.connection.cursor() as cursor:
@@ -115,6 +176,8 @@ class MySQLCADRepository:
             "quantity": int(raw.get("quantity") or 1),
             "material": str(raw.get("material") or ""),
             "device_id": str(row.get("device_id") or ""),
+            "bom_items": list(raw.get("bom_items") or []),
+            "part_relations": list(raw.get("part_relations") or []),
         }
 
 

@@ -175,6 +175,8 @@ class WorkOrderMcpAdapter:
         order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
+        if str(order.get("status") or "") == "closed":
+            return dict(order)
         if str(order.get("status") or "") != "completed":
             raise ValueError("工单必须先完成维修（completed）后才能关闭")
         return self.update_workorder(workorder_id, status="closed", closure_reason=reason)

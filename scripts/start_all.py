@@ -14,11 +14,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _load_env_file(path: Path) -> None:
-    """加载简单的 KEY=VALUE 环境文件，不覆盖已存在的进程环境变量。"""
+def _read_env_file(path: Path) -> dict[str, str]:
+    """读取简单的 KEY=VALUE 文件，不修改当前进程环境。"""
 
+    values: dict[str, str] = {}
     if not path.exists():
-        return
+        return values
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -26,15 +27,40 @@ def _load_env_file(path: Path) -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+        if key:
+            values[key] = value
+    return values
+
+
+def _load_env_file(path: Path) -> None:
+    """兼容旧调用方：将文件值加载到进程环境但不覆盖显式变量。"""
+
+    for key, value in _read_env_file(path).items():
+        if key not in os.environ:
             os.environ[key] = value
+
+
+def _merge_env(
+    explicit: dict[str, str],
+    root: dict[str, str],
+    service: dict[str, str],
+) -> dict[str, str]:
+    """按 process > service .env > root .env 合并配置。"""
+
+    merged = dict(root)
+    merged.update(service)
+    merged.update(explicit)
+    return merged
 
 
 def _default_env() -> dict[str, str]:
     """生成子进程环境，并补齐本地联调默认地址。"""
 
-    _load_env_file(PROJECT_ROOT / ".env")
-    env = dict(os.environ)
+    env = _merge_env(
+        dict(os.environ),
+        _read_env_file(PROJECT_ROOT / ".env"),
+        {},
+    )
     defaults = {
         "RAG_SERVICE_BASE_URL": "http://127.0.0.1:8020",
         "APP_ENV": "development",
@@ -42,6 +68,7 @@ def _default_env() -> dict[str, str]:
         "RAG_ALLOW_LOCAL_FALLBACK": "true",
         "EVENT_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "events.sqlite3"),
         "WORKORDER_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "workorders.sqlite3"),
+        "LEARNING_RESULT_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "learning.sqlite3"),
         "MCP_CAD_URL": "http://127.0.0.1:8011",
         "CAD_SERVICE_BASE_URL": "http://127.0.0.1:8011",
         "AGENT_SERVICE_BASE_URL": "http://127.0.0.1:8010",
@@ -52,6 +79,18 @@ def _default_env() -> dict[str, str]:
     for key, value in defaults.items():
         if not env.get(key):
             env[key] = value
+    return env
+
+
+def _env_for_service(service_root: Path) -> dict[str, str]:
+    """Build one child environment with service-level .env precedence."""
+
+    env = _merge_env(
+        dict(os.environ),
+        _read_env_file(PROJECT_ROOT / ".env"),
+        _read_env_file(service_root / ".env"),
+    )
+    env.update({key: value for key, value in _default_env().items() if key not in env})
     return env
 
 
@@ -82,27 +121,30 @@ def _terminate(processes: list[tuple[str, subprocess.Popen[str]]]) -> None:
 
 
 def main() -> int:
-    env = _default_env()
     python = sys.executable
     services = [
         (
             "rag-service",
             [python, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"],
             PROJECT_ROOT / "services" / "rag-service",
+            PROJECT_ROOT / "services" / "rag-service",
         ),
         (
             "cad-service",
             [python, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8011"],
+            PROJECT_ROOT / "services" / "document-cad-service",
             PROJECT_ROOT / "services" / "document-cad-service",
         ),
         (
             "agent-service",
             [python, "-m", "uvicorn", "app.api.server:app", "--app-dir", "services/agent-service", "--host", "127.0.0.1", "--port", "8010"],
             PROJECT_ROOT,
+            PROJECT_ROOT / "services" / "agent-service",
         ),
         (
             "monitor-web",
             [python, "services/agent-service/monitor_web_server.py"],
+            PROJECT_ROOT,
             PROJECT_ROOT,
         ),
     ]
@@ -120,12 +162,12 @@ def main() -> int:
     print("启动本地演示服务。模拟工厂需已在 http://127.0.0.1:4529 运行。")
     print("监控工作台：http://127.0.0.1:8001，按 Ctrl+C 统一停止。")
     try:
-        for name, command, cwd in services:
+        for name, command, cwd, env_root in services:
             print(f"启动 {name} ...")
             process = subprocess.Popen(
                 command,
                 cwd=cwd,
-                env=env,
+                env=_env_for_service(env_root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

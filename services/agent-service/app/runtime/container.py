@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from app.a2a.client import A2AClient
 from app.a2a.endpoints import A2AEndpoints
 from app.a2a.requests import A2ARequests
@@ -74,5 +76,6 @@ class AgentContainer:
             self.requests,
             self.closure_service,
             report_harness=self.harnesses.get("report"),
+            learning_store_path=os.getenv("LEARNING_RESULT_STORE_PATH", ""),
         )
         self.tracing = NodeTrace(self.trace)

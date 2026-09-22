@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import json
+from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -162,7 +164,7 @@ async def search(
         HTTPException: Only for framework-level validation problems; dependency
             failures are reported inside the response body.
     """
-    document_hits = get_document_store().search(request.query, request.top_n)
+    document_hits = get_document_store().search(request.query, request.top_n, request.filters)
     if not pipeline.has_any_retriever and not document_hits:
         logger.error(
             "search rejected reason=all_dependencies_unavailable pipeline={}",
@@ -184,8 +186,38 @@ async def search(
         )
     response = await pipeline.search(request, request_id)
     if document_hits:
-        response = response.model_copy(update={"hits": [HitModel(**item) for item in document_hits] + list(response.hits)})
+        filtered_pipeline_hits = [
+            hit for hit in response.hits
+            if _hit_matches_filters(hit, request.filters)
+        ]
+        merged_hits: list[HitModel] = []
+        seen_ids: set[str] = set()
+        for hit in [*(HitModel(**item) for item in document_hits), *filtered_pipeline_hits]:
+            key = str(hit.chunk_id or "")
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+            merged_hits.append(hit)
+        response = response.model_copy(update={"hits": merged_hits[: request.top_n]})
     return response
+
+
+def _hit_matches_filters(hit: HitModel, filters: dict[str, Any]) -> bool:
+    metadata = dict(hit.metadata or {})
+    for key, expected in (filters or {}).items():
+        if expected in (None, "", [], {}):
+            continue
+        actual = metadata.get(key)
+        if key in {"collection", "corpus"}:
+            actual = metadata.get("collection") if key == "collection" else metadata.get("corpus") or metadata.get("knowledge_type") or metadata.get("collection")
+            if key == "corpus":
+                actual = {"alarm": "alarms", "case": "cases", "manual": "manuals", "sop": "sop", "bom": "bom"}.get(str(actual).lower(), actual)
+        if isinstance(expected, (list, tuple, set)):
+            if str(actual or "").casefold() not in {str(item).casefold() for item in expected}:
+                return False
+        elif str(expected).casefold() != str(actual or "").casefold():
+            return False
+    return True
 
 
 @router.get(
@@ -292,7 +324,36 @@ async def legacy_upsert(payload: dict[str, Any] = Body(default_factory=dict)) ->
 
 @router.post("/documents/ingest")
 async def ingest_document(request: DocumentIngestRequest) -> dict[str, Any]:
-    return {"success": False, "backends": {"metadata": {"success": False, "error": "path ingestion must be performed by offline pipeline"}}, "path": request.path, "collection": request.collection, "loaded": 0}
+    path = Path(request.path).expanduser()
+    if not path.is_file():
+        return {"success": False, "backends": {"metadata": {"success": False, "error": "file not found"}}, "path": str(path), "collection": request.collection, "loaded": 0}
+    loaded = 0
+    errors: list[str] = []
+    store = get_document_store()
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            record = json.loads(raw_line)
+            if not isinstance(record, dict):
+                raise ValueError("record must be an object")
+            document_id = str(record.get("document_id") or record.get("experience_id") or record.get("id") or "")
+            content = str(record.get("content") or record.get("text") or "")
+            metadata = dict(record.get("metadata") or {})
+            metadata.update({key: value for key, value in record.items() if key not in {"document_id", "experience_id", "id", "content", "text", "metadata", "chunks"}})
+            store.upsert(document_id, content, metadata, request.collection or str(record.get("collection") or ""), record.get("chunks"))
+            loaded += 1
+        except Exception as error:
+            errors.append("line %d: %s" % (line_number, error))
+    success = loaded > 0 and not errors
+    return {
+        "success": success,
+        "backends": {"metadata": {"success": success, "loaded": loaded, **({"errors": errors} if errors else {})}},
+        "path": str(path),
+        "collection": request.collection,
+        "loaded": loaded,
+        "errors": errors,
+    }
 
 
 @router.get("/documents/{document_id}")

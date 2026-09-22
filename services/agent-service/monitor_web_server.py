@@ -24,6 +24,11 @@ AGENT_SERVICE_BASE_URL = os.getenv("AGENT_SERVICE_BASE_URL", "http://127.0.0.1:8
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
+# Backward-compatible symbol export for integrations that imported the old
+# module-level registry type.  Monitor never instantiates it; all execution
+# remains behind the Agent Service HTTP boundary.
+from app.tools.registry import ToolRegistry  # noqa: E402,F401
+
 
 def dispatch_agent_event(event: Dict[str, Any]) -> Dict[str, Any]:
     """把原始异常事件交给唯一的 Agent Service Runtime。"""

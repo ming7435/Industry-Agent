@@ -90,8 +90,9 @@ class DocumentStore:
             return None
         return next((dict(chunk, document_id=str(document_id)) for chunk in document["chunks"] if chunk["chunk_id"] == str(chunk_id)), None)
 
-    def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+    def search(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
         terms = [part.lower() for part in str(query or "").split() if part]
+        selected_filters = {str(key): value for key, value in (filters or {}).items() if value not in (None, "", [], {})}
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT d.document_id, d.content, d.collection, d.metadata_json, "
@@ -104,7 +105,10 @@ class DocumentStore:
             text = str(row["text"] if row["text"] is not None else row["content"] or "")
             document_metadata = json.loads(row["metadata_json"] or "{}")
             chunk_metadata = json.loads(row["chunk_metadata"] or "{}") if row["chunk_metadata"] else {}
-            haystack = (text + " " + json.dumps({**document_metadata, **chunk_metadata}, ensure_ascii=False)).lower()
+            metadata = {**document_metadata, **chunk_metadata, "collection": row["collection"], "document_id": row["document_id"]}
+            if not all(_filter_matches(key, expected, metadata, str(row["collection"] or "")) for key, expected in selected_filters.items()):
+                continue
+            haystack = (text + " " + json.dumps(metadata, ensure_ascii=False)).lower()
             score = sum(1 for term in terms if term in haystack) if terms else 0
             if terms and score == 0:
                 continue
@@ -113,10 +117,25 @@ class DocumentStore:
                 "text": text,
                 "score": float(score or 0.1),
                 "source": "standalone-document-store",
-                "metadata": {**document_metadata, **chunk_metadata, "collection": row["collection"], "document_id": row["document_id"]},
+                "metadata": metadata,
             })
         hits.sort(key=lambda item: (float(item.get("score") or 0), str(item.get("chunk_id") or "")), reverse=True)
         return hits[: max(1, int(limit))]
+
+
+def _filter_matches(key: str, expected: Any, metadata: Mapping[str, Any], collection: str) -> bool:
+    """Apply exact metadata filters while normalizing corpus aliases."""
+
+    actual = metadata.get(key, "")
+    if key == "collection":
+        actual = collection
+    elif key == "corpus":
+        actual = metadata.get("corpus") or metadata.get("knowledge_type") or collection
+        aliases = {"alarm": "alarms", "case": "cases", "manual": "manuals", "sop": "sop", "bom": "bom"}
+        actual = aliases.get(str(actual).lower(), actual)
+    if isinstance(expected, (list, tuple, set)):
+        return str(actual).casefold() in {str(item).casefold() for item in expected}
+    return str(actual).casefold() == str(expected).casefold()
 
 
 _document_store = DocumentStore()

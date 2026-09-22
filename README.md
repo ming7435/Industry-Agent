@@ -92,7 +92,7 @@ RAG Service 和一键启动脚本统一使用 8020；如果单独启动服务，
 
 复制 .env.example 为根目录 .env。密钥只放在本地 .env，不要提交到 Git。
 
-配置优先级为：进程环境变量 > 根目录 `.env` > 服务默认值。`APP_ENV=production` 时默认禁止本地 RAG、Memory 和其他存储回退；只有显式设置 `ALLOW_DEGRADED_STORAGE=true` 或 `RAG_ALLOW_LOCAL_FALLBACK=true` 才会启用降级。
+配置优先级为：进程环境变量 > 服务 `.env` > 根目录 `.env` > 代码默认值。`APP_ENV=production` 时默认禁止本地 RAG、Memory 和其他存储回退；只有显式设置 `ALLOW_DEGRADED_STORAGE=true` 或 `RAG_ALLOW_LOCAL_FALLBACK=true` 才会启用降级。`LEARNING_RESULT_STORE_PATH` 保存关闭工单后的 Memory/RAG/Report 结果，避免服务重启后重复学习。
 
 ### 根目录 Agent/监控配置
 

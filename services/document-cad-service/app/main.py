@@ -56,13 +56,14 @@ def query_drawing(query: str = "", component: str = "", part_no: str = "", **_: 
 
 def query_relation(query: str = "", component: str = "", component_id: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
     matched = _match(component_id or query or component or part_no)
-    relations = [_relation(item) for item in matched]
+    relations = [relation for item in matched for relation in (item.get("part_relations") or [_relation(item)])]
     return {"query": query or component_id or component or part_no, "relations": relations, "assembly_relations": relations, "locations": [_location(item) for item in matched], "source": "document-cad-service"}
 
 
 def fetch_engineering_record(query: str = "", component: str = "", part_no: str = "", **arguments: Any) -> Dict[str, Any]:
     matched = _match(query or component or part_no)
-    return {"query": query or component or part_no, "device_id": arguments.get("device_id", ""), "components": matched, "drawings": [_drawing(item) for item in matched], "bom_items": [_bom(item) for item in matched], "assembly_relations": [_relation(item) for item in matched], "locations": [_location(item) for item in matched], "source": "document-cad-service"}
+    relations = [relation for item in matched for relation in (item.get("part_relations") or [_relation(item)])]
+    return {"query": query or component or part_no, "device_id": arguments.get("device_id", ""), "components": matched, "drawings": [_drawing(item) for item in matched], "bom_items": [_bom(item) for item in matched], "assembly_relations": relations, "part_relations": relations, "locations": [_location(item) for item in matched], "source": "document-cad-service"}
 
 
 def _match(query: str) -> list[Dict[str, Any]]:
@@ -73,6 +74,8 @@ def _match(query: str) -> list[Dict[str, Any]]:
 
 
 def _bom(item: Mapping[str, Any]) -> Dict[str, Any]:
+    if item.get("bom_items"):
+        return {"component_id": item["component_id"], "part_no": item["part_no"], "name": item["name"], "quantity": item["quantity"], "material": item["material"], "drawing_ref": item["drawing_ref"], "items": list(item["bom_items"])}
     return {"component_id": item["component_id"], "part_no": item["part_no"], "name": item["name"], "quantity": item["quantity"], "material": item["material"], "drawing_ref": item["drawing_ref"]}
 
 
