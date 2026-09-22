@@ -204,8 +204,4 @@ class OrchestratorNodes:
         result = self.container.harnesses["report"].execute_agent(state)
         report = _serialize_agent_result(result)
         payload = {"report": report}
-        if state.get("entry") == "trigger":
-            memory_result = self.requests.access_memory({**state, "report": report}, action="learn")
-            payload["experience"] = memory_result.get("experience", {})
-            payload["memory"] = memory_result
         return self.tracing.finish("report", state, payload)

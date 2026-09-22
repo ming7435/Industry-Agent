@@ -41,8 +41,8 @@ class AgentOrchestrator:
         graph.add_conditional_edges("cad", self._after_cad, {"maintenance": "maintenance", "report": "report"})
         graph.add_conditional_edges("maintenance", self._after_maintenance, {"workorder": "workorder", "report": "report"})
         graph.add_edge("quality", "report")
-        # 自动异常主链路在派单后继续生成维修/事件报告，供报告中心查看。
-        graph.add_edge("workorder", "report")
+        # 自动异常主链路在派单后进入等待维修，关闭工单时再由运行时触发学习和报告。
+        graph.add_edge("workorder", END)
         graph.add_edge("workorder_action", END)
         graph.add_edge("workorder_query", END)
         graph.add_edge("report", END)
@@ -78,7 +78,10 @@ class AgentOrchestrator:
             **payload,
         }
         result = dict(self.graph.invoke(state))
-        result["trace"] = self.container.trace.list()
+        result["trace"] = self.container.trace.list(
+            trace_id=state["trace_id"],
+            task_id=state["task_id"],
+        )
         return result
 
 

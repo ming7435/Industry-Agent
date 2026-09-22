@@ -17,7 +17,7 @@ class NodeTrace:
         self._node_snapshots[key] = dict(state)
         self.trace.record(
             type="node", name=name, node=name, agent=self._node_agent(name),
-            event="node_started", task_id=task_id, state_change={},
+            event="node_started", task_id=task_id, trace_id=str(state.get("trace_id", "")), state_change={},
             tool_name="", latency=0.0, error="",
         )
 
@@ -29,7 +29,7 @@ class NodeTrace:
         changed = [field for field in set(before) | set(payload) if before.get(field) != payload.get(field)]
         self.trace.record(
             type="node", name=name, node=name, agent=self._node_agent(name),
-            event="node_completed", task_id=task_id, keys=list(payload),
+            event="node_completed", task_id=task_id, trace_id=str(state.get("trace_id", "")), keys=list(payload),
             state_change={"changed_keys": sorted(changed), "output_keys": list(payload)},
             tool_name="", latency=perf_counter() - started,
             error="; ".join(str(item) for item in payload.get("errors", []) if item),
