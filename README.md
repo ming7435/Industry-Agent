@@ -79,7 +79,7 @@ tests/                          根目录测试
 
 | 服务 | 当前本地地址 | 启动入口 | 说明 |
 | --- | --- | --- | --- |
-| 模拟工厂 | http://127.0.0.1:8000 | 外部模拟工厂服务 | 提供设备、状态、历史和日志 |
+| 模拟工厂 | http://127.0.0.1:4529 | 外部模拟工厂服务 | 提供设备、状态、历史和日志 |
 | 监控工作台 | http://127.0.0.1:8001 | services/agent-service/monitor_web_server.py | 采集设备并提供页面/API |
 | RAG Service | http://127.0.0.1:8020 | services/rag-service/app/main.py | 当前根目录 .env 配置的 RAG 地址 |
 | CAD Service | http://127.0.0.1:8011 | services/document-cad-service/app/main.py | 图纸、BOM、部件和关系查询 |
@@ -95,7 +95,7 @@ RAG Service 默认代码端口是 8000；如果要使用根目录当前配置的
 ### 根目录 Agent/监控配置
 
 ~~~dotenv
-FACTORY_API_BASE_URL=http://127.0.0.1:8000
+FACTORY_API_BASE_URL=http://127.0.0.1:4529
 FACTORY_DEVICE_IDS=
 FACTORY_DEVICE_ID=TRAK-TC820LTYSI-001
 MONITOR_INTERVAL_SECONDS=0.5

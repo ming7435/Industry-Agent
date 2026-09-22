@@ -208,6 +208,110 @@ h2 {
 
 .subline { margin-top: 10px; }
 
+.agent-flow {
+  max-width: min(100%, 980px);
+  margin-top: 14px;
+  overflow: hidden;
+}
+
+.agent-flow-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agent-flow-heading em {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--teal-soft);
+  color: var(--teal);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.agent-flow-track {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  margin-top: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.agent-flow-node {
+  display: grid;
+  grid-template-columns: 7px auto;
+  grid-template-rows: auto auto;
+  column-gap: 6px;
+  min-width: 74px;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fbfcfc;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.agent-flow-dot {
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #aebbc0;
+}
+
+.agent-flow-name {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.agent-flow-node small {
+  margin-top: 2px;
+  font-size: 9px;
+  line-height: 1.2;
+}
+
+.agent-flow-node.completed {
+  border-color: #a6d8d0;
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+
+.agent-flow-node.completed .agent-flow-dot { background: var(--teal); }
+
+.agent-flow-node.running {
+  border-color: #9fc3e4;
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.agent-flow-node.running .agent-flow-dot {
+  background: var(--blue);
+  box-shadow: 0 0 0 3px rgba(35, 90, 143, .14);
+}
+
+.agent-flow-node.error {
+  border-color: #efb9b5;
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.agent-flow-node.error .agent-flow-dot { background: var(--red); }
+
+.agent-flow-arrow {
+  align-self: center;
+  color: #a1afb4;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -1259,6 +1363,56 @@ h2 {
   background: #fffaf0;
 }
 
+.technician-callout {
+  margin-top: 15px;
+  padding: 15px;
+  border-left: 4px solid var(--teal);
+  background: var(--teal-soft);
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.7;
+}
+
+.technician-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.technician-section h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.technician-section ul,
+.technician-section ol {
+  margin: 9px 0 0;
+  padding-left: 22px;
+  color: var(--ink);
+  line-height: 1.75;
+}
+
+.technician-section li + li { margin-top: 5px; }
+
+.technician-section.safety {
+  border-left: 3px solid var(--amber);
+  padding-left: 13px;
+  background: #fffaf0;
+}
+
+.technician-warning {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--amber);
+  background: #fffaf0;
+  color: #76551c;
+  line-height: 1.7;
+}
+
+.technician-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
 .evidence-details {
   margin-top: 16px;
   border-top: 1px solid var(--line);
@@ -1485,11 +1639,11 @@ h2 {
 
 .workorder-detail-page {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
   gap: 12px;
   min-height: calc(100vh - 132px);
   padding: 14px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .workorder-empty-shell {
@@ -1660,6 +1814,34 @@ h2 {
   overflow: hidden;
 }
 
+.sheet-heading p.sheet-subtitle {
+  margin-top: 6px;
+  color: #6b7c84;
+  line-height: 1.5;
+}
+
+.sheet-status,
+.step-count {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #fff2e2;
+  color: #a35d0c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sheet-status.done {
+  background: #e8f7f2;
+  color: #147254;
+}
+
+.step-count {
+  padding: 5px 9px;
+  background: #f0f4f5;
+  color: #52656f;
+}
+
 .basic-grid,
 .sheet-section-grid {
   display: grid;
@@ -1822,6 +2004,13 @@ h2 {
   background: #fff;
   color: #10242c;
   resize: none;
+}
+
+.feedback-card label {
+  display: block;
+  margin-top: 9px;
+  color: #7d8d94;
+  font-size: 12px;
 }
 
 .sheet-actions {

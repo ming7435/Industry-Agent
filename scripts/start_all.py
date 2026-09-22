@@ -42,7 +42,7 @@ def _default_env() -> dict[str, str]:
         "AGENT_SERVICE_BASE_URL": "http://127.0.0.1:8010",
         "MONITOR_WEB_HOST": "127.0.0.1",
         "MONITOR_WEB_PORT": "8001",
-        "FACTORY_API_BASE_URL": "http://127.0.0.1:8000",
+        "FACTORY_API_BASE_URL": "http://127.0.0.1:4529",
     }
     for key, value in defaults.items():
         if not env.get(key):
@@ -112,7 +112,7 @@ def main() -> int:
 
     signal.signal(signal.SIGINT, handle_sigint)
 
-    print("启动本地演示服务。模拟工厂需已在 http://127.0.0.1:8000 运行。")
+    print("启动本地演示服务。模拟工厂需已在 http://127.0.0.1:4529 运行。")
     print("监控工作台：http://127.0.0.1:8001，按 Ctrl+C 统一停止。")
     try:
         for name, command, cwd in services:

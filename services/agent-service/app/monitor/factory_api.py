@@ -22,7 +22,7 @@ class FactoryApiError(RuntimeError):
 class FactoryApiClient:
     """从设备数据接口读取设备快照。"""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8000", timeout: float = 5.0):
+    def __init__(self, base_url: str = "http://127.0.0.1:4529", timeout: float = 5.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 

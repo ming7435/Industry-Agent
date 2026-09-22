@@ -38,7 +38,7 @@ def get_device_status(
 
     api_base = (
         base_url
-        or os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:8000")
+        or os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:4529")
     ).rstrip("/")
     query = urlencode({"device_id": normalized_device_id})
     request = Request(

@@ -55,7 +55,7 @@ def get_device_history(
         normalized = METRIC_ALIASES.get(key.lower(), METRIC_ALIASES.get(key, key))
         if normalized not in requested:
             requested.append(normalized)
-    api_base = (base_url or os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:8000")).rstrip("/")
+    api_base = (base_url or os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:4529")).rstrip("/")
     query = urlencode({"limit": limit})
     request = Request(
         "%s/api/devices/%s/metrics?%s" % (api_base, quote(device_id, safe=""), query),

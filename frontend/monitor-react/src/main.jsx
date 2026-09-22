@@ -4,6 +4,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import "./styles.css";
 import machineImage from "./assets/trak-tc820-machine-transparent.png";
+import { buildTechnicianSummary } from "./technicianSummary.mjs";
+import { buildWorkorderSheet } from "./workorderSheet.mjs";
+import { buildAgentFlow } from "./agentFlow.mjs";
 
 const navItems = [
   { id: "monitor", label: "监控中心", icon: "⌁", badge: "实时" },
@@ -183,7 +186,8 @@ const workorderStatusLabels = {
 const repairTargetCatalog = {
   "700001": {
     component: "LUBRICATION-PUMP",
-    part_no: "LP-TC820-001",
+    part_no: "TN420050-B",
+    cad_part_numbers: ["TN420050-B", "TN420390-A", "TN420470", "TR260061", "TR443560"],
     part_name: "润滑泵",
     system: "自动润滑系统",
     location: "机床后侧润滑单元",
@@ -192,6 +196,19 @@ const repairTargetCatalog = {
     symptom: "润滑压力未达到设定值",
     check: "检查油位、泵出口压力、过滤器和压力开关",
     marker: { left: "20%", top: "68%" },
+  },
+  "700002": {
+    component: "MCP-PENDANT",
+    part_no: "34431-1",
+    cad_part_numbers: ["34410-1_FIXED", "34431-1", "34431-2", "34431-3", "34431-4", "34431-5", "34432-1", "34432-2", "34432-3", "34432-4", "34432-5"],
+    part_name: "机床控制面板",
+    system: "机床操作系统",
+    location: "机床前侧悬臂操作箱区域",
+    description: "用于操作机床运行、进给和手轮控制。Feed hold 报警时，应检查控制面板、进给启动按钮和手轮输入。",
+    relation: "连接 CNC 控制器、进给启动按钮、手轮和操作面板输入",
+    symptom: "机床处于 Feed hold，轴运动被暂停",
+    check: "检查进给启动按钮、悬臂面板、手轮和控制信号反馈",
+    marker: { left: "68%", top: "28%" },
   },
   "700010": {
     component: "HYDRAULIC-UNIT",
@@ -219,7 +236,8 @@ const repairTargetCatalog = {
   },
   "700029": {
     component: "LUBRICATION-PUMP",
-    part_no: "LP-TC820-001",
+    part_no: "TN420050-B",
+    cad_part_numbers: ["TN420050-B", "TN420390-A", "TN420470", "TR260061", "TR443560"],
     part_name: "润滑泵",
     system: "自动润滑系统",
     location: "机床后侧润滑单元",
@@ -750,6 +768,7 @@ function Topbar({ snapshot, runner, onControl, onReset, bigScreen, onToggleBigSc
         <span className="eyebrow">工业运营中台</span>
         <h1>智能制造统一工作台</h1>
         <p className="subline">{deviceLabel}</p>
+        <AgentFlow snapshot={snapshot} />
       </div>
       <div className="toolbar">
         <label className="switch-control" title="开启或暂停自动监测">
@@ -825,10 +844,6 @@ function MonitorCenter({
           </section>
           <TrendPanel machine={selectedMachine} history={metricHistory[selectedMachine.id] || []} />
           <AlarmTimeline snapshot={snapshot} machines={machines} />
-          <section className="lower-grid">
-            <TriggerPanel snapshot={snapshot} />
-            <DiagnosisPanel snapshot={snapshot} />
-          </section>
         </>
       ) : (
         <section className="panel machine-empty-panel">
@@ -2447,60 +2462,103 @@ function PipelineData({ snapshot }) {
 function DiagnosisWorkspace({ snapshot }) {
   const latest = snapshot?.diagnosis?.latest || {};
   const pipeline = PipelineData({ snapshot });
-  const knowledge = pipeline.knowledge || {};
-  const evidence = latest.tool_calls || [];
-  const diagnosis = diagnosisParagraphs(latest.diagnosis);
-  const recommendation = diagnosisParagraphs(latest.recommendation);
+  const plan = pipeline.maintenance_plan || {};
+  const sample = snapshot?.latest_result?.current_sample || {};
+  const summary = buildTechnicianSummary({ latest, plan, sample });
   return (
     <section className="workspace-view active module-board" aria-label="智能诊断中心">
-      <ModuleHero eyebrow="Diagnosis Agent" title="智能诊断中心" text="查看异常事件、诊断结论、报警定义、历史证据和知识检索结果。" />
+      <ModuleHero eyebrow="维修人员视图" title="智能诊断中心" text="把设备报警转换成现场能直接执行的判断、检查和安全要求。" />
       <div className="module-grid">
-        <ModuleStat label="诊断状态" value={labelFor(diagnosisStatusLabels, latest.status)} text={latest.diagnosis_run_id || "等待异常任务"} />
-        <ModuleStat label="置信度" value={latest.confidence == null ? "--" : `${(Number(latest.confidence) * 100).toFixed(0)}%`} text={latest.event_id || "暂无异常事件"} />
-        <ModuleStat label="知识证据" value={(knowledge.documents || []).length} text={knowledge.source || "A2A / RAG"} />
+        <ModuleStat label="故障现象" value={summary.symptom} text={latest.device_id || "等待设备报警"} />
+        <ModuleStat label="故障部件" value={summary.target} text={summary.judgment} />
+        <ModuleStat label="诊断可信度" value={confidenceText(latest.confidence)} text={summary.uncertainty ? "需要现场进一步确认" : "可作为维修前检查依据"} />
       </div>
       <div className="ops-grid">
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">最终诊断</span><h2>维修人员诊断结论</h2></div><span className={`severity-pill ${latest.status === "failed" ? "fault" : "normal"}`}>{labelFor(diagnosisStatusLabels, latest.status)}</span></div>
-          <div className="diagnosis-summary">{compactDiagnosisSummary(latest)}</div>
-          <div className="detail-grid">
-            <DetailCell label="设备" value={latest.device_id} />
-            <DetailCell label="报警信息" value={latest.alarm_label || latest.alarm_definition?.name || latest.alarm_code || latest.alarm_definition?.alarm_code} />
-            <DetailCell label="报警级别" value={alarmLevelText(latest)} />
-            <DetailCell label="置信度" value={confidenceText(latest.confidence)} />
-          </div>
-          <div className="diagnosis-detail"><span>诊断说明</span>{diagnosis.length ? diagnosis.map((item, index) => <p key={`${item}-${index}`}>{item}</p>) : <p>暂无诊断说明</p>}</div>
-          {recommendation.length > 0 && <div className="diagnosis-detail recommendation"><span>下一步建议</span>{recommendation.map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</div>}
-          {latest.summary && <details className="raw-diagnosis-details"><summary>查看完整事件描述</summary><p>{readableDiagnosisText(latest.summary)}</p></details>}
+          <div className="panel-heading"><div><span className="eyebrow">现场判断</span><h2>维修人员先看这里</h2></div><span className={`severity-pill ${summary.uncertainty ? "warning" : "normal"}`}>{summary.uncertainty ? "待现场确认" : "可执行"}</span></div>
+          <div className="technician-callout">{summary.judgment}</div>
+          <TechnicianSection title="优先检查" items={summary.checks} />
+          <TechnicianSection title="安全要求" items={summary.safety} tone="safety" />
         </section>
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">诊断依据</span><h2>已完成的取证</h2></div><span className="muted">{evidence.length} 项工具</span></div>
-          <TraceList items={evidence.slice(0, 6).map((item) => ({ event: displayToolName(item), summary: displayToolSummary(item), agent: "Diagnosis Agent", tool: item.name }))} />
-          <details className="evidence-details">
-            <summary>查看知识库证据（{(knowledge.documents || []).length} 条）</summary>
-            <DocumentList documents={knowledge.documents || []} compact limit={4} />
-          </details>
+          <div className="panel-heading"><div><span className="eyebrow">维修提示</span><h2>现场确认重点</h2></div></div>
+          <div className="detail-grid technician-detail-grid">
+            <DetailCell label="设备" value={latest.device_id} />
+            <DetailCell label="报警" value={summary.symptom} />
+            <DetailCell label="报警级别" value={alarmLevelText(latest)} />
+            <DetailCell label="故障部件" value={summary.target} />
+          </div>
+          {summary.uncertainty && <div className="technician-warning">{summary.uncertainty}。请先完成“优先检查”，再决定更换部件。</div>}
+          <TechnicianSection title="诊断说明" items={[summary.judgment]} />
         </section>
       </div>
     </section>
   );
 }
 
+const agentStatusLabels = {
+  completed: "已完成",
+  running: "运行中",
+  waiting: "等待",
+  error: "异常",
+};
+
+function AgentFlow({ snapshot }) {
+  const agents = buildAgentFlow(snapshot);
+  const completedCount = agents.filter((agent) => agent.status === "completed").length;
+  return (
+    <div className="agent-flow" aria-label="九个核心 Agent 运行流程">
+      <div className="agent-flow-heading">
+        <span>Agent运行流程</span>
+        <em>{completedCount}/9 已完成</em>
+      </div>
+      <div className="agent-flow-track">
+        {agents.map((agent, index) => (
+          <React.Fragment key={agent.id}>
+            <div className={`agent-flow-node ${agent.status}`} title={`${agent.label}：${agent.id === "quality" && agent.status === "waiting" ? "未触发" : agentStatusLabels[agent.status]}`}>
+              <span className="agent-flow-dot" aria-hidden="true" />
+              <span className="agent-flow-name">{agent.label}</span>
+              <small>{agent.id === "quality" && agent.status === "waiting" ? "未触发" : agentStatusLabels[agent.status]}</small>
+            </div>
+            {index < agents.length - 1 && <span className="agent-flow-arrow" aria-hidden="true">›</span>}
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MaintenanceWorkspace({ snapshot }) {
   const pipeline = PipelineData({ snapshot });
   const plan = pipeline.maintenance_plan || {};
-  const diagnosis = plan.diagnosis || pipeline.diagnosis || {};
+  const latest = snapshot?.diagnosis?.latest || {};
+  const sample = snapshot?.latest_result?.current_sample || {};
+  const summary = buildTechnicianSummary({ latest, plan, sample });
   return (
     <section className="workspace-view active module-board" aria-label="维修决策中心">
-      <ModuleHero eyebrow="Maintenance Agent" title="维修决策中心" text="将诊断结果、RAG知识和CAD/BOM部件信息汇总为可执行维修方案。" />
+      <ModuleHero eyebrow="维修人员视图" title="维修决策中心" text="按故障部件给出可执行的检查、维修、恢复和安全要求。" />
       <div className="module-grid">
-        <ModuleStat label="方案编号" value={plan.plan_id || "--"} text={diagnosis.fault || diagnosis.summary || "等待诊断"} />
-        <ModuleStat label="预计用时" value={plan.estimated_time || "--"} text="Maintenance Agent 估算" />
-        <ModuleStat label="关联部件" value={(plan.cad_components || []).length} text="来自 CAD / BOM 查询" />
+        <ModuleStat label="故障部件" value={summary.target} text={summary.symptom} />
+        <ModuleStat label="预计用时" value={summary.estimatedTime || "现场评估"} text="以现场检查结果为准" />
+        <ModuleStat label="需要备件" value={summary.parts.length || "暂未确定"} text={summary.uncertainty || "按检查结果决定是否更换"} />
       </div>
       <div className="ops-grid">
-        <section className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">维修步骤</span><h2>执行清单</h2></div></div><StepList steps={plan.repair_steps || []} /></section>
-        <section className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">安全与资源</span><h2>工器具、备件和安全要求</h2></div></div><div className="detail-grid"><DetailCell label="工器具" value={(plan.tools || []).join("、")} /><DetailCell label="备件" value={(plan.parts || []).join("、")} /><DetailCell label="安全要求" value={(plan.safety || []).join("；")} /><DetailCell label="知识来源" value={(plan.source_documents || []).join("、")} /></div></section>
+        <section className="panel module-panel">
+          <div className="panel-heading"><div><span className="eyebrow">维修执行</span><h2>按顺序处理</h2></div></div>
+          <TechnicianSection title="故障判断" items={[summary.judgment]} />
+          <TechnicianSection title="优先检查" items={summary.checks} />
+          <TechnicianSection title="维修步骤" items={summary.steps} ordered />
+          <TechnicianSection title="恢复标准" items={summary.recovery} />
+        </section>
+        <section className="panel module-panel">
+          <div className="panel-heading"><div><span className="eyebrow">安全与资源</span><h2>开工前确认</h2></div></div>
+          <TechnicianSection title="安全要求" items={summary.safety} tone="safety" />
+          <div className="detail-grid technician-detail-grid">
+            <DetailCell label="工器具" value={summary.tools.join("、")} />
+            <DetailCell label="备件" value={summary.parts.join("、")} />
+          </div>
+          {summary.uncertainty && <div className="technician-warning">{summary.uncertainty}。禁止仅凭系统建议直接更换部件。</div>}
+        </section>
       </div>
     </section>
   );
@@ -2539,11 +2597,15 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   const [busy, setBusy] = useState(false);
   const autoSyncingRef = useRef(false);
   const latestDiagnosis = snapshot?.diagnosis?.latest || {};
+  const maintenancePlan = snapshot?.diagnosis?.pipeline?.maintenance_plan || {};
   const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
   const liveSample = sample
     || snapshot?.latest_result?.current_sample
     || snapshot?.devices?.find((device) => device.device_id === snapshot?.device_id)?.current_sample
     || {};
+  const currentFaultCode = String(liveSample?.alarm_code || "").trim();
+  const currentFaultStatus = String(liveSample?.status || "").toLowerCase();
+  const currentFaultActive = Boolean(currentFaultCode) && ["alarm", "fault", "warning"].includes(currentFaultStatus);
 
   async function loadOrders() {
     try {
@@ -2563,11 +2625,15 @@ function WorkorderView({ snapshot, sample, onClosed }) {
     let cancelled = false;
     async function syncCurrentFault() {
       const items = await loadOrders();
-      const faultCode = String(liveSample?.alarm_code || latestDiagnosis?.alarm_code || "").trim();
+      const faultCode = String(liveSample?.alarm_code || "").trim();
       const deviceId = liveSample?.device_id || snapshot?.device_id || "";
-      const faultStatus = String(liveSample?.status || latestDiagnosis?.status || "").toLowerCase();
+      const faultStatus = String(liveSample?.status || "").toLowerCase();
       const faultActive = Boolean(faultCode) && ["alarm", "fault", "warning"].includes(faultStatus);
-      if (cancelled || !faultActive || !deviceId || autoSyncingRef.current) return;
+      if (cancelled || autoSyncingRef.current) return;
+      if (!faultActive || !deviceId) {
+        setSelectedId("");
+        return;
+      }
 
       const existing = items.find((item) => (
         String(item.device_id || "") === String(deviceId)
@@ -2592,6 +2658,8 @@ function WorkorderView({ snapshot, sample, onClosed }) {
             alarm_code: faultCode,
             diagnosis_context: latestDiagnosis,
             repair_target: target,
+            source: "monitor",
+            idempotency_key: `monitor:${latestDiagnosis?.event_id || `${deviceId}:${faultCode}`}`,
             drawing_context: {
               model_url: "http://127.0.0.1:8023/",
               mesh_name: target.component,
@@ -2675,53 +2743,32 @@ function WorkorderView({ snapshot, sample, onClosed }) {
 
   return (
     <section className="workspace-view active workorder-page" aria-label="工单系统">
-      <WorkorderDetail order={selectedOrder} sample={sample} busy={busy} onUpdate={updateOrder} />
-      <section className="workorder-admin-strip" aria-label="工单辅助管理">
-        <div className="workorder-admin-card">
-          <div>
-            <span className="eyebrow">诊断转派</span>
-            <h2>生成维修工单</h2>
-            <p>{compactDiagnosisSummary(latestDiagnosis)}</p>
-          </div>
-          <div className="form-row compact-form-row">
-            <label>处理班组<input value={assignee} onChange={(event) => setAssignee(event.target.value)} /></label>
-            <button className="button primary" type="button" disabled={busy} onClick={createOrder}>{busy ? "生成中" : "创建工单"}</button>
-          </div>
-          {error && <div className="inline-error">{error}</div>}
-        </div>
-        <div className="workorder-admin-card">
-          <div className="admin-card-head">
-            <div><span className="eyebrow">任务队列</span><h2>{orders.length} 张工单</h2></div>
-            <button className="button ghost-button" type="button" onClick={loadOrders}>刷新</button>
-          </div>
-          <div className="order-list compact-order-list">
-            {!orders.length && <div className="empty-state">暂无工单，点击创建工单生成第一条任务</div>}
-            {orders.map((order) => (
-              <button key={order.workorder_id} type="button" className={`order-row ${order.workorder_id === selectedOrder?.workorder_id ? "active" : ""}`} onClick={() => setSelectedId(order.workorder_id)}>
-                <span><strong>{order.title}</strong><em>{order.workorder_id} · {order.device_id}</em></span>
-                <b>{labelFor(workorderStatusLabels, order.status)}</b>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
+      <WorkorderDetail
+        order={currentFaultActive ? selectedOrder : null}
+        sample={sample}
+        diagnosis={latestDiagnosis}
+        plan={maintenancePlan}
+        busy={busy}
+        error={error}
+        onUpdate={updateOrder}
+      />
     </section>
   );
 }
 
-function WorkorderDetail({ order, sample, busy, onUpdate }) {
-  const [repairFeedback, setRepairFeedback] = useState("");
+function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error, onUpdate }) {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [order?.workorder_id]);
   if (!order) {
     return (
       <section className="workorder-empty-shell">
-        <div className="empty-state">暂无工单详情，等待虚拟工厂触发故障或手动创建维修工单。</div>
+        <div className="empty-state">暂无工单详情，等待虚拟工厂触发故障后自动派发维修工单。{error && <div className="inline-error">{error}</div>}</div>
       </section>
     );
   }
   const target = resolveRepairTarget(order, sample);
+  const sheet = buildWorkorderSheet({ order, target, plan, diagnosis });
   const statusLabel = labelFor(workorderStatusLabels, order.status);
   return (
     <section className="workorder-detail-page">
@@ -2736,6 +2783,73 @@ function WorkorderDetail({ order, sample, busy, onUpdate }) {
 
       <div className="workorder-bigscreen-grid cad-only">
         <RepairCadPanel order={order} target={target} />
+      </div>
+      <WorkorderSheet sheet={sheet} busy={busy} error={error} onUpdate={onUpdate} />
+    </section>
+  );
+}
+
+function WorkorderSheet({ sheet, busy, error, onUpdate }) {
+  const [repairFeedback, setRepairFeedback] = useState("");
+  const isDone = ["completed", "closed"].includes(sheet.status);
+  const isStarted = ["in_progress", "completed", "closed"].includes(sheet.status);
+  return (
+    <section className="maintenance-sheet" aria-label="自动派发维修工单">
+      <div className="sheet-heading">
+        <div>
+          <span className="eyebrow">自动派发工单</span>
+          <h2>维修工单</h2>
+          <p className="sheet-subtitle">故障确认后由系统自动派出，维修人员按下方步骤处理。</p>
+        </div>
+        <span className={isDone ? "sheet-status done" : "sheet-status"}>{labelFor(workorderStatusLabels, sheet.status)}</span>
+      </div>
+
+      <div className="basic-grid">
+        <div><span>工单编号</span><strong>{sheet.workorderId || "--"}</strong></div>
+        <div><span>设备</span><strong>{sheet.deviceId || "--"}</strong></div>
+        <div><span>处理班组</span><strong>{sheet.assignee}</strong></div>
+        <div><span>派发方式</span><strong>{sheet.autoDispatched ? "系统自动派发" : "系统工单"}</strong></div>
+      </div>
+
+      <div className="sheet-section-grid">
+        <section className="sheet-section fault-summary-card">
+          <span className="section-kicker">故障信息</span>
+          <h3>{sheet.title}</h3>
+          <div className="fault-meta-list">
+            <span>故障部件：{sheet.partName}</span>
+            <span>料号：{sheet.partNo}</span>
+            <span>所属系统：{sheet.system}</span>
+            <span>位置：{sheet.location}</span>
+          </div>
+          <strong>故障表现：{sheet.faultSymptom}</strong>
+        </section>
+        <section className="sheet-section evidence-card">
+          <span className="section-kicker">开工前确认</span>
+          <dl>
+            <div><dt>工器具</dt><dd>{sheet.tools.length ? sheet.tools.join("、") : "按现场检查准备"}</dd></div>
+            <div><dt>备件</dt><dd>{sheet.parts.length ? sheet.parts.join("、") : "检查后决定是否更换"}</dd></div>
+            <div><dt>安全要求</dt><dd>{sheet.safety.length ? sheet.safety.join("；") : "确认停机、断电后再操作"}</dd></div>
+          </dl>
+        </section>
+      </div>
+
+      <div className="sheet-bottom-grid">
+        <section className="sheet-section">
+          <div className="sheet-subhead"><div><span className="section-kicker">维修步骤</span><h3>按顺序处理</h3></div><span className="step-count">{sheet.steps.length} 项</span></div>
+          <ol className="workorder-checklist">
+            {sheet.steps.map((step, index) => <li key={`${step}-${index}`}><span>□</span><p>{String(index + 1).padStart(2, "0")}　{step}</p></li>)}
+          </ol>
+        </section>
+        <section className="sheet-section feedback-card">
+          <div className="sheet-subhead"><div><span className="section-kicker">处理记录</span><h3>完成后提交结果</h3></div></div>
+          <label htmlFor="repair-feedback">处理说明</label>
+          <textarea id="repair-feedback" value={repairFeedback} onChange={(event) => setRepairFeedback(event.target.value)} placeholder="填写处理结果、复测数据或未解决原因" disabled={isDone} />
+          {error && <div className="inline-error">{error}</div>}
+          <div className="sheet-actions">
+            <button className="button" type="button" disabled={busy || isStarted} onClick={() => onUpdate("in_progress")}>{busy ? "处理中" : "开始处理"}</button>
+            <button className="button primary" type="button" disabled={busy || isDone || !repairFeedback.trim()} onClick={() => onUpdate("completed", { repair_feedback: { feedback: repairFeedback.trim(), operator: sheet.assignee } })}>提交结果</button>
+          </div>
+        </section>
       </div>
     </section>
   );
@@ -2767,6 +2881,7 @@ function RepairCadPanel({ order, target }) {
       component: targetComponent,
       part: target.part_name,
       part_no: target.part_no,
+      cad_part_numbers: target.cad_part_numbers || [],
       alarm_code: target.alarm_code || order?.alarm_code || "",
       device_id: order?.device_id || "TRAK-TC820LTYSI-001",
       keepHighlight: true,
@@ -2782,6 +2897,13 @@ function RepairCadPanel({ order, target }) {
   function focusFaultPart() {
     sendViewerCommand("focus", { action: "focus" });
   }
+
+  useEffect(() => {
+    const timers = [150, 600, 1400, 2600].map((delay) => window.setTimeout(() => {
+      if (cadFrameRef.current?.contentWindow) focusFaultPart();
+    }, delay));
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [viewerUrl, targetComponent, target.part_no]);
 
   function openFullscreen() {
     if (cadFrameRef.current?.requestFullscreen) {
@@ -2800,7 +2922,6 @@ function RepairCadPanel({ order, target }) {
           <p>{target.location} · CAD 对应：{targetComponent}</p>
         </div>
         <div className="repair-visual-actions">
-          <button className="button" type="button" onClick={focusFaultPart}>故障定位</button>
           <button className={`button ${exploded ? "active" : ""}`} type="button" onClick={() => { const next = !exploded; setExploded(next); setResetView(false); sendViewerCommand(next ? "explode" : "collapse", { action: next ? "explode" : "collapse" }); }}>{exploded ? "收回部件" : "爆炸查看"}</button>
           <button className="button" type="button" onClick={() => { setExploded(false); setResetView(true); sendViewerCommand("reset", { action: "reset", keepHighlight: true }); }}>恢复装配</button>
           <button className="button ghost-button" type="button" onClick={openFullscreen}>全屏</button>
@@ -2812,6 +2933,7 @@ function RepairCadPanel({ order, target }) {
           title={`${target.part_name} CAD 维修视图`}
           src={viewerUrl}
           ref={cadFrameRef}
+          onLoad={focusFaultPart}
         />
       </div>
     </section>
@@ -2978,6 +3100,21 @@ function ModuleStat({ label, value, text }) {
 
 function DetailCell({ label, value }) {
   return <div><span>{label}</span><strong>{value || "--"}</strong></div>;
+}
+
+function TechnicianSection({ title, items = [], ordered = false, tone = "" }) {
+  const values = (items || []).filter(Boolean);
+  if (!values.length) return null;
+  return (
+    <div className={`technician-section ${tone}`}>
+      <h3>{title}</h3>
+      {ordered ? (
+        <ol>{values.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ol>
+      ) : (
+        <ul>{values.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
+      )}
+    </div>
+  );
 }
 
 function StepList({ steps = [] }) {
