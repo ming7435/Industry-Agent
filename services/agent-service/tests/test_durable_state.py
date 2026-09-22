@@ -21,3 +21,13 @@ def test_workorders_survive_adapter_reconstruction_and_keep_idempotency(tmp_path
     assert duplicate["workorder_id"] == created["workorder_id"]
     assert second.get_workorder(created["workorder_id"])["status"] == "open"
     assert len(second.orders) == 1
+
+
+def test_production_workorders_require_shared_or_explicit_durable_backend(monkeypatch):
+    from app.workorder.repository import build_workorder_repository
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("WORKORDER_BACKEND", raising=False)
+    monkeypatch.delenv("MYSQL_HOST", raising=False)
+    with __import__("pytest").raises(RuntimeError, match="生产模式"):
+        build_workorder_repository()

@@ -41,7 +41,7 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - RAG 的 PDF/DOCX/XLSX/CSV/TXT/MD/图片/CAD 解析、清洗、分块、向量检索、BM25 检索、RRF 融合、重排、证据和引用。
 - SiliconFlow BGE-M3 向量化、bge-reranker-v2-m3 重排、DeepSeek 生成。
 - Milvus 向量集合、Whoosh BM25 索引和 MySQL 文档/分块元数据。
-- CAD 图纸、BOM、部件、装配关系和部件位置查询。
+- CAD 图纸、BOM、部件、装配关系和部件位置查询；配置 CAD MySQL 后从工程元数据表读取，开发环境才使用显式 Demo fallback。
 - 维修计划中的 target_part、drawing_context 和 viewer_context 数据契约。
 - WorkOrder 生命周期、维修反馈、维修完成、派工和可选 SQLite 持久化幂等。
 - 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。

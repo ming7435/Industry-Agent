@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import os
 from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping
@@ -95,8 +96,91 @@ class SQLiteWorkOrderRepository:
         return [dict(json.loads(row[0])) for row in rows]
 
 
-def build_workorder_repository(path: str | None = None) -> MemoryWorkOrderRepository | SQLiteWorkOrderRepository:
+class MySQLWorkOrderRepository:
+    """Shared-database repository with a unique idempotency key."""
+
+    def __init__(self) -> None:
+        try:
+            import mysql.connector
+        except ImportError as error:
+            raise RuntimeError("MySQL WorkOrder persistence requires mysql-connector-python") from error
+        try:
+            self.connection = mysql.connector.connect(
+                host=os.getenv("WORKORDER_MYSQL_HOST") or os.getenv("MYSQL_HOST"),
+                port=int(os.getenv("WORKORDER_MYSQL_PORT") or os.getenv("MYSQL_PORT", "3306")),
+                user=os.getenv("WORKORDER_MYSQL_USER") or os.getenv("MYSQL_USER", "root"),
+                password=os.getenv("WORKORDER_MYSQL_PASSWORD") or os.getenv("MYSQL_PASSWORD", ""),
+                database=os.getenv("WORKORDER_MYSQL_DATABASE") or os.getenv("MYSQL_DATABASE", "industrial_maintenance"),
+                autocommit=False,
+            )
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS workorders ("
+                "workorder_id VARCHAR(64) PRIMARY KEY, idempotency_key VARCHAR(255) UNIQUE, "
+                "payload JSON NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
+            )
+            self.connection.commit()
+            cursor.close()
+        except Exception as error:
+            raise RuntimeError("MySQL WorkOrder persistence unavailable: %s" % error) from error
+
+    def create(self, order: Mapping[str, Any]) -> dict[str, Any]:
+        value = dict(order)
+        key = str(value.get("idempotency_key") or "") or None
+        cursor = self.connection.cursor(dictionary=True)
+        try:
+            if key:
+                cursor.execute("SELECT payload FROM workorders WHERE idempotency_key=%s", (key,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(json.loads(row["payload"]))
+            cursor.execute(
+                "INSERT INTO workorders(workorder_id, idempotency_key, payload) VALUES (%s, %s, %s)",
+                (str(value["workorder_id"]), key, json.dumps(value, ensure_ascii=False, default=str)),
+            )
+            self.connection.commit()
+            return value
+        except Exception:
+            self.connection.rollback()
+            if key:
+                cursor.execute("SELECT payload FROM workorders WHERE idempotency_key=%s", (key,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(json.loads(row["payload"]))
+            raise
+        finally:
+            cursor.close()
+
+    def get(self, workorder_id: str) -> dict[str, Any] | None:
+        cursor = self.connection.cursor(dictionary=True)
+        cursor.execute("SELECT payload FROM workorders WHERE workorder_id=%s", (str(workorder_id),))
+        row = cursor.fetchone()
+        cursor.close()
+        return dict(json.loads(row["payload"])) if row else None
+
+    def update(self, order: Mapping[str, Any]) -> dict[str, Any]:
+        value = dict(order)
+        cursor = self.connection.cursor()
+        cursor.execute("UPDATE workorders SET payload=%s WHERE workorder_id=%s", (json.dumps(value, ensure_ascii=False, default=str), str(value["workorder_id"])))
+        self.connection.commit()
+        cursor.close()
+        return value
+
+    def list(self) -> list[dict[str, Any]]:
+        cursor = self.connection.cursor(dictionary=True)
+        cursor.execute("SELECT payload FROM workorders ORDER BY workorder_id")
+        rows = cursor.fetchall()
+        cursor.close()
+        return [dict(json.loads(row["payload"])) for row in rows]
+
+
+def build_workorder_repository(path: str | None = None) -> MemoryWorkOrderRepository | SQLiteWorkOrderRepository | MySQLWorkOrderRepository:
+    backend = os.getenv("WORKORDER_BACKEND", "").strip().lower()
+    if backend == "mysql" or (backend == "" and os.getenv("APP_ENV", "development").lower() in {"prod", "production"} and os.getenv("MYSQL_HOST")):
+        return MySQLWorkOrderRepository()
+    if backend == "" and os.getenv("APP_ENV", "development").lower() in {"prod", "production"} and not str(path or "").strip():
+        raise RuntimeError("生产模式要求配置 MYSQL_HOST 或 WORKORDER_STORE_PATH")
     return SQLiteWorkOrderRepository(path) if str(path or "").strip() else MemoryWorkOrderRepository()
 
 
-__all__ = ["MemoryWorkOrderRepository", "SQLiteWorkOrderRepository", "build_workorder_repository"]
+__all__ = ["MemoryWorkOrderRepository", "SQLiteWorkOrderRepository", "MySQLWorkOrderRepository", "build_workorder_repository"]
