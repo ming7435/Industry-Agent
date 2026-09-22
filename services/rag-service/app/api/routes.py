@@ -1,14 +1,17 @@
-"""RAG 服务的 HTTP 路由。
+"""HTTP routes of the RAG service.
 
-暴露两个端点：
+Two endpoints are exposed:
 
 ``POST /search``
-    运行在线链路并始终返回 200；降级答案仍然是有效答案。只有在没有任何检索路线可用时，
-    才返回 ``503 {"error": "all_dependencies_unavailable"}``。
+    Runs the online chain and always answers 200 -- a degraded answer is still an
+    answer -- except when *no* retrieval route is usable, which is reported as
+    ``503 {"error": "all_dependencies_unavailable"}``.
 
 ``GET /health``
-    按依赖报告就绪状态。端点自身永不抛出异常：损坏的组件会报告为 ``false``，
-    每次解析/探测都受 ``settings.health_probe_timeout_ms`` 限制，避免卡住的存储阻塞健康检查。
+    Reports per-dependency readiness. The endpoint never raises: a broken
+    component is reported as ``false``, and each resolution/probe is bounded by
+    ``settings.health_probe_timeout_ms`` so a hung store cannot hang the probe
+    itself.
 """
 
 from __future__ import annotations
@@ -38,17 +41,18 @@ from .pipeline import SearchPipeline
 router = APIRouter()
 
 _PROBE_METHODS: tuple[str, ...] = ("health", "ping", "is_ready")
-"""组件可选暴露的就绪探针；没有探针时完成装配即可视为就绪。"""
+"""Optional readiness hooks a component may expose; otherwise assembly is enough."""
 
 
 async def _resolve(loader: Callable[[], Any]) -> Any | None:
-    """解析组件，同时避免阻塞事件循环。
+    """Resolve a component without blocking the event loop.
 
     Args:
-        loader: 无参数访问器，返回组件或 ``None``。
+        loader: Zero-argument accessor returning the component or ``None``.
 
     Returns:
-        组件；组件不可用或解析超过探测预算时返回 ``None``。
+        The component, or ``None`` when it is unavailable or resolution exceeded
+        the probe budget.
     """
     try:
         return await asyncio.wait_for(
@@ -61,7 +65,7 @@ async def _resolve(loader: Callable[[], Any]) -> Any | None:
             getattr(loader, "__name__", str(loader)),
         )
         return None
-    except Exception as exc:  # noqa: BLE001 - 健康检查不能向外抛出。
+    except Exception as exc:  # noqa: BLE001 - health checks must never raise
         logger.warning(
             "health resolution failed loader={} error_type={}",
             getattr(loader, "__name__", str(loader)),
@@ -71,13 +75,14 @@ async def _resolve(loader: Callable[[], Any]) -> Any | None:
 
 
 async def _probe(component: Any) -> bool:
-    """检查已解析组件是否能通过自身的就绪探针。
+    """Check whether a resolved component answers its readiness hook, if any.
 
     Args:
-        component: 已解析且确定非 ``None`` 的组件。
+        component: Resolved component, already known to be non-``None``.
 
     Returns:
-        组件完成装配，且如果暴露就绪探针则该探针报告健康时返回 ``True``。
+        ``True`` when the component is assembled and, if it exposes a readiness
+        hook, that hook reports healthy.
     """
     probe: Callable[[], Any] | None = None
     for name in _PROBE_METHODS:
@@ -96,7 +101,7 @@ async def _probe(component: Any) -> bool:
                 timeout=settings.health_probe_timeout_ms / 1000,
             )
         )
-    except Exception as exc:  # noqa: BLE001 - 不健康是合法结果。
+    except Exception as exc:  # noqa: BLE001 - unhealthy is a valid result
         logger.warning(
             "health probe failed component={} error_type={}",
             type(component).__name__,
@@ -106,13 +111,13 @@ async def _probe(component: Any) -> bool:
 
 
 async def _ready(loader: Callable[[], Any]) -> bool:
-    """解析组件并探测其状态。
+    """Resolve a component and probe it.
 
     Args:
-        loader: 返回组件或 ``None`` 的访问器。
+        loader: Accessor returning the component or ``None``.
 
     Returns:
-        组件存在且报告健康时返回 ``True``。
+        ``True`` when the component exists and reports healthy.
     """
     component = await _resolve(loader)
     if component is None:
@@ -121,11 +126,11 @@ async def _ready(loader: Callable[[], Any]) -> bool:
 
 
 async def _llm_ready() -> bool:
-    """报告 DeepSeek 客户端是否可用。
+    """Report whether the DeepSeek client is usable.
 
     Returns:
-        客户端存在且配置完整（SDK 与 API Key 均可用）时返回 ``True``。这里不发起网络调用，
-        因而健康检查保持快速且无额外成本。
+        ``True`` when the client exists and is configured (SDK plus API key).
+        No network call is made, so the health endpoint stays fast and free.
     """
     client = await _resolve(get_llm_client)
     return bool(client is not None and getattr(client, "is_configured", False))
@@ -134,24 +139,26 @@ async def _llm_ready() -> bool:
 @router.post(
     "/search",
     response_model=SearchResponse,
-    responses={503: {"model": ErrorResponse, "description": "所有检索依赖均不可用。"}},
-    summary="检索证据并生成有依据的诊断答案",
+    responses={503: {"model": ErrorResponse, "description": "All retrieval dependencies unavailable."}},
+    summary="Retrieve evidences and generate a grounded diagnostic answer",
 )
 async def search(
     request: SearchRequest,
     pipeline: SearchPipeline = Depends(get_pipeline),
 ) -> SearchResponse | JSONResponse:
-    """运行在线检索与生成链路。
+    """Run the online retrieval + generation chain.
 
     Args:
-        request: 查询、元数据过滤条件和期望证据数量。
-        pipeline: 作为单例依赖解析得到的编排流水线。
+        request: Query, metadata filters and desired number of evidences.
+        pipeline: The orchestration pipeline, resolved as a singleton dependency.
 
     Returns:
-        :class:`SearchResponse`；当 BM25 与稠密路线都无法构建时，返回 ``503`` 负载。
+        A :class:`SearchResponse`; or a ``503`` payload when neither the BM25 nor
+        the dense route can be constructed.
 
     Raises:
-        HTTPException: 仅用于框架级校验问题；依赖失败会写入响应体。
+        HTTPException: Only for framework-level validation problems; dependency
+            failures are reported inside the response body.
     """
     if not pipeline.has_any_retriever:
         logger.error(
@@ -170,13 +177,14 @@ async def search(
 @router.get(
     "/health",
     response_model=HealthResponse,
-    summary="RAG 服务各依赖的就绪状态",
+    summary="Per-dependency readiness of the RAG service",
 )
 async def health() -> HealthResponse:
-    """报告所有在线依赖的就绪状态。
+    """Report the readiness of every online dependency.
 
     Returns:
-        :class:`HealthResponse`，其中标志位永不为 ``null``：损坏或超时的组件会报告为 ``false``。
+        A :class:`HealthResponse` whose flags are never ``null``: a broken or
+        timed-out component is simply reported as ``false``.
     """
     whoosh, milvus, embedding, reranker, llm = await asyncio.gather(
         _ready(get_bm25_retriever),

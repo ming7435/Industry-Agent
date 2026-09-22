@@ -47,9 +47,6 @@ _FILTERABLE_FIELDS: tuple[str, ...] = (
     "corpus",
     "device_model",
     "error_code",
-    "project_id",
-    "tenant_id",
-    "device_id",
     "chunk_type",
     "quality",
 )
@@ -64,9 +61,6 @@ _OUTPUT_FIELDS: tuple[str, ...] = (
     "corpus",
     "device_model",
     "error_code",
-    "project_id",
-    "tenant_id",
-    "device_id",
     "page_numbers_json",
     "chunk_type",
     "quality",
@@ -235,16 +229,12 @@ class DenseRetriever:
             database: Milvus database; defaults to ``settings.milvus_database``.
             host: Milvus host (alternative to ``uri``).
             port: Milvus port (alternative to ``uri``).
-            collection_name: Primary collection to query; defaults to
-                ``settings.milvus_collection`` -- the same collection the
-                offline writer fills. ``collection`` is an alias.
+            collection_name: Primary collection to query; when omitted, the
+                collection list is derived from the first-level directories under
+                ``RAG_DATA_DIR``.
             collection: Alias of ``collection_name``.
-            collection_names: Explicit list of collections to fan out across. When
-                provided (for example the comma-separated ``MILVUS_COLLECTIONS``
-                setting), every dense search queries each collection and merges
-                the hits by score. If a collection is explicitly provided without
-                this list, only that collection is queried; otherwise the configured
-                search collection list is used.
+            collection_names: Explicit list of collections to fan out across,
+                intended for tests and injected clients.
             dim: Expected vector dimension; defaults to ``settings.embedding_dim``.
             embedding_dim: Alias of ``dim``.
             embedder: Query embedder; defaults to the process-wide
@@ -255,16 +245,15 @@ class DenseRetriever:
         self.database = database or settings.milvus_database
         self.host = host or settings.milvus_host
         self.port = int(port or settings.milvus_port)
-        primary = collection_name or collection or settings.milvus_collection
+        primary = collection_name or collection
         explicit_primary = collection_name is not None or collection is not None
         if collection_names:
             self.collection_names = list(collection_names)
         elif explicit_primary or client is not None:
-            self.collection_names = [primary]
+            self.collection_names = [primary] if primary else []
         else:
-            self.collection_names = settings.milvus_search_collections or [primary]
-        # Keep the canonical single name for logs/health of the primary store.
-        self.collection_name = primary
+            self.collection_names = settings.milvus_search_collections
+        self.collection_name = primary or (self.collection_names[0] if self.collection_names else "")
         self.dim = int(dim or embedding_dim or settings.embedding_dim)
         self._embedder = embedder
         self._client = client
@@ -335,6 +324,9 @@ class DenseRetriever:
         limit = settings.dense_top_k if top_k is None else int(top_k)
         if limit <= 0 or not query.strip():
             return []
+
+        if not self.collection_names:
+            raise RuntimeError("no Milvus collections were derived from RAG_DATA_DIR")
 
         vector = _embed_query(self._get_embedder(), query)
         expression, remaining = _build_expression(filters)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -82,11 +83,11 @@ class VectorRecord:
 
     @property
     def metadata_json(self) -> str:
-        return json.dumps(self.metadata, ensure_ascii=False)
+        return json.dumps(prune_empty(self.metadata), ensure_ascii=False)
 
     @classmethod
     def from_chunk(cls, chunk: IndustrialChunk, vector: list[float]) -> "VectorRecord":
-        metadata = dict(chunk.metadata)
+        metadata = prune_empty(chunk.metadata)
         return cls(
             id=chunk.chunk_id,
             chunk_id=chunk.chunk_id,
@@ -180,18 +181,31 @@ class SiliconFlowEmbeddingClient:
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
-                body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="ignore")[:300]
-            raise EmbeddingError(
-                f"SiliconFlow embedding request failed: HTTP {exc.code} {detail}"
-            ) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise EmbeddingError(
-                f"SiliconFlow embedding request failed: {type(exc).__name__}"
-            ) from exc
+        body = ""
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                    body = response.read().decode("utf-8")
+                break
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="ignore")[:300]
+                raise EmbeddingError(
+                    f"SiliconFlow embedding request failed: HTTP {exc.code} {detail}"
+                ) from exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                if attempt == max_attempts:
+                    raise EmbeddingError(
+                        f"SiliconFlow embedding request failed after {max_attempts} attempts: "
+                        f"{type(exc).__name__}"
+                    ) from exc
+                logger.warning(
+                    "embedding request failed attempt={}/{} error={!r}",
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                time.sleep(2 ** (attempt - 1))
         try:
             result = json.loads(body)
             items = result["data"]
@@ -290,6 +304,28 @@ def _as_float_list(vector: Any) -> list[float]:
     return [float(value) for value in vector]
 
 
+def prune_empty(value: Any) -> Any:
+    """Remove blank metadata values while preserving false and zero values."""
+
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            normalized = prune_empty(item)
+            if normalized is None:
+                continue
+            if isinstance(normalized, str) and not normalized.strip():
+                continue
+            if isinstance(normalized, (dict, list)) and not normalized:
+                continue
+            cleaned[key] = normalized
+        return cleaned
+    if isinstance(value, list):
+        return [item for item in (prune_empty(item) for item in value) if item is not None]
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
 def validate_vector(
     vector: list[float],
     *,
@@ -318,4 +354,5 @@ __all__ = [
     "get_embedder",
     "reset_embedder",
     "validate_vector",
+    "prune_empty",
 ]

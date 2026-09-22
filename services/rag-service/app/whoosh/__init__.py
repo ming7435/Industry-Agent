@@ -1,6 +1,8 @@
-"""Whoosh BM25 包：离线索引构建和在线词法检索。
+"""Whoosh BM25 package: offline index building plus online lexical retrieval.
 
-``app.whoosh.indexer`` 属于离线部分（由入库脚本调用），``app.whoosh.retriever`` 属于在线部分（由 :mod:`app.api.deps` 解析）。二者共享 :mod:`app.whoosh.schema`。
+``app.whoosh.indexer`` belongs to the offline half (it is called by the ingestion
+scripts), ``app.whoosh.retriever`` to the online half (it is resolved by
+:mod:`app.api.deps`). Both share :mod:`app.whoosh.schema`.
 """
 
 from .indexer import (

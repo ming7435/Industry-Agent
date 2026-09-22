@@ -13,6 +13,7 @@ from .models import (
     SiliconFlowEmbeddingClient,
     VectorRecord,
     get_embedder,
+    prune_empty,
     reset_embedder,
     validate_vector,
 )
@@ -31,4 +32,5 @@ __all__ = [
     "reset_embedder",
     "should_embed_chunk",
     "validate_vector",
+    "prune_empty",
 ]

@@ -1,35 +1,47 @@
-"""工业维修 RAG 服务的在线链路编排。
+"""Online chain orchestration for the industrial-maintenance RAG service.
 
-链路是一条直线：检索、融合、重排、整理、生成；但每一跳都有独立的毫秒级预算和失败模式，
-单点失败不会拖垮整个请求。本模块集中维护这套策略：
+The chain is a straight line -- retrieve, fuse, rerank, organise, generate -- but
+every hop has its own millisecond budget and its own failure mode, and a failure
+never takes the whole request down.  This module owns that policy:
 
 ===============================================  ==============================
-失败                                             结果
+failure                                          outcome
 ===============================================  ==============================
-稠密路线超时                                     仅 BM25，``dense_timeout``
-BM25 路线超时                                    仅稠密，``bm25_timeout``
-两条路线都失败                                   空结果，``all_retrievers_failed``
-重排超时或错误                                   RRF 顺序，``rerank_timeout``
-重排器未加载                                     跳过重排，``reranker_unavailable``
-嵌入模型不可用                                   仅 BM25，``embedding_unavailable``
-Milvus 不可用                                    仅 BM25，``milvus_unavailable``
-Whoosh 不可用                                    仅稠密，``whoosh_unavailable``
-LLM 超时或错误                                   有证据但无答案，``llm_timeout``
-整体请求超过预算                                 部分结果，``request_timeout``
+dense leg timeout                                BM25 only, ``dense_timeout``
+BM25 leg timeout                                 dense only, ``bm25_timeout``
+both legs failed                                 empty result,
+                                                 ``all_retrievers_failed``
+rerank timeout / error                           RRF ordering,
+                                                 ``rerank_timeout``
+reranker not loaded                              skip rerank,
+                                                 ``reranker_unavailable``
+embedding model unusable                         BM25 only,
+                                                 ``embedding_unavailable``
+Milvus unusable                                  BM25 only,
+                                                 ``milvus_unavailable``
+Whoosh unusable                                  dense only,
+                                                 ``whoosh_unavailable``
+LLM timeout / error                              evidences without answer,
+                                                 ``llm_timeout``
+whole request past budget                        partial result,
+                                                 ``request_timeout``
 ===============================================  ==============================
 
-只有检索层完全不可用（两条路线都无法构建）时，:mod:`app.api.routes` 才会向客户端升级为 HTTP 503。
+Only a completely unusable retrieval layer (neither route constructible) is
+escalated to the client as HTTP 503, by :mod:`app.api.routes`.
 
-这里强制执行的并发规则：
+Concurrency rules enforced here:
 
-* 两条检索路线通过 :func:`asyncio.gather` 并发运行，并启用 ``return_exceptions=True``，
-  因此一条路线失败不会取消另一条路线；
-* 所有阻塞调用（Whoosh、Milvus、reranker）都通过 :func:`asyncio.to_thread` 在线程池中运行，
-  并受 :func:`asyncio.wait_for` 约束；
-* DeepSeek 调用本身已经是异步的，因此直接 await，不再包裹到额外线程中。
+* the two retrieval legs run concurrently through :func:`asyncio.gather` with
+  ``return_exceptions=True``, so one failing leg cannot cancel the other;
+* every blocking call (Whoosh, Milvus, reranker) runs in a worker thread via
+  :func:`asyncio.to_thread` and is bounded by :func:`asyncio.wait_for`;
+* the DeepSeek call is already asynchronous and is therefore awaited directly,
+  never wrapped in another thread.
 
-关于超时：工作线程无法被中断，因此某条路线超过预算后，请求会跳过它继续执行，线程则在后台完成。
-这保证了请求尾延迟可控。
+Note on timeouts: a worker thread cannot be interrupted, so when a leg exceeds
+its budget the request continues without it while the thread finishes in the
+background.  This is what keeps the tail latency of a request bounded.
 """
 
 from __future__ import annotations
@@ -50,7 +62,7 @@ from config.settings import settings
 from .models import HitModel, LatencyBreakdown, SearchRequest, SearchResponse
 
 # ---------------------------------------------------------------------------
-# 降级原因：日志和 API 负载共用的唯一事实来源。
+# Degrade reasons -- the single source of truth for logs and API payloads.
 # ---------------------------------------------------------------------------
 REASON_DENSE_TIMEOUT: str = "dense_timeout"
 REASON_BM25_TIMEOUT: str = "bm25_timeout"
@@ -75,7 +87,7 @@ _REASON_PRIORITY: tuple[str, ...] = (
     REASON_RERANKER_UNAVAILABLE,
     REASON_LLM_TIMEOUT,
 )
-"""多个原因同时出现时，用于选择单一 ``degrade_reason`` 的严重度顺序。"""
+"""Severity order used to pick a single ``degrade_reason`` when several occurred."""
 
 _STAGE_BM25: Literal["bm25"] = "bm25"
 _STAGE_DENSE: Literal["dense"] = "dense"
@@ -90,54 +102,58 @@ _WHOOSH_HINTS: tuple[str, ...] = ("whoosh",)
 
 
 class RouteUnavailable(RuntimeError):
-    """检索路线无法服务当前请求时抛出。
+    """Raised by a retrieval route that cannot serve the request.
 
-    携带降级原因，避免编排器猜测某条路线为什么没有产出。
+    Carries the degradation reason so the orchestrator does not have to guess why
+    a leg produced nothing.
     """
 
     def __init__(self, degrade_reason: str, detail: str = "") -> None:
-        """保存原因并构造异常消息。
+        """Store the reason and build the exception message.
 
         Args:
-            degrade_reason: ``REASON_*`` 常量之一。
-            detail: 可选的日志可读说明。
+            degrade_reason: One of the ``REASON_*`` constants.
+            detail: Optional human-readable explanation for the logs.
         """
         super().__init__(f"{degrade_reason}: {detail}" if detail else degrade_reason)
         self.degrade_reason = degrade_reason
 
 
 def _now() -> float:
-    """返回以秒为单位的单调时间戳。
+    """Return a monotonic timestamp in seconds.
 
     Returns:
-        高精度单调时钟的当前值。
+        The current value of a high-resolution monotonic clock.
     """
     return perf_counter()
 
 
 def _elapsed_ms(started: float) -> int:
-    """返回从 ``started`` 到现在经过的毫秒数。
+    """Return the milliseconds elapsed since ``started``.
 
     Args:
-        started: 之前由 :func:`_now` 返回的值。
+        started: Value previously returned by :func:`_now`.
 
     Returns:
-        四舍五入后的经过毫秒数。
+        Elapsed milliseconds, rounded to the nearest integer.
     """
     return int(round((perf_counter() - started) * 1000))
 
 
 def _classify_route_error(exc: BaseException, default: str) -> str:
-    """把检索异常映射为降级原因。
+    """Map a retrieval exception to a degradation reason.
 
-    检索器会包装自身依赖，因此这里检查异常类型/模块和消息，用于区分嵌入、Milvus、Whoosh 失败。
+    The retrievers wrap their own dependencies, so the exception type/module and
+    message are inspected to tell an embedding failure from a Milvus failure from
+    a Whoosh failure.
 
     Args:
-        exc: 检索路线抛出的异常。
-        default: 没有命中任何提示时使用的原因，例如 BM25 路线的 ``whoosh_unavailable``。
+        exc: Exception raised by a retrieval leg.
+        default: Reason used when no hint matches (e.g.
+            ``whoosh_unavailable`` for the BM25 leg).
 
     Returns:
-        ``REASON_*`` 常量之一。
+        One of the ``REASON_*`` constants.
     """
     haystack = f"{type(exc).__module__ or ''} {exc}".lower()
     if any(hint in haystack for hint in _EMBEDDING_HINTS):
@@ -151,9 +167,10 @@ def _classify_route_error(exc: BaseException, default: str) -> str:
 
 @dataclass
 class _Progress:
-    """单次请求各阶段共享的可变暂存区。
+    """Mutable scratch pad shared by the stages of one request.
 
-    独立成对象后，即使请求因全局预算中断，也能用链路已经产出的内容返回答案。
+    It exists so that a request aborted by the global budget can still be
+    answered with whatever the chain had already produced.
     """
 
     request_id: str
@@ -177,40 +194,41 @@ class _Progress:
     reasons: list[str] = field(default_factory=list)
 
     def mark_degraded(self, reason: str) -> None:
-        """按发现顺序记录一次降级原因。
+        """Record a degradation reason, once, in discovery order.
 
         Args:
-            reason: ``REASON_*`` 常量之一。
+            reason: One of the ``REASON_*`` constants.
         """
         if reason and reason not in self.reasons:
             self.reasons.append(reason)
 
     def clear_degraded(self) -> None:
-        """清空之前记录的降级原因。
+        """Forget previously recorded reasons.
 
-        当后续发现取代早先原因时使用，例如两条路线分别失败，但最终结果应统一为
-        ``all_retrievers_failed``。
+        Used when a later finding supersedes earlier ones, e.g. both legs failed
+        individually but the outcome is the single ``all_retrievers_failed``.
         """
         self.reasons.clear()
 
     @property
     def degraded(self) -> bool:
-        """当前请求是否以降级模式服务。
+        """Whether the request is being served in degraded mode.
 
         Returns:
-            至少记录了一个降级原因时返回 ``True``。
+            ``True`` when at least one degradation was recorded.
         """
         return bool(self.reasons)
 
     @property
     def degrade_reason(self) -> str:
-        """返回信息量最高的降级原因。
+        """Return the most informative degradation reason.
 
-        全局 ``request_timeout`` 优先于其他所有原因；否则返回 :data:`_REASON_PRIORITY` 中最严重的原因，
-        找不到时回退到第一个记录的原因。
+        The global ``request_timeout`` wins over everything else; otherwise the
+        most severe reason of :data:`_REASON_PRIORITY` is returned, falling back
+        to the first recorded one.
 
         Returns:
-            选中的原因；未发生降级时返回空字符串。
+            The selected reason, or an empty string when nothing degraded.
         """
         for reason in _REASON_PRIORITY:
             if reason in self.reasons:
@@ -219,13 +237,13 @@ class _Progress:
 
 
 def _to_hit_model(hit: Hit) -> HitModel:
-    """把检索命中转换为 API 表示。
+    """Convert a retriever hit into its API representation.
 
     Args:
-        hit: 最终排序后的命中。
+        hit: Final ranked hit.
 
     Returns:
-        ``SearchResponse.hits`` 中返回的 pydantic 模型。
+        The pydantic model returned inside ``SearchResponse.hits``.
     """
     metadata = getattr(hit, "metadata", None)
     return HitModel(
@@ -238,11 +256,12 @@ def _to_hit_model(hit: Hit) -> HitModel:
 
 
 class SearchPipeline:
-    """编排检索、融合、重排、证据整理和生成。
+    """Orchestrates retrieve -> fuse -> rerank -> evidence -> generate.
 
-    流水线持有已经解析好的组件（组件也可能为 ``None``）：组件缺失或失败时让请求降级，
-    而不是直接抛出异常。这允许服务在 CUDA 不可用、Milvus 集合仍在构建等场景下仍能启动，
-    并返回部分答案。
+    The pipeline holds already-resolved (possibly ``None``) components: a missing
+    or failed component degrades the request instead of raising, which is what
+    allows the service to boot and serve partial answers when, for example, CUDA
+    is unavailable or the Milvus collection is still being built.
     """
 
     def __init__(
@@ -253,14 +272,14 @@ class SearchPipeline:
         reranker: Any | None,
         llm: Any | None,
     ) -> None:
-        """保存已解析组件。
+        """Store the resolved components.
 
         Args:
-            bm25: ``app.whoosh.retriever.BM25Retriever`` 实例或 ``None``。
-            dense: ``app.milvus.retriever.DenseRetriever`` 实例或 ``None``。
-            embedder: 稠密路线使用的 bge-m3 嵌入器，或 ``None``。
-            reranker: ``app.reranker.model.Reranker`` 实例或 ``None``。
-            llm: ``app.llm.client.LLMClient`` 实例或 ``None``。
+            bm25: ``app.whoosh.retriever.BM25Retriever`` instance or ``None``.
+            dense: ``app.milvus.retriever.DenseRetriever`` instance or ``None``.
+            embedder: bge-m3 embedder used by the dense route, or ``None``.
+            reranker: ``app.reranker.model.Reranker`` instance or ``None``.
+            llm: ``app.llm.client.LLMClient`` instance or ``None``.
         """
         self._bm25 = bm25
         self._dense = dense
@@ -270,36 +289,40 @@ class SearchPipeline:
 
     @property
     def has_any_retriever(self) -> bool:
-        """是否至少有一条检索路线可用。
+        """Whether at least one retrieval route is usable.
 
         Returns:
-            BM25 或稠密检索器可用时返回 ``True``。两者都缺失时，调用方必须返回 HTTP 503。
+            ``True`` when the BM25 or the dense retriever is available. When both
+            are missing the caller must answer HTTP 503.
         """
         return self._bm25 is not None or self._dense is not None
 
     def _effective_top_n(self, request: SearchRequest) -> int:
-        """解析要返回的证据数量。
+        """Resolve the number of evidences to return.
 
         Args:
-            request: 已校验请求；HTTP 调用方的 ``top_n`` 已被约束为 ``>= 1``，这里的回退用于保护绕过校验的程序调用方。
+            request: Validated request; ``top_n`` is already constrained to
+                ``>= 1`` for HTTP callers, the fallback protects programmatic
+                callers that bypass validation.
 
         Returns:
-            ``request.top_n`` 为正数时返回它，否则返回 ``settings.rerank_top_n``。
+            ``request.top_n`` when positive, otherwise ``settings.rerank_top_n``.
         """
         if request.top_n and request.top_n > 0:
             return int(request.top_n)
         return int(settings.rerank_top_n)
 
     async def search(self, request: SearchRequest, request_id: str) -> SearchResponse:
-        """为单次请求运行完整在线链路。
+        """Run the full online chain for one request.
 
         Args:
-            request: 已校验的搜索请求。
-            request_id: UUID4，用于标识本请求的所有日志行。
+            request: Validated search request.
+            request_id: UUID4 identifying this request in every log line.
 
         Returns:
-            完整响应，无论是否降级。依赖失败不会向外抛出：部分结果会以 ``degraded=True`` 和
-            ``degrade_reason`` 返回。
+            The complete response, degraded or not. Never raises for a
+            dependency failure: partial results are returned with
+            ``degraded=True`` and a ``degrade_reason``.
         """
         progress = _Progress(request_id=request_id)
         started = _now()
@@ -319,10 +342,11 @@ class SearchPipeline:
                 settings.request_timeout_ms,
             )
         except asyncio.CancelledError:
-            # 客户端断开连接或服务正在关闭：继续向外传播。
+            # Client disconnected or the server is shutting down: propagate.
             raise
-        except Exception as exc:  # noqa: BLE001 - 编排器不能返回 500。
-            # 编排自身的缺陷。记录 traceback，并用已经产出的内容作答，让调用方仍能拿到证据。
+        except Exception as exc:  # noqa: BLE001 - orchestrator must never 500
+            # A bug in the orchestration itself. Log the traceback and answer
+            # with whatever was produced so the caller still gets the evidences.
             logger.exception(
                 "request_id={} stage=orchestration error_type={} error={}",
                 request_id,
@@ -352,16 +376,16 @@ class SearchPipeline:
         return response
 
     async def _run(self, request: SearchRequest, progress: _Progress) -> None:
-        """按顺序执行链路阶段，并沿途记录降级情况。
+        """Execute the chain stages in order, recording degradation as it goes.
 
         Args:
-            request: 已校验的搜索请求。
-            progress: 共享暂存区，按阶段写入。
+            request: Validated search request.
+            progress: Shared scratch pad, written stage by stage.
         """
         await self._retrieve(request, progress)
 
         if not progress.bm25_hits and not progress.dense_hits:
-            # 两条路线都失败：没有可融合、重排或生成的内容。
+            # Both legs failed: nothing to fuse, rerank or generate from.
             progress.clear_degraded()
             progress.mark_degraded(REASON_ALL_RETRIEVERS_FAILED)
             logger.warning(
@@ -385,14 +409,15 @@ class SearchPipeline:
         await self._generate(request, progress)
 
     async def _retrieve(self, request: SearchRequest, progress: _Progress) -> None:
-        """并发运行两条检索路线。
+        """Run both retrieval legs concurrently.
 
-        每条路线一完成就把命中写入 ``progress``，因此在全局预算到期前完成的路线仍会进入部分答案
-        （``request_timeout`` 降级）。
+        Each leg publishes its hits into ``progress`` as soon as it finishes, so a
+        leg that completed before the global budget expired is still part of the
+        partial answer (``request_timeout`` degradation).
 
         Args:
-            request: 已校验的搜索请求。
-            progress: 接收命中和路线延迟的暂存区。
+            request: Validated search request.
+            progress: Scratch pad receiving the hits and leg latencies.
         """
         outcomes = await asyncio.gather(
             self._bm25_route(request, progress),
@@ -427,14 +452,14 @@ class SearchPipeline:
         )
 
     async def _bm25_route(self, request: SearchRequest, progress: _Progress) -> None:
-        """执行 Whoosh/BM25 路线并发布命中。
+        """Execute the Whoosh/BM25 leg and publish its hits.
 
         Args:
-            request: 已校验的搜索请求。
-            progress: 接收路线延迟和命中的暂存区。
+            request: Validated search request.
+            progress: Scratch pad receiving the leg latency and hits.
 
         Raises:
-            RouteUnavailable: 检索器缺失、超时或失败时抛出。
+            RouteUnavailable: If the retriever is missing, times out or fails.
         """
         if self._bm25 is None:
             raise RouteUnavailable(REASON_WHOOSH_UNAVAILABLE, "whoosh retriever is not available")
@@ -451,17 +476,18 @@ class SearchPipeline:
         progress.bm25_hits = list(hits)
 
     async def _dense_route(self, request: SearchRequest, progress: _Progress) -> None:
-        """执行 Milvus/稠密路线并发布命中。
+        """Execute the Milvus/dense leg and publish its hits.
 
-        嵌入模型是硬性前置条件：没有它，稠密路线甚至无法构造查询向量，因此报告为
-        ``embedding_unavailable``，而不是 ``milvus_unavailable``。
+        The embedding model is a hard precondition: without it the dense route
+        cannot even build a query vector, so it is reported as
+        ``embedding_unavailable`` rather than ``milvus_unavailable``.
 
         Args:
-            request: 已校验的搜索请求。
-            progress: 接收路线延迟和命中的暂存区。
+            request: Validated search request.
+            progress: Scratch pad receiving the leg latency and hits.
 
         Raises:
-            RouteUnavailable: 依赖缺失、超时或失败时抛出。
+            RouteUnavailable: If a dependency is missing, times out or fails.
         """
         if self._dense is None:
             raise RouteUnavailable(REASON_MILVUS_UNAVAILABLE, "milvus retriever is not available")
@@ -493,23 +519,23 @@ class SearchPipeline:
         timeout_ms: int,
         progress: _Progress,
     ) -> list[Hit]:
-        """在线程池中按预算调用同步检索器。
+        """Call a synchronous retriever in a worker thread under a budget.
 
         Args:
-            stage: ``"bm25"`` 或 ``"dense"``，用作延迟键和日志标签。
-            retriever: 暴露 ``search(query, filters, top_k)`` 的对象。
-            fallback_reason: 无法分类失败时使用的原因。
-            query: 用户查询。
-            filters: 转发给检索器的元数据过滤条件。
-            top_k: 请求的候选数量。
-            timeout_ms: 路线预算，单位为毫秒。
-            progress: 接收路线延迟的暂存区。
+            stage: ``"bm25"`` or ``"dense"``, used as latency key and log label.
+            retriever: Object exposing ``search(query, filters, top_k)``.
+            fallback_reason: Reason used when the failure cannot be classified.
+            query: User query.
+            filters: Metadata filters forwarded to the retriever.
+            top_k: Number of candidates requested.
+            timeout_ms: Leg budget in milliseconds.
+            progress: Scratch pad receiving the leg latency.
 
         Returns:
-            检索器返回的命中列表。
+            The hits returned by the retriever.
 
         Raises:
-            RouteUnavailable: 超时（``<stage>_timeout``）或失败时抛出。
+            RouteUnavailable: On timeout (``<stage>_timeout``) or failure.
         """
         started = _now()
         try:
@@ -524,7 +550,7 @@ class SearchPipeline:
             ) from exc
         except RouteUnavailable:
             raise
-        except Exception as exc:  # noqa: BLE001 - 会被分类为降级原因
+        except Exception as exc:  # noqa: BLE001 - classified into a degrade reason
             raise RouteUnavailable(
                 _classify_route_error(exc, fallback_reason),
                 f"{stage} retrieval failed with {type(exc).__name__}",
@@ -533,12 +559,14 @@ class SearchPipeline:
             progress.latency[stage] = _elapsed_ms(started)
 
     def _fuse(self, progress: _Progress) -> None:
-        """使用 RRF 融合两条路线的结果。
+        """Fuse both leg results with RRF.
 
-        即使某条路线失败，也始终传入两个列表，确保不同请求之间的融合排序保持可比。
+        Both lists are always passed, even when one leg failed, so the fused
+        ordering stays comparable across requests.
 
         Args:
-            progress: 读取两条路线结果，并写入融合命中和融合延迟的暂存区。
+            progress: Scratch pad read for the legs and written with the fused
+                hits and the fusion latency.
         """
         started = _now()
         try:
@@ -572,16 +600,17 @@ class SearchPipeline:
         top_n: int,
         progress: _Progress,
     ) -> list[Hit]:
-        """重排融合命中，失败时回退到 RRF 顺序。
+        """Rerank the fused hits, falling back to the RRF ordering on failure.
 
         Args:
-            request: 已校验的搜索请求。
-            fused_hits: RRF 输出。
-            top_n: 保留的命中数量。
-            progress: 接收重排延迟和原因的暂存区。
+            request: Validated search request.
+            fused_hits: RRF output.
+            top_n: Number of hits to keep.
+            progress: Scratch pad receiving the rerank latency and reasons.
 
         Returns:
-            重排后的命中；重排不可用、超时或抛错时返回融合命中的前 ``top_n`` 项。
+            Reranked hits, or the top ``top_n`` fused hits when reranking is
+            unavailable, times out or raises.
         """
         if self._reranker is None:
             progress.mark_degraded(REASON_RERANKER_UNAVAILABLE)
@@ -607,7 +636,7 @@ class SearchPipeline:
                 settings.rerank_timeout_ms,
             )
             return fused_hits[:top_n]
-        except Exception as exc:  # noqa: BLE001 - 任何重排失败都降级
+        except Exception as exc:  # noqa: BLE001 - any rerank failure degrades
             progress.mark_degraded(REASON_RERANK_TIMEOUT)
             logger.warning(
                 "request_id={} stage=rerank degraded reason={} error_type={} error={!r}",
@@ -629,14 +658,16 @@ class SearchPipeline:
             progress.latency["rerank"] = _elapsed_ms(started)
 
     def _build_evidence(self, request: SearchRequest, progress: _Progress) -> bool:
-        """把最终命中整理为带引用格式的证据块。
+        """Organise the final hits into a citation-formatted evidence block.
 
         Args:
-            request: 已校验的搜索请求。
-            progress: 读取最终命中，并写入证据包和证据文本的暂存区。
+            request: Validated search request.
+            progress: Scratch pad read for the final hits and written with the
+                bundle and the evidence text.
 
         Returns:
-            产出非空上下文、值得继续生成时返回 ``True``。
+            ``True`` when a non-empty context was produced, i.e. when generation
+            is worth attempting.
         """
         try:
             bundle = build_bundle(request.query, progress.final_hits)
@@ -657,13 +688,15 @@ class SearchPipeline:
         return bool(evidence_text.strip())
 
     async def _generate(self, request: SearchRequest, progress: _Progress) -> None:
-        """根据证据上下文生成诊断答案。
+        """Generate the diagnostic answer from the evidence context.
 
-        生成失败会让 ``answer`` 保持为空并标记 ``llm_timeout``，因此调用方仍能收到已检索证据。
+        A generation failure leaves ``answer`` empty and marks ``llm_timeout``,
+        so the caller still receives the retrieved evidences.
 
         Args:
-            request: 已校验的搜索请求。
-            progress: 读取证据，并写入答案和生成延迟的暂存区。
+            request: Validated search request.
+            progress: Scratch pad read for the evidence and written with the
+                answer and the generation latency.
         """
         if self._llm is None:
             progress.mark_degraded(REASON_LLM_TIMEOUT)
@@ -688,7 +721,7 @@ class SearchPipeline:
                 REASON_LLM_TIMEOUT,
                 settings.llm_timeout_ms,
             )
-        except Exception as exc:  # noqa: BLE001 - 任何生成失败都降级
+        except Exception as exc:  # noqa: BLE001 - any generation failure degrades
             progress.mark_degraded(REASON_LLM_TIMEOUT)
             logger.warning(
                 "request_id={} stage=llm degraded reason={} error_type={} error={!r}",
@@ -708,17 +741,19 @@ class SearchPipeline:
             progress.latency["llm"] = _elapsed_ms(started)
 
     def _partial_hits(self, progress: _Progress, top_n: int) -> list[Hit]:
-        """链路未完成时返回当前可用的最佳命中列表。
+        """Return the best hit list available when the chain did not finish.
 
-        当全局预算在融合之前到期时会走到这里；已经返回的路线结果仍应展示给调用方。
+        Reached when the global budget expired before fusion -- the legs that had
+        already answered still deserve to be shown to the caller.
 
         Args:
-            progress: 保存各路线结果的暂存区。
-            top_n: 最多返回的命中数量。
+            progress: Scratch pad holding the per-leg results.
+            top_n: Maximum number of hits to return.
 
         Returns:
-            BM25 命中后接仅稠密命中的列表，并按 ``chunk_id`` 去重。由于融合尚未运行，排序使用原始检索顺序，
-            而不是融合顺序。
+            The BM25 hits followed by the dense-only hits, de-duplicated by
+            ``chunk_id``. The ordering is the raw retrieval order, not a fused
+            one, because fusion never ran.
         """
         partial: list[Hit] = []
         seen: set[str] = set()
@@ -731,15 +766,16 @@ class SearchPipeline:
         return partial[:top_n]
 
     def _build_response(self, request: SearchRequest, progress: _Progress) -> SearchResponse:
-        """用链路已经产出的内容装配 API 响应。
+        """Assemble the API response from whatever the chain produced.
 
         Args:
-            request: 已校验的搜索请求，用于 ``top_n`` 回退。
-            progress: 保存命中、证据、答案和降级原因的暂存区。
+            request: Validated search request, used for the ``top_n`` fallback.
+            progress: Scratch pad holding hits, evidence, answer and degradations.
 
         Returns:
-            返回给调用方的响应。请求在链路中途被中断时，使用当前最佳命中列表，优先级依次为：
-            重排命中、融合命中、原始各路线命中。
+            The response returned to the caller. When the request was aborted
+            mid-chain the best available hit list is used, in this order:
+            reranked hits, fused hits, raw per-leg hits.
         """
         top_n = self._effective_top_n(request)
         hits = progress.final_hits or progress.fused_hits[:top_n] or self._partial_hits(

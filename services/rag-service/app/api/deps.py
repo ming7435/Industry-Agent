@@ -178,8 +178,6 @@ def _create_dense() -> Any:
             "uri": settings.milvus_uri,
             "host": settings.milvus_host,
             "port": settings.milvus_port,
-            "collection_name": settings.milvus_collection,
-            "collection": settings.milvus_collection,
             "collection_names": collection_names,
             "dim": settings.embedding_dim,
             "embedding_dim": settings.embedding_dim,

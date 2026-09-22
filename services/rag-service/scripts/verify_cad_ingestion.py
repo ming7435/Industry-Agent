@@ -1,4 +1,4 @@
-"""校验 DXF 入库结果是否已写入 MySQL、Milvus 和 MinIO。"""
+"""Verify that the DXF ingestion landed in MySQL, Milvus, and MinIO."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app.config import load_service_env  # noqa: E402
 from app.mysql import MySQLConfig  # noqa: E402
 from app.storage import ObjectStorageClient, ObjectStorageConfig  # noqa: E402
+from config.settings import settings  # noqa: E402
 
 
 MYSQL_TABLES = [
@@ -56,7 +57,7 @@ def check_mysql(config: MySQLConfig) -> dict[str, Any]:
             if "rag_documents" in tables:
                 cursor.execute(
                     "SELECT source_name, source_format, status, chunk_count, vector_count, "
-                    "storage_bucket, storage_key FROM rag_documents"
+                    "metadata_json FROM rag_documents"
                 )
                 report["documents"] = [list(row) for row in cursor.fetchall()]
             if "cad_layers" in tables:
@@ -102,35 +103,33 @@ def check_milvus(uri: str, database: str, collection_name: str) -> dict[str, Any
             "source_name",
             "source_format",
             "chunk_type",
-            "layer_name",
-            "drawing_id",
-            "version_id",
             "text",
         ],
         limit=6,
     )
     for row in sample:
         row.pop("vector", None)
-        row["drawing_id"] = str(row.get("drawing_id", ""))[:12]
-        row["version_id"] = str(row.get("version_id", ""))[:12]
         row["text"] = str(row.get("text", "")).replace("\n", " ")[:90]
     report["sample"] = sample
     return report
 
 
 def check_object_storage() -> dict[str, Any]:
-    client = ObjectStorageClient(ObjectStorageConfig.from_env())
-    objects = client.client.list_objects(client.config.bucket, recursive=True)
-    items = []
-    for item in objects:
-        items.append(
-            {
-                "key": getattr(item, "object_name", None) or str(item),
-                "size": getattr(item, "size", None),
-                "etag": getattr(item, "etag", None),
-            }
-        )
-    return {"bucket": client.config.bucket, "objects": items}
+    try:
+        client = ObjectStorageClient(ObjectStorageConfig.from_env())
+        objects = client.client.list_objects(client.config.bucket, recursive=True)
+        items = []
+        for item in objects:
+            items.append(
+                {
+                    "key": getattr(item, "object_name", None) or str(item),
+                    "size": getattr(item, "size", None),
+                    "etag": getattr(item, "etag", None),
+                }
+            )
+        return {"bucket": client.config.bucket, "objects": items}
+    except Exception as exc:
+        return {"bucket": "unavailable", "objects": [], "error": str(exc)}
 
 
 def render(report: dict[str, Any]) -> None:
@@ -160,10 +159,13 @@ def render(report: dict[str, Any]) -> None:
 
     milvus = report["milvus"]
     print("\n[Milvus] uri=%s database=%s" % (report["milvus_uri"], report["milvus_database"]))
-    print(f"  collections ({milvus['collection_count']}): {milvus['collections']}")
-    print(f"  entities in '{report['milvus_collection']}': {milvus.get('entities')}")
-    for row in milvus.get("sample", []):
-        print(f"    {row}")
+    for collection_name, collection_report in milvus.items():
+        print(
+            f"  collection '{collection_name}': "
+            f"{collection_report.get('entities')} entities"
+        )
+        for row in collection_report.get("sample", []):
+            print(f"    {row}")
 
     storage = report["object_storage"]
     print("\n[Object storage] bucket=%s" % storage["bucket"])
@@ -175,15 +177,20 @@ def main() -> int:
     load_service_env()
     config = MySQLConfig.from_env()
     milvus_uri = os.getenv("MILVUS_URI", "http://127.0.0.1:19530")
-    milvus_database = os.getenv("MILVUS_DATABASE", "industry_rag_documents")
-    collection_name = os.getenv("MILVUS_COLLECTION", "cad_semantic_chunks")
+    milvus_database = os.getenv("MILVUS_DATABASE", "industry_agent")
+    collection_names = settings.milvus_search_collections
+    if not collection_names:
+        raise RuntimeError("No collections found under RAG_DATA_DIR")
     report = {
         "mysql_database": config.database,
         "mysql": check_mysql(config),
         "milvus_uri": milvus_uri,
         "milvus_database": milvus_database,
-        "milvus_collection": collection_name,
-        "milvus": check_milvus(milvus_uri, milvus_database, collection_name),
+        "milvus_collection": ",".join(collection_names),
+        "milvus": {
+            collection: check_milvus(milvus_uri, milvus_database, collection)
+            for collection in collection_names
+        },
         "object_storage": check_object_storage(),
     }
     render(report)

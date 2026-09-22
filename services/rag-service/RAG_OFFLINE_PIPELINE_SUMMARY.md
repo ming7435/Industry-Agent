@@ -62,8 +62,9 @@
 MinIO/S3 保存原始文件及其对象版本信息；MySQL 保存可审计的文件、图纸版本、图层、实体、文字标注和关系事实；Milvus 只保存适合语义召回的 chunk 向量及其过滤字段。当前 `same_device_id` 关系来自可解释的文字或块标注，不代表空间相交、距离或工艺拓扑关系。
 
 默认开启 MySQL 元数据写入时，重复处理同一文件会同时清理 Milvus 中已经失效的旧
-chunk ID。向量集合已存在时会校验 embedding 维度，避免更换模型后静默写入失败。若使用
-`--no-mysql`，没有文档到 chunk 的历史清单，建议配合 `--drop-all-collections` 做完整重建。
+chunk ID。向量集合已存在时会校验 embedding 维度，避免更换模型后静默写入失败。
+MySQL 只保存可审计的文档和 chunk 清单，不参与 Milvus 集合或向量字段的定义。
+如需从零重建，应先清理 `industry_agent` 数据库及其 Milvus 数据库，再运行标准入库命令。
 
 ## 2. 文件读取层
 
@@ -658,7 +659,7 @@ MySQL processing
 该脚本串联完整离线流程：
 
 ```text
-读取 data/SHUJU 下支持的文件
+读取 data/ 下一级目录中的支持文件
   -> parse_document / DocumentSource
   -> build_chunks
   -> embed_chunks
@@ -670,24 +671,14 @@ MySQL processing
 
 ### 11.3 常用命令
 
-按数据目录和业务类型创建 typed collection：
+按数据目录创建 typed collection：
 
 ```bash
-python scripts/ingest_to_milvus.py \
-  --data-dir data/SHUJU \
-  --milvus-uri http://localhost:19530 \
-  --drop-all-collections
+python scripts/ingest_to_milvus.py --data-dir data
 ```
 
-如果需要启用 Qwen-VL 视觉识别：
-
-```bash
-python scripts/ingest_to_milvus.py \
-  --data-dir data/SHUJU \
-  --milvus-uri http://localhost:19530 \
-  --drop-all-collections \
-  --vision
-```
+需要从零重建时，先删除 `industry_agent` 的 MySQL 数据库和 Milvus
+数据库，再执行上面的命令；脚本会同时写入 Milvus、MySQL 和 Whoosh。
 
 ### 11.4 好处
 

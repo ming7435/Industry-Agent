@@ -1,4 +1,4 @@
-"""离线 RAG 文档元数据和分块的 MySQL 持久化。"""
+"""MySQL persistence for offline RAG document metadata and chunks."""
 
 from .schema import MySQLConfig
 from .writer import MySQLRagWriter, MySQLWriteError

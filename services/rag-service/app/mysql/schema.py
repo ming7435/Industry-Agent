@@ -24,7 +24,7 @@ class MySQLConfig:
     port: int = 3306
     user: str = "root"
     password: str = ""
-    database: str = "industry_rag"
+    database: str = "industry_agent"
     charset: str = "utf8mb4"
     connect_timeout: int = 10
 

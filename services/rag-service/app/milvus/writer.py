@@ -90,13 +90,6 @@ class MilvusVectorWriter:
         schema.add_field(field_name="corpus", datatype=self._data_type().VARCHAR, max_length=64)
         schema.add_field(field_name="device_model", datatype=self._data_type().VARCHAR, max_length=128)
         schema.add_field(field_name="error_code", datatype=self._data_type().VARCHAR, max_length=128)
-        schema.add_field(field_name="drawing_id", datatype=self._data_type().VARCHAR, max_length=128)
-        schema.add_field(field_name="version_id", datatype=self._data_type().VARCHAR, max_length=128)
-        schema.add_field(field_name="entity_id", datatype=self._data_type().VARCHAR, max_length=128)
-        schema.add_field(field_name="project_id", datatype=self._data_type().VARCHAR, max_length=128)
-        schema.add_field(field_name="layer_name", datatype=self._data_type().VARCHAR, max_length=255)
-        schema.add_field(field_name="device_id", datatype=self._data_type().VARCHAR, max_length=128)
-        schema.add_field(field_name="tenant_id", datatype=self._data_type().VARCHAR, max_length=128)
         schema.add_field(field_name="page_numbers_json", datatype=self._data_type().VARCHAR, max_length=2048)
         schema.add_field(field_name="chunk_type", datatype=self._data_type().VARCHAR, max_length=64)
         schema.add_field(field_name="quality", datatype=self._data_type().VARCHAR, max_length=32)
@@ -189,13 +182,6 @@ class MilvusVectorWriter:
             "corpus": corpus,
             "device_model": device_model,
             "error_code": error_code,
-            "drawing_id": record.drawing_id or "",
-            "version_id": record.version_id or "",
-            "entity_id": record.entity_id or "",
-            "project_id": record.project_id or "",
-            "layer_name": record.layer_name or "",
-            "device_id": record.device_id or "",
-            "tenant_id": record.tenant_id or "",
             "page_numbers_json": json.dumps(record.page_numbers, ensure_ascii=False),
             "chunk_type": record.chunk_type or "",
             "quality": record.quality or "",
@@ -245,13 +231,6 @@ class MilvusVectorWriter:
             "corpus",
             "device_model",
             "error_code",
-            "drawing_id",
-            "version_id",
-            "entity_id",
-            "project_id",
-            "layer_name",
-            "device_id",
-            "tenant_id",
             "page_numbers_json",
             "chunk_type",
             "quality",
@@ -279,7 +258,16 @@ class MilvusVectorWriter:
             from pymilvus import MilvusClient
         except ImportError as exc:
             raise MilvusWriteError("pymilvus is required to write vector records.") from exc
-        return MilvusClient(uri=self.config.uri, db_name=self.config.database)
+        try:
+            bootstrap_client = MilvusClient(uri=self.config.uri)
+            databases = bootstrap_client.list_databases()
+            if self.config.database not in databases:
+                bootstrap_client.create_database(db_name=self.config.database)
+            return MilvusClient(uri=self.config.uri, db_name=self.config.database)
+        except Exception as exc:
+            raise MilvusWriteError(
+                f"Unable to create or open Milvus database '{self.config.database}': {exc}"
+            ) from exc
 
     @staticmethod
     def _data_type() -> Any:

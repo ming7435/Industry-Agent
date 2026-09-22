@@ -2,7 +2,7 @@
 
 Run it with either of::
 
-    uvicorn app.main:app --host 0.0.0.0 --port 8000
+    uvicorn app.main:app --host 0.0.0.0 --port 8001
     python -m app.main
 
 Start-up is intentionally non-blocking. The heavy components (bge-m3 embedder,

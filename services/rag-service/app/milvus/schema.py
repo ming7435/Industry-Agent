@@ -17,7 +17,7 @@ class MilvusConfig:
     """Milvus connection and collection settings."""
 
     uri: str = "http://localhost:19530"
-    database: str = "industry_rag_documents"
+    database: str = "industry_agent"
     collection_name: str = DEFAULT_COLLECTION_NAME
     vector_field: str = DEFAULT_VECTOR_FIELD
     primary_field: str = DEFAULT_PRIMARY_FIELD

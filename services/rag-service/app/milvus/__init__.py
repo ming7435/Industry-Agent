@@ -3,7 +3,7 @@
 ``schema`` / ``writer`` belong to the offline half (create the collection, insert
 the embedded chunks); ``retriever`` to the online half (:class:`Hit` and
 :class:`DenseRetriever` are the dense leg of the search chain). Both use the same
-collection, ``settings.milvus_collection``.
+the configured collections derived from the data tree.
 """
 
 from .retriever import SOURCE_DENSE, DenseRetriever, Hit

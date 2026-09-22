@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from app.embedding import VectorRecord
+from app.embedding import VectorRecord, prune_empty
 from app.ingestion import StructuredDocument
 
 from .schema import MySQLConfig
@@ -31,7 +31,7 @@ class MySQLRagWriter:
         self._connection = connection
         self._connection_factory = connection_factory
 
-    def initialize(self) -> None:
+    def initialize(self, *, include_cad_metadata: bool = False) -> None:
         connection = self._get_connection()
         try:
             with connection.cursor() as cursor:
@@ -49,11 +49,6 @@ class MySQLRagWriter:
                         source_format VARCHAR(32) NOT NULL,
                         content_hash CHAR(64) NOT NULL,
                         file_size BIGINT UNSIGNED NOT NULL DEFAULT 0,
-                        storage_bucket VARCHAR(255) NULL,
-                        storage_key VARCHAR(1024) NULL,
-                        storage_uri VARCHAR(2048) NULL,
-                        storage_etag VARCHAR(255) NULL,
-                        storage_version_id VARCHAR(255) NULL,
                         status VARCHAR(32) NOT NULL,
                         chunk_count INT UNSIGNED NOT NULL DEFAULT 0,
                         vector_count INT UNSIGNED NOT NULL DEFAULT 0,
@@ -67,156 +62,146 @@ class MySQLRagWriter:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
                 )
-                _ensure_columns(
-                    cursor,
-                    "rag_documents",
-                    {
-                        "storage_bucket": "VARCHAR(255) NULL",
-                        "storage_key": "VARCHAR(1024) NULL",
-                        "storage_uri": "VARCHAR(2048) NULL",
-                        "storage_etag": "VARCHAR(255) NULL",
-                        "storage_version_id": "VARCHAR(255) NULL",
-                    },
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS cad_drawings (
-                        drawing_id CHAR(64) PRIMARY KEY,
-                        document_id CHAR(64) NOT NULL,
-                        drawing_name VARCHAR(512) NOT NULL,
-                        project_id VARCHAR(128) NULL,
-                        tenant_id VARCHAR(128) NULL,
-                        current_version_id CHAR(64) NULL,
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
-                        CONSTRAINT fk_cad_drawings_document
-                            FOREIGN KEY (document_id) REFERENCES rag_documents(document_id)
-                            ON DELETE CASCADE,
-                        KEY idx_cad_drawings_project (project_id),
-                        KEY idx_cad_drawings_tenant (tenant_id)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS cad_drawing_versions (
-                        version_id CHAR(64) PRIMARY KEY,
-                        drawing_id CHAR(64) NOT NULL,
-                        document_id CHAR(64) NOT NULL,
-                        version_label VARCHAR(128) NOT NULL,
-                        source_format VARCHAR(32) NOT NULL,
-                        dxf_version VARCHAR(64) NULL,
-                        unit_name VARCHAR(64) NULL,
-                        coordinate_system VARCHAR(128) NULL,
-                        bbox_json JSON NULL,
-                        entity_count INT UNSIGNED NOT NULL DEFAULT 0,
-                        layer_count INT UNSIGNED NOT NULL DEFAULT 0,
-                        metadata_json JSON NOT NULL,
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
-                        CONSTRAINT fk_cad_versions_drawing
-                            FOREIGN KEY (drawing_id) REFERENCES cad_drawings(drawing_id)
-                            ON DELETE CASCADE,
-                        KEY idx_cad_versions_document (document_id)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS cad_layers (
-                        layer_id VARCHAR(160) PRIMARY KEY,
-                        version_id CHAR(64) NOT NULL,
-                        layer_name VARCHAR(255) NOT NULL,
-                        entity_count INT UNSIGNED NOT NULL DEFAULT 0,
-                        metadata_json JSON NOT NULL,
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
-                        CONSTRAINT fk_cad_layers_version
-                            FOREIGN KEY (version_id) REFERENCES cad_drawing_versions(version_id)
-                            ON DELETE CASCADE,
-                        KEY idx_cad_layers_name (layer_name)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS cad_entities (
-                        entity_id VARCHAR(160) PRIMARY KEY,
-                        version_id CHAR(64) NOT NULL,
-                        drawing_id CHAR(64) NOT NULL,
-                        document_id CHAR(64) NOT NULL,
-                        dxf_handle VARCHAR(128) NULL,
-                        entity_type VARCHAR(64) NOT NULL,
-                        layer_name VARCHAR(255) NULL,
-                        block_name VARCHAR(255) NULL,
-                        space_name VARCHAR(64) NULL,
-                        device_id VARCHAR(128) NULL,
-                        text_content TEXT NULL,
-                        bbox_json JSON NULL,
-                        geometry_json JSON NULL,
-                        color VARCHAR(64) NULL,
-                        linetype VARCHAR(128) NULL,
-                        lineweight DOUBLE NULL,
-                        raw_json JSON NOT NULL,
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
-                        CONSTRAINT fk_cad_entities_version
-                            FOREIGN KEY (version_id) REFERENCES cad_drawing_versions(version_id)
-                            ON DELETE CASCADE,
-                        KEY idx_cad_entities_layer_type (layer_name, entity_type),
-                        KEY idx_cad_entities_device (device_id),
-                        KEY idx_cad_entities_document (document_id)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS cad_text_annotations (
-                        annotation_id VARCHAR(160) PRIMARY KEY,
-                        entity_id VARCHAR(160) NOT NULL,
-                        version_id CHAR(64) NOT NULL,
-                        drawing_id CHAR(64) NOT NULL,
-                        document_id CHAR(64) NOT NULL,
-                        text_content TEXT NOT NULL,
-                        device_id VARCHAR(128) NULL,
-                        layer_name VARCHAR(255) NULL,
-                        bbox_json JSON NULL,
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
-                        CONSTRAINT fk_cad_annotations_entity
-                            FOREIGN KEY (entity_id) REFERENCES cad_entities(entity_id)
-                            ON DELETE CASCADE,
-                        KEY idx_cad_annotations_device (device_id),
-                        KEY idx_cad_annotations_version (version_id)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-                    """
-                )
-                cursor.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS cad_entity_relations (
-                        relation_id VARCHAR(160) PRIMARY KEY,
-                        version_id CHAR(64) NOT NULL,
-                        drawing_id CHAR(64) NOT NULL,
-                        document_id CHAR(64) NOT NULL,
-                        source_entity_id VARCHAR(160) NOT NULL,
-                        target_entity_id VARCHAR(160) NOT NULL,
-                        relation_type VARCHAR(64) NOT NULL,
-                        evidence_text TEXT NULL,
-                        metadata_json JSON NOT NULL,
-                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
-                        KEY idx_cad_relations_source (source_entity_id),
-                        KEY idx_cad_relations_target (target_entity_id),
-                        KEY idx_cad_relations_version_type (version_id, relation_type)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-                    """
-                )
+                if include_cad_metadata:
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS cad_drawings (
+                            drawing_id CHAR(64) PRIMARY KEY,
+                            document_id CHAR(64) NOT NULL,
+                            drawing_name VARCHAR(512) NOT NULL,
+                            project_id VARCHAR(128) NULL,
+                            tenant_id VARCHAR(128) NULL,
+                            current_version_id CHAR(64) NULL,
+                            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+                            CONSTRAINT fk_cad_drawings_document
+                                FOREIGN KEY (document_id) REFERENCES rag_documents(document_id)
+                                ON DELETE CASCADE,
+                            KEY idx_cad_drawings_project (project_id),
+                            KEY idx_cad_drawings_tenant (tenant_id)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS cad_drawing_versions (
+                            version_id CHAR(64) PRIMARY KEY,
+                            drawing_id CHAR(64) NOT NULL,
+                            document_id CHAR(64) NOT NULL,
+                            version_label VARCHAR(128) NOT NULL,
+                            source_format VARCHAR(32) NOT NULL,
+                            dxf_version VARCHAR(64) NULL,
+                            unit_name VARCHAR(64) NULL,
+                            coordinate_system VARCHAR(128) NULL,
+                            bbox_json JSON NULL,
+                            entity_count INT UNSIGNED NOT NULL DEFAULT 0,
+                            layer_count INT UNSIGNED NOT NULL DEFAULT 0,
+                            metadata_json JSON NOT NULL,
+                            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+                            CONSTRAINT fk_cad_versions_drawing
+                                FOREIGN KEY (drawing_id) REFERENCES cad_drawings(drawing_id)
+                                ON DELETE CASCADE,
+                            KEY idx_cad_versions_document (document_id)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS cad_layers (
+                            layer_id VARCHAR(160) PRIMARY KEY,
+                            version_id CHAR(64) NOT NULL,
+                            layer_name VARCHAR(255) NOT NULL,
+                            entity_count INT UNSIGNED NOT NULL DEFAULT 0,
+                            metadata_json JSON NOT NULL,
+                            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+                            CONSTRAINT fk_cad_layers_version
+                                FOREIGN KEY (version_id) REFERENCES cad_drawing_versions(version_id)
+                                ON DELETE CASCADE,
+                            KEY idx_cad_layers_name (layer_name)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS cad_entities (
+                            entity_id VARCHAR(160) PRIMARY KEY,
+                            version_id CHAR(64) NOT NULL,
+                            drawing_id CHAR(64) NOT NULL,
+                            document_id CHAR(64) NOT NULL,
+                            dxf_handle VARCHAR(128) NULL,
+                            entity_type VARCHAR(64) NOT NULL,
+                            layer_name VARCHAR(255) NULL,
+                            block_name VARCHAR(255) NULL,
+                            space_name VARCHAR(64) NULL,
+                            device_id VARCHAR(128) NULL,
+                            text_content TEXT NULL,
+                            bbox_json JSON NULL,
+                            geometry_json JSON NULL,
+                            color VARCHAR(64) NULL,
+                            linetype VARCHAR(128) NULL,
+                            lineweight DOUBLE NULL,
+                            raw_json JSON NOT NULL,
+                            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+                            CONSTRAINT fk_cad_entities_version
+                                FOREIGN KEY (version_id) REFERENCES cad_drawing_versions(version_id)
+                                ON DELETE CASCADE,
+                            KEY idx_cad_entities_layer_type (layer_name, entity_type),
+                            KEY idx_cad_entities_device (device_id),
+                            KEY idx_cad_entities_document (document_id)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS cad_text_annotations (
+                            annotation_id VARCHAR(160) PRIMARY KEY,
+                            entity_id VARCHAR(160) NOT NULL,
+                            version_id CHAR(64) NOT NULL,
+                            drawing_id CHAR(64) NOT NULL,
+                            document_id CHAR(64) NOT NULL,
+                            text_content TEXT NOT NULL,
+                            device_id VARCHAR(128) NULL,
+                            layer_name VARCHAR(255) NULL,
+                            bbox_json JSON NULL,
+                            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+                            CONSTRAINT fk_cad_annotations_entity
+                                FOREIGN KEY (entity_id) REFERENCES cad_entities(entity_id)
+                                ON DELETE CASCADE,
+                            KEY idx_cad_annotations_device (device_id),
+                            KEY idx_cad_annotations_version (version_id)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS cad_entity_relations (
+                            relation_id VARCHAR(160) PRIMARY KEY,
+                            version_id CHAR(64) NOT NULL,
+                            drawing_id CHAR(64) NOT NULL,
+                            document_id CHAR(64) NOT NULL,
+                            source_entity_id VARCHAR(160) NOT NULL,
+                            target_entity_id VARCHAR(160) NOT NULL,
+                            relation_type VARCHAR(64) NOT NULL,
+                            evidence_text TEXT NULL,
+                            metadata_json JSON NOT NULL,
+                            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+                            KEY idx_cad_relations_source (source_entity_id),
+                            KEY idx_cad_relations_target (target_entity_id),
+                            KEY idx_cad_relations_version_type (version_id, relation_type)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                        """
+                    )
                 cursor.execute(
                     """
                     CREATE TABLE IF NOT EXISTS rag_chunks (
@@ -231,13 +216,6 @@ class MySQLRagWriter:
                         contains_table BOOLEAN NOT NULL DEFAULT FALSE,
                         contains_image BOOLEAN NOT NULL DEFAULT FALSE,
                         contains_cad BOOLEAN NOT NULL DEFAULT FALSE,
-                        drawing_id CHAR(64) NULL,
-                        version_id CHAR(64) NULL,
-                        entity_id VARCHAR(160) NULL,
-                        project_id VARCHAR(128) NULL,
-                        layer_name VARCHAR(255) NULL,
-                        device_id VARCHAR(128) NULL,
-                        tenant_id VARCHAR(128) NULL,
                         metadata_json JSON NOT NULL,
                         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -249,19 +227,6 @@ class MySQLRagWriter:
                         KEY idx_rag_chunks_type_quality (chunk_type, quality)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                     """
-                )
-                _ensure_columns(
-                    cursor,
-                    "rag_chunks",
-                    {
-                        "drawing_id": "CHAR(64) NULL",
-                        "version_id": "CHAR(64) NULL",
-                        "entity_id": "VARCHAR(160) NULL",
-                        "project_id": "VARCHAR(128) NULL",
-                        "layer_name": "VARCHAR(255) NULL",
-                        "device_id": "VARCHAR(128) NULL",
-                        "tenant_id": "VARCHAR(128) NULL",
-                    },
                 )
             connection.commit()
         except Exception as exc:
@@ -316,18 +281,12 @@ class MySQLRagWriter:
                     """
                     INSERT INTO rag_documents (
                         document_id, source_name, source_path, source_format,
-                        content_hash, file_size, storage_bucket, storage_key,
-                        storage_uri, storage_etag, storage_version_id, status,
-                        metadata_json
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'processing', %s)
+                        content_hash, file_size, status, metadata_json
+                    ) VALUES (%s, %s, %s, %s, %s, %s, 'processing', %s)
                     ON DUPLICATE KEY UPDATE
                         source_name=VALUES(source_name), source_path=VALUES(source_path),
                         source_format=VALUES(source_format), content_hash=VALUES(content_hash),
-                        file_size=VALUES(file_size), storage_bucket=COALESCE(VALUES(storage_bucket), storage_bucket),
-                        storage_key=COALESCE(VALUES(storage_key), storage_key),
-                        storage_uri=COALESCE(VALUES(storage_uri), storage_uri),
-                        storage_etag=COALESCE(VALUES(storage_etag), storage_etag),
-                        storage_version_id=COALESCE(VALUES(storage_version_id), storage_version_id),
+                        file_size=VALUES(file_size),
                         status='processing', error_message=NULL, metadata_json=VALUES(metadata_json)
                     """,
                     (
@@ -337,11 +296,6 @@ class MySQLRagWriter:
                         source_format,
                         content_hash,
                         file_size,
-                        (storage or {}).get("storage_bucket"),
-                        (storage or {}).get("storage_key"),
-                        (storage or {}).get("storage_uri"),
-                        (storage or {}).get("storage_etag"),
-                        (storage or {}).get("storage_version_id"),
                         _json(metadata or {}),
                     ),
                 )
@@ -563,10 +517,8 @@ class MySQLRagWriter:
                         INSERT INTO rag_chunks (
                             chunk_id, document_id, chunk_text, content_hash,
                             milvus_collection, page_numbers_json, chunk_type, quality,
-                            contains_table, contains_image, contains_cad, drawing_id,
-                            version_id, entity_id, project_id, layer_name, device_id,
-                            tenant_id, metadata_json
-                        ) VALUES (%s, %s, %s, SHA2(%s, 256), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            contains_table, contains_image, contains_cad, metadata_json
+                        ) VALUES (%s, %s, %s, SHA2(%s, 256), %s, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
                             document_id=VALUES(document_id), chunk_text=VALUES(chunk_text),
                             content_hash=VALUES(content_hash),
@@ -576,10 +528,7 @@ class MySQLRagWriter:
                             contains_table=VALUES(contains_table),
                             contains_image=VALUES(contains_image),
                             contains_cad=VALUES(contains_cad),
-                            drawing_id=VALUES(drawing_id), version_id=VALUES(version_id),
-                            entity_id=VALUES(entity_id), project_id=VALUES(project_id),
-                            layer_name=VALUES(layer_name), device_id=VALUES(device_id),
-                            tenant_id=VALUES(tenant_id), metadata_json=VALUES(metadata_json)
+                            metadata_json=VALUES(metadata_json)
                         """,
                         (
                             record.chunk_id,
@@ -593,13 +542,6 @@ class MySQLRagWriter:
                             record.contains_table,
                             record.contains_image,
                             record.contains_cad,
-                            record.drawing_id,
-                            record.version_id,
-                            record.entity_id,
-                            record.project_id,
-                            record.layer_name,
-                            record.device_id,
-                            record.tenant_id,
                             record.metadata_json,
                         ),
                     )
@@ -653,11 +595,6 @@ class MySQLRagWriter:
                     UPDATE rag_documents SET
                         source_name=%s, source_path=%s, source_format=%s,
                         content_hash=%s, file_size=%s,
-                        storage_bucket=COALESCE(%s, storage_bucket),
-                        storage_key=COALESCE(%s, storage_key),
-                        storage_uri=COALESCE(%s, storage_uri),
-                        storage_etag=COALESCE(%s, storage_etag),
-                        storage_version_id=COALESCE(%s, storage_version_id),
                         metadata_json=%s
                     WHERE document_id=%s
                     """,
@@ -667,11 +604,6 @@ class MySQLRagWriter:
                         source_format,
                         content_hash,
                         file_size,
-                        (storage or {}).get("storage_bucket"),
-                        (storage or {}).get("storage_key"),
-                        (storage or {}).get("storage_uri"),
-                        (storage or {}).get("storage_etag"),
-                        (storage or {}).get("storage_version_id"),
                         _json(metadata or {}),
                         document_id,
                     ),
@@ -747,7 +679,12 @@ class MySQLRagWriter:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    return json.dumps(
+        prune_empty(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=str,
+    )
 
 
 def _json_or_none(value: Any) -> str | None:

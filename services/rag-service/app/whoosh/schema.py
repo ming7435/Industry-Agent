@@ -1,11 +1,14 @@
-"""离线写入器和在线 BM25 路径共享的 Whoosh 索引 Schema。
+"""Whoosh index schema shared by the offline writer and the online BM25 route.
 
-一个 Schema，两个使用方：
+One schema, two users:
 
-* :mod:`app.whoosh.indexer` 在入库后（或入库过程中）写入；
-* :mod:`app.whoosh.retriever` 在在线链路的词法检索分支读取。
+* :mod:`app.whoosh.indexer` writes it after (or during) ingestion;
+* :mod:`app.whoosh.retriever` reads it for the lexical leg of the online chain.
 
-分析器在这里统一选择，确保两部分分词一致；用一种分析器建索引、用另一种分析器查询会导致无结果。本语料以中文为主，因此优先使用基于 jieba 的 :class:`ChineseAnalyzer`，不可用时退回到无依赖的 CJK 单字分析器。
+The analyser is chosen once here so both halves tokenise identically -- an index
+built with one analyser and queried with another returns nothing. Chinese text is
+the common case in this corpus, so jieba-based :class:`ChineseAnalyzer` is used
+when available and a dependency-free CJK unigram analyser otherwise.
 """
 
 from __future__ import annotations
@@ -21,7 +24,7 @@ FIELD_ERROR_CODE = "error_code"
 FIELD_METADATA = "metadata_json"
 
 TEXT_FIELDS: tuple[str, ...] = (FIELD_TEXT,)
-"""BM25 查询解析器检索的字段。"""
+"""Fields searched by the BM25 query parser."""
 
 FILTER_FIELDS: tuple[str, ...] = (
     FIELD_CORPUS,
@@ -29,16 +32,17 @@ FILTER_FIELDS: tuple[str, ...] = (
     FIELD_ERROR_CODE,
     FIELD_SOURCE_NAME,
 )
-"""请求过滤条件可下推为 Whoosh ``Term`` 的字段。"""
+"""Fields a request filter can be pushed down to as a Whoosh ``Term``."""
 
 _CJK_TOKEN_PATTERN = r"[\u4e00-\u9fff]|[A-Za-z0-9_]+"
 
 
 def cjk_analyzer() -> Any:
-    """返回无额外依赖、仍能切分中文文本的分析器。
+    """Return a dependency-free analyser that still splits Chinese text.
 
-    返回：
-        一个 Whoosh 分析器：逐字切分 CJK 字符，整体保留 ASCII 单词并转为小写。
+    Returns:
+        A Whoosh analyser tokenising CJK characters individually and ASCII words
+        as a whole, lower-cased.
     """
     from whoosh.analysis import LowercaseFilter, RegexTokenizer
 
@@ -46,10 +50,11 @@ def cjk_analyzer() -> Any:
 
 
 def build_analyzer() -> Any:
-    """返回写入和查询索引时使用的分析器。
+    """Return the analyser used to write and to query the index.
 
-    返回：
-        安装 jieba 时返回 :class:`whoosh.analysis.ChineseAnalyzer`，否则返回 :func:`cjk_analyzer`。
+    Returns:
+        :class:`whoosh.analysis.ChineseAnalyzer` when jieba is installed,
+        otherwise :func:`cjk_analyzer`.
     """
     try:
         from whoosh.analysis import ChineseAnalyzer
@@ -58,15 +63,16 @@ def build_analyzer() -> Any:
 
     try:
         return ChineseAnalyzer()
-    except Exception:  # noqa: BLE001 - jieba 存在但不可用
+    except Exception:  # noqa: BLE001 - jieba present but unusable
         return cjk_analyzer()
 
 
 def build_schema() -> Schema:
-    """返回 BM25 索引的 Whoosh Schema。
+    """Return the Whoosh schema of the BM25 index.
 
-    返回：
-        以 ``chunk_id`` 为唯一键、包含已分析 ``text`` 字段、可过滤元数据列和已存储 ``metadata_json`` blob 的 Schema。
+    Returns:
+        The schema with ``chunk_id`` as unique key, the analysed ``text`` field,
+        the filterable metadata columns and the stored ``metadata_json`` blob.
     """
     from whoosh.fields import ID, STORED, TEXT, Schema
 

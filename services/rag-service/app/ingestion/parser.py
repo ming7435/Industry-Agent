@@ -929,6 +929,18 @@ def describe_visual(
 def image_asset_from_file(path: Path, *, asset_id: str = "image") -> ImageAsset:
     data = read_file(path)
     media_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    if path.suffix.lower() == ".jp2":
+        try:
+            from PIL import Image
+
+            with Image.open(io.BytesIO(data)) as image:
+                converted = image.convert("RGB")
+                output = io.BytesIO()
+                converted.save(output, format="PNG")
+                data = output.getvalue()
+            media_type = "image/png"
+        except (ImportError, OSError, ValueError) as exc:
+            raise ImageParseError(f"Unable to convert JP2 image '{path}' to PNG: {exc}") from exc
     return ImageAsset(
         asset_id=asset_id,
         page_number=1,

@@ -443,7 +443,9 @@ def _split_text(text: str, max_characters: int, overlap_characters: int) -> list
             if len(overlapped) <= max_characters:
                 current = overlapped
             else:
-                # 不要让重叠内容把名义上受限的分块撑成超大分块；这对表格和较长工业参数段落尤其重要。
+                # Do not let overlap turn a nominally bounded chunk into an
+                # oversized one.  This is especially important for tables and
+                # long industrial parameter paragraphs.
                 chunks.extend(
                     _split_long_text(paragraph, max_characters, overlap_characters)
                 )

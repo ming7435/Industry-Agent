@@ -174,8 +174,8 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # 离线语料
     # ------------------------------------------------------------------
-    rag_data_dir: str = "data/SHUJU"
-    """``scripts/ingest_to_milvus.py`` 扫描的目录（相对于当前工作目录）。"""
+    rag_data_dir: str = str(SERVICE_ROOT / "data")
+    """``scripts/ingest_to_milvus.py`` 扫描的目录（固定在服务根目录）。"""
 
     default_corpus: str = "manuals"
     """当文档没有语料标识时，由 :func:`app.corpus.infer_corpus` 使用的默认语料标签
@@ -185,14 +185,14 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # 离线存储
     # ------------------------------------------------------------------
-    whoosh_index_dir: str = "data/index/whoosh"
+    whoosh_index_dir: str = str(SERVICE_ROOT / "data" / "index" / "whoosh")
     """生成的 Whoosh BM25 索引所在目录。"""
 
     milvus_uri: str = "http://localhost:19530"
     """Milvus 连接地址。"""
 
-    milvus_database: str = "industry_rag_documents"
-    """工业维护 RAG 服务使用的专用 Milvus 数据库。"""
+    milvus_database: str = "industry_agent"
+    """工业维护 RAG 服务使用的 Milvus 数据库；不存在时由写入器创建。"""
 
     milvus_host: str = "localhost"
     """Milvus 主机地址，供使用主机和端口而非 URI 的客户端使用。"""
@@ -200,31 +200,42 @@ class Settings(BaseSettings):
     milvus_port: int = 19530
     """Milvus 端口。"""
 
-    milvus_collection: str = "industry_rag_alarm_codes"
-    """当 ``MILVUS_COLLECTIONS`` 为空时使用的主备用集合。"""
-
-    milvus_collections: str = ""
-    """稠密检索路径要并发查询的类型化集合，多个集合使用逗号分隔。
-
-    标准入库流程会根据数据目录或业务类型将文档路由到不同集合，在线稠密检索
-    再查询解析后的集合列表并按分数合并结果。元数据过滤是细化层，而不是唯一的
-    隔离手段。
-    """
-
     @property
     def milvus_search_collections(self) -> list[str]:
-        """返回稠密检索路径要查询的集合列表。
+        """Return collections derived from the first-level data directories.
 
-        如果 ``MILVUS_COLLECTIONS`` 非空，则返回解析后的集合列表；否则
-        返回单个 :attr:`milvus_collection` 集合。
+        The data tree is the only source of collection membership. Empty marker
+        files do not create online collections, so health checks only target
+        collections that the ingestion command can actually build.
         """
 
-        raw = (self.milvus_collections or "").strip()
-        if raw:
-            parsed = [item.strip() for item in raw.split(",") if item.strip()]
-            if parsed:
-                return parsed
-        return [self.milvus_collection]
+        data_root = Path(self.rag_data_dir)
+        folder_collections = {
+            "alarms": "industry_rag_alarm_codes",
+            "cases": "industry_rag_alarm_solutions",
+            "manuals": "industry_rag_manuals",
+            "sop": "industry_rag_sop",
+            "cad": "industry_rag_drawings",
+        }
+        if not data_root.is_dir():
+            return []
+
+        discovered: list[str] = []
+        for folder in sorted(data_root.iterdir(), key=lambda item: item.name.casefold()):
+            if not folder.is_dir() or folder.name.lower() in {"index", ".git", "__pycache__"}:
+                continue
+            if not any(path.is_file() and path.name != ".gitkeep" for path in folder.rglob("*")):
+                continue
+            normalized = folder.name.lower()
+            if normalized in folder_collections:
+                discovered.append(folder_collections[normalized])
+                continue
+            slug = "".join(
+                char if char.isalnum() or char == "_" else "_"
+                for char in normalized
+            ).strip("_")
+            discovered.append(f"industry_rag_{slug or 'unknown'}"[:255])
+        return sorted(set(discovered))
 
     milvus_primary_field: str = "id"
     """文本块集合的主键字段。"""
@@ -251,7 +262,7 @@ class Settings(BaseSettings):
     mysql_port: int = 3306
     mysql_user: str = "root"
     mysql_password: str = ""
-    mysql_database: str = "industry_rag"
+    mysql_database: str = "industry_agent"
     mysql_charset: str = "utf8mb4"
     mysql_connect_timeout: int = 10
 
@@ -299,7 +310,7 @@ class Settings(BaseSettings):
     service_host: str = "0.0.0.0"
     """uvicorn 服务的绑定地址。"""
 
-    service_port: int = 8000
+    service_port: int = 8001
     """服务绑定端口。"""
 
     log_level: str = "INFO"
