@@ -50,3 +50,18 @@ def test_orchestrator_response_trace_isolated_to_current_task_and_trace():
     result = orchestrator._execute_graph({"entry": "user", "user_text": "hello"})
 
     assert result["trace"] == []
+
+
+def test_same_event_has_one_task_and_one_workorder():
+    from fastapi.testclient import TestClient
+
+    from app.api.server import create_app
+
+    client = TestClient(create_app())
+    event = {"event_id": "EVT-E2E-1", "device_id": "D-1", "alarm_code": "E102", "event_type": "alarm"}
+    first = client.post("/api/v1/agent/event", json={"event": event}).json()
+    second = client.post("/api/v1/agent/event", json={"event": event}).json()
+
+    assert second["task_id"] == first["task_id"]
+    orders = client.get("/api/workorders").json()["items"]
+    assert len([item for item in orders if item.get("event_id") == "EVT-E2E-1"]) == 1
