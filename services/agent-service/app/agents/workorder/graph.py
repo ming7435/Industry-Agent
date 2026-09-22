@@ -36,7 +36,11 @@ def create_order(state: WorkOrderGraphState) -> Dict[str, Any]:
     existing = agent.find_idempotent(request)
     if existing:
         return {"workorder": existing, "route": "collect_dispatch_context"}
-    order = agent.service.create_from_plan(state.get("plan") or {})
+    plan = dict(state.get("plan") or {})
+    for key in ("idempotency_key", "event_id", "diagnosis_snapshot", "maintenance_plan_snapshot"):
+        if request.get(key):
+            plan[key] = request[key]
+    order = agent.service.create_from_plan(plan)
     raw = order.model_dump(mode="json") if hasattr(order, "model_dump") else dict(order)
     agent.remember_idempotent(request, raw)
     return {"workorder": raw, "route": "collect_dispatch_context"}

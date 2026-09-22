@@ -124,7 +124,15 @@ class OrchestratorNodes:
         """Maintenance 完成后创建并派工；后续维修由外部反馈入口驱动。"""
 
         self.tracing.start("workorder", state)
-        result = self.requests.execute_workorder(state, action="create", from_agent="maintenance")
+        event = dict(state.get("event") or {})
+        context = dict(state.get("context") or {})
+        context.update({
+            "event_id": str(event.get("event_id") or context.get("event_id") or ""),
+            "idempotency_key": "monitor:%s" % str(event.get("event_id")) if event.get("event_id") else context.get("idempotency_key", ""),
+            "diagnosis_snapshot": dict(state.get("diagnosis") or {}),
+            "maintenance_plan_snapshot": dict(state.get("maintenance_plan") or {}),
+        })
+        result = self.requests.execute_workorder({**state, "context": context}, action="create", from_agent="maintenance")
         return self.tracing.finish("workorder", state, {
             "workorder_result": result,
             "workorder": result.get("workorder", {}),

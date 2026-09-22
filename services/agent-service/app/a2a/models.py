@@ -172,6 +172,9 @@ class WorkOrderRequest(A2ARequest):
     assignee: str = ""
     fault_level: str = ""
     idempotency_key: str = ""
+    event_id: str = ""
+    diagnosis_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    maintenance_plan_snapshot: Dict[str, Any] = Field(default_factory=dict)
     closure_reason: str = ""
     priority: str = "normal"
     risk_level: str = ""

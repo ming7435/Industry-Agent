@@ -18,6 +18,7 @@ class WorkOrderMcpAdapter:
 
     def __init__(self) -> None:
         self._orders: Dict[str, Dict[str, Any]] = {}
+        self._idempotency_index: Dict[str, str] = {}
 
     @staticmethod
     def _now() -> str:
@@ -36,8 +37,17 @@ class WorkOrderMcpAdapter:
         priority: str = "normal",
         risk_level: str = "",
         source: str = "",
+        idempotency_key: str = "",
+        event_id: str = "",
+        diagnosis_snapshot: Mapping[str, Any] | None = None,
+        maintenance_plan_snapshot: Mapping[str, Any] | None = None,
         **_: Any,
     ) -> Dict[str, Any]:
+        key = str(idempotency_key or "").strip()
+        if key:
+            existing_id = self._idempotency_index.get(key)
+            if existing_id and existing_id in self._orders:
+                return dict(self._orders[existing_id])
         now = self._now()
         order = {
             "workorder_id": "WO-" + uuid4().hex[:10].upper(),
@@ -57,10 +67,16 @@ class WorkOrderMcpAdapter:
             "priority": priority or "normal",
             "risk_level": risk_level,
             "source": source,
+            "idempotency_key": key,
+            "event_id": str(event_id or ""),
+            "diagnosis_snapshot": dict(diagnosis_snapshot or {}),
+            "maintenance_plan_snapshot": dict(maintenance_plan_snapshot or {}),
             "created_at": now,
             "updated_at": now,
         }
         self._orders[order["workorder_id"]] = order
+        if key:
+            self._idempotency_index[key] = order["workorder_id"]
         self._record_event(order, "created", "", "open", {})
         return dict(order)
 

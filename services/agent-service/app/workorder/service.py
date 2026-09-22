@@ -41,6 +41,10 @@ class WorkOrderService:
             "priority": payload.get("priority") or "normal",
             "risk_level": payload.get("risk_level") or "",
             "source": payload.get("source") or "agent",
+            "idempotency_key": payload.get("idempotency_key") or "",
+            "event_id": payload.get("event_id") or "",
+            "diagnosis_snapshot": dict(payload.get("diagnosis_snapshot") or diagnosis),
+            "maintenance_plan_snapshot": dict(payload.get("maintenance_plan_snapshot") or payload),
         })
         return WorkOrder(**raw)
 
@@ -57,6 +61,7 @@ class WorkOrderService:
             "priority": priority,
             "risk_level": risk_level,
             "source": source,
+            "idempotency_key": "",
         })
         if assignee:
             order = self.assign(str(order["workorder_id"]), assignee)
