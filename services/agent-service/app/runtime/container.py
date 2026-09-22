@@ -70,5 +70,9 @@ class AgentContainer:
         }
         self.endpoints = A2AEndpoints(self.harnesses)
         self.endpoints.register(self.a2a)
-        self.operations = RuntimeOperations(self.requests, self.closure_service)
+        self.operations = RuntimeOperations(
+            self.requests,
+            self.closure_service,
+            report_harness=self.harnesses.get("report"),
+        )
         self.tracing = NodeTrace(self.trace)

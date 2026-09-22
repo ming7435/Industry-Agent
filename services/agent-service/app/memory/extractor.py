@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 from uuid import uuid4
+from hashlib import sha256
 
 from app.common import AlarmCodeParser
 
@@ -35,8 +36,14 @@ class ExperienceExtractor:
             content_parts.append("维修步骤：%s" % steps)
         if feedback:
             content_parts.append("现场反馈：%s" % feedback)
+        learning_key = str(workorder.get("learning_idempotency_key") or "").strip()
+        experience_id = (
+            "EXP-" + sha256(learning_key.encode("utf-8")).hexdigest()[:10].upper()
+            if learning_key
+            else "EXP-" + uuid4().hex[:10].upper()
+        )
         return {
-            "experience_id": "EXP-" + uuid4().hex[:10].upper(),
+            "experience_id": experience_id,
             "device_id": workorder.get("device_id") or diagnosis.get("device_id", ""),
             "title": workorder.get("title") or "%s维修经验" % fault,
             "content": "\n".join(content_parts),
@@ -52,6 +59,8 @@ class ExperienceExtractor:
             "diagnosis": str(fault),
             "treatment": treatment,
             "duration_seconds": duration_seconds,
+            "learning_idempotency_key": learning_key,
+            "source_event_id": str(workorder.get("source_event_id") or workorder.get("event_id") or ""),
         }
 
     @staticmethod

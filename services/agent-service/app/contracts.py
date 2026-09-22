@@ -297,3 +297,5 @@ class ExperienceResult(BaseModel):
     treatment: str = ""
     duration_seconds: float = 0.0
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    learning_idempotency_key: str = ""
+    source_event_id: str = ""

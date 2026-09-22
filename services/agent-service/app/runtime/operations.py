@@ -5,11 +5,14 @@ from uuid import uuid4
 from app.workorder.validator import WorkOrderValidator
 from app.a2a.requests import A2ARequests
 from app.closure import ClosureService
+from app.common.serialization import _serialize_agent_result
 
 class RuntimeOperations:
-    def __init__(self, requests: A2ARequests, closure_service: ClosureService) -> None:
+    def __init__(self, requests: A2ARequests, closure_service: ClosureService, report_harness: Any | None = None) -> None:
         self.requests = requests
         self.closure_service = closure_service
+        self.report_harness = report_harness
+        self._learning_results: dict[str, Dict[str, Any]] = {}
 
     def inspect_quality(
         self,
@@ -75,20 +78,48 @@ class RuntimeOperations:
             order = dict(result.get("workorder") or {})
             feedback = order.get("repair_feedback") or values.get("repair_feedback") or {}
             if order.get("status") == "closed" and WorkOrderValidator.can_learn(order, feedback):
+                learning_key = "workorder:%s" % str(order.get("workorder_id") or values.get("workorder_id") or "")
+                cached = self._learning_results.get(learning_key)
+                if cached is not None:
+                    result.update(cached)
+                    return result
                 learning_state: dict[str, Any] = {
                     **state,
                     "workorder": order,
                     "repair_feedback": feedback,
                     "repair_verification": dict(order.get("repair_verification") or {}),
-                    "diagnosis": dict(values.get("diagnosis") or {}),
-                    "maintenance_plan": dict(values.get("maintenance_plan") or {}),
+                    "diagnosis": dict(values.get("diagnosis") or order.get("diagnosis_snapshot") or {}),
+                    "maintenance_plan": dict(values.get("maintenance_plan") or order.get("maintenance_plan_snapshot") or {}),
+                    "context": {
+                        **dict(values),
+                        "learning_idempotency_key": learning_key,
+                        "source_event_id": str(order.get("event_id") or values.get("event_id") or ""),
+                        "report_type": "full_case_report",
+                    },
+                }
+                learning_state["workorder"] = {
+                    **order,
+                    "learning_idempotency_key": learning_key,
+                    "source_event_id": str(order.get("event_id") or values.get("event_id") or ""),
                 }
                 try:
-                    result["memory_result"] = self.requests.access_memory(
+                    memory_result = self.requests.access_memory(
                         learning_state,
                         action="learn",
                         from_agent="workorder",
                     )
+                    result["memory_result"] = memory_result
+                    if memory_result.get("success") and self.report_harness is not None:
+                        report_state = {
+                            **learning_state,
+                            "report_type": "full_case_report",
+                            "report": dict(memory_result.get("experience") or {}),
+                        }
+                        result["report"] = _serialize_agent_result(self.report_harness.execute_agent(report_state))
+                    self._learning_results[learning_key] = {
+                        "memory_result": result.get("memory_result", {}),
+                        **({"report": result["report"]} if result.get("report") else {}),
+                    }
                 except Exception as error:
                     result["memory_result"] = {
                         "success": False,
