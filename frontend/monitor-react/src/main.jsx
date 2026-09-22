@@ -2899,10 +2899,10 @@ function RepairCadPanel({ order, target }) {
   }
 
   useEffect(() => {
-    const timers = [150, 600, 1400, 2600].map((delay) => window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       if (cadFrameRef.current?.contentWindow) focusFaultPart();
-    }, delay));
-    return () => timers.forEach((timer) => window.clearTimeout(timer));
+    }, 180);
+    return () => window.clearTimeout(timer);
   }, [viewerUrl, targetComponent, target.part_no]);
 
   function openFullscreen() {
