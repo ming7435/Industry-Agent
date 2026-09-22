@@ -109,7 +109,11 @@ class RuntimeOperations:
                         from_agent="workorder",
                     )
                     result["memory_result"] = memory_result
-                    if memory_result.get("success") and self.report_harness is not None:
+                    experience = dict(memory_result.get("experience") or {})
+                    rag_saved = memory_result.get("rag_saved")
+                    if rag_saved is None:
+                        rag_saved = experience.get("rag_saved", True)
+                    if memory_result.get("success") and bool(rag_saved) and self.report_harness is not None:
                         report_state = {
                             **learning_state,
                             "report_type": "full_case_report",

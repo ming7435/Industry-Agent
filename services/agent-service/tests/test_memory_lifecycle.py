@@ -78,3 +78,27 @@ def test_close_without_feedback_does_not_learn_or_report():
     assert "report" not in result
     assert requests.learn_calls == 0
     assert reports.calls == []
+
+
+def test_close_does_not_report_when_rag_stage_failed():
+    from app.runtime.operations import RuntimeOperations
+
+    class _RagFailureRequests(_Requests):
+        def access_memory(self, _state, action="learn", **_kwargs):
+            self.learn_calls += 1
+            return {
+                "success": True,
+                "rag_saved": False,
+                "experience": {"experience_id": "EXP-WO-RAG-FAIL", "rag_saved": False},
+            }
+
+    requests = _RagFailureRequests()
+    reports = _ReportHarness()
+    result = RuntimeOperations(requests, SimpleNamespace(), report_harness=reports).execute_workorder(
+        "close", {"workorder_id": "WO-RAG-FAIL", "repair_feedback": {"feedback": "replaced"}}
+    )
+
+    assert result["memory_result"]["success"] is True
+    assert result["memory_result"]["rag_saved"] is False
+    assert "report" not in result
+    assert reports.calls == []

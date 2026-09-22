@@ -94,7 +94,15 @@ def final(state: MemoryGraphState) -> Dict[str, Any]:
     action = state.get("action", "search")
     items = list(state.get("ranked_items") or [])
     experience = dict(state.get("experience") or {})
-    result = MemoryResult(action=action, success=bool(items) if action in {"search", "recent"} else bool(experience.get("memory_saved")), items=items, experience=experience, count=len(items), backend=getattr(state["agent"].experience_module.long_memory, "backend", ""), validation_findings=list(state.get("validation_findings") or []), stop_reason="completed")
+    if action in {"search", "recent"}:
+        success = bool(items)
+    else:
+        # Preserve the historical Memory Agent meaning of ``success`` (the
+        # experience was admitted to long memory).  ``rag_saved`` remains an
+        # explicit stage result and the close runtime uses it to gate reports.
+        # A duplicate with a successful RAG retry is also a completed learn.
+        success = bool(experience.get("memory_saved") or (experience.get("duplicate") and experience.get("rag_saved")))
+    result = MemoryResult(action=action, success=success, items=items, experience=experience, count=len(items), backend=getattr(state["agent"].experience_module.long_memory, "backend", ""), validation_findings=list(state.get("validation_findings") or []), stop_reason="completed")
     return {"result": result, "stop_reason": "completed"}
 
 
