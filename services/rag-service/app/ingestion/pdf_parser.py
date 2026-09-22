@@ -18,7 +18,7 @@ from .models import (
     PdfType,
     StructuredDocument,
 )
-from .vision import ImageDescriber, QwenVLClient, VisionError
+from .vision import ImageDescriber, SiliconFlowVisionClient, VisionError
 
 
 DEFAULT_VISION_PROMPT = """你是工业机械图纸和设备技术文档识别专家。请描述这张图片，供检索增强生成使用。
@@ -506,7 +506,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--vision",
         action="store_true",
-        help="Use Qwen-VL from DASHSCOPE_API_KEY/QWEN_API_KEY",
+        help="Use SiliconFlow vision from SILICONFLOW_API_KEY",
     )
     return parser
 
@@ -516,7 +516,7 @@ def main() -> int:
     import json
 
     try:
-        image_describer = QwenVLClient.from_env() if args.vision else None
+        image_describer = SiliconFlowVisionClient.from_env() if args.vision else None
         result = parse_pdf(
             args.path,
             config=PdfParserConfig(

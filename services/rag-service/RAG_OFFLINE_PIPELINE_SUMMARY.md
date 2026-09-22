@@ -12,7 +12,7 @@
 | DOCX | `python-docx`，段落、标题、表格、内嵌图片 | 完整支持 |
 | CSV | Python `csv`，行列转语义表格 | 完整支持 |
 | XLSX | `openpyxl`，按工作表转表格页 | 完整支持 |
-| PNG/JPG/TIFF/BMP/WEBP | 图片资产读取，可选 Qwen-VL 描述 | 完整支持 |
+| PNG/JPG/TIFF/BMP/WEBP | 图片资产读取，可选 SiliconFlow 视觉模型描述 | 完整支持 |
 | DXF | `ezdxf`，图层、文字、尺寸、块、实体统计 | 完整支持 |
 | DWG | ODA File Converter 转临时 DXF，再由 `ezdxf` 解析 | 需安装外部转换器 |
 
@@ -146,7 +146,7 @@ PDF 解析层负责把工业 PDF 转换成结构化文档对象 `StructuredDocum
 - 为后续清洗、切块、向量化提供统一数据结构
 - 对工业手册、维修文档、报警码文档等复杂 PDF 更友好
 
-## 4. Qwen-VL 多模态识别层
+## 4. SiliconFlow 多模态识别层
 
 ### 4.1 主要位置
 
@@ -154,7 +154,7 @@ PDF 解析层负责把工业 PDF 转换成结构化文档对象 `StructuredDocum
 
 ### 4.2 逻辑说明
 
-Qwen-VL 识别层用于处理普通文本抽取无法理解的视觉内容，例如：
+SiliconFlow 视觉识别层用于处理普通文本抽取无法理解的视觉内容，例如：
 
 - 设备图片
 - CAD 图纸
@@ -163,11 +163,11 @@ Qwen-VL 识别层用于处理普通文本抽取无法理解的视觉内容，例
 - 含尺寸标注的图纸
 - 含零件编号的结构图
 
-PDF 解析阶段会将图片或页面渲染为图像，再调用 Qwen-VL 生成语义描述，并把描述与对应 placeholder 关联。
+PDF 解析阶段会将图片或页面渲染为图像，再调用 SiliconFlow 视觉模型生成语义描述，并把描述与对应 placeholder 关联。
 
 ### 4.3 使用的方法
 
-采用 DashScope / Qwen 的 OpenAI-compatible API：
+采用 SiliconFlow 的 OpenAI-compatible 多模态 API：
 
 - 将图片转为 base64 data URL
 - 使用文本 prompt 指导模型识别工业图像
@@ -177,10 +177,9 @@ PDF 解析阶段会将图片或页面渲染为图像，再调用 Qwen-VL 生成�
 支持的环境变量包括：
 
 ```text
-DASHSCOPE_API_KEY
-QWEN_API_KEY
-QWEN_VL_MODEL
-QWEN_VL_ENDPOINT
+SILICONFLOW_API_KEY
+SILICONFLOW_VISION_MODEL
+SILICONFLOW_VISION_ENDPOINT
 ```
 
 ### 4.4 好处
@@ -756,7 +755,7 @@ industry_rag_drawings: <cad_vector_records>
 
 ### 13.2 多模态能力可扩展
 
-图片、CAD、扫描页可以通过 Qwen-VL 转换为语义文本，解决传统 RAG 无法处理视觉信息的问题。
+图片、CAD、扫描页可以通过 SiliconFlow 视觉模型转换为语义文本，解决传统 RAG 无法处理视觉信息的问题。
 
 ### 13.3 数据质量更可控
 

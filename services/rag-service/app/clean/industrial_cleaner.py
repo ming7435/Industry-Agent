@@ -426,7 +426,7 @@ def _is_discardable(
     if not text:
         return True
     if kind in {BlockType.IMAGE, BlockType.PAGE_IMAGE, BlockType.CAD_DRAWING}:
-        return text in {"[待Qwen-VL识别]"} or "识别失败" in text
+        return text in {"[待Qwen-VL识别]", "[待SiliconFlow视觉模型识别]"} or "识别失败" in text
     if len(text) < min_characters and not is_heading and not _contains_industrial_signal(text):
         return True
     return False

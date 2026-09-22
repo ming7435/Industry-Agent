@@ -60,7 +60,7 @@ tests/                  offline unit tests (no network, no GPU, no Milvus requir
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env      # then fill in SILICONFLOW_API_KEY, DEEPSEEK_API_KEY and, optionally, MySQL / Qwen-VL
+cp .env.example .env      # then fill in SILICONFLOW_API_KEY, DEEPSEEK_API_KEY and, optionally, MySQL / SiliconFlow vision
 ```
 
 ## Offline: build the indexes

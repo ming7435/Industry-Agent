@@ -1,6 +1,6 @@
-"""Qwen-VL image description client.
+"""SiliconFlow vision image description client.
 
-The client uses the OpenAI-compatible DashScope endpoint and deliberately
+The client uses SiliconFlow's OpenAI-compatible endpoint and deliberately
 keeps HTTP details here so PDF parsing can be tested without network access.
 """
 
@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 
 
 class VisionError(RuntimeError):
-    """Raised when Qwen-VL cannot describe an image."""
+    """Raised when the SiliconFlow vision model cannot describe an image."""
 
 
 class UrlOpener(Protocol):
@@ -37,13 +37,13 @@ def _load_local_env() -> None:
 
 
 @dataclass(frozen=True)
-class QwenVLConfig:
-    """Connection and generation settings for the Qwen-VL API."""
+class SiliconFlowVisionConfig:
+    """Connection and generation settings for the SiliconFlow vision API."""
 
     api_key: str
-    model: str = "qwen-vl-max"
+    model: str = "Qwen/Qwen3-VL-8B-Instruct"
     endpoint: str = (
-        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        "https://api.siliconflow.cn/v1/chat/completions"
     )
     timeout_seconds: float = 90.0
     max_tokens: int = 1200
@@ -51,11 +51,11 @@ class QwenVLConfig:
 
     def __post_init__(self) -> None:
         if not self.api_key.strip():
-            raise ValueError("Qwen-VL api_key must not be empty.")
+            raise ValueError("SiliconFlow vision api_key must not be empty.")
         if not self.model.strip():
-            raise ValueError("Qwen-VL model must not be empty.")
+            raise ValueError("SiliconFlow vision model must not be empty.")
         if not self.endpoint.strip():
-            raise ValueError("Qwen-VL endpoint must not be empty.")
+            raise ValueError("SiliconFlow vision endpoint must not be empty.")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero.")
         if self.max_tokens <= 0:
@@ -64,19 +64,19 @@ class QwenVLConfig:
             raise ValueError("temperature must be between zero and two.")
 
     @classmethod
-    def from_env(cls) -> "QwenVLConfig":
-        """Load configuration from .env and common DashScope/Qwen variables."""
+    def from_env(cls) -> "SiliconFlowVisionConfig":
+        """Load configuration from the service .env and SiliconFlow variables."""
 
         _load_local_env()
-        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY")
+        api_key = os.getenv("SILICONFLOW_API_KEY")
         if not api_key:
             raise VisionError(
-                "Qwen-VL is not configured; set DASHSCOPE_API_KEY or QWEN_API_KEY."
+                "SiliconFlow vision is not configured; set SILICONFLOW_API_KEY."
             )
         return cls(
             api_key=api_key,
-            model=os.getenv("QWEN_VL_MODEL", cls.model),
-            endpoint=os.getenv("QWEN_VL_ENDPOINT", cls.endpoint),
+            model=os.getenv("SILICONFLOW_VISION_MODEL", cls.model),
+            endpoint=os.getenv("SILICONFLOW_VISION_ENDPOINT", cls.endpoint),
         )
 
 
@@ -95,22 +95,27 @@ class ImageDescriber(Protocol):
         ...
 
 
-class QwenVLClient:
-    """Small dependency-light client for Qwen-VL image understanding."""
+class SiliconFlowVisionClient:
+    """Small dependency-light client for SiliconFlow vision understanding."""
 
-    def __init__(self, config: QwenVLConfig, *, opener: UrlOpener | None = None) -> None:
+    def __init__(
+        self,
+        config: SiliconFlowVisionConfig,
+        *,
+        opener: UrlOpener | None = None,
+    ) -> None:
         if not config.api_key.strip():
-            raise ValueError("Qwen-VL api_key must not be empty.")
+            raise ValueError("SiliconFlow vision api_key must not be empty.")
         if not config.model.strip():
-            raise ValueError("Qwen-VL model must not be empty.")
+            raise ValueError("SiliconFlow vision model must not be empty.")
         self.config = config
         self._opener = opener or urlopen
 
     @classmethod
-    def from_env(cls, *, opener: UrlOpener | None = None) -> "QwenVLClient":
+    def from_env(cls, *, opener: UrlOpener | None = None) -> "SiliconFlowVisionClient":
         """Create a client from environment variables."""
 
-        return cls(QwenVLConfig.from_env(), opener=opener)
+        return cls(SiliconFlowVisionConfig.from_env(), opener=opener)
 
     def describe_image(
         self,
@@ -121,7 +126,7 @@ class QwenVLClient:
         page_number: int,
         prompt: str,
     ) -> str:
-        """Send one image to Qwen-VL and return its semantic description."""
+        """Send one image to SiliconFlow and return its semantic description."""
 
         if not image:
             raise ValueError("The image payload must not be empty.")
@@ -166,24 +171,26 @@ class QwenVLClient:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise VisionError(
-                f"Qwen-VL request failed with HTTP {exc.code}: {detail[:500]}"
+                f"SiliconFlow vision request failed with HTTP {exc.code}: {detail[:500]}"
             ) from exc
         except (URLError, TimeoutError, OSError) as exc:
-            raise VisionError(f"Qwen-VL request failed: {exc}") from exc
+            raise VisionError(f"SiliconFlow vision request failed: {exc}") from exc
 
         try:
             result = json.loads(response_body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise VisionError("Qwen-VL returned an invalid JSON response.") from exc
+            raise VisionError("SiliconFlow vision returned an invalid JSON response.") from exc
 
         try:
             message_content = result["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
-            raise VisionError("Qwen-VL response did not contain message content.") from exc
+            raise VisionError(
+                "SiliconFlow vision response did not contain message content."
+            ) from exc
 
         description = _content_to_text(message_content).strip()
         if not description:
-            raise VisionError("Qwen-VL returned an empty image description.")
+            raise VisionError("SiliconFlow vision returned an empty image description.")
         return description
 
 
@@ -203,8 +210,15 @@ def _content_to_text(content: Any) -> str:
     return ""
 
 
+# Backward-compatible names for callers that imported the former Qwen client.
+QwenVLConfig = SiliconFlowVisionConfig
+QwenVLClient = SiliconFlowVisionClient
+
+
 __all__ = [
     "ImageDescriber",
+    "SiliconFlowVisionClient",
+    "SiliconFlowVisionConfig",
     "QwenVLClient",
     "QwenVLConfig",
     "VisionError",

@@ -6,7 +6,7 @@
   各阶段预算、模型路径和 DeepSeek 凭据；
 * **离线链路**（解析 -> 清洗 -> 切分 -> 向量化 -> Milvus/MySQL/Whoosh）
   从同一个配置对象读取语料目录、Milvus 写入选项、MySQL 元数据存储配置，
-  以及可选的 Qwen-VL 凭据。
+  以及可选的 SiliconFlow 视觉模型凭据。
 
 所有配置都通过环境变量（或本地 ``.env`` 文件）由 ``pydantic-settings`` 读取。
 代码不会硬编码任何密钥：API 密钥默认是空字符串，必须通过环境变量提供，
@@ -36,7 +36,7 @@ def load_service_env() -> None:
 
     ``pydantic-settings`` 在实例化 :class:`Settings` 时已经会读取 :data:`ENV_FILE`。
     这个辅助函数用于那些直接读取 ``os.getenv`` 的代码路径（例如离线 MySQL 和
-    Qwen-VL 配置辅助函数），确保服务的两个部分看到相同的配置值。
+    可选的 SiliconFlow 视觉模型配置辅助函数），确保服务的两个部分看到相同的配置值。
 
     如果没有安装 ``python-dotenv``，不会抛出错误；此时只使用进程环境变量。
     """
@@ -267,21 +267,15 @@ class Settings(BaseSettings):
     mysql_connect_timeout: int = 10
 
     # ------------------------------------------------------------------
-    # 离线解析器使用的可选视觉/CAD 辅助配置
+    # 离线解析器使用的 SiliconFlow 视觉/CAD 辅助配置
     # ------------------------------------------------------------------
-    dashscope_api_key: str = ""
-    """Qwen-VL 图像识别使用的 DashScope 密钥（可选）。"""
+    siliconflow_vision_model: str = "Qwen/Qwen3-VL-8B-Instruct"
+    """用于描述图像和扫描页面的 SiliconFlow 视觉模型标识。"""
 
-    qwen_api_key: str = ""
-    """当未设置 ``DASHSCOPE_API_KEY`` 时，Qwen-VL 使用的备用密钥。"""
-
-    qwen_vl_model: str = "qwen-vl-max"
-    """用于描述图像和扫描页面的 Qwen-VL 模型标识。"""
-
-    qwen_vl_endpoint: str = (
-        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    siliconflow_vision_endpoint: str = (
+        "https://api.siliconflow.cn/v1/chat/completions"
     )
-    """兼容 OpenAI 接口的 DashScope Qwen-VL 端点。"""
+    """SiliconFlow 兼容 OpenAI 接口的视觉模型端点。"""
 
     oda_file_converter: str = ""
     """读取 DWG 图纸所需的 ``ODAFileConverter.exe`` 路径。"""

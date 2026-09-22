@@ -22,7 +22,7 @@ from app.chunk import ChunkerConfig, build_chunks
 from app.embedding import EmbeddingConfig, SiliconFlowEmbeddingClient, embed_chunks
 from app.ingestion import (
     DocumentSource,
-    QwenVLClient,
+    SiliconFlowVisionClient,
     SUPPORTED_EXTENSIONS,
     parse_document,
 )
@@ -188,8 +188,8 @@ def ingest_directory(
 
     image_describer = None
     if any(path.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".jp2"} for path in paths):
-        image_describer = QwenVLClient.from_env()
-        LOGGER.info("Visual image parser enabled with Qwen-VL model=%s", image_describer.config.model)
+        image_describer = SiliconFlowVisionClient.from_env()
+        LOGGER.info("Visual image parser enabled with SiliconFlow model=%s", image_describer.config.model)
 
     embed_config = EmbeddingConfig(
         model_name=settings.siliconflow_embedding_model,

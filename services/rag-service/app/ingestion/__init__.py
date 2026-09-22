@@ -47,7 +47,14 @@ from .pdf_parser import (
     parse_pdf,
 )
 from .reader import DocumentSource
-from .vision import ImageDescriber, QwenVLClient, QwenVLConfig, VisionError
+from .vision import (
+    ImageDescriber,
+    QwenVLClient,
+    QwenVLConfig,
+    SiliconFlowVisionClient,
+    SiliconFlowVisionConfig,
+    VisionError,
+)
 
 __all__ = [
     "CAD_ENTITY_TYPES",
@@ -76,6 +83,8 @@ __all__ = [
     "PdfType",
     "QwenVLClient",
     "QwenVLConfig",
+    "SiliconFlowVisionClient",
+    "SiliconFlowVisionConfig",
     "SUPPORTED_EXTENSIONS",
     "StructuredDocument",
     "UnsupportedDocumentError",
