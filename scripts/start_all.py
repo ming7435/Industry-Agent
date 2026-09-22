@@ -37,6 +37,11 @@ def _default_env() -> dict[str, str]:
     env = dict(os.environ)
     defaults = {
         "RAG_SERVICE_BASE_URL": "http://127.0.0.1:8020",
+        "APP_ENV": "development",
+        "ALLOW_DEGRADED_STORAGE": "true",
+        "RAG_ALLOW_LOCAL_FALLBACK": "true",
+        "EVENT_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "events.sqlite3"),
+        "WORKORDER_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "workorders.sqlite3"),
         "MCP_CAD_URL": "http://127.0.0.1:8011",
         "CAD_SERVICE_BASE_URL": "http://127.0.0.1:8011",
         "AGENT_SERVICE_BASE_URL": "http://127.0.0.1:8010",

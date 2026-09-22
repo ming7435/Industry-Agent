@@ -5,12 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from app.common.alarm import AlarmCodeParser
 from app.contracts import RouteResult
 
 from .graph import build_router_graph
 
 
-_ALARM_CODE_RE = re.compile(r"\b(?:e\d{2,6}(?:s\d+)?|alm[-]?\d{2,6})\b", re.IGNORECASE)
 _DEVICE_RE = re.compile(r"\b(?:CNC|TC|PLC|MACHINE|EQP)[-_]?[A-Z0-9]{2,}\b", re.IGNORECASE)
 _WORKORDER_RE = re.compile(r"\bWO[-_]?[A-Z0-9]{2,}\b", re.IGNORECASE)
 _PART_RE = re.compile(r"\b(?:PN|PART)[-_]?[A-Z0-9]{2,}\b", re.IGNORECASE)
@@ -63,22 +63,26 @@ class RouterAgent:
         ).strip().lower()
         if context_hint in {"diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "memory", "workorder_action", "workorder_query"}:
             return context_hint, "根据上游上下文 route_hint 完成路由：%s" % context_hint
+        rules = {
+            "quality": {"零件质量": 5, "质量检测": 5, "尺寸检测": 5, "外观检测": 4, "材料检测": 4, "功能检测": 4, "生产出来": 3, "成品质检": 5, "零件质检": 5},
+            "cad": {"cad": 5, "bom": 5, "图纸": 5, "结构": 3, "零件": 1, "物料": 3, "位置": 4, "在哪里": 4, "部件": 1, "组件": 1, "传感器": 1, "装配": 4, "关系": 3},
+            "report": {"报告": 4, "日报": 5, "维修记录": 4},
+            "workorder_query": {"查询工单": 6, "工单状态": 6, "维修状态": 3, "查看工单": 6, "获取工单": 6},
+            "workorder_action": {"创建工单": 7, "新建工单": 7, "生成工单": 7, "派工": 6, "关闭工单": 7, "更新工单": 6, "重新打开工单": 7},
+            "memory": {"历史维修经验": 5, "维修经验": 5, "经验库": 5, "类似案例": 5, "历史案例": 5},
+            "maintenance": {"维修方案": 6, "怎么修": 7, "怎么维修": 7, "维修步骤": 6, "检修": 4, "维修": 3, "修理": 4, "维护": 3, "保养": 3, "更换": 4},
+            "knowledge": {"手册": 4, "sop": 5, "规范": 4, "案例": 2, "怎么检查": 5, "含义": 4, "说明": 3},
+            "diagnosis": {"诊断": 5, "故障": 3, "报警": 2, "异常": 2, "为什么": 5, "原因": 5},
+        }
+        scores = {candidate: sum(weight for keyword, weight in keywords.items() if keyword.lower() in text) for candidate, keywords in rules.items()}
         if entities.get("alarm_code") and any(keyword in text for keyword in ("什么", "含义", "处理", "步骤", "说明", "手册", "sop")):
-            return "knowledge", "识别到报警码知识问答，路由到 Knowledge Agent"
-        rules = [
-            ("quality", ("零件质量", "质量检测", "尺寸检测", "外观检测", "材料检测", "功能检测", "生产出来", "成品质检", "零件质检")),
-            ("cad", ("cad", "bom", "图纸", "结构", "零件", "物料", "位置", "在哪里", "部件", "组件", "传感器", "装配", "关系")),
-            ("report", ("报告", "日报", "维修记录")),
-            ("workorder_query", ("查询工单", "工单状态", "维修状态", "查看工单", "获取工单")),
-            ("workorder_action", ("创建工单", "新建工单", "生成工单", "派工", "关闭工单", "更新工单", "重新打开工单")),
-            ("memory", ("历史维修经验", "维修经验", "经验库", "类似案例", "历史案例")),
-            ("maintenance", ("维修方案", "怎么修", "怎么维修", "维修步骤", "检修", "维修", "修理", "维护", "保养")),
-            ("knowledge", ("手册", "sop", "规范", "案例", "怎么检查")),
-            ("diagnosis", ("诊断", "故障", "报警", "异常", "为什么")),
-        ]
-        for candidate, keywords in rules:
-            if any(keyword.lower() in text for keyword in keywords):
-                return candidate, "根据用户文本关键词完成路由：%s" % candidate
+            scores["knowledge"] = scores.get("knowledge", 0) + 4
+        ranked = sorted(((score, candidate) for candidate, score in scores.items() if score), reverse=True)
+        if ranked:
+            best_score, candidate = ranked[0]
+            if len(ranked) > 1 and ranked[1][0] == best_score and candidate not in {"workorder_action", "workorder_query"}:
+                return "need_more_context", "检测到多个同等优先级意图：%s" % ", ".join(item[1] for item in ranked if item[0] == best_score)
+            return candidate, "根据意图得分完成路由：%s=%s" % (candidate, best_score)
         return "unknown", "未识别到明确的工业运维意图"
 
     @staticmethod
@@ -92,9 +96,9 @@ class RouterAgent:
                 "route_hint", "intent", "task_type", "target_agent",
             } and value
         }
-        alarm = _ALARM_CODE_RE.search(text)
-        if alarm:
-            entities["alarm_code"] = alarm.group(0).upper().replace("-", "")
+        alarm_code = AlarmCodeParser.extract(text)
+        if alarm_code:
+            entities["alarm_code"] = alarm_code
         device = _DEVICE_RE.search(text)
         if device and not entities.get("device_id"):
             entities["device_id"] = device.group(0).upper()

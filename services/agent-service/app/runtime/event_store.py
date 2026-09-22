@@ -35,14 +35,10 @@ class EventResultStore:
                 self._results.move_to_end(key)
                 return dict(cached)
             if self._durable is not None:
-                durable = self._durable.get("agent_event", key)
-                if durable is not None:
-                    self._results[key] = dict(durable)
-                    return dict(durable)
-            result = dict(producer() or {})
+                result = self._durable.get_or_create("agent_event", key, producer)
+            else:
+                result = dict(producer() or {})
             self._results[key] = dict(result)
-            if self._durable is not None:
-                self._durable.set("agent_event", key, result)
             self._results.move_to_end(key)
             while len(self._results) > self.max_items:
                 self._results.popitem(last=False)

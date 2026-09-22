@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from threading import Lock
 from typing import Any
+from typing import Callable
 
 
 class DurableJsonStore:
@@ -48,6 +49,24 @@ class DurableJsonStore:
                 "ON CONFLICT(namespace, state_key) DO UPDATE SET payload=excluded.payload, updated_at=CURRENT_TIMESTAMP",
                 (str(namespace), str(key), payload),
             )
+
+    def get_or_create(self, namespace: str, key: str, producer: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """Return one durable value while serializing producers across processes."""
+
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload FROM runtime_state WHERE namespace = ? AND state_key = ?",
+                (str(namespace), str(key)),
+            ).fetchone()
+            if row is not None:
+                return dict(json.loads(row["payload"]))
+            value = dict(producer() or {})
+            connection.execute(
+                "INSERT INTO runtime_state(namespace, state_key, payload) VALUES (?, ?, ?)",
+                (str(namespace), str(key), json.dumps(value, ensure_ascii=False, default=str)),
+            )
+            return value
 
 
 __all__ = ["DurableJsonStore"]

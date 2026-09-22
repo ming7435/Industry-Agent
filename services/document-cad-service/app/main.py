@@ -11,25 +11,24 @@ from typing import Any, Dict, Mapping
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from .repository import CADRepositoryError, get_repository
+
 
 class ToolCall(BaseModel):
     tool: str
     arguments: Dict[str, Any] = Field(default_factory=dict)
 
 
-CATALOG = [
-    {"component_id": "SPINDLE-ASSY", "part_no": "SP-ASSY-TC820-001", "name": "主轴电机组件", "position": "Z轴上方主轴箱", "assembly_relation": "上级为主轴箱总成，下接主轴轴承、温度传感器与冷却回路", "drawing_ref": "DWG-TC820-SPINDLE-001", "quantity": 1, "material": "装配件"},
-    {"component_id": "COOLING-PUMP", "part_no": "CP-TC820-015", "name": "冷却泵", "position": "机床后侧冷却单元", "assembly_relation": "向主轴冷却回路供液，连接冷却箱、过滤器和主轴夹套", "drawing_ref": "DWG-TC820-COOLING-002", "quantity": 1, "material": "外购件"},
-    {"component_id": "TEMP-PT100", "part_no": "TS-PT100-008", "name": "主轴温度传感器", "position": "主轴电机壳体测温孔", "assembly_relation": "采集主轴温度，信号接入PLC模拟量模块", "drawing_ref": "DWG-TC820-SENSOR-003", "quantity": 1, "material": "传感器"},
-    {"component_id": "VIB-SENSOR", "part_no": "VS-RMS-004", "name": "主轴振动传感器", "position": "主轴箱体右侧安装座", "assembly_relation": "采集主轴振动RMS，关联刀具、夹具和主轴轴承", "drawing_ref": "DWG-TC820-SENSOR-004", "quantity": 1, "material": "传感器"},
-]
-
 app = FastAPI(title="Document CAD Service", version="1.0.0")
 
 
 @app.get("/health")
 def health() -> Dict[str, Any]:
-    return {"status": "ok", "service": "document-cad-service", "records": len(CATALOG)}
+    try:
+        repository = get_repository()
+        return {"status": "ok", "service": "document-cad-service", "records": repository.count(), "backend": repository.backend}
+    except CADRepositoryError as error:
+        return {"status": "unavailable", "service": "document-cad-service", "records": 0, "backend": "unavailable", "error": str(error)}
 
 
 @app.post("/tools/call")
@@ -67,25 +66,10 @@ def fetch_engineering_record(query: str = "", component: str = "", part_no: str 
 
 
 def _match(query: str) -> list[Dict[str, Any]]:
-    text = str(query or "").lower().strip()
-    if not text:
-        return [dict(item) for item in CATALOG[:2]]
-    for item in CATALOG:
-        exact_values = (item.get("component_id"), item.get("part_no"), item.get("name"), item.get("drawing_ref"))
-        if text in {str(value or "").lower().strip() for value in exact_values}:
-            return [dict(item)]
-    aliases = {"温度": ("TEMP-PT100", "SPINDLE-ASSY", "COOLING-PUMP"), "过热": ("TEMP-PT100", "SPINDLE-ASSY", "COOLING-PUMP"), "冷却": ("COOLING-PUMP", "SPINDLE-ASSY"), "主轴": ("SPINDLE-ASSY", "TEMP-PT100", "VIB-SENSOR", "COOLING-PUMP"), "振动": ("VIB-SENSOR", "SPINDLE-ASSY")}
-    ids: list[str] = []
-    for token, component_ids in aliases.items():
-        if token in text:
-            ids.extend(item_id for item_id in component_ids if item_id not in ids)
-    for item in CATALOG:
-        haystack = " ".join(str(item.get(key, "")) for key in ("component_id", "part_no", "name", "position", "drawing_ref")).lower()
-        if any(term and term in haystack for term in text.replace("/", " ").replace("-", " ").split()):
-            if item["component_id"] not in ids:
-                ids.append(item["component_id"])
-    by_id = {item["component_id"]: item for item in CATALOG}
-    return [dict(by_id[item_id]) for item_id in ids if item_id in by_id]
+    try:
+        return get_repository().search(query)
+    except CADRepositoryError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 def _bom(item: Mapping[str, Any]) -> Dict[str, Any]:

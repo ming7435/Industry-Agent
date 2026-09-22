@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "start:all": "L:/anaconda/python.exe scripts/start_all.py",
+    "start:all": "python scripts/start_all.py",
+    "test:all": "python scripts/test_all.py",
     "dev:monitor": "vite --config frontend/monitor-react/vite.config.js",
     "build:monitor": "vite build --config frontend/monitor-react/vite.config.js"
   },

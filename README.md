@@ -43,7 +43,7 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - Milvus 向量集合、Whoosh BM25 索引和 MySQL 文档/分块元数据。
 - CAD 图纸、BOM、部件、装配关系和部件位置查询。
 - 维修计划中的 target_part、drawing_context 和 viewer_context 数据契约。
-- WorkOrder 生命周期、维修反馈、维修完成、派工和进程内幂等。
+- WorkOrder 生命周期、维修反馈、维修完成、派工和可选 SQLite 持久化幂等。
 - 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。
 - TraceRecorder 记录 Agent、Node、Tool、模块和 A2A 调用轨迹。
 - React + Vite 监控工作台和内置静态前端。
@@ -86,11 +86,13 @@ tests/                          根目录测试
 | Agent Service | http://127.0.0.1:8010 | app.api.server:app | 用户入口、异常入口和业务 API |
 | Vite 开发服务 | http://127.0.0.1:5173 | npm run dev:monitor | 前端开发调试，/api 代理到 8001 |
 
-RAG Service 默认代码端口是 8000；如果要使用根目录当前配置的独立 RAG 服务，请在 services/rag-service/.env 中设置 SERVICE_PORT=8020，并保持根目录 .env 的 RAG_SERVICE_BASE_URL=http://127.0.0.1:8020。
+RAG Service 和一键启动脚本统一使用 8020；如果单独启动服务，请在 services/rag-service/.env 中设置 SERVICE_PORT=8020，并保持根目录 .env 的 RAG_SERVICE_BASE_URL=http://127.0.0.1:8020。
 
 ## 环境配置
 
 复制 .env.example 为根目录 .env。密钥只放在本地 .env，不要提交到 Git。
+
+配置优先级为：进程环境变量 > 根目录 `.env` > 服务默认值。`APP_ENV=production` 时默认禁止本地 RAG、Memory 和其他存储回退；只有显式设置 `ALLOW_DEGRADED_STORAGE=true` 或 `RAG_ALLOW_LOCAL_FALLBACK=true` 才会启用降级。
 
 ### 根目录 Agent/监控配置
 
@@ -159,7 +161,7 @@ DEEPSEEK_MODEL=deepseek-chat
 ### 一键启动本地演示服务
 
 ~~~powershell
-L:/anaconda/python.exe scripts/start_all.py
+python scripts/start_all.py
 ~~~
 
 也可以使用 npm 脚本调用当前环境中的 Python：
@@ -364,24 +366,22 @@ API / Monitor
 - WorkOrder Agent 负责工单生命周期；Quality Agent 只负责生产零件质量检测。
 - Memory Agent 负责有效维修经验的检索和沉淀，工单关闭且存在有效维修反馈后才允许学习。
 - RAG_SERVICE_BASE_URL 配置远程 RAG；MCP_RAG_URL 是可选 MCP 风格地址，二者不是同一个配置项。
-- 当前 WorkOrder 幂等是进程内实现，多实例生产环境应替换为 Redis 或数据库唯一键。
+- 配置 `WORKORDER_STORE_PATH` 后，WorkOrder 使用 SQLite 唯一键持久化幂等；生产集群仍建议使用 MySQL 唯一键或等价共享数据库。
 
 ## 测试
 
-Agent Service 测试：
+完整回归（两个服务的 `app` 包在独立 pytest 进程中运行）：
 
 ~~~powershell
-Push-Location services/agent-service
-L:/anaconda/python.exe -m pytest -q
-Pop-Location
+python scripts/test_all.py
 ~~~
 
-RAG Service 测试：
+也可以分别运行：
 
 ~~~powershell
-Push-Location services/rag-service
-L:/anaconda/python.exe -m pytest -q
-Pop-Location
+pytest -c pytest-agent.ini -q
+pytest -c pytest-rag.ini -q
+pytest -c pytest-cad.ini -q
 ~~~
 
 前端构建：

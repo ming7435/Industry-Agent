@@ -76,7 +76,10 @@ class WorkOrderMcpAdapter:
             "created_at": now,
             "updated_at": now,
         }
+        candidate_id = order["workorder_id"]
         order = self.repository.create(order)
+        if str(order.get("workorder_id") or "") != candidate_id:
+            return dict(order)
         self._record_event(order, "created", "", "open", {})
         order = self.repository.update(order)
         return dict(order)

@@ -17,6 +17,7 @@ Two endpoints are exposed:
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -231,10 +232,33 @@ async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
     """Persist a document and its chunks in the standalone RAG store."""
 
     backends: dict[str, dict[str, Any]] = {}
-    if str(__import__("os").getenv("RAG_TEST_FAIL_WHOOSH", "")).lower() in {"1", "true", "yes"}:
-        backends["whoosh"] = {"success": False, "error": "whoosh test failure"}
+    whoosh_enabled = os.getenv("RAG_UPSERT_WHOOSH_ENABLED", "false").lower() in {"1", "true", "yes"}
+    if os.getenv("RAG_TEST_FAIL_WHOOSH", "").lower() in {"1", "true", "yes"}:
+        backends["whoosh"] = {"success": False, "required": True, "error": "whoosh test failure"}
+    elif whoosh_enabled:
+        try:
+            from app.whoosh.indexer import build_index, index_dir_for_collection
+
+            chunks = list(request.chunks or [{"chunk_id": f"{request.document_id}:0", "text": request.content, "metadata": request.metadata}])
+            records = [
+                {
+                    "chunk_id": str(chunk.get("chunk_id") or f"{request.document_id}:{index}"),
+                    "text": str(chunk.get("text") or chunk.get("content") or request.content),
+                    "source_name": str(request.metadata.get("source_name") or request.document_id),
+                    "source_path": str(request.metadata.get("source_path") or ""),
+                    "metadata": {**request.metadata, **dict(chunk.get("metadata") or {}), "document_id": request.document_id, "collection": request.collection},
+                }
+                for index, chunk in enumerate(chunks)
+            ]
+            directory = index_dir_for_collection(os.getenv("RAG_DOCUMENT_WHOOSH_INDEX_DIR", settings.whoosh_index_dir), request.collection)
+            written = build_index(records, directory, recreate=False)
+            backends["whoosh"] = {"success": written == len(records), "required": True, "written": written, "index_dir": str(directory)}
+        except Exception as error:
+            backends["whoosh"] = {"success": False, "required": True, "error": str(error)}
     else:
-        backends["whoosh"] = {"success": True, "mode": "standalone-document-store"}
+        backends["whoosh"] = {"success": True, "required": False, "skipped": True, "reason": "RAG_UPSERT_WHOOSH_ENABLED is false"}
+    backends["milvus"] = {"success": True, "required": False, "skipped": True, "reason": "online upsert requires an embedding provider"}
+    backends["mysql"] = {"success": True, "required": False, "skipped": True, "reason": "standalone metadata store is authoritative for this endpoint"}
     try:
         document = get_document_store().upsert(
             request.document_id,
@@ -247,7 +271,9 @@ async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
     except Exception as error:
         backends["metadata"] = {"success": False, "error": str(error)}
         document = {}
-    success = all(item.get("success") for item in backends.values())
+    success = bool(backends.get("metadata", {}).get("success")) and all(
+        item.get("success") for item in backends.values() if item.get("required")
+    )
     return {"success": success, "backends": backends, "document": document, "loaded": 1 if success else 0}
 
 

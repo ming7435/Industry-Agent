@@ -304,7 +304,7 @@ class Settings(BaseSettings):
     service_host: str = "0.0.0.0"
     """uvicorn 服务的绑定地址。"""
 
-    service_port: int = 8001
+    service_port: int = 8020
     """服务绑定端口。"""
 
     log_level: str = "INFO"
