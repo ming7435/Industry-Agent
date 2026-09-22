@@ -176,6 +176,7 @@ class _Progress:
     request_id: str
     bm25_hits: list[Hit] = field(default_factory=list)
     dense_hits: list[Hit] = field(default_factory=list)
+    supplemental_hits: list[Hit] = field(default_factory=list)
     fused_hits: list[Hit] = field(default_factory=list)
     final_hits: list[Hit] = field(default_factory=list)
     bundle: EvidenceBundle | None = None
@@ -312,7 +313,12 @@ class SearchPipeline:
             return int(request.top_n)
         return int(settings.rerank_top_n)
 
-    async def search(self, request: SearchRequest, request_id: str) -> SearchResponse:
+    async def search(
+        self,
+        request: SearchRequest,
+        request_id: str,
+        supplemental_hits: list[Hit] | None = None,
+    ) -> SearchResponse:
         """Run the full online chain for one request.
 
         Args:
@@ -324,7 +330,7 @@ class SearchPipeline:
             dependency failure: partial results are returned with
             ``degraded=True`` and a ``degrade_reason``.
         """
-        progress = _Progress(request_id=request_id)
+        progress = _Progress(request_id=request_id, supplemental_hits=list(supplemental_hits or []))
         started = _now()
         request_budget_s = settings.request_timeout_ms / 1000
 
@@ -384,7 +390,7 @@ class SearchPipeline:
         """
         await self._retrieve(request, progress)
 
-        if not progress.bm25_hits and not progress.dense_hits:
+        if not progress.bm25_hits and not progress.dense_hits and not progress.supplemental_hits:
             # Both legs failed: nothing to fuse, rerank or generate from.
             progress.clear_degraded()
             progress.mark_degraded(REASON_ALL_RETRIEVERS_FAILED)
@@ -402,11 +408,42 @@ class SearchPipeline:
 
         top_n = self._effective_top_n(request)
         progress.final_hits = await self._rerank(request, progress.fused_hits, top_n, progress)
+        self._include_supplemental_hits(progress, top_n)
 
         if not self._build_evidence(request, progress):
             return
 
         await self._generate(request, progress)
+
+    @staticmethod
+    def _include_supplemental_hits(progress: _Progress, top_n: int) -> None:
+        """Keep stored experiences in the final evidence window.
+
+        A reranker may spend the entire top-N budget on older corpus hits even
+        when the standalone store supplied exact closed-work-order chunks.  The
+        supplemental chunks have already passed RRF and are therefore admitted
+        before evidence/LLM construction; replacing the lowest non-supplemental
+        candidate preserves the requested result size without bypassing stages.
+        """
+
+        if not progress.supplemental_hits:
+            return
+        selected = list(progress.final_hits)
+        selected_ids = {str(hit.chunk_id) for hit in selected}
+        for supplemental in progress.supplemental_hits:
+            if str(supplemental.chunk_id) in selected_ids:
+                continue
+            if len(selected) < top_n:
+                selected.append(supplemental)
+            else:
+                replace_at = next(
+                    (index for index in range(len(selected) - 1, -1, -1)
+                     if selected[index] not in progress.supplemental_hits),
+                    len(selected) - 1,
+                )
+                selected[replace_at] = supplemental
+            selected_ids.add(str(supplemental.chunk_id))
+        progress.final_hits = selected[:top_n]
 
     async def _retrieve(self, request: SearchRequest, progress: _Progress) -> None:
         """Run both retrieval legs concurrently.
@@ -571,7 +608,7 @@ class SearchPipeline:
         started = _now()
         try:
             progress.fused_hits = rrf_fusion(
-                [progress.bm25_hits, progress.dense_hits],
+                [progress.bm25_hits, progress.dense_hits, progress.supplemental_hits],
                 k=settings.rrf_k,
                 top_m=settings.fusion_top_m,
             )
@@ -757,7 +794,7 @@ class SearchPipeline:
         """
         partial: list[Hit] = []
         seen: set[str] = set()
-        for hit in (*progress.bm25_hits, *progress.dense_hits):
+        for hit in (*progress.bm25_hits, *progress.dense_hits, *progress.supplemental_hits):
             chunk_id = str(getattr(hit, "chunk_id", ""))
             if chunk_id in seen:
                 continue

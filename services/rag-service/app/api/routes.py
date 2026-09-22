@@ -41,6 +41,8 @@ from app.reranker import reranker_error
 from .models import DocumentIngestRequest, DocumentUpsertRequest, ErrorResponse, HealthResponse, HitModel, SearchRequest, SearchResponse
 from .documents import get_document_store
 from .pipeline import SearchPipeline
+from app.retrieval import Hit
+from .indexing import UnifiedExperienceIndexer
 
 router = APIRouter()
 
@@ -165,6 +167,17 @@ async def search(
             failures are reported inside the response body.
     """
     document_hits = get_document_store().search(request.query, request.top_n, request.filters)
+    supplemental_hits = [
+        Hit(
+            chunk_id=str(item.get("chunk_id") or ""),
+            text=str(item.get("text") or ""),
+            score=float(item.get("score") or 0.0),
+            source="experience-store",
+            metadata=dict(item.get("metadata") or {}),
+        )
+        for item in document_hits
+        if str(item.get("chunk_id") or "").strip()
+    ]
     if not pipeline.has_any_retriever and not document_hits:
         logger.error(
             "search rejected reason=all_dependencies_unavailable pipeline={}",
@@ -176,30 +189,7 @@ async def search(
         )
 
     request_id = str(uuid4())
-    if not pipeline.has_any_retriever and document_hits:
-        return SearchResponse(
-            request_id=request_id,
-            hits=[HitModel(**item) for item in document_hits],
-            evidence_text="\n".join(item["text"] for item in document_hits),
-            degraded=True,
-            degrade_reason="standalone_document_store",
-        )
-    response = await pipeline.search(request, request_id)
-    if document_hits:
-        filtered_pipeline_hits = [
-            hit for hit in response.hits
-            if _hit_matches_filters(hit, request.filters)
-        ]
-        merged_hits: list[HitModel] = []
-        seen_ids: set[str] = set()
-        for hit in [*(HitModel(**item) for item in document_hits), *filtered_pipeline_hits]:
-            key = str(hit.chunk_id or "")
-            if key in seen_ids:
-                continue
-            seen_ids.add(key)
-            merged_hits.append(hit)
-        response = response.model_copy(update={"hits": merged_hits[: request.top_n]})
-    return response
+    return await pipeline.search(request, request_id, supplemental_hits=supplemental_hits)
 
 
 def _hit_matches_filters(hit: HitModel, filters: dict[str, Any]) -> bool:
@@ -262,35 +252,10 @@ async def health() -> HealthResponse:
 @router.post("/documents/upsert")
 async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
     """Persist a document and its chunks in the standalone RAG store."""
-
-    backends: dict[str, dict[str, Any]] = {}
-    whoosh_enabled = os.getenv("RAG_UPSERT_WHOOSH_ENABLED", "false").lower() in {"1", "true", "yes"}
-    if os.getenv("RAG_TEST_FAIL_WHOOSH", "").lower() in {"1", "true", "yes"}:
-        backends["whoosh"] = {"success": False, "required": True, "error": "whoosh test failure"}
-    elif whoosh_enabled:
-        try:
-            from app.whoosh.indexer import build_index, index_dir_for_collection
-
-            chunks = list(request.chunks or [{"chunk_id": f"{request.document_id}:0", "text": request.content, "metadata": request.metadata}])
-            records = [
-                {
-                    "chunk_id": str(chunk.get("chunk_id") or f"{request.document_id}:{index}"),
-                    "text": str(chunk.get("text") or chunk.get("content") or request.content),
-                    "source_name": str(request.metadata.get("source_name") or request.document_id),
-                    "source_path": str(request.metadata.get("source_path") or ""),
-                    "metadata": {**request.metadata, **dict(chunk.get("metadata") or {}), "document_id": request.document_id, "collection": request.collection},
-                }
-                for index, chunk in enumerate(chunks)
-            ]
-            directory = index_dir_for_collection(os.getenv("RAG_DOCUMENT_WHOOSH_INDEX_DIR", settings.whoosh_index_dir), request.collection)
-            written = build_index(records, directory, recreate=False)
-            backends["whoosh"] = {"success": written == len(records), "required": True, "written": written, "index_dir": str(directory)}
-        except Exception as error:
-            backends["whoosh"] = {"success": False, "required": True, "error": str(error)}
-    else:
-        backends["whoosh"] = {"success": True, "required": False, "skipped": True, "reason": "RAG_UPSERT_WHOOSH_ENABLED is false"}
-    backends["milvus"] = {"success": True, "required": False, "skipped": True, "reason": "online upsert requires an embedding provider"}
-    backends["mysql"] = {"success": True, "required": False, "skipped": True, "reason": "standalone metadata store is authoritative for this endpoint"}
+    index_result = UnifiedExperienceIndexer(
+        enable_whoosh=True if os.getenv("RAG_TEST_FAIL_WHOOSH", "").lower() in {"1", "true", "yes"} else None,
+    ).upsert(request)
+    backends = dict(index_result.get("backends") or {})
     try:
         document = get_document_store().upsert(
             request.document_id,
@@ -306,7 +271,13 @@ async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
     success = bool(backends.get("metadata", {}).get("success")) and all(
         item.get("success") for item in backends.values() if item.get("required")
     )
-    return {"success": success, "backends": backends, "document": document, "loaded": 1 if success else 0}
+    return {
+        "success": success,
+        "pipeline_ready": bool(index_result.get("pipeline_ready")) and bool(backends.get("metadata", {}).get("success")),
+        "backends": backends,
+        "document": document,
+        "loaded": 1 if success else 0,
+    }
 
 
 @router.post("/upsert", include_in_schema=False)
