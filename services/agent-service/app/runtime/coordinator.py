@@ -47,6 +47,7 @@ class RuntimeCoordinator:
         goal_event: GoalEvent = self.jev.parse(source_payload)
         planner_context = {
             **goal_event.entities,
+            "constraints": dict(goal_event.constraints),
             "event": dict(goal_event.raw),
             "required_capabilities": list(goal_event.required_capabilities),
             "task_id": initial.get("task_id", ""),
@@ -56,10 +57,13 @@ class RuntimeCoordinator:
         self.container.trace.record(
             type="runtime", name="runtime", node="runtime", agent="runtime",
             event="goal_parsed", task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
-            state_change=goal_event.as_dict(), keys=list(goal_event.as_dict()), tool_name="", latency=0.0, error="",
+            state_change=goal_event.as_dict(), keys=list(goal_event.as_dict()), tool_name="", latency=0.0,
+            error="; ".join(goal_event.validation_findings),
         )
         runtime_state = {
             **initial,
+            "route": "runtime",
+            "route_result": {"intent": "runtime", "target_agent": "runtime", "goal": goal_event.goal},
             "goal_event": goal_event.as_dict(),
             "runtime_plan": plan.as_dict(),
             "runtime_next_index": 0,
@@ -85,7 +89,7 @@ class RuntimeCoordinator:
                 "evidence_status": "ready" if result.evidence else "pending",
             }
             if capability == "workorder_create":
-                next_state["status"] = str(result.output.get("status") or "waiting_repair")
+                next_state["status"] = "waiting_repair"
             return {
                 "state": next_state,
                 "action": action,
@@ -123,6 +127,7 @@ class RuntimeCoordinator:
             "actions": list(result.actions),
             "history": list(result.history),
         }
+        final_state["runtime_actions"] = list(result.actions)
         if result.status != "completed":
             final_state["status"] = "blocked"
             final_state["stop_reason"] = result.stop_reason

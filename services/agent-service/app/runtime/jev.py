@@ -19,6 +19,7 @@ class GoalEvent:
     required_capabilities: tuple[str, ...] = ()
     source: str = "unknown"
     raw: dict[str, Any] = field(default_factory=dict)
+    validation_findings: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -28,6 +29,7 @@ class GoalEvent:
             "required_capabilities": list(self.required_capabilities),
             "source": self.source,
             "raw": dict(self.raw),
+            "validation_findings": list(self.validation_findings),
         }
 
 
@@ -50,7 +52,11 @@ class JEVParser:
                 required_capabilities=self._user_capabilities(text),
                 source="user",
                 raw={"user_text": payload},
+                validation_findings=("goal is blank",) if not text else (),
             )
+        findings: list[str] = []
+        if not isinstance(payload, Mapping):
+            findings.append("payload must be a mapping or string")
         raw = dict(payload or {}) if isinstance(payload, Mapping) else {}
         user_text = str(raw.get("user_text") or raw.get("goal") or "").strip()
         event_type = str(raw.get("event_type") or raw.get("alarm_code") or "设备异常").strip()
@@ -71,6 +77,10 @@ class JEVParser:
             required = self.EVENT_CAPABILITIES
         else:
             required = self._user_capabilities(user_text)
+        if capabilities is not None and not isinstance(capabilities, (list, tuple)):
+            findings.append("required_capabilities must be a list")
+        if not user_text and not is_event:
+            findings.append("goal is blank")
         return GoalEvent(
             goal=goal,
             entities=entities,
@@ -78,6 +88,7 @@ class JEVParser:
             required_capabilities=required,
             source=source,
             raw=raw,
+            validation_findings=tuple(findings),
         )
 
     @staticmethod

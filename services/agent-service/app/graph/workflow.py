@@ -15,8 +15,8 @@ from app.tools.registry import ToolRegistry
 
 
 class AgentOrchestrator:
-    def __init__(self, diagnosis_agent: DiagnosisAgent | None = None, tools: ToolRegistry | None = None) -> None:
-        self.container = AgentContainer(diagnosis_agent=diagnosis_agent, tools=tools)
+    def __init__(self, diagnosis_agent: DiagnosisAgent | None = None, tools: ToolRegistry | None = None, container: AgentContainer | None = None) -> None:
+        self.container = container or AgentContainer(diagnosis_agent=diagnosis_agent, tools=tools)
         self.nodes = OrchestratorNodes(self.container)
         graph = StateGraph(AgentState)
         # Graph is intentionally a state/execution layer. RuntimeCoordinator

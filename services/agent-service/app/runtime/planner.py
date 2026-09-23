@@ -62,28 +62,70 @@ class Planner:
         workorder_key = "monitor:%s" % event_id if event_id else "plan:%s" % sha256(goal.encode("utf-8")).hexdigest()[:16]
         payload = {"goal": goal, **context}
 
+        fallback_agents = {
+            "fault_analysis": "diagnosis",
+            "hypothesis_generation": "diagnosis",
+            "document_search": "knowledge",
+            "historical_case_search": "knowledge",
+            "evidence_retrieval": "knowledge",
+            "drawing_search": "cad",
+            "bom_query": "cad",
+            "component_relation": "cad",
+            "repair_planning": "maintenance",
+            "repair_plan": "maintenance",
+            "maintenance_replan": "maintenance",
+            "workorder_create": "workorder",
+            "workorder_update": "workorder",
+            "quality_inspection": "quality",
+            "quality_review": "quality",
+            "experience_learning": "memory",
+            "experience_retrieval": "memory",
+            "case_reporting": "report",
+        }
+
         def agent_for(capability: str, fallback: str) -> str:
             matches = self.capabilities.find(capability)
-            return matches[0] if matches else fallback
+            return matches[0] if matches else fallback_agents.get(capability, fallback)
 
         def payload_for(capability: str) -> dict[str, Any]:
             return {**payload, "required_capability": capability}
 
-        definitions = [
+        base_definitions = [
             ("fault_analysis", "analyze abnormal event", False),
             ("document_search", "retrieve supporting evidence", False),
             ("drawing_search", "resolve engineering context", False),
             ("repair_planning", "prepare executable repair plan", False),
             ("workorder_create", "create one idempotent work order", True),
         ]
+        optional_definitions = [
+            ("hypothesis_generation", "generate diagnostic hypotheses", False),
+            ("historical_case_search", "retrieve historical cases", False),
+            ("evidence_retrieval", "retrieve supporting evidence", False),
+            ("bom_query", "resolve BOM context", False),
+            ("component_relation", "resolve component relations", False),
+            ("repair_plan", "prepare executable repair plan", False),
+            ("maintenance_replan", "replan an insufficient maintenance plan", False),
+            ("workorder_update", "update an existing work order", False),
+            ("quality_review", "review part quality", False),
+            ("case_reporting", "compose a case report", False),
+            ("experience_retrieval", "retrieve validated experience", False),
+            ("experience_learning", "persist validated repair experience", True),
+        ]
+        definitions = list(base_definitions)
         requested = context.get("required_capabilities")
         requested_set = {str(item) for item in requested} if isinstance(requested, (list, tuple, set)) else set()
         if requested_set:
-            definitions.extend([
+            definitions = [
+                *base_definitions,
                 ("quality_inspection", "verify the produced part when requested", False),
-                ("experience_learning", "persist validated repair experience", True),
-            ])
-            definitions = [item for item in definitions if item[0] in requested_set]
+                *optional_definitions,
+            ]
+            known = {item[0]: item for item in definitions}
+            definitions = [
+                known.get(capability, (capability, "execute requested capability", False))
+                for capability in requested
+                if str(capability).strip()
+            ]
         actions = []
         for capability, reason, side_effect in definitions:
             kwargs: dict[str, Any] = {"reason": reason, "confidence": 0.7, "side_effect": side_effect}

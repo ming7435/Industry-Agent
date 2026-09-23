@@ -44,6 +44,7 @@ def test_runtime_coordinator_uses_planned_capabilities_instead_of_graph_edges():
     ]
     assert result["runtime_result"]["status"] == "completed"
     assert result["workorder"]["workorder_id"] == "WO-1"
+    assert result["status"] == "waiting_repair"
 
 
 def test_user_goal_does_not_expand_into_an_automatic_workorder_plan():
@@ -60,3 +61,34 @@ def test_user_goal_does_not_expand_into_an_automatic_workorder_plan():
 
     assert [action.required_capability for action in dispatcher.actions] == ["document_search"]
     assert "workorder" not in result
+
+
+def test_runtime_state_preserves_runtime_fields_through_langgraph_schema():
+    from app.graph.workflow import AgentOrchestrator
+
+    class _Container:
+        trace = TraceRecorder()
+        requests = SimpleNamespace()
+        tracing = SimpleNamespace(
+            start=lambda *_args, **_kwargs: None,
+            finish=lambda _name, _state, payload: payload,
+        )
+
+        class _Coordinator:
+            def run(self, state):
+                return {
+                    **state,
+                    "goal_event": {"goal": "x"},
+                    "runtime_plan": {"actions": []},
+                    "runtime_result": {"status": "completed"},
+                    "runtime_actions": [],
+                }
+
+        coordinator = _Coordinator()
+
+    orchestrator = AgentOrchestrator(container=_Container())
+    result = orchestrator.run_user("查询维修手册")
+
+    assert result["runtime_plan"] == {"actions": []}
+    assert result["runtime_result"]["status"] == "completed"
+    assert result["runtime_actions"] == []

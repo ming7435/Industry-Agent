@@ -38,3 +38,9 @@ class AgentState(TypedDict, total=False):
     diagnosis_review: Dict[str, Any]
     maintenance_replan: Dict[str, Any]
     stop_reason: str
+    goal_event: Dict[str, Any]
+    runtime_plan: Dict[str, Any]
+    runtime_next_index: int
+    runtime_outputs: Dict[str, Any]
+    runtime_result: Dict[str, Any]
+    runtime_actions: List[str]

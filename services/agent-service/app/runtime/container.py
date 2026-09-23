@@ -103,6 +103,7 @@ class AgentContainer:
             self.execution_manager,
             trace=self.trace,
             tools=self.registry,
+            harnesses=self.harnesses,
         )
         self.coordinator = RuntimeCoordinator(self)
         self.operations = RuntimeOperations(

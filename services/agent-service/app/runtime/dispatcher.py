@@ -31,11 +31,13 @@ class RuntimeDispatcher:
         execution_manager: ExecutionManager,
         trace: TraceRecorder | None = None,
         tools: ToolRegistry | None = None,
+        harnesses: Mapping[str, Any] | None = None,
     ) -> None:
         self.capabilities = capabilities
         self.execution_manager = execution_manager
         self.trace = trace or TraceRecorder()
         self.tools = tools
+        self.harnesses = dict(harnesses or {})
 
     def _emit(self, event: str, state: Mapping[str, Any], **payload: Any) -> None:
         record = {
@@ -81,7 +83,9 @@ class RuntimeDispatcher:
 
         record = self.execution_manager.execute(
             action,
-            lambda: agent.execute(task) if callable(getattr(agent, "execute", None)) else agent.run(task),
+            lambda: self.harnesses[agent_name].execute_agent(task)
+            if agent_name in self.harnesses
+            else (agent.execute(task) if callable(getattr(agent, "execute", None)) else agent.run(task)),
             trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
         if record.status != ExecutionStatus.SUCCESS:
