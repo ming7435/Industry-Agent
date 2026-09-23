@@ -35,8 +35,9 @@ class ReportQuery(BaseModel):
         values = dict(payload or {}) if isinstance(payload, dict) else {}
         for key in ("diagnosis", "maintenance_plan", "workorder", "repair_feedback", "repair_verification", "quality", "knowledge", "event"):
             value = values.get(key)
-            if hasattr(value, "model_dump"):
-                values[key] = value.model_dump(mode="json")
+            dump = getattr(value, "model_dump", None)
+            if callable(dump):
+                values[key] = dump(mode="json")
             elif value and not isinstance(value, dict):
                 values[key] = dict(value)
         values["trace"] = [dict(item) for item in values.get("trace") or [] if isinstance(item, dict)]

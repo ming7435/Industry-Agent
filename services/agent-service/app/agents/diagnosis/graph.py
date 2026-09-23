@@ -146,9 +146,9 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
         for item in evidence.evidence_from_observation(observation):
             if item not in runtime.evidence:
                 runtime.evidence.append(item)
-        for item in evidence.evidence_records_from_observation(observation):
-            if not any(existing.get("source") == item.get("source") and existing.get("content") == item.get("content") for existing in runtime.evidence_records):
-                runtime.evidence_records.append(item)
+        for evidence_record in evidence.evidence_records_from_observation(observation):
+            if not any(existing.get("source") == evidence_record.get("source") and existing.get("content") == evidence_record.get("content") for existing in runtime.evidence_records):
+                runtime.evidence_records.append(dict(evidence_record))
         runtime.messages.append({
             "role": "tool",
             "tool_call_id": "a2a-knowledge",
@@ -284,9 +284,9 @@ def record_tool_observations(state: DiagnosisGraphState) -> Dict[str, Any]:
         for evidence_text in evidence.evidence_from_observation(observation):
             if evidence_text not in runtime.evidence:
                 runtime.evidence.append(evidence_text)
-        for item in evidence.evidence_records_from_observation(observation):
-            if not any(existing.get("source") == item.get("source") and existing.get("content") == item.get("content") for existing in runtime.evidence_records):
-                runtime.evidence_records.append(item)
+        for evidence_record in evidence.evidence_records_from_observation(observation):
+            if not any(existing.get("source") == evidence_record.get("source") and existing.get("content") == evidence_record.get("content") for existing in runtime.evidence_records):
+                runtime.evidence_records.append(dict(evidence_record))
         runtime.messages.append({
             "role": "tool",
             "tool_call_id": call.get("id") or "tool_call",

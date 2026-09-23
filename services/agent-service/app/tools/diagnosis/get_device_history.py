@@ -55,7 +55,7 @@ def get_device_history(
         normalized = METRIC_ALIASES.get(key.lower(), METRIC_ALIASES.get(key, key))
         if normalized not in requested:
             requested.append(normalized)
-    api_base = (base_url or os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:4529")).rstrip("/")
+    api_base = (base_url or os.getenv("FACTORY_API_BASE_URL") or "http://127.0.0.1:4529").rstrip("/")
     query = urlencode({"limit": limit})
     request = Request(
         "%s/api/devices/%s/metrics?%s" % (api_base, quote(device_id, safe=""), query),
@@ -78,7 +78,7 @@ def get_device_history(
 
     raw_history = payload.get("history") if isinstance(payload, dict) else []
     raw_history = raw_history if isinstance(raw_history, list) else []
-    available_keys = set()
+    available_keys: set[str] = set()
     for item in raw_history:
         if isinstance(item, dict):
             available_keys.update((item.get("metrics") or {}).keys())
@@ -128,7 +128,7 @@ def _summarize_series(points: List[Dict[str, Any]]) -> Dict[str, Any]:
         if isinstance(value, bool):
             continue
         try:
-            numeric.append(float(value))
+            numeric.append(float(str(value)))
         except (TypeError, ValueError):
             continue
 

@@ -131,7 +131,8 @@ class MySQLClosureStore:
     @classmethod
     def _quality_row(cls, row: Mapping[str, Any]) -> dict[str, Any]:
         result = dict(row)
-        for key, default in (("findings", []), ("items", []), ("appeal_ids", [])):
+        defaults: tuple[tuple[str, Any], ...] = (("findings", []), ("items", []), ("appeal_ids", []))
+        for key, default in defaults:
             result[key] = cls._loads(result.get(key), default)
         return result
 

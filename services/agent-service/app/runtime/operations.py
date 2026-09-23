@@ -150,7 +150,7 @@ class RuntimeOperations:
             feedback = order.get("repair_feedback") or values.get("repair_feedback") or {}
             if order.get("status") == "closed" and WorkOrderValidator.can_learn(order, feedback):
                 learning_key = "workorder:%s" % str(order.get("workorder_id") or values.get("workorder_id") or "")
-                learning_loop = {
+                learning_loop: dict[str, Any] = {
                     "status": "running",
                     "learning_idempotency_key": learning_key,
                     "stages": [],
@@ -217,7 +217,8 @@ class RuntimeOperations:
                     rag_saved = memory_result.get("rag_saved")
                     if rag_saved is None:
                         rag_saved = experience.get("rag_saved", True)
-                    if memory_result.get("success") and bool(rag_saved) and self.report_harness is not None:
+                    report_harness = self.report_harness
+                    if memory_result.get("success") and bool(rag_saved) and report_harness is not None:
                         if "rag" not in learning_loop["stages"]:
                             learning_loop["stages"].append("rag")
                         report_state = {
@@ -227,7 +228,7 @@ class RuntimeOperations:
                         }
                         try:
                             def produce_report() -> Dict[str, Any]:
-                                report = _serialize_agent_result(self.report_harness.execute_agent(report_state))
+                                report = _serialize_agent_result(report_harness.execute_agent(report_state))
                                 if str(report.get("status") or "completed") != "completed" or report.get("persisted") is False:
                                     raise _IncompleteLearningStage(report, "full case report is incomplete or not persisted")
                                 return report

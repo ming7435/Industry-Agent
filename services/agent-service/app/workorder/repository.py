@@ -105,9 +105,11 @@ class MySQLWorkOrderRepository:
         except ImportError as error:
             raise RuntimeError("MySQL WorkOrder persistence requires mysql-connector-python") from error
         try:
+            mysql_host = os.getenv("WORKORDER_MYSQL_HOST") or os.getenv("MYSQL_HOST") or "127.0.0.1"
+            mysql_port = os.getenv("WORKORDER_MYSQL_PORT") or os.getenv("MYSQL_PORT") or "3306"
             self.connection = mysql.connector.connect(
-                host=os.getenv("WORKORDER_MYSQL_HOST") or os.getenv("MYSQL_HOST"),
-                port=int(os.getenv("WORKORDER_MYSQL_PORT") or os.getenv("MYSQL_PORT", "3306")),
+                host=mysql_host,
+                port=int(mysql_port),
                 user=os.getenv("WORKORDER_MYSQL_USER") or os.getenv("MYSQL_USER", "root"),
                 password=os.getenv("WORKORDER_MYSQL_PASSWORD") or os.getenv("MYSQL_PASSWORD", ""),
                 database=os.getenv("WORKORDER_MYSQL_DATABASE") or os.getenv("MYSQL_DATABASE", "industrial_maintenance"),
@@ -180,7 +182,8 @@ def build_workorder_repository(path: str | None = None) -> MemoryWorkOrderReposi
         return MySQLWorkOrderRepository()
     if backend == "" and os.getenv("APP_ENV", "development").lower() in {"prod", "production"} and not str(path or "").strip():
         raise RuntimeError("生产模式要求配置 MYSQL_HOST 或 WORKORDER_STORE_PATH")
-    return SQLiteWorkOrderRepository(path) if str(path or "").strip() else MemoryWorkOrderRepository()
+    sqlite_path = str(path or "").strip()
+    return SQLiteWorkOrderRepository(sqlite_path) if sqlite_path else MemoryWorkOrderRepository()
 
 
 __all__ = ["MemoryWorkOrderRepository", "SQLiteWorkOrderRepository", "MySQLWorkOrderRepository", "build_workorder_repository"]

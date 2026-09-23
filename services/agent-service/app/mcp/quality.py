@@ -111,7 +111,8 @@ class QualityMcpAdapter:
         expected = specs.get("material_grade")
         actual = material.get("grade")
         grade_passed = not expected or actual == expected
-        hardness_rule = specs.get("hardness_hb") if isinstance(specs.get("hardness_hb"), Mapping) else {}
+        hardness_value = specs.get("hardness_hb")
+        hardness_rule: Mapping[str, Any] = hardness_value if isinstance(hardness_value, Mapping) else {}
         hardness = _number(material.get("hardness_hb"))
         hardness_passed = not hardness_rule or (hardness is not None and _in_range(hardness, hardness_rule))
         defects = []
@@ -126,7 +127,8 @@ class QualityMcpAdapter:
         function = dict(record.get("function") or {})
         specs = dict(specifications or record.get("specifications") or {})
         runout = _number(function.get("runout_mm"))
-        rule = specs.get("runout_mm") if isinstance(specs.get("runout_mm"), Mapping) else {}
+        rule_value = specs.get("runout_mm")
+        rule: Mapping[str, Any] = rule_value if isinstance(rule_value, Mapping) else {}
         runout_passed = not rule or (runout is not None and _in_range(runout, rule))
         rotation_passed = function.get("rotation_test") is not False
         defects = []

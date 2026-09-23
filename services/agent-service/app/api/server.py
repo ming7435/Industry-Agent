@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 from pathlib import Path
 
+_load_dotenv: Callable[..., Any] | None
 try:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv as _load_dotenv
 except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时触发
-    load_dotenv = None
+    _load_dotenv = None
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,10 +31,10 @@ def _load_project_env() -> None:
     如果缺少这一步，重启后即使项目配置了远程 RAG 服务，也会静默丢失 ``RAG_SERVICE_BASE_URL`` 并回退到演示索引。
     """
 
-    if load_dotenv is None:
+    if _load_dotenv is None:
         return
     project_root = Path(__file__).resolve().parents[4]
-    load_dotenv(project_root / ".env", override=False)
+    _load_dotenv(project_root / ".env", override=False)
 
 
 _load_project_env()

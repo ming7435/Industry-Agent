@@ -144,6 +144,6 @@ def get_alarm_definition(alarm_code: str) -> Dict[str, Any]:
         "source": "mock_alarm_dictionary",
         "raw_alarm_text": parsed.raw_text,
         "operator_description": parsed.description,
-        "severity_label": severity_labels.get(definition.get("severity"), "未知"),
+        "severity_label": severity_labels.get(str(definition.get("severity") or ""), "未知"),
         **definition,
     }

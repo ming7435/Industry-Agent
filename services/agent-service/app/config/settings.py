@@ -6,20 +6,22 @@ import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, Callable
 
+_load_dotenv: Callable[..., Any] | None
 try:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv as _load_dotenv
 except ImportError:  # pragma: no cover - 仅在缺少可选依赖时触发
-    load_dotenv = None
+    _load_dotenv = None
 
 
 def _load_project_env() -> None:
     """加载仓库根目录的 .env，且不覆盖已有进程环境变量。"""
 
-    if load_dotenv is None:
+    if _load_dotenv is None:
         return
     project_root = Path(__file__).resolve().parents[4]
-    load_dotenv(project_root / ".env", override=False)
+    _load_dotenv(project_root / ".env", override=False)
 
 
 def _csv_env(name: str, default: str) -> list[str]:

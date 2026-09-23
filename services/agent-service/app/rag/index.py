@@ -137,7 +137,7 @@ class RAGIndex:
                     invalid_lines += 1
                     continue
                 if isinstance(value, Mapping):
-                    records.append(value)
+                    records.append(dict(value))
                 else:
                     invalid_lines += 1
 

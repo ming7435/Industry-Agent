@@ -36,10 +36,7 @@ def get_device_status(
             "error": "device_id 不能为空",
         }
 
-    api_base = (
-        base_url
-        or os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:4529")
-    ).rstrip("/")
+    api_base = (base_url or os.getenv("FACTORY_API_BASE_URL") or "http://127.0.0.1:4529").rstrip("/")
     query = urlencode({"device_id": normalized_device_id})
     request = Request(
         "%s/api/snapshot?%s" % (api_base, query),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 SOURCE_ALIASES = {
@@ -28,8 +28,8 @@ class KnowledgeEvidenceValidator:
     @classmethod
     def validate(
         cls,
-        documents: list[Mapping[str, Any]],
-        evidence: list[Mapping[str, Any]],
+        documents: Sequence[Mapping[str, Any]],
+        evidence: Sequence[Mapping[str, Any]],
         required_sources: list[str],
         confidence: float,
         status: str,

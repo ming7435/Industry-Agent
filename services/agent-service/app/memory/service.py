@@ -59,7 +59,8 @@ class ExperienceLearningModule:
             maintenance_plan=dict(payload.get("maintenance_plan") or {}),
             report=dict(payload.get("report") or {}),
         )
-        existing = self.long_memory.search(device_id=str(experience.get("device_id") or ""), limit=100)
+        existing_raw = self.long_memory.search(device_id=str(experience.get("device_id") or ""), limit=100)
+        existing: list[Mapping[str, Any]] = [dict(item) for item in existing_raw if isinstance(item, Mapping)]
         quality = self.validator.validate_experience(experience, workorder, repair_feedback, existing=existing)
         experience.update({
             "experience_quality_score": quality.experience_quality_score,

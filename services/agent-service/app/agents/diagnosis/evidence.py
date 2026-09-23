@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Sequence
 
 from .schemas import DiagnosisState
 
 
-def observation_hash(observations: List[Mapping[str, Any]]) -> str:
+def observation_hash(observations: Sequence[Mapping[str, Any]]) -> str:
     """生成 Observation 指纹，用于检测重复取证。"""
 
     if not observations:

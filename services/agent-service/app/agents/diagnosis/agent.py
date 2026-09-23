@@ -673,4 +673,4 @@ class DiagnosisAgent:
             "knowledge_degraded": knowledge_degraded,
             "warning": warning,
         }
-        return details["overall"], details, warning
+        return float(details["overall"]), details, warning

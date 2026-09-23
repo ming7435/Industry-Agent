@@ -212,7 +212,7 @@ class WorkOrderMcpAdapter:
         order.setdefault("status_history", []).append(event)
 
     def query_technicians(self, device_id: str = "", component: str = "", priority: str = "", **_: Any) -> Dict[str, Any]:
-        items = [
+        items: list[Dict[str, Any]] = [
             {"technician_id": "TECH-001", "name": "张工", "skills": ["主轴", "电气", "冷却系统"], "area": "A区", "shift": "白班", "workload": 1, "available": True},
             {"technician_id": "TECH-002", "name": "李工", "skills": ["机械", "轴承", "振动"], "area": "B区", "shift": "白班", "workload": 2, "available": True},
             {"technician_id": "TECH-003", "name": "王工", "skills": ["PLC", "伺服", "报警诊断"], "area": "A区", "shift": "白班", "workload": 0, "available": True},

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from app.contracts import CADComponent
 
@@ -14,11 +14,11 @@ class CADEngineeringValidator:
     def validate(
         cls,
         components: list[CADComponent],
-        bom_items: list[Mapping[str, Any]],
-        drawings: list[Mapping[str, Any]],
-        part_relations: list[Mapping[str, Any]],
-        assembly_relations: list[Mapping[str, Any]],
-        locations: list[Mapping[str, Any]],
+        bom_items: Sequence[Mapping[str, Any]],
+        drawings: Sequence[Mapping[str, Any]],
+        part_relations: Sequence[Mapping[str, Any]],
+        assembly_relations: Sequence[Mapping[str, Any]],
+        locations: Sequence[Mapping[str, Any]],
     ) -> list[str]:
         findings: list[str] = []
         component_ids = {item.component_id for item in components if item.component_id}
@@ -51,7 +51,7 @@ class CADEngineeringValidator:
             if component_id and component_ids and component_id not in component_ids:
                 findings.append("图纸部件未匹配 CAD 部件：%s" % component_id)
 
-        for item in part_relations + assembly_relations + locations:
+        for item in (*part_relations, *assembly_relations, *locations):
             component_id = str(item.get("component_id") or "")
             part_no = str(item.get("part_no") or "")
             if component_id and component_ids and component_id not in component_ids:

@@ -57,6 +57,18 @@ class MaintenanceAgent:
         return merged or self._safe_tool("query_cad", arguments)
 
     @staticmethod
+    def _mapping_items(value: Any) -> list[Mapping[str, Any]]:
+        """Return only structured evidence records from an external provider.
+
+        Provider payloads are untrusted at this boundary; accepting strings here
+        makes ``dict(item)`` fail and can abort an otherwise valid maintenance
+        plan.  Normalize once so the downstream evidence model stays stable.
+        """
+        if not isinstance(value, (list, tuple)):
+            return []
+        return [item for item in value if isinstance(item, Mapping)]
+
+    @staticmethod
     def _requires_cad(diagnosis: DiagnosisView) -> bool:
         text = "%s %s" % (diagnosis.fault, diagnosis.cause)
         return any(token in text for token in ("轴承", "主轴", "冷却", "泵", "振动", "温度", "传感器", "零件", "部件", "拆装", "BOM"))
@@ -272,17 +284,17 @@ class MaintenanceAgent:
     @staticmethod
     def _evidence(diagnosis: DiagnosisView, knowledge: Mapping[str, Any], cad: Mapping[str, Any], spare_parts: Mapping[str, Any], profile: Mapping[str, Any], memory: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
         evidence: list[dict[str, Any]] = []
-        for item in diagnosis.evidence:
-            evidence.append({"type": "diagnosis", "content": item})
-        for item in knowledge.get("evidence") or []:
-            evidence.append({"type": "knowledge", **dict(item)})
-        for item in spare_parts.get("parts") or []:
-            if MaintenanceAgent._part_matches_profile(profile, item):
-                evidence.append({"type": "inventory", **dict(item)})
-        for item in cad.get("evidence") or []:
-            evidence.append({"type": "cad", **dict(item)})
-        for item in (memory or {}).get("items") or []:
-            evidence.append({"type": "historical_experience", **dict(item)})
+        for diagnosis_item in diagnosis.evidence:
+            evidence.append({"type": "diagnosis", "content": diagnosis_item})
+        for knowledge_item in MaintenanceAgent._mapping_items(knowledge.get("evidence")):
+            evidence.append({"type": "knowledge", **dict(knowledge_item)})
+        for inventory_item in MaintenanceAgent._mapping_items(spare_parts.get("parts")):
+            if MaintenanceAgent._part_matches_profile(profile, inventory_item):
+                evidence.append({"type": "inventory", **dict(inventory_item)})
+        for cad_item in MaintenanceAgent._mapping_items(cad.get("evidence")):
+            evidence.append({"type": "cad", **dict(cad_item)})
+        for memory_item in MaintenanceAgent._mapping_items((memory or {}).get("items")):
+            evidence.append({"type": "historical_experience", **dict(memory_item)})
         return evidence[:20]
 
     @staticmethod

@@ -70,7 +70,7 @@ def _emit_otel(record: Dict[str, Any]) -> None:
 class TraceRecorder:
     def __init__(self, maxlen: int = 5000) -> None:
         self._lock = Lock()
-        self._records = deque(maxlen=max(1, int(maxlen)))
+        self._records: deque[Dict[str, Any]] = deque(maxlen=max(1, int(maxlen)))
 
     def record(self, **payload: Any) -> Dict[str, Any]:
         record = {

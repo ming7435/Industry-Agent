@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from typing import Any, Dict, List, Mapping, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -117,8 +117,8 @@ def observe(state: CADGraphState) -> Dict[str, Any]:
 
 
 def validate_relation(state: CADGraphState) -> Dict[str, Any]:
-    aggregate = {"components": state.get("components", []), "drawings": state.get("drawings", []), "bom_items": state.get("bom_items", []), "assembly_relations": state.get("assembly_relations", []), "source": (state.get("sources") or [""])[0]}
-    components = []
+    aggregate: dict[str, Any] = {"components": state.get("components", []), "drawings": state.get("drawings", []), "bom_items": state.get("bom_items", []), "assembly_relations": state.get("assembly_relations", []), "source": (state.get("sources") or [""])[0]}
+    components: list[CADComponent] = []
     for item in aggregate["components"]:
         value = dict(item)
         value.setdefault("component_id", value.get("part_no") or value.get("name") or "unknown-component")
@@ -175,11 +175,11 @@ def _query_type(query: str) -> str:
 
 
 def _extend(target: list[dict[str, Any]], items: Any, key: str) -> None:
-    if not isinstance(items, list):
+    if not isinstance(items, (list, tuple)):
         return
     existing = {str(item.get(key) or item.get("part_no") or item.get("name") or "") for item in target}
     for item in items:
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             continue
         normalized = dict(item)
         identity = str(normalized.get(key) or normalized.get("part_no") or normalized.get("name") or "")

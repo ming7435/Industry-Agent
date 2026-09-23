@@ -113,7 +113,7 @@ class SkillRegistry:
         self,
         agent: str,
         context: Mapping[str, Any] | None = None,
-        names: list[str] | tuple[str, ...] | None = None,
+        names: List[str] | tuple[str, ...] | None = None,
     ) -> List[SkillDefinition]:
         """选择多个 Skill。
 

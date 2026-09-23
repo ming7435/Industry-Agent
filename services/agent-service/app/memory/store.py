@@ -21,7 +21,7 @@ class ShortMemoryStore:
     backend = "redis-compatible-memory"
 
     def __init__(self, max_items: int = 100) -> None:
-        self._items = deque(maxlen=max_items)
+        self._items: deque[Dict[str, Any]] = deque(maxlen=max_items)
         self._lock = Lock()
 
     def add(self, item: Dict[str, Any]) -> None:
