@@ -59,7 +59,7 @@ class A2ARequests:
         )
         return response.model_dump(mode="json")
 
-    def _maintenance_knowledge_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
+    def request_knowledge_for_maintenance(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
         return self._knowledge_a2a(
             str(context.get("task_id") or ""),
             "maintenance",
@@ -71,8 +71,16 @@ class A2ARequests:
             required_sources=["sop"],
         )
 
-    def _maintenance_cad_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
+    def request_cad_for_maintenance(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
         return self._cad_a2a(str(context.get("task_id") or ""), "maintenance", query, context)
+
+    # Compatibility aliases for integrations written against the original
+    # provider injection names. New Runtime code should use the public methods.
+    def _maintenance_knowledge_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
+        return self.request_knowledge_for_maintenance(context, query)
+
+    def _maintenance_cad_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
+        return self.request_cad_for_maintenance(context, query)
 
     def retrieve_cad(self, state: Mapping[str, Any], query: str, from_agent: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         return self._cad_a2a(state.get("task_id", ""), from_agent, query, context or state.get("context") or {})
@@ -250,8 +258,8 @@ class A2ARequests:
         response = self.a2a.request(request, DiagnosisResponse)
         return response.diagnosis
 
-    def _diagnosis_knowledge_request(self, event: Dict[str, Any], query: str) -> Dict[str, Any]:
-        """Diagnosis Agent 使用的 Knowledge A2A 入口。"""
+    def request_knowledge_for_diagnosis(self, event: Mapping[str, Any], query: str) -> Dict[str, Any]:
+        """Public Knowledge provider used by Diagnosis Agent."""
 
         task_id = str(event.get("task_id") or "")
         response = self.a2a.request(
@@ -271,3 +279,8 @@ class A2ARequests:
             KnowledgeResponse,
         )
         return response.model_dump(mode="json")
+
+    def _diagnosis_knowledge_request(self, event: Dict[str, Any], query: str) -> Dict[str, Any]:
+        """Compatibility alias for the original injected provider name."""
+
+        return self.request_knowledge_for_diagnosis(event, query)

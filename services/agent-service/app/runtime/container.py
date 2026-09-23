@@ -74,18 +74,18 @@ class AgentContainer:
 
         diagnosis_runtime = diagnosis_agent or DiagnosisAgent(
             tools=registry,
-            knowledge_provider=self.requests._diagnosis_knowledge_request,
+            knowledge_provider=self.requests.request_knowledge_for_diagnosis,
         )
         if getattr(diagnosis_runtime, "knowledge_provider", None) is None:
-            diagnosis_runtime.knowledge_provider = self.requests._diagnosis_knowledge_request
+            diagnosis_runtime.knowledge_provider = self.requests.request_knowledge_for_diagnosis
         if hasattr(diagnosis_runtime.tools, "trace"):
             diagnosis_runtime.tools.trace = self.trace
 
         self.agents = build_agent_registry(
             tools=registry,
             diagnosis=diagnosis_runtime,
-            maintenance_knowledge_provider=self.requests._maintenance_knowledge_request,
-            maintenance_cad_provider=self.requests._maintenance_cad_request,
+            maintenance_knowledge_provider=self.requests.request_knowledge_for_maintenance,
+            maintenance_cad_provider=self.requests.request_cad_for_maintenance,
             workorder_service=self.workorder_service,
             experience_module=self.experience_module,
         )
