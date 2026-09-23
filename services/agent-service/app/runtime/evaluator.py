@@ -119,7 +119,8 @@ class RuntimeEvaluator:
             if validation_status is None:
                 validation_status = payload.get("validation_status", "")
             validation_status = str(validation_status).lower()
-            workorder = value.get("workorder") if isinstance(value.get("workorder"), Mapping) else {}
+            workorder_value = value.get("workorder")
+            workorder: Mapping[str, Any] = workorder_value if isinstance(workorder_value, Mapping) else {}
             closed = str(value.get("workorder_status") or workorder.get("status") or "").lower() == "closed"
             feedback = value.get("repair_feedback") or payload.get("repair_feedback") or workorder.get("repair_feedback")
             has_feedback = bool(feedback)

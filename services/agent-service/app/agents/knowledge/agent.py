@@ -190,7 +190,7 @@ class KnowledgeAgent:
         )
 
     @classmethod
-    def _confidence(documents: list[KnowledgeDocument], required_sources: list[str]) -> float:
+    def _confidence(cls, documents: list[KnowledgeDocument], required_sources: list[str]) -> float:
         return cls._confidence_details(documents, required_sources)["overall"]
 
     @classmethod

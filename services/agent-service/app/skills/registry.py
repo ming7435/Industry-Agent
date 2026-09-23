@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, List, Mapping
 
 import yaml
 
@@ -65,7 +65,7 @@ class SkillRegistry:
         agent = str(agent).strip().lower()
         if agent not in self._cache:
             directory = self.root / agent
-            definitions: list[SkillDefinition] = []
+            definitions: List[SkillDefinition] = []
             for path in sorted(directory.glob("*.yaml")) if directory.is_dir() else []:
                 payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
                 if not isinstance(payload, Mapping):
@@ -114,7 +114,7 @@ class SkillRegistry:
         agent: str,
         context: Mapping[str, Any] | None = None,
         names: list[str] | tuple[str, ...] | None = None,
-    ) -> list[SkillDefinition]:
+    ) -> List[SkillDefinition]:
         """选择多个 Skill。
 
         显式 ``names`` 优先；没有显式名称时按简单 trigger 规则匹配，
@@ -138,8 +138,8 @@ class SkillRegistry:
         return [item for item in available if item.trigger == "default"][:1] or available[:1]
 
     @staticmethod
-    def merge_tools(skills: list[SkillDefinition]) -> list[str]:
-        tools: list[str] = []
+    def merge_tools(skills: List[SkillDefinition]) -> List[str]:
+        tools: List[str] = []
         for skill in skills:
             for tool in skill.tools:
                 if tool and tool not in tools:
@@ -147,8 +147,8 @@ class SkillRegistry:
         return tools
 
     @staticmethod
-    def merge_steps(skills: list[SkillDefinition]) -> list[str]:
-        steps: list[str] = []
+    def merge_steps(skills: List[SkillDefinition]) -> List[str]:
+        steps: List[str] = []
         for skill in skills:
             for step in skill.steps:
                 if step and step not in steps:

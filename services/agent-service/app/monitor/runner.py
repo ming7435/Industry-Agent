@@ -167,6 +167,8 @@ class MonitorRunner:
         with self._state_lock:
             self._last_sample_at = latest_timestamp
             self._last_error = None
+        if latest_result is None:
+            raise ValueError("sample_provider returned no valid samples")
         return latest_result
 
     def _read_samples(self) -> list[DeviceSample]:

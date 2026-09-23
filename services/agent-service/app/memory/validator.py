@@ -49,8 +49,9 @@ class ExperienceValidator:
         else:
             findings.append("experience_content_missing")
 
-        feedback = repair_feedback if isinstance(repair_feedback, Mapping) else {"feedback": repair_feedback}
-        verification = feedback.get("verification") if isinstance(feedback.get("verification"), Mapping) else {}
+        feedback: Mapping[str, Any] = repair_feedback if isinstance(repair_feedback, Mapping) else {"feedback": repair_feedback}
+        verification_value = feedback.get("verification")
+        verification: Mapping[str, Any] = verification_value if isinstance(verification_value, Mapping) else {}
         result_text = str(feedback.get("result") or feedback.get("status") or "").lower()
         if verification.get("passed") is False or result_text in {"failed", "fail", "unsuccessful"}:
             findings.append("repair_not_successful")

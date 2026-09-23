@@ -44,7 +44,7 @@ class ExecutionRecord:
 class ExecutionManager:
     """Execute Actions without pretending a timed-out thread was killed."""
 
-    def __init__(self, timeout_seconds: float = 30.0, max_retries: int = 0, trace: Callable[[str, Dict[str, Any]], None] | None = None) -> None:
+    def __init__(self, timeout_seconds: float = 30.0, max_retries: int = 0, trace: Callable[[str, Dict[str, Any]], Any] | None = None) -> None:
         self.timeout_seconds = float(timeout_seconds)
         self.max_retries = max(0, int(max_retries))
         self.trace = trace

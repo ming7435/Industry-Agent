@@ -36,7 +36,7 @@ class Planner:
     def __init__(
         self,
         capabilities: CapabilityRegistry | None = None,
-        trace: Callable[[str, dict[str, Any]], None] | None = None,
+        trace: Callable[[str, dict[str, Any]], Any] | None = None,
     ) -> None:
         self.capabilities = capabilities or build_capability_registry()
         self.trace = trace
