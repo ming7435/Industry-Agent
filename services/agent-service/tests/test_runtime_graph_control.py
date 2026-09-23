@@ -45,3 +45,18 @@ def test_runtime_coordinator_uses_planned_capabilities_instead_of_graph_edges():
     assert result["runtime_result"]["status"] == "completed"
     assert result["workorder"]["workorder_id"] == "WO-1"
 
+
+def test_user_goal_does_not_expand_into_an_automatic_workorder_plan():
+    from app.runtime.coordinator import RuntimeCoordinator
+
+    dispatcher = _Dispatcher()
+    container = SimpleNamespace(planner=Planner(), dispatcher=dispatcher, trace=TraceRecorder())
+    result = RuntimeCoordinator(container).run({
+        "entry": "user",
+        "task_id": "TASK-USER-1",
+        "trace_id": "TRACE-USER-1",
+        "user_text": "查询主轴维修手册",
+    })
+
+    assert [action.required_capability for action in dispatcher.actions] == ["document_search"]
+    assert "workorder" not in result
