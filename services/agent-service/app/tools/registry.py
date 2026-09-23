@@ -390,6 +390,8 @@ class ToolRegistry:
                 output=None, execution_time=0.0, error="",
             )
         try:
+            if server == "cad" and not self.cad_base_url and not self._cad_fallback_allowed():
+                raise RuntimeError("生产模式要求配置 MCP_CAD_URL 或 CAD_SERVICE_BASE_URL")
             result = self.mcp.call(server, operation, arguments)
         except Exception as error:
             if server == "cad" and operation in {"query_drawing", "query_bom", "query_part", "query_relation", "fetch_engineering_record"} and self._cad_fallback_allowed():

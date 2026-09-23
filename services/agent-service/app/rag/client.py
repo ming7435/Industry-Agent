@@ -280,6 +280,8 @@ class RAGServiceClient:
                     "record_count": self.fallback.count(),
                     "collections": self.fallback.collections(),
                 }
+        if not self.allow_fallback:
+            raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
         return {
             "backend": "local-rag-fallback",
             "connected": False,

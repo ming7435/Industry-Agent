@@ -11,6 +11,17 @@ def test_rag_client_rejects_local_fallback_in_production(monkeypatch):
         client.upsert({"experience_id": "EXP-PROD", "content": "fixed"})
 
 
+def test_rag_status_rejects_local_fallback_in_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("RAG_SERVICE_BASE_URL", raising=False)
+    monkeypatch.delenv("RAG_ALLOW_LOCAL_FALLBACK", raising=False)
+    from app.rag.client import RAGServiceClient
+
+    client = RAGServiceClient(base_url="")
+    with pytest.raises(RuntimeError, match="禁止本地回退"):
+        client.status()
+
+
 def test_memory_backends_require_external_services_in_production(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("ALLOW_DEGRADED_STORAGE", raising=False)
@@ -50,4 +61,19 @@ def test_cad_tool_does_not_fallback_to_demo_in_production(monkeypatch, tmp_path)
 
     monkeypatch.setattr(registry.mcp, "call", fail)
     with pytest.raises(RuntimeError, match="cad unavailable"):
+        registry.execute("query_cad", {"query": "spindle"})
+
+
+def test_cad_tool_requires_remote_service_in_production(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ALLOW_DEGRADED_STORAGE", "false")
+    monkeypatch.delenv("CAD_ALLOW_DEMO_FALLBACK", raising=False)
+    monkeypatch.delenv("MCP_CAD_URL", raising=False)
+    monkeypatch.delenv("CAD_SERVICE_BASE_URL", raising=False)
+    monkeypatch.setenv("WORKORDER_STORE_PATH", str(tmp_path / "workorders.sqlite3"))
+    monkeypatch.setenv("REPORT_STORE_PATH", str(tmp_path / "reports.sqlite3"))
+    from app.tools.registry import ToolRegistry
+
+    registry = ToolRegistry(rag_client=object(), cad_base_url="")
+    with pytest.raises(RuntimeError, match="CAD"):
         registry.execute("query_cad", {"query": "spindle"})
