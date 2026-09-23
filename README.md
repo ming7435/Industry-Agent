@@ -382,6 +382,29 @@ API / Monitor
 - RAG_SERVICE_BASE_URL 配置远程 RAG；MCP_RAG_URL 是可选 MCP 风格地址，二者不是同一个配置项。
 - 配置 `WORKORDER_STORE_PATH` 后，WorkOrder 使用 SQLite 唯一键持久化幂等；生产集群仍建议使用 MySQL 唯一键或等价共享数据库。
 
+### Runtime 最终控制流
+
+当前 Graph 只负责保存状态并提供 Runtime 生命周期入口，不再通过 Graph 边决定
+Diagnosis、Knowledge、CAD、Maintenance 或 WorkOrder 的业务顺序。统一控制流为：
+
+```text
+Goal/Event
+  -> JEVParser
+  -> Planner
+  -> ActionModel(required_capability)
+  -> CapabilityRegistry
+  -> LoopEngine
+  -> ExecutionManager
+  -> Agent / Tool / MCP
+  -> Evidence
+  -> Evaluator
+  -> Continue / Replan / Final
+```
+
+九个已有 Agent 都声明自己的能力并通过统一 `BaseAgent.execute()` 边界接入；
+Runtime 根据 `required_capability` 选择已有 Agent，不新增业务 Agent。一次任务的
+Trace 可以还原 Planner、能力选择、Action 执行、Evidence 和 Evaluator 决策。
+
 ## 测试
 
 完整回归（两个服务的 `app` 包在独立 pytest 进程中运行）：

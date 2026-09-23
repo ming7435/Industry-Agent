@@ -11,3 +11,5 @@ Task 2: complete (tests: test_runtime_dispatcher.py + capability/planner/contrac
 Task 3: complete (tests: runtime graph, orchestrator, Agent contract, Planner, Capability → 12 passed)
 
 Task 4: complete (tests: evaluator diagnosis/learning domains and LoopEngine continuation events → 3 passed)
+
+Task 5: complete (tests: autonomous lifecycle E2E + shared contract → 2 passed; full regression and frontend build run before commit)

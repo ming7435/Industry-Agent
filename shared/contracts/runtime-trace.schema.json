@@ -10,7 +10,7 @@
     "event": {
       "type": "string",
       "enum": [
-        "planner_start", "planner_end", "loop_start", "evaluation_result", "action_selected", "execution_start",
+        "planner_start", "planner_end", "loop_start", "loop_continue", "evaluation_result", "action_selected", "capability_selected", "execution_start",
         "execution_end", "evidence_added", "review_result", "replan", "loop_stop",
         "node_started", "node_completed", "agent_start", "agent_end", "tool_start", "tool_end"
       ]

@@ -47,8 +47,14 @@
 diagnosis -> knowledge -> cad -> maintenance -> workorder
 ```
 
-WorkOrder Action 固定携带 `monitor:<event_id>` 幂等键。Planner 只能把结果交给
-Loop Engine，不能直接调用执行器；`planner_start` 和 `planner_end` 进入 Trace。
+WorkOrder Action 固定携带 `monitor:<event_id>` 幂等键。需要时，GoalEvent 可以显式
+携带 `required_capabilities` 扩展到 Quality 或 Memory Learning；没有显式扩展时，
+自动设备异常仍保持原有维修闭环。Planner 只能把结果交给 Loop Engine，不能直接
+调用执行器；`planner_start` 和 `planner_end` 进入 Trace。
+
+`ActionModel.payload.required_capability` 是 Runtime 选择 Agent 的唯一能力键。
+`CapabilityRegistry.register_agent()` 注册已有 Agent 的声明能力，`resolve_agent()`
+返回对应实例；Runtime 不再根据 Graph 边或 `if diagnosis` 语句决定下一个 Agent。
 
 ## 2. Loop、Evaluator 与 Execution
 
@@ -82,16 +88,18 @@ Observe
 
 ## 3. 自动异常与工单生命周期
 
-自动异常链路固定为：
+Graph 只提供 Runtime 生命周期入口；自动异常的默认计划为：
 
 ```text
-AbnormalEvent
-  -> Diagnosis
-  -> Knowledge
-  -> CAD
-  -> Maintenance
-  -> WorkOrder
-  -> END
+Goal/Event
+  -> JEVParser
+  -> Planner
+  -> LoopEngine
+  -> CapabilityRegistry
+  -> ExecutionManager
+  -> Diagnosis / Knowledge / CAD / Maintenance / WorkOrder
+  -> Evidence + Evaluator
+  -> waiting_repair
 ```
 
 事件边界去重保证同一个 `event_id` 返回同一个 Agent task/pipeline。自动工单使用
@@ -130,8 +138,10 @@ Memory 在写入前执行 Experience Quality Gate，输出：
 
 ```text
 loop_start
+loop_continue
 evaluation_result
 action_selected
+capability_selected
 execution_start
 execution_end
 evidence_added

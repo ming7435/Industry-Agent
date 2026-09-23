@@ -20,15 +20,20 @@ idempotent.
 
 ## Agent Loop
 
-The trigger graph is the Agent Loop:
+The Graph is now only the Runtime execution layer. It carries state into one
+Runtime lifecycle node; Planner and LoopEngine choose the next Action:
 
 ```text
-Diagnosis -> Knowledge -> CAD -> Maintenance -> WorkOrder -> waiting_repair
+Goal/Event -> JEV -> Planner -> CapabilityRegistry -> LoopEngine
+  -> ActionModel -> ExecutionManager -> Agent/Tool/MCP
+  -> Evidence -> Evaluator -> Continue/Replan/Final
 ```
 
-Maintenance can return `blocked_insufficient_evidence`; the graph then ends
-without creating a WorkOrder. This is the cross-Agent stop boundary and prevents
-an optimistic downstream Agent from hiding upstream uncertainty.
+The default abnormal-event plan still resolves to
+`Diagnosis -> Knowledge -> CAD -> Maintenance -> WorkOrder -> waiting_repair`,
+but that order is a Planner result rather than a Graph edge. Maintenance can
+return `blocked_insufficient_evidence`; Runtime then stops without creating a
+WorkOrder.
 
 ## Unified Loop Engine
 
@@ -51,8 +56,9 @@ used by the engine. `RuntimeEvaluator` is the single policy point for
 `continue`, `replan`, `final` and `blocked`; business Nodes must not duplicate
 that decision logic. `ExecutionManager` owns action execution status and
 reconciliation boundaries. Runtime tracing records
-`loop_start`, `evaluation_result`, `action_selected`, `execution_start`,
-`execution_end`, `evidence_added`, `review_result`, `replan` and `loop_stop`
+`planner_start`, `planner_end`, `capability_selected`, `action_selected`,
+`execution_start`, `execution_end`, `evidence_added`, `evaluation_result`,
+`loop_continue`, `review_result`, `replan` and `loop_stop`
 with the active `task_id` and `trace_id`.
 
 ## Evidence Loop
