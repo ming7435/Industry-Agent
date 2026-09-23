@@ -792,7 +792,7 @@ function PlatformOverview() {
       <OverviewCard primary label="当前主线" value="监控中心" text="设备快照、异常判定和智能诊断实时联动。" />
       <OverviewCard label="工单闭环" value="已联动" text="异常诊断可转派维修工单，支持处理和验收流转。" />
       <OverviewCard label="知识中枢" value="已接入" text="手册、历史案例、报警码和SOP统一检索。" />
-      <OverviewCard label="质检协同" value="已接入" text="工单恢复验证、经验沉淀和质量追溯联动。" />
+      <OverviewCard label="零件质检" value="已接入" text="生产零件的尺寸、外观、材料、功能和工艺质量检查。" />
     </section>
   );
 }

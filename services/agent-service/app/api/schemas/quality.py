@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 from pydantic import BaseModel, Field
 
 
@@ -18,14 +18,14 @@ class PartQualityRequest(BaseModel):
 
 
 class QualityCheckRequest(BaseModel):
-    target_type: str = "workorder"
+    target_type: Literal["production_part"] = "production_part"
     target_id: str = Field(min_length=1)
     workorder_id: str = ""
     part_id: str = ""
     part_no: str = ""
     batch_id: str = ""
     production_order_id: str = ""
-    inspection_type: str = ""
+    inspection_type: Literal["part_quality"] = "part_quality"
     score: float | None = Field(default=None, ge=0, le=100)
     result: str = ""
     findings: list[str] = Field(default_factory=list)

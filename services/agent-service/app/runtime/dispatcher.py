@@ -136,7 +136,7 @@ class RuntimeDispatcher:
                 "event_id": state.get("event", {}).get("event_id", ""),
                 "idempotency_key": action_key(state, payload),
             }
-        if capability == "quality_inspection":
+        if capability in {"quality_inspection", "quality_review"}:
             context = dict(state.get("context") or {})
             return {
                 **current,

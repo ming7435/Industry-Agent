@@ -28,6 +28,8 @@
 
 Quality Agent 的业务定义是**生产出来的零件质量检测**，不是设备维修验收。维修工单的创建、派工、反馈、完成、关闭和重开由 WorkOrder Agent 管理。
 
+质检能力仅保留 `quality_inspection` / `quality_review`，统一处理生产零件。质检记录接口仅接受 `target_type=production_part`、`inspection_type=part_quality`；原工单质检入口 `/api/workorders/{workorder_id}/quality` 已移除。
+
 ## 当前能力
 
 - 模拟工厂设备快照采集和多设备实时监控。

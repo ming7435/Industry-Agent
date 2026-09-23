@@ -36,20 +36,24 @@ class ClosureService:
 
     def create_quality_check(self, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         values = dict(payload)
+        if values.get("target_type", "production_part") != "production_part":
+            raise ValueError("Quality checks only support production_part targets")
+        if values.get("inspection_type", "part_quality") != "part_quality":
+            raise ValueError("Quality checks only support part_quality inspections")
         check_id = self._id("QC")
         result = str(values.get("result") or "pending").lower()
         if result not in {"pending", "passed", "failed", "minor_issue", "major_issue", "high_risk"}:
             result = "pending"
         record = {
             "quality_check_id": check_id,
-            "target_type": str(values.get("target_type") or "workorder"),
+            "target_type": "production_part",
             "target_id": str(values.get("target_id") or ""),
             "workorder_id": str(values.get("workorder_id") or ""),
             "part_id": str(values.get("part_id") or ""),
             "part_no": str(values.get("part_no") or ""),
             "batch_id": str(values.get("batch_id") or ""),
             "production_order_id": str(values.get("production_order_id") or ""),
-            "inspection_type": str(values.get("inspection_type") or ""),
+            "inspection_type": "part_quality",
             "score": values.get("score"),
             "result": result,
             "findings": list(values.get("findings") or []),

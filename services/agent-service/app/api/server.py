@@ -196,15 +196,6 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         items = runtime.container.closure_service.audit_logs(object_id=object_id, action=action)
         return {"items": items, "count": len(items), "backend": runtime.container.closure_service.backend}
 
-    @app.post("/api/workorders/{workorder_id}/quality")
-    def workorder_quality(workorder_id: str) -> Dict[str, Any]:
-        return {
-            "success": False,
-            "status": "deprecated",
-            "workorder_id": workorder_id,
-            "message": "维修验收已从 Quality Agent 移除；请通过 WorkOrder Agent 管理维修完成和工单关闭，生产零件质检请调用 /api/quality/parts/{part_id}。",
-        }
-
     @app.post("/api/quality/parts/{part_id}")
     def part_quality(part_id: str, request: PartQualityRequest) -> Dict[str, Any]:
         """通过 Orchestrator 的 A2A 入口检测生产零件质量。"""

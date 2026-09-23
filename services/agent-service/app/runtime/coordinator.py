@@ -33,6 +33,7 @@ class RuntimeCoordinator:
             "workorder_create": "workorder",
             "workorder_update": "workorder",
             "quality_inspection": "quality",
+            "quality_review": "quality",
             "experience_learning": "memory",
             "experience_retrieval": "memory",
             "case_reporting": "report",
