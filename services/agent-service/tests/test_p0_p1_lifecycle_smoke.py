@@ -2,11 +2,17 @@ from types import SimpleNamespace
 
 
 class _Tracing:
+    def __init__(self):
+        self.loop_events = []
+
     def start(self, _name, _state):
         return None
 
     def finish(self, _name, _state, payload):
         return payload
+
+    def loop_event(self, name, _state, event, payload):
+        self.loop_events.append((name, event, payload))
 
 
 class _LifecycleRequests:
@@ -40,6 +46,10 @@ class _LifecycleRequests:
 
     def access_memory(self, _state, action="search", query="", from_agent=None):
         if action != "learn":
+            item = self.rag_store.get("workorder:%s" % self.order.get("workorder_id", "")) if self.order else None
+            if item:
+                self.stages.append("ExperienceRetrieval")
+                return {"success": True, "items": [item], "query": query}
             return {"success": False, "items": [], "query": query}
         self.stages.append("Memory")
         document_id = "workorder:%s" % self.order["workorder_id"]
@@ -108,7 +118,8 @@ def test_event_to_closed_case_smoke(tmp_path):
     rag_store = module.DocumentStore(str(tmp_path / "rag.sqlite3"))
 
     requests = _LifecycleRequests(rag_store)
-    container = SimpleNamespace(requests=requests, tracing=_Tracing())
+    tracing = _Tracing()
+    container = SimpleNamespace(requests=requests, tracing=tracing)
     nodes = OrchestratorNodes(container)
     state = {
         "entry": "trigger",
@@ -121,6 +132,9 @@ def test_event_to_closed_case_smoke(tmp_path):
         state.update(node(state))
 
     assert state["status"] == "waiting_repair"
+    assert {event for _name, event, _payload in tracing.loop_events} >= {
+        "loop_start", "action_selected", "evidence_added", "review_result", "loop_stop",
+    }
     operations = RuntimeOperations(
         requests,
         object(),
@@ -139,8 +153,10 @@ def test_event_to_closed_case_smoke(tmp_path):
     assert closed["workorder"]["status"] == "closed"
     assert closed["memory_result"]["rag_saved"] is True
     assert closed["report"]["report_type"] == "full_case_report"
-    assert rag_store.get("workorder:WO-SMOKE-1") is not None
+    retrieved = requests.access_memory({}, action="search", query="轴承维修经验", from_agent="diagnosis")
+    assert retrieved["success"] is True
+    assert retrieved["items"][0]["document_id"] == "workorder:WO-SMOKE-1"
     assert requests.stages == [
         "Event", "Diagnosis", "Knowledge", "CAD", "Maintenance", "WorkOrder",
-        "Complete", "Close", "Memory", "RAG", "Report",
+        "Complete", "Close", "Memory", "RAG", "Report", "ExperienceRetrieval",
     ]

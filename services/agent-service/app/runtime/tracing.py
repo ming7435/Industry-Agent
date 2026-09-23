@@ -36,6 +36,16 @@ class NodeTrace:
         )
         return payload
 
+    def loop_event(self, loop_name: str, state: Mapping[str, Any], event: str, payload: Mapping[str, Any] | None = None) -> None:
+        """Record runtime loop lifecycle events with the active task/trace scope."""
+
+        self.trace.record(
+            type="loop", name=loop_name, node=loop_name, agent="runtime",
+            event=event, task_id=str(state.get("task_id", "")),
+            trace_id=str(state.get("trace_id", "")), state_change=dict(payload or {}),
+            keys=list((payload or {}).keys()), tool_name="", latency=0.0, error="",
+        )
+
     @staticmethod
     def _node_agent(name: str) -> str:
         return {

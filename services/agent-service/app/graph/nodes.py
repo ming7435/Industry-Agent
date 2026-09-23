@@ -6,6 +6,7 @@ from app.a2a.client import A2AError
 from app.common.serialization import _serialize_agent_result
 from app.graph.state import AgentState
 from app.runtime import evidence as evidence_loop
+from app.runtime.action import ActionModel
 from app.runtime.container import AgentContainer
 from app.runtime.loop_engine import LoopEngine, LoopPolicy
 
@@ -14,6 +15,25 @@ class OrchestratorNodes:
         self.container = container
         self.requests = container.requests
         self.tracing = container.tracing
+
+    def _loop_trace(self, name: str, state: AgentState, event: str, payload: Dict[str, Any]) -> None:
+        recorder = getattr(self.tracing, "loop_event", None)
+        if recorder is not None:
+            recorder(name, state, event, payload)
+
+    @staticmethod
+    def _evidence_ids(payload: Dict[str, Any]) -> list[str]:
+        values = payload.get("evidence_ids")
+        if isinstance(values, list):
+            return [str(value) for value in values if value]
+        ids: list[str] = []
+        for key in ("documents", "evidence", "components", "parts"):
+            for item in payload.get(key) or []:
+                if isinstance(item, dict):
+                    value = item.get("id") or item.get("document_id") or item.get("component_id") or item.get("part_no")
+                    if value:
+                        ids.append(str(value))
+        return ids
 
     def route(self, state: AgentState) -> Dict[str, Any]:
         self.tracing.start("route", state)
@@ -64,13 +84,19 @@ class OrchestratorNodes:
             done = score >= 0.8
             return {
                 "state": {**loop_state, "diagnosis": diagnosis_result, "review_index": review_index + 1},
-                "action": "diagnosis:review:%d" % review_index,
+                "action": ActionModel(kind="agent", name="diagnosis.review", params={"iteration": review_index}),
+                "evidence_ids": self._evidence_ids(diagnosis_result),
+                "confidence": confidence_raw,
                 "evidence_score": score,
                 "done": done,
             }
 
         review_policy = LoopPolicy(max_iterations=2 if review_enabled else 1, min_evidence_score=0.8)
-        review_result = LoopEngine(review_policy).run({"diagnosis": {}, "review_index": 0}, review_step)
+        review_result = LoopEngine(review_policy).run(
+            {"diagnosis": {}, "review_index": 0}, review_step,
+            trace=lambda event_name, payload: self._loop_trace("diagnosis_review", state, event_name, payload),
+            trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
+        )
         diagnosis = dict(review_result.state.get("diagnosis") or {})
         output = {
             "diagnosis": diagnosis,
@@ -130,15 +156,21 @@ class OrchestratorNodes:
             if not current or not evidence_loop.ready(current, "knowledge"):
                 current = self.requests.retrieve_knowledge(state, search_query)
             ready = evidence_loop.ready(current, "knowledge")
+            evidence_ids = self._evidence_ids(current)
+            if not evidence_ids and current:
+                evidence_ids = ["knowledge-status:%s" % str(current.get("status") or "empty")]
             return {
                 "state": {**loop_state, "knowledge": current},
-                "action": "knowledge:%s" % search_query,
+                "action": ActionModel(kind="tool", name="knowledge.retrieve", params={"query": search_query}),
+                "evidence_ids": evidence_ids,
                 "evidence_score": 1.0 if ready else 0.0,
                 "done": ready,
             }
 
         loop_result = LoopEngine(LoopPolicy(max_iterations=max_iterations, min_evidence_score=0.8)).run(
-            {"knowledge": initial_result}, evidence_step
+            {"knowledge": initial_result}, evidence_step,
+            trace=lambda event_name, payload: self._loop_trace("knowledge_evidence", state, event_name, payload),
+            trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
         result = dict(loop_result.state.get("knowledge") or {})
         attempts = max(previous_attempts, max(0, loop_result.iterations - 1))
@@ -222,13 +254,16 @@ class OrchestratorNodes:
             ready = bool(plan_result.get("workorder_ready")) and not findings
             return {
                 "state": {**loop_state, "maintenance_plan": plan_result},
-                "action": "maintenance:replan:%d" % loop_context.iteration,
+                "action": ActionModel(kind="replan", name="maintenance.replan", params={"iteration": loop_context.iteration}),
+                "evidence_ids": self._evidence_ids(plan_result),
                 "evidence_score": 1.0 if ready else 0.0,
                 "done": ready,
             }
 
         replan_result = LoopEngine(LoopPolicy(max_iterations=2, min_evidence_score=0.8)).run(
-            {"maintenance_plan": dict(state.get("maintenance_plan") or {})}, replan_step
+            {"maintenance_plan": dict(state.get("maintenance_plan") or {})}, replan_step,
+            trace=lambda event_name, payload: self._loop_trace("maintenance_replan", state, event_name, payload),
+            trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
         plan = dict(replan_result.state.get("maintenance_plan") or {})
         payload = {

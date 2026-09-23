@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Callable, Dict, Mapping
 
+from .action import ActionModel
+from .guard import LoopGuard
+
 
 @dataclass(frozen=True)
 class LoopPolicy:
@@ -54,19 +57,47 @@ class LoopEngine:
 
     def __init__(self, policy: LoopPolicy | None = None) -> None:
         self.policy = policy or LoopPolicy()
+        self.guard = LoopGuard(self.policy)
 
     def run(
         self,
         initial_state: Mapping[str, Any] | None,
         step: Callable[[Dict[str, Any], LoopContext], Mapping[str, Any]],
+        *,
+        trace: Callable[[str, Dict[str, Any]], None] | None = None,
+        trace_context: Mapping[str, Any] | None = None,
     ) -> LoopResult:
         state = dict(initial_state or {})
         actions: list[str] = []
         seen_actions: set[str] = set()
         history: list[Dict[str, Any]] = []
         evidence_score = 0.0
+        previous_evidence: set[str] = set()
+        previous_confidence: float | None = None
+
+        def emit(event: str, **payload: Any) -> None:
+            if trace is None:
+                return
+            trace(event, {**dict(trace_context or {}), "iteration": len(history), **payload})
+
+        def stopped(result: LoopResult) -> LoopResult:
+            emit("loop_stop", status=result.status, stop_reason=result.stop_reason,
+                 iterations=result.iterations, evidence_score=result.evidence_score,
+                 actions=list(result.actions))
+            return result
+
+        emit("loop_start", max_iterations=self.policy.max_iterations,
+             min_evidence_score=self.policy.min_evidence_score,
+             timeout_seconds=self.policy.timeout_seconds)
 
         for iteration in range(int(self.policy.max_iterations)):
+            iteration_guard = self.guard.check_iteration(iteration)
+            if not iteration_guard.allowed:
+                return stopped(LoopResult(
+                    status="blocked", stop_reason=iteration_guard.reason, state=state,
+                    iterations=iteration, evidence_score=evidence_score,
+                    actions=actions, history=history,
+                ))
             context = LoopContext(
                 iteration=iteration,
                 policy=self.policy,
@@ -81,7 +112,7 @@ class LoopEngine:
             except TimeoutError:
                 future.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)
-                return LoopResult(
+                return stopped(LoopResult(
                     status="timeout",
                     stop_reason="timeout",
                     state=state,
@@ -89,11 +120,11 @@ class LoopEngine:
                     evidence_score=evidence_score,
                     actions=actions,
                     history=history,
-                )
+                ))
             except Exception as error:
                 executor.shutdown(wait=False, cancel_futures=True)
                 history.append({"iteration": iteration, "error": str(error)})
-                return LoopResult(
+                return stopped(LoopResult(
                     status="error",
                     stop_reason="step_error",
                     state=state,
@@ -101,23 +132,33 @@ class LoopEngine:
                     evidence_score=evidence_score,
                     actions=actions,
                     history=history,
-                )
+                ))
             finally:
                 if not future.done():
                     executor.shutdown(wait=False, cancel_futures=True)
                 else:
                     executor.shutdown(wait=True, cancel_futures=True)
 
+            timeout_guard = self.guard.check_timeout(started)
+            if not timeout_guard.allowed:
+                return stopped(LoopResult(
+                    status="timeout", stop_reason=timeout_guard.reason, state=state,
+                    iterations=iteration + 1, evidence_score=evidence_score,
+                    actions=actions, history=history,
+                ))
+
             output = dict(raw or {})
             next_state = output.get("state")
             if isinstance(next_state, Mapping):
                 state = dict(next_state)
-            action = str(output.get("action") or output.get("next_action") or "").strip()
-            if action:
-                actions.append(action)
-                if action in seen_actions:
-                    history.append({"iteration": iteration, "action": action, "duplicate": True})
-                    return LoopResult(
+            action = ActionModel.coerce(output.get("action") or output.get("next_action"))
+            action_decision = self.guard.check_action(action, seen_actions)
+            if action is not None:
+                emit("action_selected", action=action.as_dict())
+                if not action_decision.allowed:
+                    actions.append(action.name)
+                    history.append({"iteration": iteration, "action": action.name, "duplicate": True})
+                    return stopped(LoopResult(
                         status="blocked",
                         stop_reason="duplicate_action",
                         state=state,
@@ -125,20 +166,53 @@ class LoopEngine:
                         evidence_score=evidence_score,
                         actions=actions,
                         history=history,
-                    )
-                seen_actions.add(action)
+                    ))
+                actions.append(action.name)
+                seen_actions.add(action.fingerprint)
             try:
                 evidence_score = max(0.0, min(1.0, float(output.get("evidence_score", evidence_score))))
             except (TypeError, ValueError):
                 evidence_score = 0.0
+            current_evidence = {str(item) for item in output.get("evidence_ids", []) if item}
+            confidence_raw = output.get("confidence")
+            confidence = float(confidence_raw) if confidence_raw is not None else None
+            done = bool(output.get("done"))
+            evidence_decision = self.guard.check_evidence(done, evidence_score)
+            if current_evidence:
+                added = sorted(current_evidence - previous_evidence)
+                if added:
+                    emit("evidence_added", evidence_ids=added)
+            if iteration and previous_evidence:
+                progress = self.guard.check_evidence_progress(previous_evidence, current_evidence)
+                if not progress.allowed and not evidence_decision.allowed:
+                    history.append({"iteration": iteration, "stop_reason": progress.reason})
+                    return stopped(LoopResult(
+                        status="blocked", stop_reason=progress.reason, state=state,
+                        iterations=iteration + 1, evidence_score=evidence_score,
+                        actions=actions, history=history,
+                    ))
+            if iteration and confidence is not None and previous_confidence is not None:
+                confidence_progress = self.guard.check_confidence(previous_confidence, confidence)
+                if not confidence_progress.allowed and not evidence_decision.allowed:
+                    history.append({"iteration": iteration, "stop_reason": confidence_progress.reason})
+                    return stopped(LoopResult(
+                        status="blocked", stop_reason=confidence_progress.reason, state=state,
+                        iterations=iteration + 1, evidence_score=evidence_score,
+                        actions=actions, history=history,
+                    ))
             history.append({
                 "iteration": iteration,
-                "action": action,
+                "action": action.name if action else "",
                 "evidence_score": evidence_score,
+                "confidence": confidence,
                 "elapsed_ms": round((perf_counter() - started) * 1000, 2),
             })
-            if bool(output.get("done")) and evidence_score >= float(self.policy.min_evidence_score):
-                return LoopResult(
+            emit("review_result", done=done, evidence_score=evidence_score,
+                 confidence=confidence, action=action.as_dict() if action else None)
+            previous_evidence = current_evidence or previous_evidence
+            previous_confidence = confidence if confidence is not None else previous_confidence
+            if evidence_decision.allowed:
+                return stopped(LoopResult(
                     status="completed",
                     stop_reason="evidence_ready",
                     state=state,
@@ -146,9 +220,9 @@ class LoopEngine:
                     evidence_score=evidence_score,
                     actions=actions,
                     history=history,
-                )
+                ))
 
-        return LoopResult(
+        return stopped(LoopResult(
             status="blocked",
             stop_reason="max_iterations",
             state=state,
@@ -156,4 +230,4 @@ class LoopEngine:
             evidence_score=evidence_score,
             actions=actions,
             history=history,
-        )
+        ))

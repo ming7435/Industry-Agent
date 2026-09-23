@@ -37,6 +37,13 @@ Evidence, Diagnosis Review and Maintenance Replan. Each step returns
 There is no free-running Agent loop: every loop has a finite policy and an
 explicit stop reason.
 
+Every step emits an `ActionModel` with one of four kinds: `agent`, `tool`,
+`replan` or `final`. `LoopGuard` is the single guard implementation used by
+the engine. In addition to the hard budget it detects duplicate actions, no
+new evidence and confidence that did not improve. Runtime tracing records
+`loop_start`, `action_selected`, `evidence_added`, `review_result` and
+`loop_stop` with the active `task_id` and `trace_id`.
+
 ## Evidence Loop
 
 Trigger Knowledge retrieval gets one deterministic refinement attempt through
