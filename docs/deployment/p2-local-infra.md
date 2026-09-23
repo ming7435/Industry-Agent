@@ -1,6 +1,6 @@
 # P2 本地基础设施
 
-`infra/docker/docker-compose.yml` 提供 Agent/RAG 联调所需的 MySQL、Redis、Milvus、etcd 和 MinIO。
+`infra/docker/docker-compose.yml` 提供 Agent/RAG 联调所需的 MySQL、Redis、Milvus、etcd 和 MinIO。MySQL 会按顺序执行 `infra/mysql/migrations/` 下的版本化初始化脚本。
 
 启动：
 

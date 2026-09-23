@@ -102,6 +102,8 @@ docker compose -f infra/docker/docker-compose.yml up -d
 
 配置优先级为：进程环境变量 > 服务 `.env` > 根目录 `.env` > 代码默认值。`APP_ENV=production` 时默认禁止本地 RAG、Memory、CAD、Closure 和 Report 回退；只有显式设置降级开关才会启用降级。`LEARNING_RESULT_STORE_PATH` 保存关闭工单后的 Memory/RAG/Report 结果，`REPORT_STORE_PATH` 保存结构化报告，避免服务重启后重复学习或丢失报告。
 
+TraceRecorder 默认只保留本地记录；设置 `OTEL_ENABLED=true` 或配置 `OTEL_EXPORTER_OTLP_ENDPOINT` 后，会将 Agent、A2A、Tool、Node 记录以 OTLP span 发送到观测系统。未安装 OTEL 依赖或导出端点不可用时，本地 Trace API 仍保持可用。
+
 ### 根目录 Agent/监控配置
 
 ~~~dotenv
