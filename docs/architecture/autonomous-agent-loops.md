@@ -1,7 +1,9 @@
 # Autonomous Agent Loops
 
-The runtime is moving from one-shot Agent execution to four bounded loops. Each
-loop has an explicit state, a stop condition, and a durable side-effect rule.
+The runtime is moving from one-shot Agent execution to bounded, evidence-driven
+loops. Each loop has an explicit state, a stop condition, and a durable
+side-effect rule. The shared implementation is Runtime infrastructure; domain
+Nodes only provide observation and action adapters.
 
 ## Tool Loop
 
@@ -31,18 +33,27 @@ an optimistic downstream Agent from hiding upstream uncertainty.
 ## Unified Loop Engine
 
 `app.runtime.loop_engine.LoopEngine` is the shared finite-state runtime for
-Evidence, Diagnosis Review and Maintenance Replan. Each step returns
-`state/action/evidence_score/done`; the engine enforces `max_iterations`,
-`min_evidence_score`, a wall-clock timeout, and duplicate-action detection.
-There is no free-running Agent loop: every loop has a finite policy and an
-explicit stop reason.
+Evidence, Diagnosis Review, Maintenance Replan and future bounded learning
+operations. Its Runtime-native API is:
 
-Every step emits an `ActionModel` with one of four kinds: `agent`, `tool`,
-`replan` or `final`. `LoopGuard` is the single guard implementation used by
-the engine. In addition to the hard budget it detects duplicate actions, no
-new evidence and confidence that did not improve. Runtime tracing records
-`loop_start`, `action_selected`, `evidence_added`, `review_result` and
-`loop_stop` with the active `task_id` and `trace_id`.
+```text
+Observe -> RuntimeEvaluator -> Select Action -> Execute -> Update State
+```
+
+The engine enforces `max_iterations`, `min_evidence_score`, a wall-clock
+timeout, a cost budget, duplicate-action detection, no-new-evidence detection
+and confidence-progress detection. There is no free-running Agent loop: every
+loop has a finite policy and an explicit stop reason.
+
+Every step emits an `ActionModel` with one of five kinds: `AGENT`, `TOOL`,
+`REPLAN`, `FINAL` or `WAIT`. `LoopGuard` is the single guard implementation
+used by the engine. `RuntimeEvaluator` is the single policy point for
+`continue`, `replan`, `final` and `blocked`; business Nodes must not duplicate
+that decision logic. `ExecutionManager` owns action execution status and
+reconciliation boundaries. Runtime tracing records
+`loop_start`, `evaluation_result`, `action_selected`, `execution_start`,
+`execution_end`, `evidence_added`, `review_result`, `replan` and `loop_stop`
+with the active `task_id` and `trace_id`.
 
 ## Evidence Loop
 
@@ -105,8 +116,8 @@ failed Report stage retries Report only and never relearns the same WorkOrder.
 }
 ```
 
-All four loops are bounded. A loop that cannot satisfy its evidence or side
-effect contract returns an explicit stop reason instead of silently continuing.
+All loops are bounded. A loop that cannot satisfy its evidence or side-effect
+contract returns an explicit stop reason instead of silently continuing.
 
 ## Runtime control plane
 
@@ -133,4 +144,7 @@ State update + Evidence
 that a worker thread was killed; side-effecting actions require an
 `idempotency_key` and remain subject to existing state checks and
 reconciliation. `CapabilityRegistry` describes the capabilities of the nine
-existing Agents for a future Planner without creating another Agent.
+existing Agents for a future Planner without creating another Agent. The
+machine-readable versions of these boundaries live in
+`shared/contracts/`; the field-level mapping is documented in
+`docs/contracts/runtime-contracts.md`.

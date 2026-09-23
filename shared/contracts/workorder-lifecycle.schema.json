@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://industry-agent.local/contracts/workorder-lifecycle.schema.json",
+  "title": "WorkOrder lifecycle contract",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "workorder_id": {"type": "string"},
+    "event_id": {"type": "string"},
+    "idempotency_key": {"type": "string"},
+    "learning_idempotency_key": {"type": "string"},
+    "status": {"type": "string", "enum": ["open", "in_progress", "completed", "closed", "rejected", "timeout"]},
+    "pipeline_status": {"type": "string", "enum": ["waiting_repair"]},
+    "repair_feedback": {"type": ["object", "string"]}
+  },
+  "x-rules": [
+    "Automatic event creation uses idempotency_key=monitor:<event_id>.",
+    "pipeline_status=waiting_repair is not a WorkOrder status.",
+    "Memory learning requires status=closed and non-empty repair_feedback.",
+    "Learning uses learning_idempotency_key=workorder:<workorder_id>."
+  ]
+}

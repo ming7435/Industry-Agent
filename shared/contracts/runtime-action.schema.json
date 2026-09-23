@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://industry-agent.local/contracts/runtime-action.schema.json",
+  "title": "Runtime Action",
+  "description": "Canonical ActionModel emitted and consumed by the bounded Runtime.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["action_type", "target"],
+  "properties": {
+    "action_type": {
+      "type": "string",
+      "enum": ["TOOL", "AGENT", "FINAL", "REPLAN", "WAIT"]
+    },
+    "target": {"type": "string", "minLength": 1},
+    "reason": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "payload": {"type": "object"},
+    "side_effect": {"type": "boolean"},
+    "idempotency_key": {"type": "string"},
+    "cost": {"type": "number", "minimum": 0},
+    "fingerprint": {"type": "string"}
+  },
+  "x-legacy-input-aliases": {
+    "kind": "action_type",
+    "name": "target",
+    "params": "payload",
+    "parameters": "payload"
+  }
+}

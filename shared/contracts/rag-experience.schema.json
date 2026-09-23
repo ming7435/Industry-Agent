@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://industry-agent.local/contracts/rag-experience.schema.json",
+  "title": "Maintenance experience document",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["experience_id", "content", "collection", "source_workorder", "learning_idempotency_key"],
+  "properties": {
+    "experience_id": {"type": "string", "minLength": 1},
+    "content": {"type": "string"},
+    "collection": {"const": "maint_fault_events"},
+    "record_category": {"const": "case"},
+    "knowledge_type": {"const": "case"},
+    "source_workorder": {"type": "string"},
+    "source_event_id": {"type": "string"},
+    "learning_idempotency_key": {"type": "string", "pattern": "^workorder:.+"},
+    "device_id": {"type": "string"},
+    "fault": {"type": "string"},
+    "diagnosis": {"type": "string"},
+    "treatment": {"type": "string"},
+    "alarm_code": {"type": "string"},
+    "component": {"type": "string"},
+    "duration_seconds": {"type": "number", "minimum": 0}
+  }
+}

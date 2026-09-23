@@ -47,6 +47,7 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。
 - TraceRecorder 记录 Agent、Node、Tool、模块和 A2A 调用轨迹。
 - React + Vite 监控工作台和内置静态前端。
+- Runtime Evaluator、LoopGuard、ExecutionManager 和 CapabilityRegistry 提供统一的可控、证据驱动循环基础设施；不新增 Agent。
 
 ## 目录结构
 
@@ -72,6 +73,7 @@ services/
 frontend/monitor-react/         React + Vite 前端源码
 frontend/monitor/               监控工作台构建输出
 data/                           根目录数据挂载点和目录占位
+shared/contracts/               Agent Runtime, WorkOrder, RAG and Trace shared schemas
 tests/                          根目录测试
 ~~~
 
@@ -402,6 +404,12 @@ npm run build:monitor
 ~~~
 
 测试不要求调用真实大模型；联调 RAG、Milvus、MySQL、模拟工厂时，需要分别启动对应依赖并配置相应 .env。
+
+Runtime 和跨服务契约说明见：
+
+- [Runtime 契约](docs/contracts/runtime-contracts.md)
+- [Runtime 验证手册](docs/runbooks/runtime-validation.md)
+- [共享 JSON Schema](shared/contracts/)
 
 ## 常见问题
 
