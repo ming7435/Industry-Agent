@@ -153,3 +153,36 @@ def test_loop_engine_stops_when_confidence_does_not_improve():
 
     result = LoopEngine(LoopPolicy(max_iterations=4)).run({}, step)
     assert result.stop_reason == "confidence_not_improved"
+
+
+def test_runtime_loop_pipeline_uses_evaluator_action_and_execution_interfaces():
+    from app.runtime.action import ActionModel
+    from app.runtime.loop_engine import LoopEngine, LoopPolicy
+
+    selected = []
+    executed = []
+
+    def observe(state, _context):
+        return {
+            "done": bool(state.get("loaded")),
+            "evidence_ids": ["DOC-1"] if state.get("loaded") else [],
+            "evidence_score": 1.0 if state.get("loaded") else 0.0,
+        }
+
+    def select_action(_state, evaluation, _context):
+        selected.append(evaluation.status)
+        return ActionModel.tool("load-evidence", reason="missing evidence")
+
+    def execute(action, _state, _context):
+        executed.append(action.target)
+        return {"loaded": True}
+
+    result = LoopEngine(LoopPolicy(max_iterations=2)).run_runtime(
+        {}, observe=observe, select_action=select_action, execute_action=execute,
+        update_state=lambda state, _action, execution_result, _context: {**state, **execution_result},
+    )
+
+    assert result.status == "completed"
+    assert selected == ["continue"]
+    assert executed == ["load-evidence"]
+    assert result.loop_state["action_history"] == ["load-evidence"]

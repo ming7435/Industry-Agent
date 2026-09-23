@@ -1,63 +1,117 @@
-"""Structured actions emitted by bounded runtime loops."""
+"""Canonical action contract for every Runtime-selected operation."""
 
 from __future__ import annotations
 
+from enum import Enum
 import hashlib
 import json
-from typing import Any, Literal, Mapping
+from typing import Any, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class ActionType(str, Enum):
+    TOOL = "TOOL"
+    AGENT = "AGENT"
+    FINAL = "FINAL"
+    REPLAN = "REPLAN"
+    WAIT = "WAIT"
 
 
 class ActionModel(BaseModel):
-    """A deterministic, inspectable action emitted by a loop step.
+    """Runtime's only action representation, with legacy input support."""
 
-    ``action``/``parameters`` are accepted as wire-compatible aliases for
-    callers that already use those names.  The fingerprint intentionally
-    includes the idempotency key when supplied so two explicitly distinct
-    side-effect operations cannot be conflated by the duplicate guard.
-    """
+    model_config = ConfigDict(extra="allow")
 
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
-
-    kind: Literal["agent", "tool", "final", "replan"] = "agent"
-    name: str = Field(alias="action", min_length=1)
-    params: dict[str, Any] = Field(default_factory=dict, alias="parameters")
+    action_type: ActionType = ActionType.AGENT
+    target: str = Field(min_length=1)
+    reason: str = ""
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    side_effect: bool = False
     idempotency_key: str = ""
+    cost: float = Field(default=1.0, ge=0.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_shape(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        values = dict(value)
+        kind = values.pop("kind", None)
+        name = values.pop("name", None)
+        params = values.pop("params", values.pop("parameters", None))
+        legacy_action = values.pop("action", None)
+        if "action_type" not in values and kind is not None:
+            values["action_type"] = str(kind).upper()
+        elif "action_type" in values:
+            raw_action_type = values["action_type"]
+            values["action_type"] = raw_action_type if isinstance(raw_action_type, ActionType) else str(raw_action_type).upper()
+        if "target" not in values:
+            values["target"] = name or legacy_action
+        if "payload" not in values and params is not None:
+            values["payload"] = dict(params)
+        return values
+
+    @property
+    def kind(self) -> str:
+        return self.action_type.value.lower()
+
+    @property
+    def name(self) -> str:
+        return self.target
+
+    @property
+    def params(self) -> dict[str, Any]:
+        return dict(self.payload)
 
     @classmethod
-    def agent(cls, name: str, params: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
-        return cls(kind="agent", name=name, params=dict(params or {}), **kwargs)
+    def agent(cls, target: str, payload: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
+        return cls(action_type=ActionType.AGENT, target=target, payload=dict(payload or {}), **kwargs)
 
     @classmethod
-    def tool(cls, name: str, params: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
-        return cls(kind="tool", name=name, params=dict(params or {}), **kwargs)
+    def tool(cls, target: str, payload: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
+        return cls(action_type=ActionType.TOOL, target=target, payload=dict(payload or {}), **kwargs)
 
     @classmethod
-    def final(cls, name: str = "final", params: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
-        return cls(kind="final", name=name, params=dict(params or {}), **kwargs)
+    def final(cls, target: str = "final", payload: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
+        return cls(action_type=ActionType.FINAL, target=target, payload=dict(payload or {}), **kwargs)
 
     @classmethod
-    def replan(cls, name: str, params: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
-        return cls(kind="replan", name=name, params=dict(params or {}), **kwargs)
+    def replan(cls, target: str, payload: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
+        return cls(action_type=ActionType.REPLAN, target=target, payload=dict(payload or {}), **kwargs)
+
+    @classmethod
+    def wait(cls, target: str = "wait", payload: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
+        return cls(action_type=ActionType.WAIT, target=target, payload=dict(payload or {}), **kwargs)
 
     @property
     def fingerprint(self) -> str:
-        payload = {
-            "kind": self.kind,
-            "name": self.name,
-            "params": self.params,
-            "idempotency_key": self.idempotency_key,
-        }
-        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        canonical = json.dumps(
+            {
+                "action_type": self.action_type.value,
+                "target": self.target,
+                "payload": self.payload,
+                "side_effect": self.side_effect,
+                "idempotency_key": self.idempotency_key,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "kind": self.kind,
-            "name": self.name,
-            "params": dict(self.params),
+            "action_type": self.action_type.value,
+            "target": self.target,
+            "reason": self.reason,
+            "confidence": self.confidence,
+            "payload": dict(self.payload),
+            "side_effect": self.side_effect,
             "idempotency_key": self.idempotency_key,
+            "cost": self.cost,
             "fingerprint": self.fingerprint,
         }
 
@@ -69,12 +123,12 @@ class ActionModel(BaseModel):
             return value
         if isinstance(value, Mapping):
             payload = dict(value)
-            if "name" not in payload and "action" not in payload:
-                return cls(name="mapping", params=payload)
+            if not any(key in payload for key in ("target", "name", "action")):
+                return cls.agent("mapping", payload)
             return cls.model_validate(payload)
-        return cls(name=str(value))
+        return cls.agent(str(value))
 
 
 Action = ActionModel
 
-__all__ = ["ActionModel", "Action"]
+__all__ = ["ActionType", "ActionModel", "Action"]

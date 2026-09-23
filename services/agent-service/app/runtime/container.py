@@ -19,6 +19,8 @@ from app.config import Settings, get_settings
 
 from .operations import RuntimeOperations
 from .tracing import NodeTrace
+from .capabilities import build_capability_registry
+from .execution import ExecutionManager
 
 
 class AgentContainer:
@@ -35,7 +37,17 @@ class AgentContainer:
         get_skill_registry().validate_tools(registry.mcp.handlers)
         self.registry = registry
         self.tools = registry
+        self.capabilities = build_capability_registry()
         self.trace = TraceRecorder()
+        self.execution_manager = ExecutionManager(
+            timeout_seconds=settings.agent_timeout_seconds,
+            trace=lambda event, payload: self.trace.record(
+                type="execution", name="execution", node="runtime", agent="runtime",
+                event=event, task_id=str(payload.get("task_id", "")),
+                trace_id=str(payload.get("trace_id", "")), state_change=dict(payload),
+                keys=list(payload), tool_name="", latency=0.0, error="",
+            ),
+        )
         self.registry.trace = self.trace
         self.a2a = A2AClient(trace=self.trace)
         self.short_memory, self.long_memory = build_memory_stores()

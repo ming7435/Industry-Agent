@@ -107,3 +107,30 @@ failed Report stage retries Report only and never relearns the same WorkOrder.
 
 All four loops are bounded. A loop that cannot satisfy its evidence or side
 effect contract returns an explicit stop reason instead of silently continuing.
+
+## Runtime control plane
+
+The Runtime-native path is now:
+
+```text
+Goal
+  ↓
+LoopEngine
+  ↓ Observe
+RuntimeEvaluator
+  ↓ Continue / Replan / Final / Blocked
+ActionModel (TOOL | AGENT | REPLAN | FINAL | WAIT)
+  ↓
+ExecutionManager
+  ↓
+Agent / Tool / A2A / MCP
+  ↓
+State update + Evidence
+```
+
+`ExecutionManager` exposes explicit `PENDING`, `RUNNING`, `SUCCESS`,
+`FAILED`, `TIMEOUT`, `CANCELLED` and `UNKNOWN` states. A timeout never claims
+that a worker thread was killed; side-effecting actions require an
+`idempotency_key` and remain subject to existing state checks and
+reconciliation. `CapabilityRegistry` describes the capabilities of the nine
+existing Agents for a future Planner without creating another Agent.

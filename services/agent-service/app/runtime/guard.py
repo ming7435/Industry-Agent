@@ -30,6 +30,11 @@ class LoopGuard:
             return GuardDecision(False, "max_iterations")
         return GuardDecision(True, "within_budget")
 
+    def check_budget(self, used: float, cost: float = 1.0) -> GuardDecision:
+        if self.policy.max_budget is not None and float(used) + float(cost) > float(self.policy.max_budget):
+            return GuardDecision(False, "budget")
+        return GuardDecision(True, "within_budget")
+
     def check_timeout(self, started_at: float, now: float | None = None) -> GuardDecision:
         elapsed = (monotonic() if now is None else float(now)) - float(started_at)
         if elapsed > float(self.policy.timeout_seconds):
