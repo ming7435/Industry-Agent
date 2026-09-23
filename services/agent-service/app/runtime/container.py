@@ -77,5 +77,6 @@ class AgentContainer:
             self.closure_service,
             report_harness=self.harnesses.get("report"),
             learning_store_path=os.getenv("LEARNING_RESULT_STORE_PATH", ""),
+            trace=self.trace,
         )
         self.tracing = NodeTrace(self.trace)

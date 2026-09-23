@@ -8,6 +8,7 @@ from app.a2a.requests import A2ARequests
 from app.closure import ClosureService
 from app.common.serialization import _serialize_agent_result
 from app.runtime.durable_store import DurableJsonStore
+from app.runtime.action import ActionModel
 
 
 class _IncompleteLearningStage(RuntimeError):
@@ -25,10 +26,12 @@ class RuntimeOperations:
         closure_service: ClosureService,
         report_harness: Any | None = None,
         learning_store_path: str | None = None,
+        trace: Any | None = None,
     ) -> None:
         self.requests = requests
         self.closure_service = closure_service
         self.report_harness = report_harness
+        self.trace = trace
         self._learning_results: dict[str, Dict[str, Any]] = {}
         self._learning_stages: dict[tuple[str, str], Dict[str, Any]] = {}
         from threading import Lock
@@ -71,6 +74,16 @@ class RuntimeOperations:
             value = dict(producer() or {})
             self._learning_stages[cache_key] = value
             return value
+
+    def _learning_trace(self, state: Mapping[str, Any], event: str, payload: Mapping[str, Any] | None = None) -> None:
+        if self.trace is None or not hasattr(self.trace, "record"):
+            return
+        values = dict(payload or {})
+        self.trace.record(
+            type="loop", name="learning", node="learning", agent="runtime", event=event,
+            task_id=str(state.get("task_id", "")), trace_id=str(state.get("trace_id", "")),
+            state_change=values, keys=list(values), tool_name="", latency=0.0, error="",
+        )
 
     def inspect_quality(
         self,
@@ -163,6 +176,14 @@ class RuntimeOperations:
                     "learning_idempotency_key": learning_key,
                     "source_event_id": str(order.get("event_id") or values.get("event_id") or ""),
                 }
+                self._learning_trace(
+                    learning_state, "loop_start",
+                    {"learning_idempotency_key": learning_key, "stages": list(learning_loop["stages"])},
+                )
+                self._learning_trace(
+                    learning_state, "action_selected",
+                    {"action": ActionModel.agent("memory.learn", {"workorder_id": learning_key}).as_dict()},
+                )
                 try:
                     def produce_memory() -> Dict[str, Any]:
                         memory = self.requests.access_memory(
@@ -185,6 +206,11 @@ class RuntimeOperations:
                         learning_loop.update({"status": "blocked", "stop_reason": "memory_or_rag_failed"})
                         return result
                     result["memory_result"] = memory_result
+                    experience_preview = dict(memory_result.get("experience") or {})
+                    self._learning_trace(
+                        learning_state, "evidence_added",
+                        {"evidence_ids": [str(experience_preview.get("experience_id"))] if experience_preview.get("experience_id") else []},
+                    )
                     if "memory" not in learning_loop["stages"]:
                         learning_loop["stages"].append("memory")
                     experience = dict(memory_result.get("experience") or {})
@@ -237,6 +263,15 @@ class RuntimeOperations:
                         "stop_reason": "memory_learning_failed",
                     }
                     learning_loop.update({"status": "blocked", "stop_reason": "memory_learning_failed"})
+                finally:
+                    self._learning_trace(
+                        learning_state, "review_result",
+                        {"status": learning_loop.get("status"), "stages": list(learning_loop.get("stages") or [])},
+                    )
+                    self._learning_trace(
+                        learning_state, "loop_stop",
+                        {"status": learning_loop.get("status"), "stop_reason": learning_loop.get("stop_reason", "")},
+                    )
         return result
 
     def execute_memory(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router") -> Dict[str, Any]:

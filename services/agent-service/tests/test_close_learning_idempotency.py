@@ -47,6 +47,14 @@ class _FlakyReport(_Report):
         return {"report_id": "REPORT-RETRY", "report_type": "full_case_report", "status": "completed", "persisted": True}
 
 
+class _Trace:
+    def __init__(self):
+        self.events = []
+
+    def record(self, **payload):
+        self.events.append(payload)
+
+
 class _SlowRequests(_Requests):
     def __init__(self):
         super().__init__()
@@ -127,3 +135,17 @@ def test_concurrent_close_runs_learning_and_report_once(tmp_path):
     assert requests.learn_calls == 1
     assert report.calls == 1
     assert {item["report"]["report_id"] for item in results} == {"REPORT-1"}
+
+
+def test_close_learning_loop_emits_runtime_trace_events(tmp_path):
+    trace = _Trace()
+    operations = RuntimeOperations(
+        _Requests(), object(), report_harness=_Report(),
+        learning_store_path=str(tmp_path / "learning.sqlite3"), trace=trace,
+    )
+
+    operations.execute_workorder("close", {"workorder_id": "WO-CLOSE-1"})
+
+    assert [item["event"] for item in trace.events if item.get("type") == "loop"] == [
+        "loop_start", "action_selected", "evidence_added", "review_result", "loop_stop",
+    ]
