@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict
 import os
 
 from .durable_store import DurableJsonStore
+from app.config.settings import allow_degraded_storage
 
 
 class EventResultStore:
@@ -23,6 +24,8 @@ class EventResultStore:
         self._results: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self._lock = Lock()
         configured_path = str(path or os.getenv("EVENT_STORE_PATH", "")).strip()
+        if not configured_path and not allow_degraded_storage():
+            raise RuntimeError("生产模式要求配置 EVENT_STORE_PATH")
         self._durable = DurableJsonStore(configured_path) if configured_path else None
 
     def get_or_create(self, event_id: str, producer: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:

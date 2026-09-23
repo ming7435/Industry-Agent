@@ -33,6 +33,16 @@ def test_memory_backends_require_external_services_in_production(monkeypatch):
         build_memory_stores()
 
 
+def test_event_store_requires_durable_path_in_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ALLOW_DEGRADED_STORAGE", "false")
+    monkeypatch.delenv("EVENT_STORE_PATH", raising=False)
+    from app.runtime.event_store import EventResultStore
+
+    with pytest.raises(RuntimeError, match="EVENT_STORE_PATH"):
+        EventResultStore()
+
+
 def test_closure_store_does_not_fallback_to_memory_in_production(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ALLOW_DEGRADED_STORAGE", "false")
