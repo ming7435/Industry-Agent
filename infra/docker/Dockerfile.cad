@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY services/document-cad-service/requirements.txt /tmp/cad-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/cad-requirements.txt
+
+COPY services/document-cad-service /app/services/document-cad-service
+
+ENV PYTHONPATH=/app/services/document-cad-service:/app
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "/app/services/document-cad-service", "--host", "0.0.0.0", "--port", "8011"]

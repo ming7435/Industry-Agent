@@ -93,6 +93,146 @@ services:
       timeout: 10s
       retries: 20
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.121.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+    volumes:
+      - ../otel/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+
+  rag-service:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.rag
+    restart: unless-stopped
+    environment:
+      SERVICE_HOST: 0.0.0.0
+      SERVICE_PORT: 8020
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-industry}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
+      MILVUS_URI: http://milvus:19530
+      OBJECT_STORAGE_ENDPOINT: minio:9000
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+    depends_on:
+      mysql:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    ports:
+      - "${RAG_PORT:-8020}:8020"
+
+  cad-service:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.cad
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      CAD_MYSQL_HOST: mysql
+      CAD_MYSQL_PORT: 3306
+      CAD_MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
+      CAD_MYSQL_USER: ${MYSQL_USER:-industry}
+      CAD_MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "${CAD_PORT:-8011}:8011"
+
+  agent-service:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.agent
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      SERVICE_HOST: 0.0.0.0
+      SERVICE_PORT: 8010
+      RAG_SERVICE_BASE_URL: http://rag-service:8020
+      MCP_CAD_URL: http://cad-service:8011
+      EVENT_STORE_PATH: /app/.runtime/events.sqlite3
+      WORKORDER_STORE_PATH: /app/.runtime/workorders.sqlite3
+      REPORT_STORE_PATH: /app/.runtime/reports.sqlite3
+      LEARNING_RESULT_STORE_PATH: /app/.runtime/learning.sqlite3
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-industry}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
+      ALLOW_DEGRADED_STORAGE: ${ALLOW_DEGRADED_STORAGE:-true}
+      RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+    depends_on:
+      rag-service:
+        condition: service_started
+      cad-service:
+        condition: service_started
+    ports:
+      - "${AGENT_PORT:-8010}:8010"
+
+  agent-migrate:
+    profiles: ["migrate"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.agent
+    restart: "no"
+    command: ["python", "-m", "alembic", "-c", "services/agent-service/alembic.ini", "upgrade", "head"]
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-industry}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  monitor-web:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.agent
+    restart: unless-stopped
+    command: ["python", "services/agent-service/monitor_web_server.py"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      MONITOR_WEB_HOST: 0.0.0.0
+      MONITOR_WEB_PORT: 8001
+      AGENT_SERVICE_BASE_URL: http://agent-service:8010
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
+    depends_on:
+      agent-service:
+        condition: service_started
+    ports:
+      - "${MONITOR_PORT:-8001}:8001"
+
+  gateway:
+    profiles: ["apps", "gateway"]
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-8080}:80"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      agent-service:
+        condition: service_started
+      monitor-web:
+        condition: service_started
+      rag-service:
+        condition: service_started
+      cad-service:
+        condition: service_started
+
 volumes:
   mysql-data:
   redis-data:

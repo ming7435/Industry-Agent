@@ -1,0 +1,7 @@
+services:
+  otel-collector:
+    volumes:
+      - ../otel/otel-collector.production.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      OTEL_BACKEND_ENDPOINT: ${OTEL_BACKEND_ENDPOINT:?set OTEL_BACKEND_ENDPOINT for production observability}
+      OTEL_BACKEND_AUTH: ${OTEL_BACKEND_AUTH:-}
