@@ -1,6 +1,6 @@
 # P2 本地基础设施
 
-`infra/docker/docker-compose.yml` 提供 Agent/RAG 联调所需的 MySQL、Redis、Milvus、etcd、MinIO 和 OTLP Collector。带 `apps` profile 时还会启动 Agent、Monitor、RAG、CAD 服务，带 `gateway` profile 时额外启动 Nginx 入口。MySQL 会按顺序执行 `infra/mysql/migrations/` 下的版本化初始化脚本。
+`infra/docker/docker-compose.yml` 提供 Agent/RAG 联调所需的 MySQL、Redis、Milvus、etcd、MinIO 和 OTLP Collector。带 `apps` profile 时还会启动 Agent、Monitor、RAG、CAD 服务，带 `gateway` profile 时额外启动 Nginx 入口。MySQL 容器只负责初始化数据库，表结构由 Agent Service 的 Alembic 迁移器统一管理。
 
 启动：
 
@@ -19,6 +19,8 @@ Agent Service 的正式 Alembic 迁移从仓库根目录执行：
 ```powershell
 python -m alembic -c services/agent-service/alembic.ini upgrade head
 ```
+
+`infra/mysql/migrations/001_core.sql` 仅保留给无法运行 Alembic 的外部初始化工具；Compose 不会自动执行它，避免和 Alembic 产生双重迁移来源。
 
 也可以复用 Agent 镜像中的正式迁移运行器（会等待 MySQL 健康）：
 

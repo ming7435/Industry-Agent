@@ -12,8 +12,13 @@ except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时�
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
+from app.api.schemas.agent import AbnormalEventRequest, UserQuestionRequest
+from app.api.schemas.closure import ClosureTaskRequest
+from app.api.schemas.memory import ExperienceSearchRequest
+from app.api.schemas.quality import PartQualityRequest, QualityAppealRequest, QualityCheckRequest
+from app.api.schemas.rag import RAGIngestRequest
+from app.api.schemas.workorder import RepairFeedbackRequest, WorkOrderActionRequest, WorkOrderCreateRequest
 from app.graph import AgentOrchestrator, build_orchestrator
 from app.runtime.event_store import EventResultStore
 
@@ -32,109 +37,6 @@ def _load_project_env() -> None:
 
 
 _load_project_env()
-
-
-class UserQuestionRequest(BaseModel):
-    user_text: str = Field(min_length=1)
-    context: Dict[str, Any] = Field(default_factory=dict)
-
-
-class AbnormalEventRequest(BaseModel):
-    event: Dict[str, Any]
-
-
-class RAGIngestRequest(BaseModel):
-    path: str = Field(min_length=1)
-    collection: str = ""
-
-
-class WorkOrderCreateRequest(BaseModel):
-    device_id: str = Field(default="unknown", min_length=1)
-    title: str = Field(default="设备维修工单", min_length=1)
-    plan_id: str = ""
-    steps: list[str] = Field(default_factory=list)
-    assignee: str = ""
-    repair_target: Dict[str, Any] = Field(default_factory=dict)
-    drawing_context: Dict[str, Any] = Field(default_factory=dict)
-    alarm_code: str = ""
-    diagnosis_context: Dict[str, Any] = Field(default_factory=dict)
-    priority: str = "normal"
-    risk_level: str = ""
-    source: str = "manual"
-    idempotency_key: str = ""
-
-
-class WorkOrderActionRequest(BaseModel):
-    action: str = Field(default="update", pattern="^(assign|update|submit_feedback|mark_repair_completed|close|reopen)$")
-    status: str = "in_progress"
-    assignee: str = ""
-    feedback: str = ""
-    repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
-    repair_verification: Dict[str, Any] = Field(default_factory=dict)
-
-
-class ExperienceSearchRequest(BaseModel):
-    device_id: str = ""
-    device_model: str = ""
-    alarm_code: str = ""
-    fault_type: str = ""
-    component: str = ""
-    part_no: str = ""
-    query: str = ""
-    limit: int = Field(default=20, ge=1, le=100)
-
-
-class PartQualityRequest(BaseModel):
-    part_no: str = ""
-    part_name: str = ""
-    batch_id: str = ""
-    production_order_id: str = ""
-    device_id: str = ""
-    part: Dict[str, Any] = Field(default_factory=dict)
-    inspection_plan: Dict[str, Any] = Field(default_factory=dict)
-    measurements: Dict[str, Any] = Field(default_factory=dict)
-    specifications: Dict[str, Any] = Field(default_factory=dict)
-    production_context: Dict[str, Any] = Field(default_factory=dict)
-
-
-class QualityCheckRequest(BaseModel):
-    target_type: str = "workorder"
-    target_id: str = Field(min_length=1)
-    workorder_id: str = ""
-    part_id: str = ""
-    part_no: str = ""
-    batch_id: str = ""
-    production_order_id: str = ""
-    inspection_type: str = ""
-    score: float | None = Field(default=None, ge=0, le=100)
-    result: str = ""
-    findings: list[str] = Field(default_factory=list)
-    items: list[Dict[str, Any]] = Field(default_factory=list)
-    reviewer: str = ""
-    risk_level: str = "R1"
-
-
-class QualityAppealRequest(BaseModel):
-    reason: str = Field(min_length=1)
-    evidence: list[Dict[str, Any]] = Field(default_factory=list)
-    applicant: str = ""
-
-
-class ClosureTaskRequest(BaseModel):
-    workorder_id: str = ""
-    quality_check_id: str = ""
-    title: str = Field(min_length=1)
-    owner: str = ""
-    actions: list[str] = Field(default_factory=list)
-    due_at: str = ""
-
-
-class RepairFeedbackRequest(BaseModel):
-    feedback: str = Field(min_length=1)
-    result: str = ""
-    operator: str = ""
-    duration_seconds: float | None = Field(default=None, ge=0)
-    verification: Dict[str, Any] = Field(default_factory=dict)
 
 
 def serialize_api_response(value: Any) -> Dict[str, Any]:
