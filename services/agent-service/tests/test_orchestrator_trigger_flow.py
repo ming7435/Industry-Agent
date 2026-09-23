@@ -54,5 +54,36 @@ def test_same_event_has_one_task_and_one_workorder():
     first = client.post("/api/v1/agent/event", json={"event": event}).json()
     second = client.post("/api/v1/agent/event", json={"event": event}).json()
     assert second["task_id"] == first["task_id"]
+    assert first["status"] == "waiting_repair"
+    assert first["runtime_result"]["status"] == "completed"
+    assert first["runtime_plan"]["actions"]
+    assert [item["payload"]["required_capability"] for item in first["runtime_plan"]["actions"]] == [
+        "fault_analysis", "document_search", "drawing_search", "repair_planning", "workorder_create",
+    ]
+    trace_events = {item.get("event") for item in first["trace"]}
+    assert {
+        "goal_parsed", "planner_start", "planner_end", "capability_selected", "action_selected",
+        "execution_start", "execution_end", "evidence_added", "evaluation_result", "loop_continue", "loop_stop",
+    } <= trace_events
     orders = client.get("/api/workorders").json()["items"]
-    assert len([item for item in orders if item.get("event_id") == "EVT-E2E-1"]) == 1
+    matching = [item for item in orders if item.get("event_id") == "EVT-E2E-1"]
+    assert len(matching) == 1
+
+    workorder_id = matching[0]["workorder_id"]
+    completed = client.post(
+        f"/api/v1/workorders/{workorder_id}/complete",
+        json={"feedback": "更换主轴轴承", "verification": {"passed": True}},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    closed = client.post(
+        f"/api/workorders/{workorder_id}/action",
+        json={"action": "close", "feedback": "维修完成"},
+    )
+    assert closed.status_code == 200
+    close_result = closed.json()
+    assert close_result["status"] == "closed"
+    assert close_result["learning_loop"]["status"] == "completed"
+    assert close_result["memory_result"]["experience"]["memory_saved"] is True
+    assert close_result["memory_result"]["experience"]["rag_saved"] is True
+    assert close_result["report"]["report_type"] == "full_case_report"
