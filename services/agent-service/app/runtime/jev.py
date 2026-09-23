@@ -45,7 +45,12 @@ class JEVParser:
     def parse(self, payload: Any) -> GoalEvent:
         if isinstance(payload, str):
             text = payload.strip()
-            return GoalEvent(goal=text or "处理工业运维请求", source="user", raw={"user_text": payload})
+            return GoalEvent(
+                goal=text or "处理工业运维请求",
+                required_capabilities=self._user_capabilities(text),
+                source="user",
+                raw={"user_text": payload},
+            )
         raw = dict(payload or {}) if isinstance(payload, Mapping) else {}
         user_text = str(raw.get("user_text") or raw.get("goal") or "").strip()
         event_type = str(raw.get("event_type") or raw.get("alarm_code") or "设备异常").strip()
@@ -65,7 +70,7 @@ class JEVParser:
         elif is_event:
             required = self.EVENT_CAPABILITIES
         else:
-            required = ()
+            required = self._user_capabilities(user_text)
         return GoalEvent(
             goal=goal,
             entities=entities,
@@ -74,6 +79,23 @@ class JEVParser:
             source=source,
             raw=raw,
         )
+
+    @staticmethod
+    def _user_capabilities(text: str) -> tuple[str, ...]:
+        value = str(text or "").lower()
+        if any(token in value for token in ("质检", "质量", "零件检测", "inspection")):
+            return ("quality_inspection",)
+        if any(token in value for token in ("工单", "派工", "维修完成", "重开")):
+            return ("workorder_update",)
+        if any(token in value for token in ("图纸", "bom", "部件", "装配", "cad")):
+            return ("drawing_search",)
+        if any(token in value for token in ("报告", "report")):
+            return ("case_reporting",)
+        if any(token in value for token in ("经验", "手册", "sop", "案例", "知识", "维修")):
+            return ("document_search",)
+        if any(token in value for token in ("故障", "报警", "诊断", "异常", "fault")):
+            return ("fault_analysis",)
+        return ("document_search",)
 
 
 __all__ = ["GoalEvent", "JEVParser"]

@@ -41,3 +41,9 @@ def test_jev_parser_returns_structured_goal_without_selecting_agents():
     assert "fault_analysis" in event.required_capabilities
     assert "agent" not in event.entities
 
+
+def test_jev_parser_limits_user_goal_to_relevant_capability():
+    event = JEVParser().parse("查询主轴维修手册")
+
+    assert event.source == "user"
+    assert event.required_capabilities == ("document_search",)

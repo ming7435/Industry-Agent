@@ -10,10 +10,11 @@ from .loop_engine import LoopEngine, LoopPolicy
 from .planner import Plan, Planner
 from .dispatcher import RuntimeDispatcher
 from .jev import GoalEvent, JEVParser
+from .coordinator import RuntimeCoordinator
 
 __all__ = [
     "AgentContainer", "Action", "ActionModel", "ActionType", "Capability", "CapabilityRegistry",
     "build_capability_registry", "EvaluationResult", "EvaluationStatus", "RuntimeEvaluator",
     "ExecutionManager", "ExecutionRecord", "ExecutionStatus", "LoopGuard", "LoopEngine", "LoopPolicy",
-    "Plan", "Planner", "RuntimeDispatcher", "GoalEvent", "JEVParser",
+    "Plan", "Planner", "RuntimeDispatcher", "GoalEvent", "JEVParser", "RuntimeCoordinator",
 ]

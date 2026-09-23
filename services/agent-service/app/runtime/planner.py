@@ -69,20 +69,27 @@ class Planner:
         def payload_for(capability: str) -> dict[str, Any]:
             return {**payload, "required_capability": capability}
 
-        actions = [
-            ActionModel.agent(agent_for("fault_analysis", "diagnosis"), payload=payload_for("fault_analysis"), reason="analyze abnormal event", confidence=0.7),
-            ActionModel.agent(agent_for("document_search", "knowledge"), payload=payload_for("document_search"), reason="retrieve supporting evidence", confidence=0.7),
-            ActionModel.agent(agent_for("drawing_search", "cad"), payload=payload_for("drawing_search"), reason="resolve engineering context", confidence=0.7),
-            ActionModel.agent(agent_for("repair_planning", "maintenance"), payload=payload_for("repair_planning"), reason="prepare executable repair plan", confidence=0.7),
-            ActionModel.agent(
-                agent_for("workorder_create", "workorder"),
-                payload=payload_for("workorder_create"),
-                reason="create one idempotent work order",
-                confidence=0.7,
-                side_effect=True,
-                idempotency_key=workorder_key,
-            ),
+        definitions = [
+            ("fault_analysis", "analyze abnormal event", False),
+            ("document_search", "retrieve supporting evidence", False),
+            ("drawing_search", "resolve engineering context", False),
+            ("repair_planning", "prepare executable repair plan", False),
+            ("workorder_create", "create one idempotent work order", True),
         ]
+        requested = context.get("required_capabilities")
+        requested_set = {str(item) for item in requested} if isinstance(requested, (list, tuple, set)) else set()
+        if requested_set:
+            definitions = [item for item in definitions if item[0] in requested_set]
+        actions = []
+        for capability, reason, side_effect in definitions:
+            kwargs: dict[str, Any] = {"reason": reason, "confidence": 0.7, "side_effect": side_effect}
+            if side_effect:
+                kwargs["idempotency_key"] = workorder_key
+            actions.append(ActionModel.agent(
+                agent_for(capability, capability.split("_")[0]),
+                payload=payload_for(capability),
+                **kwargs,
+            ))
         result = Plan(goal=goal, actions=actions, metadata={"event_id": event_id, "idempotency_key": workorder_key})
         self._emit("planner_end", {
             "goal": goal,

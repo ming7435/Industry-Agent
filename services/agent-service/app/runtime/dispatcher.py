@@ -13,6 +13,15 @@ from .capability import CapabilityRegistry
 from .execution import ExecutionManager, ExecutionStatus
 
 
+def action_key(state: Mapping[str, Any], payload: Mapping[str, Any]) -> str:
+    return str(
+        payload.get("idempotency_key")
+        or state.get("event", {}).get("event_id")
+        or state.get("task_id")
+        or ""
+    )
+
+
 class RuntimeDispatcher:
     """Resolve and execute Actions without hard-coded Agent sequencing."""
 
@@ -68,7 +77,7 @@ class RuntimeDispatcher:
             return AgentResult(success=False, output={"error": error, "status": "blocked"})
         agent_name = str(getattr(agent, "name", type(agent).__name__))
         self._emit("capability_selected", state, required_capability=capability, agent=agent_name)
-        task = {**state, **dict(action.payload)}
+        task = self._task_for_agent(capability, state, action.payload)
 
         record = self.execution_manager.execute(
             action,
@@ -81,6 +90,49 @@ class RuntimeDispatcher:
                 output={"error": record.error or record.status.value, "status": "blocked", "execution_id": record.execution_id},
             )
         return AgentResult.from_value(record.result)
+
+    @staticmethod
+    def _task_for_agent(capability: str, state: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Adapt the canonical Runtime state to an existing Agent's request shape."""
+
+        current = {**dict(state), **dict(payload)}
+        if capability == "fault_analysis":
+            event = dict(state.get("event") or payload.get("event") or current)
+            event.setdefault("task_id", state.get("task_id", ""))
+            event.setdefault("trace_id", state.get("trace_id", ""))
+            return event
+        diagnosis = dict(state.get("diagnosis") or {})
+        query = str(
+            diagnosis.get("fault")
+            or diagnosis.get("summary")
+            or diagnosis.get("diagnosis")
+            or state.get("user_text")
+            or payload.get("goal")
+            or "工业设备维修"
+        )
+        if capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
+            return {"query": query, "diagnosis": diagnosis, "context": dict(state.get("context") or {})}
+        if capability in {"drawing_search", "bom_query", "component_relation"}:
+            context = dict(state.get("context") or {})
+            return {"query": query, "device_id": diagnosis.get("device_id") or context.get("device_id", "")}
+        if capability in {"repair_planning", "repair_plan", "maintenance_replan"}:
+            return {
+                "diagnosis": diagnosis,
+                "knowledge": dict(state.get("knowledge") or {}),
+                "cad": dict(state.get("cad") or {}),
+                "memory": dict(state.get("memory") or {}),
+                "event_id": state.get("event", {}).get("event_id", ""),
+                "context": dict(state.get("context") or {}),
+            }
+        if capability in {"workorder_create", "workorder_update"}:
+            return {
+                "action": "create" if capability == "workorder_create" else "update",
+                "maintenance_plan": dict(state.get("maintenance_plan") or {}),
+                "diagnosis": diagnosis,
+                "event_id": state.get("event", {}).get("event_id", ""),
+                "idempotency_key": action_key(state, payload),
+            }
+        return current
 
     def _dispatch_tool(self, action: ActionModel, state: dict[str, Any]) -> AgentResult:
         if self.tools is None:

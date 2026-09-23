@@ -23,6 +23,7 @@ from .capability import build_capability_registry
 from .execution import ExecutionManager
 from .planner import Planner
 from .dispatcher import RuntimeDispatcher
+from .coordinator import RuntimeCoordinator
 
 
 class AgentContainer:
@@ -103,6 +104,7 @@ class AgentContainer:
             trace=self.trace,
             tools=self.registry,
         )
+        self.coordinator = RuntimeCoordinator(self)
         self.operations = RuntimeOperations(
             self.requests,
             self.closure_service,

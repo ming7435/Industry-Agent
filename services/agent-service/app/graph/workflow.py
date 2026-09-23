@@ -19,33 +19,13 @@ class AgentOrchestrator:
         self.container = AgentContainer(diagnosis_agent=diagnosis_agent, tools=tools)
         self.nodes = OrchestratorNodes(self.container)
         graph = StateGraph(AgentState)
+        # Graph is intentionally a state/execution layer. RuntimeCoordinator
+        # owns planning, capability selection, looping, and Agent execution.
+        graph.add_node("runtime", self.nodes.runtime)
         for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "workorder_action", "workorder_query", "memory", "report"):
             graph.add_node(name, getattr(self.nodes, name))
-        graph.add_edge(START, "route")
-        graph.add_conditional_edges("route", lambda state: state.get("route", "unknown"), {
-            "diagnosis": "diagnosis",
-            "knowledge": "knowledge",
-            "cad": "cad",
-            "maintenance": "maintenance",
-            "workorder": "workorder",
-            "quality": "quality",
-            "report": "report",
-            "memory": "memory",
-            "workorder_action": "workorder_action",
-            "workorder_query": "workorder_query",
-            "need_more_context": END,
-            "unknown": END,
-        })
-        graph.add_conditional_edges("diagnosis", self._after_diagnosis, {"knowledge": "knowledge", "report": "report"})
-        graph.add_conditional_edges("knowledge", self._after_knowledge, {"cad": "cad", "report": "report"})
-        graph.add_conditional_edges("cad", self._after_cad, {"maintenance": "maintenance", "report": "report"})
-        graph.add_conditional_edges("maintenance", self._after_maintenance, {"workorder": "workorder", "report": "report", "blocked": END})
-        graph.add_edge("quality", "report")
-        # 自动异常主链路在派单后进入等待维修，关闭工单时再由运行时触发学习和报告。
-        graph.add_edge("workorder", END)
-        graph.add_edge("workorder_action", END)
-        graph.add_edge("workorder_query", END)
-        graph.add_edge("report", END)
+        graph.add_edge(START, "runtime")
+        graph.add_edge("runtime", END)
         self.graph = graph.compile()
 
     @staticmethod

@@ -16,6 +16,20 @@ class OrchestratorNodes:
         self.requests = container.requests
         self.tracing = container.tracing
 
+    def runtime(self, state: AgentState) -> Dict[str, Any]:
+        """Runtime lifecycle entry; Planner/LoopEngine choose every Action."""
+
+        self.tracing.start("runtime", state)
+        coordinator = getattr(self.container, "coordinator", None)
+        if coordinator is None:
+            return self.tracing.finish("runtime", state, {
+                "status": "blocked",
+                "stop_reason": "runtime_coordinator_unavailable",
+                "errors": ["Runtime coordinator is not configured"],
+            })
+        result = coordinator.run(state)
+        return self.tracing.finish("runtime", state, result)
+
     def _loop_trace(self, name: str, state: AgentState, event: str, payload: Dict[str, Any]) -> None:
         recorder = getattr(self.tracing, "loop_event", None)
         if recorder is not None:

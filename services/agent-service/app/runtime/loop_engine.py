@@ -273,6 +273,8 @@ class LoopEngine:
                                 "action_history": list(actions), "evidence_history": list(evidence_history),
                                 "stop_reason": "evidence_ready", "budget_used": budget_used},
                 ))
+            emit("loop_continue", reason="evidence_pending", next_iteration=iteration + 1,
+                 evidence_score=evidence_score, actions=list(actions))
 
         return stopped(LoopResult(
             status="blocked",
@@ -428,4 +430,6 @@ class LoopEngine:
                 return finish("completed", "final", iteration + 1)
             if post_evaluation.status == EvaluationStatus.BLOCKED:
                 return finish("blocked", post_evaluation.reason, iteration + 1)
+            emit("loop_continue", reason=post_evaluation.reason, next_iteration=iteration + 1,
+                 evidence_score=evidence_score, actions=list(actions))
         return finish("blocked", "max_iterations", int(self.policy.max_iterations))
