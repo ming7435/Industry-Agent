@@ -59,6 +59,22 @@ class ExperienceLearningModule:
             maintenance_plan=dict(payload.get("maintenance_plan") or {}),
             report=dict(payload.get("report") or {}),
         )
+        existing = self.long_memory.search(device_id=str(experience.get("device_id") or ""), limit=100)
+        quality = self.validator.validate_experience(experience, workorder, repair_feedback, existing=existing)
+        experience.update({
+            "experience_quality_score": quality.experience_quality_score,
+            "validation_status": quality.validation_status,
+            "validation_findings": list(quality.findings),
+        })
+        if quality.validation_status == "rejected":
+            result = ExperienceResult(**{
+                **experience,
+                "passed": False,
+                "memory_saved": False,
+                "rag_saved": False,
+            })
+            self._trace("module_completed", action="learn", saved=False, reason="experience_quality_rejected", quality=quality.experience_quality_score)
+            return result
         memory_saved, rag_saved, duplicate = self.writer.write(experience)
         result = ExperienceResult(**experience, memory_saved=memory_saved, rag_saved=rag_saved)
         self._trace("module_completed", action="learn", saved=memory_saved, rag_saved=rag_saved, duplicate=duplicate)

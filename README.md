@@ -48,6 +48,7 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - TraceRecorder 记录 Agent、Node、Tool、模块和 A2A 调用轨迹。
 - React + Vite 监控工作台和内置静态前端。
 - Runtime Evaluator、LoopGuard、ExecutionManager 和 CapabilityRegistry 提供统一的可控、证据驱动循环基础设施；不新增 Agent。
+- 基础 Planner 只负责 Goal→Plan→ActionModel，Experience Quality Gate 控制关闭工单经验进入 Memory/RAG。
 
 ## 目录结构
 

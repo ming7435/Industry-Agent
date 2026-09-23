@@ -20,6 +20,9 @@
     "treatment": {"type": "string"},
     "alarm_code": {"type": "string"},
     "component": {"type": "string"},
-    "duration_seconds": {"type": "number", "minimum": 0}
+    "duration_seconds": {"type": "number", "minimum": 0},
+    "experience_quality_score": {"type": "number", "minimum": 0, "maximum": 1},
+    "validation_status": {"type": "string", "enum": ["accepted", "duplicate", "rejected", ""]},
+    "validation_findings": {"type": "array", "items": {"type": "string"}}
   }
 }

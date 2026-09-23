@@ -186,3 +186,28 @@ def test_runtime_loop_pipeline_uses_evaluator_action_and_execution_interfaces():
     assert selected == ["continue"]
     assert executed == ["load-evidence"]
     assert result.loop_state["action_history"] == ["load-evidence"]
+
+
+def test_action_model_has_stable_runtime_action_id_and_serializes_it():
+    from app.runtime.action import ActionModel
+
+    action = ActionModel.tool("knowledge.search")
+
+    assert action.action_id.startswith("ACT-")
+    assert action.as_dict()["action_id"] == action.action_id
+
+
+def test_runtime_loop_records_execution_history():
+    from app.runtime.action import ActionModel
+    from app.runtime.loop_engine import LoopEngine, LoopPolicy
+
+    result = LoopEngine(LoopPolicy(max_iterations=2)).run_runtime(
+        {},
+        observe=lambda state, _context: {"done": bool(state.get("ready")), "evidence_score": 1.0 if state.get("ready") else 0.0},
+        select_action=lambda _state, _evaluation, _context: ActionModel.tool("load"),
+        execute_action=lambda _action, _state, _context: {"ready": True},
+    )
+
+    assert result.status == "completed"
+    assert result.loop_state["execution_history"]
+    assert result.loop_state["execution_history"][0]["status"] == "SUCCESS"

@@ -26,6 +26,7 @@
         "elapsed_time": {"type": "number", "minimum": 0},
         "action_history": {"type": "array", "items": {"type": "string"}},
         "evidence_history": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+        "execution_history": {"type": "array", "items": {"type": "object"}},
         "stop_reason": {"type": "string"},
         "budget_used": {"type": "number", "minimum": 0}
       }

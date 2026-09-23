@@ -5,8 +5,9 @@
   "description": "Canonical ActionModel emitted and consumed by the bounded Runtime.",
   "type": "object",
   "additionalProperties": true,
-  "required": ["action_type", "target"],
+  "required": ["action_id", "action_type", "target"],
   "properties": {
+    "action_id": {"type": "string", "pattern": "^ACT-.+"},
     "action_type": {
       "type": "string",
       "enum": ["TOOL", "AGENT", "FINAL", "REPLAN", "WAIT"]

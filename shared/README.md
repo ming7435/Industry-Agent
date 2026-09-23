@@ -7,11 +7,11 @@ Agent；Agent Service、RAG Service 和前端仍然由各自的源码模型负�
 
 | 文件 | 对应源码 | 用途 |
 | --- | --- | --- |
-| `contracts/runtime-action.schema.json` | `services/agent-service/app/runtime/action.py` | Runtime 唯一动作表达 |
+| `contracts/runtime-action.schema.json` | `services/agent-service/app/runtime/action.py`、`runtime/planner.py` | Runtime 唯一动作表达与 Planner 输出 |
 | `contracts/runtime-loop.schema.json` | `runtime/loop_engine.py`、`runtime/evaluator.py`、`runtime/guard.py` | Loop 状态、Evaluator 结果和 Guard 停止原因 |
 | `contracts/runtime-trace.schema.json` | `runtime/tracing.py`、`harness/trace.py` | Agent/Tool/A2A/MCP/Loop Trace 事件 |
 | `contracts/workorder-lifecycle.schema.json` | `workorder/validator.py`、`runtime/operations.py` | 工单状态、幂等和关闭学习门禁 |
-| `contracts/rag-experience.schema.json` | `memory/extractor.py`、`memory/writer.py`、`rag/client.py` | 关闭工单后的经验写入与检索元数据 |
+| `contracts/rag-experience.schema.json` | `memory/extractor.py`、`memory/validator.py`、`memory/writer.py`、`rag/client.py` | 关闭工单后的经验质量门禁、写入与检索元数据 |
 
 这些 JSON Schema 是接口边界文档，不替代服务端校验。修改服务模型时，应同时
 更新对应 Schema 和 `docs/contracts/runtime-contracts.md`，并运行：

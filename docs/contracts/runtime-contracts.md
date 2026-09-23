@@ -21,6 +21,7 @@
 ```json
 {
   "action_type": "AGENT",
+  "action_id": "ACT-8B8A9F0B4B2D1C33",
   "target": "knowledge",
   "reason": "missing evidence",
   "confidence": 0.75,
@@ -33,6 +34,21 @@
 
 旧调用方可以继续发送 `kind/name/params`；`ActionModel` 只在输入边界把它们
 转换为规范字段，Trace 和执行记录不会再产生第二套动作模型。
+
+`action_id` 用于一次动作的可观测标识；LoopGuard 的重复判断仍使用不包含
+`action_id` 的语义 fingerprint，避免同一个动作因为重新生成 ID 而绕过保护。
+
+## 1.1 Planner
+
+`app.runtime.planner.Planner` 只做 `Goal -> Plan -> ActionModel` 的确定性拆解，
+不执行 Agent、Tool 或 MCP。默认异常计划使用已有能力：
+
+```text
+diagnosis -> knowledge -> cad -> maintenance -> workorder
+```
+
+WorkOrder Action 固定携带 `monitor:<event_id>` 幂等键。Planner 只能把结果交给
+Loop Engine，不能直接调用执行器；`planner_start` 和 `planner_end` 进入 Trace。
 
 ## 2. Loop、Evaluator 与 Execution
 
@@ -59,7 +75,9 @@ Observe
 - Confidence 没有提升时的 `confidence_not_improved`。
 
 `ExecutionManager` 的 timeout 只改变 Runtime 观察到的执行状态，不声称杀死底层
-线程。任何外部副作用动作必须有 `idempotency_key`，并在执行前做已有状态检查；
+线程。非副作用 Action 可按有限 `max_retries` 重试；任何外部副作用动作必须有
+`idempotency_key`，失败或超时后先做已有状态检查，不能盲目再次创建。执行记录
+包含 `execution_id`、`attempts`、`retry_count`、`side_effect_status` 和 history；
 超时后由 reconciliation 查询真实状态。
 
 ## 3. 自动异常与工单生命周期
@@ -96,6 +114,15 @@ Memory Learn -> RAG /documents/upsert -> Full Case Report
 `POST /documents/upsert`，读取使用 `GET /documents/{document_id}` 或
 `GET /documents/{document_id}/chunks/{chunk_id}`。Agent Service 只有在配置允许
 降级时才使用本地索引；生产环境应显式禁止 fallback。
+
+Memory 在写入前执行 Experience Quality Gate，输出：
+
+- `experience_quality_score`：0 到 1 的质量分；
+- `validation_status`：`accepted`、`duplicate` 或 `rejected`；
+- `validation_findings`：维修成功、内容完整性、人工确认和重复记录检查结果。
+
+低于质量阈值或明确失败的维修经验不会写入 Memory/RAG；`duplicate` 仍可用于
+幂等重试和补偿 RAG 写入，不会生成第二条经验。
 
 ## 5. Trace 隔离
 

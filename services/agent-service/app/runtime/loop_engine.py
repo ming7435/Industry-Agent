@@ -308,6 +308,7 @@ class LoopEngine:
         actions: list[str] = []
         seen: set[str] = set()
         history: list[Dict[str, Any]] = []
+        execution_history: list[Dict[str, Any]] = []
         evidence_history: list[list[str]] = []
         evidence_score = 0.0
         budget_used = 0.0
@@ -327,6 +328,7 @@ class LoopEngine:
                     "iteration": iteration, "max_iterations": self.policy.max_iterations,
                     "start_time": started_at, "elapsed_time": perf_counter() - started_at,
                     "action_history": list(actions), "evidence_history": list(evidence_history),
+                    "execution_history": list(execution_history),
                     "stop_reason": reason, "budget_used": budget_used,
                 },
             )
@@ -378,6 +380,16 @@ class LoopEngine:
                 action, lambda: execute_action(action, dict(state), context),
                 trace_context=trace_context,
             )
+            execution_history.append({
+                "execution_id": record.execution_id,
+                "action_id": action.action_id,
+                "target": action.target,
+                "status": record.status.value,
+                "attempts": record.attempts,
+                "retry_count": record.retry_count,
+                "side_effect": action.side_effect,
+                "side_effect_status": record.side_effect_status,
+            })
             if record.status != ExecutionStatus.SUCCESS:
                 return finish("blocked", "execution_%s" % record.status.value.lower(), iteration + 1)
             result_value = record.result
@@ -392,6 +404,7 @@ class LoopEngine:
             evidence_score = post_evaluation.evidence_score
             post_evidence = {str(item) for item in (post_observation.get("evidence_ids") or []) if item}
             post_confidence = post_evaluation.confidence
+            evidence_progressed = bool(post_evidence - previous_evidence)
             if post_evidence:
                 added = sorted(post_evidence - previous_evidence)
                 if added:
@@ -400,7 +413,7 @@ class LoopEngine:
                 progress = self.guard.check_evidence_progress(previous_evidence, post_evidence)
                 if not progress.allowed:
                     return finish("blocked", progress.reason, iteration + 1)
-            if previous_confidence is not None and not post_evaluation.status == EvaluationStatus.FINAL:
+            if previous_confidence is not None and not evidence_progressed and not post_evaluation.status == EvaluationStatus.FINAL:
                 confidence_progress = self.guard.check_confidence(previous_confidence, post_confidence)
                 if not confidence_progress.allowed:
                     return finish("blocked", confidence_progress.reason, iteration + 1)

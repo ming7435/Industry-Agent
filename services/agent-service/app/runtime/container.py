@@ -21,6 +21,7 @@ from .operations import RuntimeOperations
 from .tracing import NodeTrace
 from .capabilities import build_capability_registry
 from .execution import ExecutionManager
+from .planner import Planner
 
 
 class AgentContainer:
@@ -41,11 +42,21 @@ class AgentContainer:
         self.trace = TraceRecorder()
         self.execution_manager = ExecutionManager(
             timeout_seconds=settings.agent_timeout_seconds,
+            max_retries=settings.agent_max_retries,
             trace=lambda event, payload: self.trace.record(
                 type="execution", name="execution", node="runtime", agent="runtime",
                 event=event, task_id=str(payload.get("task_id", "")),
                 trace_id=str(payload.get("trace_id", "")), state_change=dict(payload),
                 keys=list(payload), tool_name="", latency=0.0, error="",
+            ),
+        )
+        self.planner = Planner(
+            capabilities=self.capabilities,
+            trace=lambda event, payload: self.trace.record(
+                type="planner", name="runtime_planner", node="runtime", agent="runtime",
+                event=event, task_id=str(payload.get("task_id") or payload.get("context", {}).get("task_id") or ""),
+                trace_id=str(payload.get("trace_id") or payload.get("context", {}).get("trace_id") or ""),
+                state_change=dict(payload), keys=list(payload), tool_name="", latency=0.0, error="",
             ),
         )
         self.registry.trace = self.trace

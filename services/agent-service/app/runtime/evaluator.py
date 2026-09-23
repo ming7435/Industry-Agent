@@ -26,9 +26,10 @@ class EvaluationResult(BaseModel):
 class RuntimeEvaluator:
     """Central policy for completion, continuation and bounded replanning."""
 
-    def __init__(self, min_evidence_score: float = 0.8, min_confidence: float = 0.8) -> None:
+    def __init__(self, min_evidence_score: float = 0.8, min_confidence: float = 0.8, min_experience_quality_score: float = 0.8) -> None:
         self.min_evidence_score = max(0.0, min(1.0, float(min_evidence_score)))
         self.min_confidence = max(0.0, min(1.0, float(min_confidence)))
+        self.min_experience_quality_score = max(0.0, min(1.0, float(min_experience_quality_score)))
 
     def evaluate(self, observation: Mapping[str, Any] | None) -> EvaluationResult:
         value = dict(observation or {})
@@ -103,6 +104,34 @@ class RuntimeEvaluator:
             value.update({"done": ready, "workorder_ready": bool(payload.get("workorder_ready")),
                           "evidence_score": 1.0 if ready else 0.0,
                           "missing_evidence": [] if ready else ["maintenance_plan"]})
+        elif domain == "learning":
+            nested_experience = value.get("experience") if isinstance(value.get("experience"), Mapping) else {}
+            result_payload = value.get("result") if isinstance(value.get("result"), Mapping) else {}
+            payload = dict(result_payload or nested_experience or {})
+            quality = value.get("experience_quality_score")
+            if quality is None:
+                quality = payload.get("experience_quality_score", 0.0)
+            try:
+                quality = max(0.0, min(1.0, float(quality)))
+            except (TypeError, ValueError):
+                quality = 0.0
+            validation_status = value.get("validation_status")
+            if validation_status is None:
+                validation_status = payload.get("validation_status", "")
+            validation_status = str(validation_status).lower()
+            workorder = value.get("workorder") if isinstance(value.get("workorder"), Mapping) else {}
+            closed = str(value.get("workorder_status") or workorder.get("status") or "").lower() == "closed"
+            feedback = value.get("repair_feedback") or payload.get("repair_feedback") or workorder.get("repair_feedback")
+            has_feedback = bool(feedback)
+            rejected = validation_status in {"rejected", "invalid", "duplicate"} or quality < self.min_experience_quality_score
+            value.update({
+                "confidence": quality,
+                "evidence_score": quality,
+                "done": bool(value.get("done") or value.get("complete") or (closed and has_feedback and not rejected)),
+                "missing_evidence": [] if closed and has_feedback and not rejected else ["experience_quality"],
+            })
+            if rejected:
+                value.update({"blocked": True, "reason": "experience_quality_gate"})
         return value
 
     def _confidence(self, value: Mapping[str, Any]) -> float:

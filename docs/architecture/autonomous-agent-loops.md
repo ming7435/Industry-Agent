@@ -126,6 +126,8 @@ The Runtime-native path is now:
 ```text
 Goal
   ↓
+Planner (Goal -> Plan -> ActionModel)
+  ↓
 LoopEngine
   ↓ Observe
 RuntimeEvaluator
@@ -144,7 +146,7 @@ State update + Evidence
 that a worker thread was killed; side-effecting actions require an
 `idempotency_key` and remain subject to existing state checks and
 reconciliation. `CapabilityRegistry` describes the capabilities of the nine
-existing Agents for a future Planner without creating another Agent. The
-machine-readable versions of these boundaries live in
+existing Agents and is the only lookup source used by the basic Planner; it
+does not create another Agent. The machine-readable versions of these boundaries live in
 `shared/contracts/`; the field-level mapping is documented in
 `docs/contracts/runtime-contracts.md`.

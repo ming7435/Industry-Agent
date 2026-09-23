@@ -58,3 +58,50 @@ def test_evaluator_requests_diagnosis_review_without_node_threshold_logic():
 
     assert result.status == "replan"
     assert result.missing_evidence == ["diagnosis_evidence"]
+
+
+def test_evaluator_blocks_low_quality_learning_experience():
+    from app.runtime.evaluator import RuntimeEvaluator
+
+    result = RuntimeEvaluator().evaluate({
+        "domain": "learning",
+        "workorder_status": "closed",
+        "repair_feedback": {"feedback": "fixed"},
+        "experience_quality_score": 0.2,
+        "validation_status": "rejected",
+    })
+
+    assert result.status == "blocked"
+    assert result.reason == "experience_quality_gate"
+
+
+def test_evaluator_accepts_valid_learning_experience():
+    from app.runtime.evaluator import RuntimeEvaluator
+
+    result = RuntimeEvaluator().evaluate({
+        "domain": "learning",
+        "workorder_status": "closed",
+        "repair_feedback": {"feedback": "fixed", "operator": "u-1"},
+        "experience_quality_score": 0.9,
+        "validation_status": "accepted",
+        "done": True,
+    })
+
+    assert result.status == "final"
+    assert result.evidence_score >= 0.8
+
+
+def test_evaluator_reads_quality_gate_from_nested_experience_payload():
+    from app.runtime.evaluator import RuntimeEvaluator
+
+    result = RuntimeEvaluator().evaluate({
+        "domain": "learning",
+        "workorder": {"status": "closed", "repair_feedback": {"feedback": "fixed"}},
+        "experience": {
+            "experience_quality_score": 0.9,
+            "validation_status": "accepted",
+        },
+        "done": True,
+    })
+
+    assert result.status == "final"

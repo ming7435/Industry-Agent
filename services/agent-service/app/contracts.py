@@ -299,3 +299,6 @@ class ExperienceResult(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     learning_idempotency_key: str = ""
     source_event_id: str = ""
+    experience_quality_score: float = Field(default=0.0, ge=0, le=1)
+    validation_status: Literal["accepted", "duplicate", "rejected", ""] = ""
+    validation_findings: List[str] = Field(default_factory=list)

@@ -30,6 +30,11 @@ class CapabilityRegistry:
     def find(self, capability: str) -> list[str]:
         return [agent for agent, values in self._by_agent.items() if any(item.name == capability for item in values)]
 
+    def lookup(self, capability: str) -> list[str]:
+        """Return existing Agents that advertise a capability."""
+
+        return self.find(capability)
+
     def agents(self) -> list[str]:
         return sorted(self._by_agent)
 

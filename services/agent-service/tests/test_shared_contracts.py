@@ -25,6 +25,7 @@ def test_shared_contracts_are_valid_json_and_expose_runtime_boundaries() -> None
         for path in CONTRACTS.glob("*.json")
     }
     action = documents["runtime-action.schema.json"]
+    assert "action_id" in action["required"]
     assert action["properties"]["action_type"]["enum"] == ["TOOL", "AGENT", "FINAL", "REPLAN", "WAIT"]
     assert action["x-legacy-input-aliases"]["kind"] == "action_type"
 
@@ -34,6 +35,7 @@ def test_shared_contracts_are_valid_json_and_expose_runtime_boundaries() -> None
     trace = documents["runtime-trace.schema.json"]
     assert {"event", "task_id", "trace_id"} <= set(trace["required"])
     assert "execution_start" in trace["properties"]["event"]["enum"]
+    assert "planner_start" in trace["properties"]["event"]["enum"]
 
     workorder = documents["workorder-lifecycle.schema.json"]
     assert "closed" in workorder["properties"]["status"]["enum"]

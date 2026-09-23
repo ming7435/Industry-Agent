@@ -6,6 +6,7 @@ from enum import Enum
 import hashlib
 import json
 from typing import Any, Mapping
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -23,6 +24,7 @@ class ActionModel(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
+    action_id: str = Field(default_factory=lambda: "ACT-" + uuid4().hex[:16].upper(), min_length=1)
     action_type: ActionType = ActionType.AGENT
     target: str = Field(min_length=1)
     reason: str = ""
@@ -104,6 +106,7 @@ class ActionModel(BaseModel):
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "action_id": self.action_id,
             "action_type": self.action_type.value,
             "target": self.target,
             "reason": self.reason,
