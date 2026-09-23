@@ -1,5 +1,7 @@
 """面向工业设备的各类智能体。"""
 
+from .base import AgentResult, BaseAgent
+
 from .cad import CADAgent
 from .diagnosis import DiagnosisAgent
 from .knowledge import KnowledgeAgent
@@ -13,6 +15,8 @@ from .workorder import WorkOrderAgent
 CORE_AGENT_NAMES = ("router", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "report", "memory")
 
 __all__ = [
+    "AgentResult",
+    "BaseAgent",
     "CADAgent",
     "DiagnosisAgent",
     "KnowledgeAgent",

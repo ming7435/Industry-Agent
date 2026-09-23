@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from app.tools.registry import ToolRegistry
 from app.contracts import KnowledgeDocument, KnowledgeResult
+from app.agents.base import BaseAgent
 
 from .graph import build_knowledge_graph
 from .confidence import calculate_confidence
@@ -15,8 +16,9 @@ from .confidence import calculate_confidence
 _ALARM_CODE_RE = re.compile(r"\b[A-Z]?\d{3,6}\b", re.IGNORECASE)
 
 
-class KnowledgeAgent:
+class KnowledgeAgent(BaseAgent):
     name = "knowledge"
+    capabilities = ("document_search", "historical_case_search", "evidence_retrieval")
 
     def __init__(self, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()

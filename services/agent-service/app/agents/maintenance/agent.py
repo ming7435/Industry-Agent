@@ -7,13 +7,15 @@ from uuid import uuid4
 
 from app.tools.registry import ToolRegistry
 from app.contracts import DiagnosisView, MaintenancePlan
+from app.agents.base import BaseAgent
 
 from .graph import build_maintenance_graph
 from .validator import MaintenancePlanValidator
 
 
-class MaintenanceAgent:
+class MaintenanceAgent(BaseAgent):
     name = "maintenance"
+    capabilities = ("repair_plan", "repair_planning", "maintenance_replan")
 
     def __init__(
         self,

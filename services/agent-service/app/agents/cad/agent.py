@@ -6,13 +6,15 @@ from typing import Any
 
 from app.tools.registry import ToolRegistry
 from app.contracts import CADResult
+from app.agents.base import BaseAgent
 
 from .graph import build_cad_graph
 from .schemas import CADQuery
 
 
-class CADAgent:
+class CADAgent(BaseAgent):
     name = "cad"
+    capabilities = ("bom_query", "drawing_search", "component_relation")
 
     def __init__(self, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()

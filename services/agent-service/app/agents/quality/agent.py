@@ -6,12 +6,14 @@ from typing import Any, Mapping
 
 from app.tools.registry import ToolRegistry
 from app.contracts import QualityResult
+from app.agents.base import BaseAgent
 
 from .graph import build_quality_graph
 
 
-class QualityAgent:
+class QualityAgent(BaseAgent):
     name = "quality"
+    capabilities = ("quality_inspection", "quality_review")
 
     def __init__(self, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()

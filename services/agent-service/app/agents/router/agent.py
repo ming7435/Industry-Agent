@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from app.common.alarm import AlarmCodeParser
 from app.contracts import RouteResult
+from app.agents.base import BaseAgent
 
 from .graph import build_router_graph
 
@@ -38,8 +39,9 @@ _COMPONENT_KEYWORDS = (
 )
 
 
-class RouterAgent:
+class RouterAgent(BaseAgent):
     name = "router"
+    capabilities = ("intent_routing",)
 
     def __init__(self) -> None:
         self.graph = build_router_graph()

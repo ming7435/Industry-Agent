@@ -24,9 +24,10 @@ from .schemas import (
 from app.common import AlarmCodeParser
 from app.llm import get_default_llm_client
 from app.tools.registry import ToolRegistry
+from app.agents.base import BaseAgent
 
 
-class DiagnosisAgent:
+class DiagnosisAgent(BaseAgent):
     """
     Diagnosis Agent。
 
@@ -59,6 +60,9 @@ class DiagnosisAgent:
             ↓
         DiagnosisAgent.run()
     """
+
+    name = "diagnosis"
+    capabilities = ("fault_analysis", "hypothesis_generation", "diagnosis_review")
 
     def __init__(
         self,

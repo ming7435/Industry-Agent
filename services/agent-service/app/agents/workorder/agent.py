@@ -6,14 +6,16 @@ from typing import Any, Mapping
 
 from app.tools.registry import ToolRegistry
 from app.workorder import WorkOrderService
+from app.agents.base import BaseAgent
 
 from .graph import build_workorder_graph
 from .schemas import WorkOrderQuery, WorkOrderResult
 from .validator import WorkOrderAgentValidator
 
 
-class WorkOrderAgent:
+class WorkOrderAgent(BaseAgent):
     name = "workorder"
+    capabilities = ("workorder_create", "workorder_update")
 
     def __init__(self, tools: ToolRegistry | None = None, service: WorkOrderService | None = None) -> None:
         self.tools = tools or ToolRegistry()

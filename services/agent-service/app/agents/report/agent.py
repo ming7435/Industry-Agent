@@ -7,15 +7,17 @@ from uuid import uuid4
 
 from app.tools.registry import ToolRegistry
 from app.contracts import ReportResult
+from app.agents.base import BaseAgent
 
 from .graph import build_report_graph
 from .validator import ReportValidator
 
 
-class ReportAgent:
+class ReportAgent(BaseAgent):
     """只汇总已有记录，不重新诊断，也不新增故障事实。"""
 
     name = "report"
+    capabilities = ("case_reporting",)
 
     def __init__(self, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()

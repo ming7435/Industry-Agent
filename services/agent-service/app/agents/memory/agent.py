@@ -8,13 +8,15 @@ from app.memory import ExperienceLearningModule
 from app.memory import build_memory_stores
 from app.rag import RAGServiceClient
 from app.tools.registry import ToolRegistry
+from app.agents.base import BaseAgent
 
 from .graph import build_memory_graph
 from .schemas import MemoryQuery, MemoryResult
 
 
-class MemoryAgent:
+class MemoryAgent(BaseAgent):
     name = "memory"
+    capabilities = ("experience_learning", "experience_retrieval")
 
     def __init__(self, experience_module: ExperienceLearningModule | None = None, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()
