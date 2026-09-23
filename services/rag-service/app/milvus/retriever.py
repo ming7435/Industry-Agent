@@ -333,18 +333,25 @@ class DenseRetriever:
 
         client = self._get_client()
         merged: list[Hit] = []
+        queried_collections = 0
         for collection_name in self.collection_names:
-            results = client.search(
-                collection_name=collection_name,
-                data=[vector],
-                limit=limit,
-                # ``None`` rather than ``""``: some pymilvus builds reject an empty
-                # filter expression.
-                filter=expression or None,
-                output_fields=list(_OUTPUT_FIELDS),
-            )
+            try:
+                results = client.search(
+                    collection_name=collection_name,
+                    data=[vector],
+                    limit=limit,
+                    filter=expression or None,
+                    output_fields=list(_OUTPUT_FIELDS),
+                )
+            except Exception as error:  # noqa: BLE001 - one missing collection must not hide others
+                logger.warning("dense collection unavailable collection={} error_type={}", collection_name, type(error).__name__)
+                continue
+            queried_collections += 1
             rows = results[0] if results else []
             merged.extend(_hit_from_row(row) for row in rows)
+
+        if not queried_collections:
+            raise RuntimeError("no Milvus collections are available")
 
         hits = merged
         if remaining:
@@ -371,9 +378,8 @@ class DenseRetriever:
         """
         try:
             client = self._get_client()
-            return all(
-                bool(client.has_collection(name)) for name in self.collection_names
-            )
+            available = sum(bool(client.has_collection(name)) for name in self.collection_names)
+            return bool(available)
         except Exception as exc:  # noqa: BLE001 - unhealthy is a valid result
             logger.warning(
                 "milvus health probe failed collections={} error_type={}",

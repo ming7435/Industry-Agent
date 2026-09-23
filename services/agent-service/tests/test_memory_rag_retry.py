@@ -38,3 +38,14 @@ def test_duplicate_experience_retries_failed_rag_upsert():
     assert second.success is True
     assert second.experience["rag_saved"] is True
     assert rag.calls == 2
+
+
+def test_rag_upsert_requires_unified_pipeline_when_reported():
+    from app.memory.writer import ExperienceWriter
+
+    class _PartialRag:
+        def upsert(self, record, collection=""):
+            return {"success": True, "loaded": 1, "pipeline_ready": False}
+
+    writer = ExperienceWriter(ShortMemoryStore(), LongMemoryStore(), _PartialRag())
+    assert writer._upsert_rag({"experience_id": "EXP-PARTIAL"}) is False

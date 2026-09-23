@@ -20,3 +20,34 @@ def test_memory_backends_require_external_services_in_production(monkeypatch):
 
     with pytest.raises(MemoryBackendError):
         build_memory_stores()
+
+
+def test_closure_store_does_not_fallback_to_memory_in_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ALLOW_DEGRADED_STORAGE", "false")
+    monkeypatch.delenv("MYSQL_HOST", raising=False)
+    from app.closure.store import ClosureBackendError, build_closure_store
+
+    with pytest.raises(ClosureBackendError, match="MYSQL_HOST"):
+        build_closure_store()
+
+
+def test_cad_tool_does_not_fallback_to_demo_in_production(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("ALLOW_DEGRADED_STORAGE", "false")
+    monkeypatch.setenv("CAD_ALLOW_DEMO_FALLBACK", "false")
+    monkeypatch.setenv("WORKORDER_STORE_PATH", str(tmp_path / "workorders.sqlite3"))
+    monkeypatch.setenv("REPORT_STORE_PATH", str(tmp_path / "reports.sqlite3"))
+    from app.tools.registry import ToolRegistry
+
+    class _Rag:
+        pass
+
+    registry = ToolRegistry(rag_client=_Rag(), cad_base_url="http://cad.invalid")
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("cad unavailable")
+
+    monkeypatch.setattr(registry.mcp, "call", fail)
+    with pytest.raises(RuntimeError, match="cad unavailable"):
+        registry.execute("query_cad", {"query": "spindle"})

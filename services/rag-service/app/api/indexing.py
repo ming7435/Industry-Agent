@@ -142,7 +142,11 @@ class UnifiedExperienceIndexer:
             backends["milvus"] = {"success": True, "required": False, "skipped": True, "reason": "RAG_UPSERT_MILVUS_ENABLED is false"}
 
         required = [item for item in backends.values() if item.get("required")]
-        pipeline_ready = bool(required) and all(item.get("success") for item in required)
+        pipeline_ready = all(
+            backends.get(name, {}).get("success") is True
+            and not backends.get(name, {}).get("skipped")
+            for name in ("whoosh", "milvus")
+        )
         return {
             "success": all(item.get("success") for item in required) if required else True,
             "pipeline_ready": pipeline_ready,

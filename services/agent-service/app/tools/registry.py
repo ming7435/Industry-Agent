@@ -82,6 +82,7 @@ from app.tools.report import (
 from app.tools.report import generate_report as generate_report_tool
 from app.tools.router import intent_classifier_tool as intent_classifier_tool_fn
 from app.harness import TraceRecorder
+from app.report.store import build_report_store
 
 
 class ToolRegistry:
@@ -93,7 +94,7 @@ class ToolRegistry:
         self.trace = trace
         self.workorder_mcp = WorkOrderMcpAdapter()
         self.quality_mcp = QualityMcpAdapter()
-        self.report_store: Dict[str, Dict[str, Any]] = {}
+        self.report_store = build_report_store()
         self.mcp = McpClient({
             "get_alarm_definition": get_alarm_definition,
             "get_device_history": self._get_device_history,
@@ -391,7 +392,7 @@ class ToolRegistry:
         try:
             result = self.mcp.call(server, operation, arguments)
         except Exception as error:
-            if server == "cad" and operation in {"query_drawing", "query_bom", "query_part", "query_relation", "fetch_engineering_record"}:
+            if server == "cad" and operation in {"query_drawing", "query_bom", "query_part", "query_relation", "fetch_engineering_record"} and self._cad_fallback_allowed():
                 fallback = self.mcp.handlers.get(operation)
                 if fallback is not None:
                     result = fallback(**dict(arguments))
@@ -414,6 +415,13 @@ class ToolRegistry:
                 output=result, execution_time=perf_counter() - started, error="",
             )
         return result
+
+    @staticmethod
+    def _cad_fallback_allowed() -> bool:
+        explicit = os.getenv("CAD_ALLOW_DEMO_FALLBACK")
+        if explicit is not None:
+            return explicit.strip().lower() in {"1", "true", "yes", "on"}
+        return os.getenv("APP_ENV", "development").strip().lower() not in {"prod", "production"}
 
     def tool_schemas(self) -> list[Dict[str, Any]]:
         return [{"type": "function", "function": {"name": name, "description": description, "parameters": {"type": "object", "additionalProperties": True}}} for name, description in {

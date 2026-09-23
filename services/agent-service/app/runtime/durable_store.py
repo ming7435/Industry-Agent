@@ -50,6 +50,21 @@ class DurableJsonStore:
                 (str(namespace), str(key), payload),
             )
 
+    def delete(self, namespace: str, key: str) -> None:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "DELETE FROM runtime_state WHERE namespace = ? AND state_key = ?",
+                (str(namespace), str(key)),
+            )
+
+    def keys(self, namespace: str) -> list[str]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT state_key FROM runtime_state WHERE namespace = ? ORDER BY state_key",
+                (str(namespace),),
+            ).fetchall()
+        return [str(row["state_key"]) for row in rows]
+
     def get_or_create(self, namespace: str, key: str, producer: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         """Return one durable value while serializing producers across processes."""
 

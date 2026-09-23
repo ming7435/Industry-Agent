@@ -92,7 +92,7 @@ RAG Service 和一键启动脚本统一使用 8020；如果单独启动服务，
 
 复制 .env.example 为根目录 .env。密钥只放在本地 .env，不要提交到 Git。
 
-配置优先级为：进程环境变量 > 服务 `.env` > 根目录 `.env` > 代码默认值。`APP_ENV=production` 时默认禁止本地 RAG、Memory 和其他存储回退；只有显式设置 `ALLOW_DEGRADED_STORAGE=true` 或 `RAG_ALLOW_LOCAL_FALLBACK=true` 才会启用降级。`LEARNING_RESULT_STORE_PATH` 保存关闭工单后的 Memory/RAG/Report 结果，避免服务重启后重复学习。
+配置优先级为：进程环境变量 > 服务 `.env` > 根目录 `.env` > 代码默认值。`APP_ENV=production` 时默认禁止本地 RAG、Memory、CAD、Closure 和 Report 回退；只有显式设置降级开关才会启用降级。`LEARNING_RESULT_STORE_PATH` 保存关闭工单后的 Memory/RAG/Report 结果，`REPORT_STORE_PATH` 保存结构化报告，避免服务重启后重复学习或丢失报告。
 
 ### 根目录 Agent/监控配置
 
@@ -137,9 +137,10 @@ SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-m3
 SILICONFLOW_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 
 MILVUS_URI=http://127.0.0.1:19530
-MILVUS_DATABASE=industry_rag_documents
+MILVUS_DATABASE=industry_agent
 MILVUS_COLLECTION=industry_rag_alarm_codes
 MILVUS_COLLECTIONS=
+RAG_EXPERIENCE_COLLECTION=maint_fault_events
 
 MYSQL_HOST=127.0.0.1
 MYSQL_PORT=3306

@@ -59,6 +59,8 @@ class ExperienceWriter:
                 {"id": experience["experience_id"], **dict(experience)},
                 collection=str(experience.get("collection", "maint_fault_events")),
             )
+            if "pipeline_ready" in rag_result:
+                return bool(rag_result.get("pipeline_ready"))
             return bool(rag_result.get("loaded", 0) or rag_result.get("success", False))
         except Exception:
             return False

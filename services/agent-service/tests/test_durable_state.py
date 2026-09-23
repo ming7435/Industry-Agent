@@ -19,3 +19,14 @@ def test_workorders_survive_adapter_reconstruction_and_keep_idempotency(tmp_path
     assert duplicate["workorder_id"] == created["workorder_id"]
     assert second.get_workorder(created["workorder_id"])["status"] == "open"
     assert len(second.orders) == 1
+
+
+def test_report_store_survives_reconstruction(tmp_path):
+    from app.report.store import DurableReportStore
+
+    path = str(tmp_path / "reports.sqlite3")
+    first = DurableReportStore(path)
+    first["REPORT-1"] = {"report_id": "REPORT-1", "report_type": "full_case_report"}
+
+    second = DurableReportStore(path)
+    assert second["REPORT-1"]["report_type"] == "full_case_report"

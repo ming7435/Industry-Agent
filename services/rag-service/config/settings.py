@@ -27,6 +27,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 """``services/rag-service`` 的绝对路径，用于定位 ``.env`` 和数据目录。"""
 
+PROJECT_ROOT = SERVICE_ROOT.parents[1]
+"""Repository root used for the lower-priority shared ``.env`` file."""
+
 ENV_FILE = SERVICE_ROOT / ".env"
 """服务本地的 ``.env`` 文件；此外还会读取当前工作目录中的 ``.env``。"""
 
@@ -85,7 +88,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         # 先读取服务本地文件，再读取当前工作目录的 ``.env``；
         # 实际的进程环境变量优先级高于这两个文件。
-        env_file=(str(ENV_FILE), ".env"),
+        # pydantic-settings applies later files last.  The service file must
+        # therefore follow the repository file while process ENV remains first.
+        env_file=(str(PROJECT_ROOT / ".env"), str(ENV_FILE)),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -200,6 +205,12 @@ class Settings(BaseSettings):
     milvus_port: int = 19530
     """Milvus 端口。"""
 
+    milvus_collections: str = ""
+    """Comma-separated explicit collection names; overrides directory discovery."""
+
+    rag_experience_collection: str = "maint_fault_events"
+    """Collection receiving closed-work-order experiences."""
+
     @property
     def milvus_search_collections(self) -> list[str]:
         """Return collections derived from the first-level data directories.
@@ -209,6 +220,11 @@ class Settings(BaseSettings):
         collections that the ingestion command can actually build.
         """
 
+        explicit = [item.strip() for item in self.milvus_collections.split(",") if item.strip()]
+        if explicit:
+            discovered = explicit
+        else:
+            discovered = []
         data_root = Path(self.rag_data_dir)
         folder_collections = {
             "alarms": "industry_rag_alarm_codes",
@@ -217,25 +233,24 @@ class Settings(BaseSettings):
             "sop": "industry_rag_sop",
             "cad": "industry_rag_drawings",
         }
-        if not data_root.is_dir():
-            return []
-
-        discovered: list[str] = []
-        for folder in sorted(data_root.iterdir(), key=lambda item: item.name.casefold()):
-            if not folder.is_dir() or folder.name.lower() in {"index", ".git", "__pycache__"}:
-                continue
-            if not any(path.is_file() and path.name != ".gitkeep" for path in folder.rglob("*")):
-                continue
-            normalized = folder.name.lower()
-            if normalized in folder_collections:
-                discovered.append(folder_collections[normalized])
-                continue
-            slug = "".join(
-                char if char.isalnum() or char == "_" else "_"
-                for char in normalized
-            ).strip("_")
-            discovered.append(f"industry_rag_{slug or 'unknown'}"[:255])
-        return sorted(set(discovered))
+        if not explicit and data_root.is_dir():
+            for folder in sorted(data_root.iterdir(), key=lambda item: item.name.casefold()):
+                if not folder.is_dir() or folder.name.lower() in {"index", ".git", "__pycache__"}:
+                    continue
+                if not any(path.is_file() and path.name != ".gitkeep" for path in folder.rglob("*")):
+                    continue
+                normalized = folder.name.lower()
+                if normalized in folder_collections:
+                    discovered.append(folder_collections[normalized])
+                    continue
+                slug = "".join(
+                    char if char.isalnum() or char == "_" else "_"
+                    for char in normalized
+                ).strip("_")
+                discovered.append(f"industry_rag_{slug or 'unknown'}"[:255])
+        if self.rag_experience_collection.strip():
+            discovered.append(self.rag_experience_collection.strip())
+        return list(dict.fromkeys(discovered))
 
     milvus_primary_field: str = "id"
     """文本块集合的主键字段。"""
@@ -332,6 +347,7 @@ def get_settings() -> Settings:
 
 __all__ = [
     "ENV_FILE",
+    "PROJECT_ROOT",
     "SERVICE_ROOT",
     "Settings",
     "env_bool",

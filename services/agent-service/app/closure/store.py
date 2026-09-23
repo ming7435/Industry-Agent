@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from app.config.settings import allow_degraded_storage
 from typing import Any, Dict, Mapping
 
 
@@ -331,6 +332,8 @@ def build_closure_store() -> MySQLClosureStore | None:
 
     host = os.getenv("MYSQL_HOST", "").strip()
     if not host:
+        if not allow_degraded_storage():
+            raise ClosureBackendError("生产模式要求配置 MYSQL_HOST")
         return None
     try:
         return MySQLClosureStore(
@@ -343,4 +346,6 @@ def build_closure_store() -> MySQLClosureStore | None:
             }
         )
     except (ClosureBackendError, ValueError):
+        if not allow_degraded_storage():
+            raise
         return None

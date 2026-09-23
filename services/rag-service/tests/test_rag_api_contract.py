@@ -235,3 +235,68 @@ def test_stored_experience_runs_through_rrf_rerank_evidence_and_llm():
     assert response.evidence_text
     assert response.answer
     assert stages == ["bm25", "dense", "rerank", "llm"]
+
+
+def test_pipeline_ready_requires_both_bm25_and_dense():
+    from app.api.indexing import UnifiedExperienceIndexer
+    from app.api.models import DocumentUpsertRequest
+
+    result = UnifiedExperienceIndexer(
+        whoosh_writer=lambda records, collection: len(list(records)),
+        enable_whoosh=True,
+        enable_milvus=False,
+    ).upsert(DocumentUpsertRequest(
+        document_id="workorder:WO-PARTIAL",
+        content="repaired bearing",
+        collection="maint_fault_events",
+    ))
+
+    assert result["backends"]["whoosh"]["success"] is True
+    assert result["backends"]["milvus"]["skipped"] is True
+    assert result["pipeline_ready"] is False
+
+
+def test_dense_retriever_skips_one_missing_collection():
+    from app.milvus.retriever import DenseRetriever
+
+    class _Embedder:
+        def embed_query(self, query):
+            return [0.1, 0.2]
+
+    class _Client:
+        def search(self, collection_name, **kwargs):
+            if collection_name == "missing":
+                raise RuntimeError("collection not found")
+            return [[{
+                "score": 0.9,
+                "entity": {
+                    "chunk_id": "workorder:WO-1:0",
+                    "text": "bearing repaired",
+                    "source_name": "WO-1",
+                    "metadata_json": '{"corpus":"cases"}',
+                },
+            }]]
+
+    retriever = DenseRetriever(
+        collection_names=["missing", "maint_fault_events"],
+        embedder=_Embedder(),
+        client=_Client(),
+    )
+
+    hits = retriever.search("bearing", top_k=5)
+    assert [item.chunk_id for item in hits] == ["workorder:WO-1:0"]
+
+
+def test_dense_health_accepts_partial_collection_availability():
+    from app.milvus.retriever import DenseRetriever
+
+    class _Client:
+        def has_collection(self, name):
+            return name == "maint_fault_events"
+
+    retriever = DenseRetriever(
+        collection_names=["missing", "maint_fault_events"],
+        client=_Client(),
+    )
+
+    assert retriever.health() is True
