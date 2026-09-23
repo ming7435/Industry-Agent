@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable, Mapping
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,7 @@ class Capability:
 class CapabilityRegistry:
     def __init__(self, entries: Iterable[Capability] | None = None) -> None:
         self._by_agent: dict[str, list[Capability]] = {}
+        self._agents: dict[str, Any] = {}
         for entry in entries or []:
             self.register(entry.agent, entry.name, entry.description)
 
@@ -23,6 +24,31 @@ class CapabilityRegistry:
         values = self._by_agent.setdefault(str(agent), [])
         if not any(item.name == capability for item in values):
             values.append(Capability(str(agent), str(capability), str(description)))
+
+    def register_agent(self, agent: Any) -> None:
+        """Register a concrete Agent and its declared capabilities."""
+
+        name = str(getattr(agent, "name", "") or type(agent).__name__).strip()
+        if not name:
+            raise ValueError("agent must declare a name")
+        capabilities = tuple(str(item).strip() for item in getattr(agent, "capabilities", ()) if str(item).strip())
+        if not capabilities:
+            raise ValueError("agent %s must declare capabilities" % name)
+        self._agents[name] = agent
+        for capability in capabilities:
+            self.register(name, capability)
+
+    def register_agents(self, agents: Iterable[Any] | Mapping[str, Any]) -> None:
+        values = agents.values() if isinstance(agents, Mapping) else agents
+        for agent in values:
+            self.register_agent(agent)
+
+    def resolve_agent(self, capability: str) -> Any | None:
+        matches = self.find(capability)
+        return self._agents.get(matches[0]) if matches else None
+
+    def agent(self, name: str) -> Any | None:
+        return self._agents.get(str(name))
 
     def for_agent(self, agent: str) -> list[str]:
         return [item.name for item in self._by_agent.get(str(agent), [])]

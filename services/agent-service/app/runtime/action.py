@@ -67,6 +67,12 @@ class ActionModel(BaseModel):
     def params(self) -> dict[str, Any]:
         return dict(self.payload)
 
+    @property
+    def required_capability(self) -> str:
+        """Capability required by this action, if it is an Agent action."""
+
+        return str(self.payload.get("required_capability") or "").strip()
+
     @classmethod
     def agent(cls, target: str, payload: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
         return cls(action_type=ActionType.AGENT, target=target, payload=dict(payload or {}), **kwargs)

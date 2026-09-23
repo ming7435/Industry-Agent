@@ -5,3 +5,5 @@ Pre-flight: Task 1 produces BaseAgent/AgentResult/JEV and dynamic Agent registra
 Ruling: implement the Runtime convergence through adapters and a Runtime dispatcher, preserving existing Agent.run() and legacy Graph node methods — this minimizes business behavior changes and satisfies the no-Agent-redesign constraint.
 
 Task 1: complete (tests: test_agent_contract.py + capability/planner regression → 7 passed)
+
+Task 2: complete (tests: test_runtime_dispatcher.py + capability/planner/contract regression → 10 passed)

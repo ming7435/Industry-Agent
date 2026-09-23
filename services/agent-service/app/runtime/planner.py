@@ -66,14 +66,17 @@ class Planner:
             matches = self.capabilities.find(capability)
             return matches[0] if matches else fallback
 
+        def payload_for(capability: str) -> dict[str, Any]:
+            return {**payload, "required_capability": capability}
+
         actions = [
-            ActionModel.agent(agent_for("fault_analysis", "diagnosis"), payload=payload, reason="analyze abnormal event", confidence=0.7),
-            ActionModel.agent(agent_for("document_search", "knowledge"), payload=payload, reason="retrieve supporting evidence", confidence=0.7),
-            ActionModel.agent(agent_for("drawing_search", "cad"), payload=payload, reason="resolve engineering context", confidence=0.7),
-            ActionModel.agent(agent_for("repair_planning", "maintenance"), payload=payload, reason="prepare executable repair plan", confidence=0.7),
+            ActionModel.agent(agent_for("fault_analysis", "diagnosis"), payload=payload_for("fault_analysis"), reason="analyze abnormal event", confidence=0.7),
+            ActionModel.agent(agent_for("document_search", "knowledge"), payload=payload_for("document_search"), reason="retrieve supporting evidence", confidence=0.7),
+            ActionModel.agent(agent_for("drawing_search", "cad"), payload=payload_for("drawing_search"), reason="resolve engineering context", confidence=0.7),
+            ActionModel.agent(agent_for("repair_planning", "maintenance"), payload=payload_for("repair_planning"), reason="prepare executable repair plan", confidence=0.7),
             ActionModel.agent(
                 agent_for("workorder_create", "workorder"),
-                payload=payload,
+                payload=payload_for("workorder_create"),
                 reason="create one idempotent work order",
                 confidence=0.7,
                 side_effect=True,

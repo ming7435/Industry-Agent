@@ -22,6 +22,7 @@ from .tracing import NodeTrace
 from .capability import build_capability_registry
 from .execution import ExecutionManager
 from .planner import Planner
+from .dispatcher import RuntimeDispatcher
 
 
 class AgentContainer:
@@ -89,12 +90,19 @@ class AgentContainer:
             workorder_service=self.workorder_service,
             experience_module=self.experience_module,
         )
+        self.capabilities.register_agents(self.agents)
         self.harnesses = {
             name: AgentHarness(agent, timeout_seconds=settings.agent_timeout_seconds, max_retries=settings.agent_max_retries, trace=self.trace)
             for name, agent in self.agents.items()
         }
         self.endpoints = A2AEndpoints(self.harnesses)
         self.endpoints.register(self.a2a)
+        self.dispatcher = RuntimeDispatcher(
+            self.capabilities,
+            self.execution_manager,
+            trace=self.trace,
+            tools=self.registry,
+        )
         self.operations = RuntimeOperations(
             self.requests,
             self.closure_service,
