@@ -88,6 +88,14 @@ tests/                          根目录测试
 
 RAG Service 和一键启动脚本统一使用 8020；如果单独启动服务，请在 services/rag-service/.env 中设置 SERVICE_PORT=8020，并保持根目录 .env 的 RAG_SERVICE_BASE_URL=http://127.0.0.1:8020。
 
+### P2 本地基础设施
+
+需要联调 MySQL、Redis、Milvus 或 MinIO 时，可先启动 [P2 本地基础设施说明](docs/deployment/p2-local-infra.md) 中的 Compose 栈：
+
+```powershell
+docker compose -f infra/docker/docker-compose.yml up -d
+```
+
 ## 环境配置
 
 复制 .env.example 为根目录 .env。密钥只放在本地 .env，不要提交到 Git。
