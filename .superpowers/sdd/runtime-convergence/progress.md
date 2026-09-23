@@ -13,3 +13,5 @@ Task 3: complete (tests: runtime graph, orchestrator, Agent contract, Planner, C
 Task 4: complete (tests: evaluator diagnosis/learning domains and LoopEngine continuation events → 3 passed)
 
 Task 5: complete (tests: autonomous lifecycle E2E + shared contract → 2 passed; full regression and frontend build run before commit)
+
+Post-task regression: user Goal/Event scope test passed; user knowledge requests do not create WorkOrder Actions.
