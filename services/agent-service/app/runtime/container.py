@@ -19,7 +19,7 @@ from app.config import Settings, get_settings
 
 from .operations import RuntimeOperations
 from .tracing import NodeTrace
-from .capabilities import build_capability_registry
+from .capability import build_capability_registry
 from .execution import ExecutionManager
 from .planner import Planner
 

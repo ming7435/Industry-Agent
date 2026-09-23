@@ -7,7 +7,7 @@ from hashlib import sha256
 from typing import Any, Callable, Mapping
 
 from .action import ActionModel
-from .capabilities import CapabilityRegistry, build_capability_registry
+from .capability import CapabilityRegistry, build_capability_registry
 
 
 @dataclass(frozen=True)

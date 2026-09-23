@@ -2,7 +2,7 @@
 
 from .container import AgentContainer
 from .action import Action, ActionModel, ActionType
-from .capabilities import Capability, CapabilityRegistry, build_capability_registry
+from .capability import Capability, CapabilityRegistry, build_capability_registry
 from .evaluator import EvaluationResult, EvaluationStatus, RuntimeEvaluator
 from .execution import ExecutionManager, ExecutionRecord, ExecutionStatus
 from .guard import LoopGuard
