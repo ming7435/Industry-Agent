@@ -35,4 +35,6 @@ class AgentState(TypedDict, total=False):
     evidence_loop: Dict[str, Any]
     evidence_loop_attempts: int
     evidence_status: str
+    diagnosis_review: Dict[str, Any]
+    maintenance_replan: Dict[str, Any]
     stop_reason: str

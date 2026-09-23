@@ -5,8 +5,9 @@ import os
 from app.a2a.client import A2AError
 from app.common.serialization import _serialize_agent_result
 from app.graph.state import AgentState
-from app.graph import evidence as evidence_loop
+from app.runtime import evidence as evidence_loop
 from app.runtime.container import AgentContainer
+from app.runtime.loop_engine import LoopEngine, LoopPolicy
 
 class OrchestratorNodes:
     def __init__(self, container: AgentContainer) -> None:
@@ -41,8 +42,46 @@ class OrchestratorNodes:
                 "realtime_snapshot": {},
                 "timestamp": state.get("task_id", ""),
             }
-        output = {"diagnosis": self.requests.diagnose(state, event)}
-        diagnosis = output["diagnosis"]
+        context = dict(state.get("context") or {})
+        review_enabled = state.get("entry") == "trigger" or bool(context.get("enable_diagnosis_review_loop"))
+
+        def review_step(loop_state: Dict[str, Any], loop_context: Any) -> Dict[str, Any]:
+            review_index = int(loop_state.get("review_index") or 0)
+            review_event = dict(event)
+            if review_index:
+                review_event["review_required"] = True
+                review_event["review_reason"] = "low_confidence_or_missing_evidence"
+            diagnosis_result = self.requests.diagnose(loop_state, review_event)
+            confidence_raw = diagnosis_result.get("confidence")
+            confidence = float(confidence_raw) if confidence_raw is not None else 1.0
+            evidence = diagnosis_result.get("evidence") or diagnosis_result.get("evidence_records") or []
+            findings = diagnosis_result.get("validation_errors") or diagnosis_result.get("validation_findings") or []
+            # Legacy diagnosis payloads do not expose confidence/evidence fields;
+            # treat them as compatible while enabling strict review for explicit
+            # low-confidence or validation-finding responses.
+            explicit_quality = confidence_raw is not None or bool(evidence) or bool(findings)
+            score = 1.0 if confidence >= 0.8 and (bool(evidence) or not explicit_quality) and not findings else min(confidence, 0.79)
+            done = score >= 0.8
+            return {
+                "state": {**loop_state, "diagnosis": diagnosis_result, "review_index": review_index + 1},
+                "action": "diagnosis:review:%d" % review_index,
+                "evidence_score": score,
+                "done": done,
+            }
+
+        review_policy = LoopPolicy(max_iterations=2 if review_enabled else 1, min_evidence_score=0.8)
+        review_result = LoopEngine(review_policy).run({"diagnosis": {}, "review_index": 0}, review_step)
+        diagnosis = dict(review_result.state.get("diagnosis") or {})
+        output = {
+            "diagnosis": diagnosis,
+            "diagnosis_review": {
+                "status": review_result.status,
+                "stop_reason": review_result.stop_reason,
+                "iterations": review_result.iterations,
+                "evidence_score": review_result.evidence_score,
+                "actions": review_result.actions,
+            },
+        }
         memory_query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or event.get("event_type") or "设备维修经验")
         try:
             memory = self.requests.access_memory(
@@ -78,14 +117,40 @@ class OrchestratorNodes:
         self.tracing.start("knowledge", state)
         diagnosis = state.get("diagnosis") or {}
         query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or state.get("user_text") or "工业设备维修")
-        result = dict(state.get("knowledge") or {})
-        if not result:
-            result = self.requests.retrieve_knowledge(state, query)
-        attempts = int(state.get("evidence_loop_attempts") or 0)
-        if state.get("entry") == "trigger" and not evidence_loop.ready(result, "knowledge") and attempts < 1:
-            attempts += 1
-            result = self.requests.retrieve_knowledge(state, evidence_loop.refined_query(query, diagnosis))
-        loop = evidence_loop.loop_payload(attempts, result)
+        initial_result = dict(state.get("knowledge") or {})
+        previous_attempts = int(state.get("evidence_loop_attempts") or 0)
+        max_iterations = 2 if state.get("entry") == "trigger" and previous_attempts < 1 else 1
+
+        def evidence_step(loop_state: Dict[str, Any], loop_context: Any) -> Dict[str, Any]:
+            iteration = int(loop_context.iteration)
+            current = dict(loop_state.get("knowledge") or {})
+            search_query = query
+            if iteration or previous_attempts:
+                search_query = evidence_loop.refined_query(query, diagnosis)
+            if not current or not evidence_loop.ready(current, "knowledge"):
+                current = self.requests.retrieve_knowledge(state, search_query)
+            ready = evidence_loop.ready(current, "knowledge")
+            return {
+                "state": {**loop_state, "knowledge": current},
+                "action": "knowledge:%s" % search_query,
+                "evidence_score": 1.0 if ready else 0.0,
+                "done": ready,
+            }
+
+        loop_result = LoopEngine(LoopPolicy(max_iterations=max_iterations, min_evidence_score=0.8)).run(
+            {"knowledge": initial_result}, evidence_step
+        )
+        result = dict(loop_result.state.get("knowledge") or {})
+        attempts = max(previous_attempts, max(0, loop_result.iterations - 1))
+        loop = {
+            "attempts": attempts,
+            "max_attempts": 1,
+            "status": "ready" if evidence_loop.ready(result, "knowledge") else "blocked",
+            "stop_reason": "evidence_ready" if evidence_loop.ready(result, "knowledge") else loop_result.stop_reason,
+            "iterations": loop_result.iterations,
+            "evidence_score": loop_result.evidence_score,
+            "guard_status": loop_result.status,
+        }
         return self.tracing.finish("knowledge", state, {
             "knowledge": result,
             "evidence_loop": loop,
@@ -141,14 +206,51 @@ class OrchestratorNodes:
             )
         except A2AError as error:
             memory = {"success": False, "validation_findings": [str(error)], "items": []}
-        planning_state = {**state, "memory": memory}
-        plan = self.requests.create_maintenance_plan(
-            planning_state,
-            state.get("diagnosis", {}),
-            state.get("knowledge", {}),
-            cad,
+        def replan_step(loop_state: Dict[str, Any], loop_context: Any) -> Dict[str, Any]:
+            plan_context = dict(context)
+            if loop_context.iteration:
+                plan_context["replan_required"] = True
+                plan_context["replan_reason"] = "validation_findings_or_not_workorder_ready"
+            planning_state = {**state, "context": plan_context, "memory": memory}
+            plan_result = self.requests.create_maintenance_plan(
+                planning_state,
+                state.get("diagnosis", {}),
+                state.get("knowledge", {}),
+                cad,
+            )
+            findings = plan_result.get("validation_findings") or plan_result.get("validation_errors") or []
+            ready = bool(plan_result.get("workorder_ready")) and not findings
+            return {
+                "state": {**loop_state, "maintenance_plan": plan_result},
+                "action": "maintenance:replan:%d" % loop_context.iteration,
+                "evidence_score": 1.0 if ready else 0.0,
+                "done": ready,
+            }
+
+        replan_result = LoopEngine(LoopPolicy(max_iterations=2, min_evidence_score=0.8)).run(
+            {"maintenance_plan": dict(state.get("maintenance_plan") or {})}, replan_step
         )
-        payload = {"maintenance_plan": plan, "memory": memory, "memory_result": memory}
+        plan = dict(replan_result.state.get("maintenance_plan") or {})
+        payload = {
+            "maintenance_plan": plan,
+            "memory": memory,
+            "memory_result": memory,
+            "maintenance_replan": {
+                "status": replan_result.status,
+                "stop_reason": replan_result.stop_reason,
+                "iterations": replan_result.iterations,
+                "evidence_score": replan_result.evidence_score,
+                "actions": replan_result.actions,
+            },
+        }
+        if state.get("entry") == "trigger" and strict_evidence_gate and replan_result.status != "completed":
+            payload.update({
+                "status": "blocked_insufficient_evidence",
+                "stop_reason": "maintenance_replan_guard",
+                "evidence_status": "blocked",
+                "workorder": {},
+            })
+            return self.tracing.finish("maintenance", state, payload)
         if state.get("entry") == "trigger":
             payload["workorder"] = {}
         return self.tracing.finish("maintenance", state, payload)
