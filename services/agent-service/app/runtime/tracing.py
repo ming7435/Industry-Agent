@@ -49,6 +49,7 @@ class NodeTrace:
     @staticmethod
     def _node_agent(name: str) -> str:
         return {
+            "runtime": "runtime",
             "route": "router",
             "diagnosis": "diagnosis",
             "knowledge": "knowledge",

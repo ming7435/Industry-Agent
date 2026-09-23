@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from .action import ActionModel
 from .jev import GoalEvent, JEVParser
 from .loop_engine import LoopEngine, LoopPolicy, LoopResult
+from .evaluator import RuntimeEvaluator
 
 
 class RuntimeCoordinator:
@@ -109,6 +110,7 @@ class RuntimeCoordinator:
         ).run(
             runtime_state,
             step,
+            evaluator=RuntimeEvaluator(min_evidence_score=0.0, min_confidence=0.0),
             trace=trace,
             trace_context={"task_id": initial.get("task_id", ""), "trace_id": initial.get("trace_id", "")},
         )

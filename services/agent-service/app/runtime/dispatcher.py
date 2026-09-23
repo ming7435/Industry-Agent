@@ -132,6 +132,21 @@ class RuntimeDispatcher:
                 "event_id": state.get("event", {}).get("event_id", ""),
                 "idempotency_key": action_key(state, payload),
             }
+        if capability == "quality_inspection":
+            context = dict(state.get("context") or {})
+            return {
+                **current,
+                "part_id": payload.get("part_id") or context.get("part_id") or state.get("event", {}).get("part_id", ""),
+            }
+        if capability in {"experience_learning", "experience_retrieval"}:
+            return {
+                **current,
+                "action": "learn" if capability == "experience_learning" else "search",
+                "workorder": dict(state.get("workorder") or {}),
+                "repair_feedback": dict(state.get("repair_feedback") or {}),
+                "repair_verification": dict(state.get("repair_verification") or {}),
+                "query": query,
+            }
         return current
 
     def _dispatch_tool(self, action: ActionModel, state: dict[str, Any]) -> AgentResult:

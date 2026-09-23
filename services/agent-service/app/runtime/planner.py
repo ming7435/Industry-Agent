@@ -79,12 +79,20 @@ class Planner:
         requested = context.get("required_capabilities")
         requested_set = {str(item) for item in requested} if isinstance(requested, (list, tuple, set)) else set()
         if requested_set:
+            definitions.extend([
+                ("quality_inspection", "verify the produced part when requested", False),
+                ("experience_learning", "persist validated repair experience", True),
+            ])
             definitions = [item for item in definitions if item[0] in requested_set]
         actions = []
         for capability, reason, side_effect in definitions:
             kwargs: dict[str, Any] = {"reason": reason, "confidence": 0.7, "side_effect": side_effect}
             if side_effect:
-                kwargs["idempotency_key"] = workorder_key
+                kwargs["idempotency_key"] = (
+                    "experience:%s" % event_id
+                    if capability == "experience_learning" and event_id
+                    else workorder_key
+                )
             actions.append(ActionModel.agent(
                 agent_for(capability, capability.split("_")[0]),
                 payload=payload_for(capability),

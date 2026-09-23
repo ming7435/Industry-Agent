@@ -9,3 +9,5 @@ Task 1: complete (tests: test_agent_contract.py + capability/planner regression 
 Task 2: complete (tests: test_runtime_dispatcher.py + capability/planner/contract regression → 10 passed)
 
 Task 3: complete (tests: runtime graph, orchestrator, Agent contract, Planner, Capability → 12 passed)
+
+Task 4: complete (tests: evaluator diagnosis/learning domains and LoopEngine continuation events → 3 passed)
