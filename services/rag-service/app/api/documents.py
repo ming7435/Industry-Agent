@@ -12,13 +12,14 @@ import os
 import sqlite3
 from pathlib import Path
 from threading import Lock
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 class DocumentStore:
     def __init__(self, path: str | None = None) -> None:
         default = Path(__file__).resolve().parents[2] / "data" / "rag_documents.sqlite3"
-        self.path = Path(path or os.getenv("RAG_DOCUMENT_STORE_PATH", str(default)))
+        configured_path = path or os.getenv("RAG_DOCUMENT_STORE_PATH") or str(default)
+        self.path = Path(configured_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
         self._initialize()
@@ -49,7 +50,7 @@ class DocumentStore:
                 """
             )
 
-    def upsert(self, document_id: str, content: str, metadata: Mapping[str, Any], collection: str, chunks: list[Mapping[str, Any]] | None = None) -> dict[str, Any]:
+    def upsert(self, document_id: str, content: str, metadata: Mapping[str, Any], collection: str, chunks: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Any]:
         document_id = str(document_id or "").strip()
         if not document_id:
             raise ValueError("document_id must not be blank")
@@ -100,7 +101,7 @@ class DocumentStore:
                 "FROM rag_documents d LEFT JOIN rag_chunks c ON c.document_id = d.document_id "
                 "ORDER BY d.updated_at DESC, c.chunk_id"
             ).fetchall()
-        hits = []
+        hits: list[dict[str, Any]] = []
         for row in rows:
             text = str(row["text"] if row["text"] is not None else row["content"] or "")
             document_metadata = json.loads(row["metadata_json"] or "{}")

@@ -53,9 +53,10 @@ class MySQLCADRepository:
         except ImportError as error:
             raise CADRepositoryError("CAD MySQL repository requires PyMySQL") from error
         try:
+            mysql_port = os.getenv("CAD_MYSQL_PORT") or os.getenv("MYSQL_PORT") or "3306"
             self.connection = pymysql.connect(
                 host=os.getenv("CAD_MYSQL_HOST") or os.getenv("MYSQL_HOST", "127.0.0.1"),
-                port=int(os.getenv("CAD_MYSQL_PORT") or os.getenv("MYSQL_PORT", "3306")),
+                port=int(mysql_port),
                 user=os.getenv("CAD_MYSQL_USER") or os.getenv("MYSQL_USER", "root"),
                 password=os.getenv("CAD_MYSQL_PASSWORD") or os.getenv("MYSQL_PASSWORD", ""),
                 database=os.getenv("CAD_MYSQL_DATABASE") or os.getenv("MYSQL_DATABASE", "industry_agent"),

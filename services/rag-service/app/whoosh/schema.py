@@ -67,7 +67,7 @@ def build_analyzer() -> Any:
         return cjk_analyzer()
 
 
-def build_schema() -> Schema:
+def build_schema() -> Any:
     """Return the Whoosh schema of the BM25 index.
 
     Returns:

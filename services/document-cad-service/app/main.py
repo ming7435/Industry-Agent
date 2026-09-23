@@ -6,7 +6,7 @@ Agent 只通过 MCP 风格的结构化工具访问本服务。
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping
+from typing import Any, Callable, Dict, Mapping
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -33,7 +33,14 @@ def health() -> Dict[str, Any]:
 
 @app.post("/tools/call")
 def call_tool(request: ToolCall) -> Dict[str, Any]:
-    handler = {"query_drawing": query_drawing, "query_bom": query_bom, "query_part": query_part, "query_relation": query_relation, "fetch_engineering_record": fetch_engineering_record}.get(request.tool)
+    handlers: Dict[str, Callable[..., Dict[str, Any]]] = {
+        "query_drawing": query_drawing,
+        "query_bom": query_bom,
+        "query_part": query_part,
+        "query_relation": query_relation,
+        "fetch_engineering_record": fetch_engineering_record,
+    }
+    handler = handlers.get(request.tool)
     if handler is None:
         raise HTTPException(status_code=404, detail="未注册 CAD 工具：%s" % request.tool)
     return handler(**request.arguments)

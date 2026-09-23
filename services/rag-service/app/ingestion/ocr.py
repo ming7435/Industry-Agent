@@ -106,7 +106,10 @@ class LocalOcrClient:
 
     def _run_command(self, image: bytes, media_type: str, filename: str) -> str:
         image_path = _write_temp_image(image, media_type, filename)
-        command = [part.format(image=str(image_path)) for part in self.config.command.split()]
+        command_template = self.config.command
+        if not command_template:
+            raise OcrError("Local OCR command is not configured")
+        command = [part.format(image=str(image_path)) for part in command_template.split()]
         try:
             completed = subprocess.run(
                 command,
