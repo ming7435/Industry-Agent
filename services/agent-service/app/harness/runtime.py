@@ -64,7 +64,16 @@ class AgentHarness:
                 max_workers=1,
                 thread_name_prefix="agent-runtime",
             )
-            future = executor.submit(self.agent.run, abnormal_event)
+
+            def run_agent():
+                tools = getattr(self.agent, "tools", None)
+                bind_trace = getattr(tools, "trace_context", None)
+                if callable(bind_trace):
+                    with bind_trace(task_id=task_id, trace_id=trace_id):
+                        return self.agent.run(abnormal_event)
+                return self.agent.run(abnormal_event)
+
+            future = executor.submit(run_agent)
             try:
                 result = future.result(timeout=self.config.timeout_seconds)
                 self.trace.record(type="agent", name=agent_name, event="agent_completed", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2))

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from time import perf_counter
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Iterator, Mapping
 
 from app.mcp.client import McpClient
 from app.mcp.quality import QualityMcpAdapter
@@ -85,6 +87,12 @@ from app.harness import TraceRecorder
 from app.report.store import build_report_store
 
 
+_TOOL_TRACE_CONTEXT: ContextVar[tuple[str, str]] = ContextVar(
+    "tool_trace_context",
+    default=("", ""),
+)
+
+
 class ToolRegistry:
     def __init__(self, base_url: str | None = None, rag_index: RAGIndex | None = None, rag_client: RAGServiceClient | None = None, trace: TraceRecorder | None = None, cad_base_url: str | None = None, rag_base_url: str | None = None) -> None:
         self.base_url = base_url
@@ -160,6 +168,16 @@ class ToolRegistry:
             "generate_report_file": self.generate_report_file,
             "ingest_knowledge": self.ingest_knowledge,
         }, base_urls={"cad": self.cad_base_url})
+
+    @contextmanager
+    def trace_context(self, task_id: str = "", trace_id: str = "") -> Iterator[None]:
+        """Bind the current task and trace to direct tool invocations."""
+
+        token = _TOOL_TRACE_CONTEXT.set((str(task_id or ""), str(trace_id or "")))
+        try:
+            yield
+        finally:
+            _TOOL_TRACE_CONTEXT.reset(token)
 
     def _get_device_history(self, **arguments: Any) -> Dict[str, Any]:
         """读取设备历史趋势，并把当前工厂地址注入工具调用。"""
@@ -383,11 +401,12 @@ class ToolRegistry:
         }.get(name, name)
         started = perf_counter()
         input_payload = dict(arguments)
+        task_id, trace_id = _TOOL_TRACE_CONTEXT.get()
         if self.trace:
             self.trace.record(
                 type="tool", name=name, event="tool_started", tool=name, tool_name=name,
                 mcp_server=server, arguments=input_payload, input=input_payload,
-                output=None, execution_time=0.0, error="",
+                output=None, execution_time=0.0, error="", task_id=task_id, trace_id=trace_id,
             )
         try:
             if server == "cad" and not self.cad_base_url and not self._cad_fallback_allowed():
@@ -408,6 +427,7 @@ class ToolRegistry:
                         type="tool", name=name, event="tool_error", tool=name, tool_name=name,
                         mcp_server=server, arguments=input_payload, input=input_payload,
                         output=None, execution_time=perf_counter() - started, error=str(error),
+                        task_id=task_id, trace_id=trace_id,
                     )
                 raise
         if self.trace:
@@ -415,6 +435,7 @@ class ToolRegistry:
                 type="tool", name=name, event="tool_completed", tool=name, tool_name=name,
                 mcp_server=server, arguments=input_payload, input=input_payload,
                 output=result, execution_time=perf_counter() - started, error="",
+                task_id=task_id, trace_id=trace_id,
             )
         return result
 
