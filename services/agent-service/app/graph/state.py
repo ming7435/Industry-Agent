@@ -32,3 +32,7 @@ class AgentState(TypedDict, total=False):
     pending_workorder_id: str
     errors: List[str]
     trace: List[Dict[str, Any]]
+    evidence_loop: Dict[str, Any]
+    evidence_loop_attempts: int
+    evidence_status: str
+    stop_reason: str

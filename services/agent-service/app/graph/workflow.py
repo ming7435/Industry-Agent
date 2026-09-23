@@ -39,7 +39,7 @@ class AgentOrchestrator:
         graph.add_conditional_edges("diagnosis", self._after_diagnosis, {"knowledge": "knowledge", "report": "report"})
         graph.add_conditional_edges("knowledge", self._after_knowledge, {"cad": "cad", "report": "report"})
         graph.add_conditional_edges("cad", self._after_cad, {"maintenance": "maintenance", "report": "report"})
-        graph.add_conditional_edges("maintenance", self._after_maintenance, {"workorder": "workorder", "report": "report"})
+        graph.add_conditional_edges("maintenance", self._after_maintenance, {"workorder": "workorder", "report": "report", "blocked": END})
         graph.add_edge("quality", "report")
         # 自动异常主链路在派单后进入等待维修，关闭工单时再由运行时触发学习和报告。
         graph.add_edge("workorder", END)
@@ -62,6 +62,8 @@ class AgentOrchestrator:
 
     @staticmethod
     def _after_maintenance(state: AgentState) -> str:
+        if state.get("status") == "blocked_insufficient_evidence":
+            return "blocked"
         return "workorder" if state.get("entry") == "trigger" else "report"
 
     def run_user(self, user_text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:

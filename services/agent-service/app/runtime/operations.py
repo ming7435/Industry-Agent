@@ -137,6 +137,13 @@ class RuntimeOperations:
             feedback = order.get("repair_feedback") or values.get("repair_feedback") or {}
             if order.get("status") == "closed" and WorkOrderValidator.can_learn(order, feedback):
                 learning_key = "workorder:%s" % str(order.get("workorder_id") or values.get("workorder_id") or "")
+                learning_loop = {
+                    "status": "running",
+                    "learning_idempotency_key": learning_key,
+                    "stages": [],
+                    "stop_reason": "",
+                }
+                result["learning_loop"] = learning_loop
                 learning_state: dict[str, Any] = {
                     **state,
                     "workorder": order,
@@ -175,13 +182,18 @@ class RuntimeOperations:
                         memory_result = self._run_learning_stage("workorder_memory", learning_key, produce_memory)
                     except _IncompleteLearningStage as stage_error:
                         result["memory_result"] = stage_error.result
+                        learning_loop.update({"status": "blocked", "stop_reason": "memory_or_rag_failed"})
                         return result
                     result["memory_result"] = memory_result
+                    if "memory" not in learning_loop["stages"]:
+                        learning_loop["stages"].append("memory")
                     experience = dict(memory_result.get("experience") or {})
                     rag_saved = memory_result.get("rag_saved")
                     if rag_saved is None:
                         rag_saved = experience.get("rag_saved", True)
                     if memory_result.get("success") and bool(rag_saved) and self.report_harness is not None:
+                        if "rag" not in learning_loop["stages"]:
+                            learning_loop["stages"].append("rag")
                         report_state = {
                             **learning_state,
                             "report_type": "full_case_report",
@@ -195,6 +207,8 @@ class RuntimeOperations:
                                 return report
 
                             result["report"] = self._run_learning_stage("workorder_report", learning_key, produce_report)
+                            if "report" not in learning_loop["stages"]:
+                                learning_loop["stages"].append("report")
                         except Exception as report_error:
                             if isinstance(report_error, _IncompleteLearningStage):
                                 result["report"] = {
@@ -209,12 +223,20 @@ class RuntimeOperations:
                                     "error": str(report_error),
                                     "stop_reason": "report_generation_failed",
                                 }
+                            learning_loop.update({"status": "waiting_report", "stop_reason": "report_generation_failed"})
+                        else:
+                            learning_loop.update({"status": "completed", "stop_reason": "learning_complete"})
+                    elif memory_result.get("success") and bool(rag_saved):
+                        if "rag" not in learning_loop["stages"]:
+                            learning_loop["stages"].append("rag")
+                        learning_loop.update({"status": "completed", "stop_reason": "learning_complete"})
                 except Exception as error:
                     result["memory_result"] = {
                         "success": False,
                         "error": str(error),
                         "stop_reason": "memory_learning_failed",
                     }
+                    learning_loop.update({"status": "blocked", "stop_reason": "memory_learning_failed"})
         return result
 
     def execute_memory(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router") -> Dict[str, Any]:

@@ -104,6 +104,8 @@ def test_report_failure_retries_report_without_relearning(tmp_path):
     assert second_requests.learn_calls == 0
     assert second_report.calls == 2
     assert retried["report"]["report_id"] == "REPORT-RETRY"
+    assert retried["learning_loop"]["status"] == "completed"
+    assert retried["learning_loop"]["stages"] == ["memory", "rag", "report"]
 
 
 def test_concurrent_close_runs_learning_and_report_once(tmp_path):

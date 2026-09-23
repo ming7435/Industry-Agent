@@ -1,9 +1,11 @@
 """LangGraph nodes: map shared State to Agent inputs and result updates."""
 from __future__ import annotations
 from typing import Any, Dict
+import os
 from app.a2a.client import A2AError
 from app.common.serialization import _serialize_agent_result
 from app.graph.state import AgentState
+from app.graph import evidence as evidence_loop
 from app.runtime.container import AgentContainer
 
 class OrchestratorNodes:
@@ -74,11 +76,22 @@ class OrchestratorNodes:
 
     def knowledge(self, state: AgentState) -> Dict[str, Any]:
         self.tracing.start("knowledge", state)
-        if state.get("knowledge"):
-            return self.tracing.finish("knowledge", state, {"knowledge": state["knowledge"]})
         diagnosis = state.get("diagnosis") or {}
         query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or state.get("user_text") or "工业设备维修")
-        return self.tracing.finish("knowledge", state, {"knowledge": self.requests.retrieve_knowledge(state, query)})
+        result = dict(state.get("knowledge") or {})
+        if not result:
+            result = self.requests.retrieve_knowledge(state, query)
+        attempts = int(state.get("evidence_loop_attempts") or 0)
+        if state.get("entry") == "trigger" and not evidence_loop.ready(result, "knowledge") and attempts < 1:
+            attempts += 1
+            result = self.requests.retrieve_knowledge(state, evidence_loop.refined_query(query, diagnosis))
+        loop = evidence_loop.loop_payload(attempts, result)
+        return self.tracing.finish("knowledge", state, {
+            "knowledge": result,
+            "evidence_loop": loop,
+            "evidence_status": loop["status"],
+            "evidence_loop_attempts": attempts,
+        })
 
     def cad(self, state: AgentState) -> Dict[str, Any]:
         self.tracing.start("cad", state)
@@ -97,6 +110,26 @@ class OrchestratorNodes:
         if not cad:
             query = str(diagnosis.get("fault") or diagnosis.get("summary") or context.get("query") or state.get("user_text") or "设备维修")
             cad = self.requests.retrieve_cad(state, query, "maintenance", context=context)
+        strict_evidence_gate = bool(context.get("enforce_evidence_gate")) or os.getenv("APP_ENV", "").strip().lower() in {"prod", "production"}
+        if state.get("entry") == "trigger" and strict_evidence_gate:
+            knowledge_ready = evidence_loop.ready(state.get("knowledge"), "knowledge")
+            cad_ready = evidence_loop.ready(cad, "cad")
+            if not knowledge_ready or not cad_ready:
+                return self.tracing.finish("maintenance", state, {
+                    "status": "blocked_insufficient_evidence",
+                    "stop_reason": "evidence_gate",
+                    "evidence_status": "blocked",
+                    "evidence_findings": [
+                        finding
+                        for finding, valid in (
+                            ("knowledge evidence is insufficient", knowledge_ready),
+                            ("CAD evidence is insufficient", cad_ready),
+                        )
+                        if not valid
+                    ],
+                    "maintenance_plan": {},
+                    "workorder": {},
+                })
         memory_query = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or context.get("query") or "设备维修经验")
         memory = state.get("memory") or {}
         try:
