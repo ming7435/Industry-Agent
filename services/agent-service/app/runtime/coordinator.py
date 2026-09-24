@@ -110,8 +110,14 @@ class RuntimeCoordinator:
                 state_change=dict(payload), keys=list(payload), tool_name="", latency=0.0, error="",
             )
 
+        execution_manager = getattr(self.container, "execution_manager", None)
+        execution_timeout = float(getattr(execution_manager, "timeout_seconds", 30.0))
         result: LoopResult = LoopEngine(
-            LoopPolicy(max_iterations=max(1, len(plan.actions) + 1), min_evidence_score=0.0),
+            LoopPolicy(
+                max_iterations=max(1, len(plan.actions) + 1),
+                min_evidence_score=0.0,
+                timeout_seconds=max(1.0, execution_timeout + 1.0),
+            ),
         ).run(
             runtime_state,
             step,

@@ -43,6 +43,40 @@ class AgentHarness:
 
         return self.trace.list()
 
+    def execute_once(self, abnormal_event: Any):
+        """Run one attempt; RuntimeDispatcher owns timeout/retry policy."""
+
+        task_id = abnormal_event.get("task_id", "") if isinstance(abnormal_event, dict) else ""
+        trace_id = abnormal_event.get("trace_id", "") if isinstance(abnormal_event, dict) else ""
+        agent_run_id = "AGENT-RUN-" + uuid4().hex[:12].upper()
+        agent_name = getattr(self.agent, "name", type(self.agent).__name__)
+        started = perf_counter()
+        self.trace.record(
+            type="agent", name=agent_name, event="agent_started", agent=agent_name,
+            agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=1,
+        )
+        try:
+            tools = getattr(self.agent, "tools", None)
+            bind_trace = getattr(tools, "trace_context", None)
+            if callable(bind_trace):
+                with bind_trace(task_id=task_id, trace_id=trace_id):
+                    result = self.agent.run(abnormal_event)
+            else:
+                result = self.agent.run(abnormal_event)
+            self.trace.record(
+                type="agent", name=agent_name, event="agent_completed", agent=agent_name,
+                agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=1,
+                elapsed_ms=round((perf_counter() - started) * 1000, 2),
+            )
+            return result
+        except Exception as error:
+            self.trace.record(
+                type="agent", name=agent_name, event="agent_error", agent=agent_name,
+                agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=1,
+                elapsed_ms=round((perf_counter() - started) * 1000, 2), error=str(error),
+            )
+            raise
+
     def execute_agent(self, abnormal_event: Any):
         """执行一次 Agent 任务，失败时按配置重试。"""
 

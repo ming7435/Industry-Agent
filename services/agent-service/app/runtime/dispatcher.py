@@ -83,7 +83,7 @@ class RuntimeDispatcher:
 
         record = self.execution_manager.execute(
             action,
-            lambda: self.harnesses[agent_name].execute_agent(task)
+            lambda: self.harnesses[agent_name].execute_once(task)
             if agent_name in self.harnesses
             else (agent.execute(task) if callable(getattr(agent, "execute", None)) else agent.run(task)),
             trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
