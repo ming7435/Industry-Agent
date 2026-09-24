@@ -13,7 +13,7 @@ import os
 from typing import Any, Callable, Iterable, Mapping
 
 from app.embedding import VectorRecord
-from app.embedding.model import get_embedder
+from app.api.deps import get_embedder
 from app.milvus.schema import MilvusConfig
 from app.milvus.writer import MilvusVectorWriter
 from app.whoosh.indexer import build_index, index_dir_for_collection

@@ -96,13 +96,18 @@ _TOOL_TRACE_CONTEXT: ContextVar[tuple[str, str]] = ContextVar(
 class ToolRegistry:
     def __init__(self, base_url: str | None = None, rag_index: RAGIndex | None = None, rag_client: RAGServiceClient | None = None, trace: TraceRecorder | None = None, cad_base_url: str | None = None, rag_base_url: str | None = None) -> None:
         self.base_url = base_url
+        self.backend_base_url = (os.getenv("BACKEND_SERVICE_BASE_URL") or os.getenv("MCP_MES_URL") or "").rstrip("/")
         self.cad_base_url = (cad_base_url or os.getenv("MCP_CAD_URL") or os.getenv("CAD_SERVICE_BASE_URL") or "").rstrip("/")
         # 裸注册表对 Agent 测试和库调用方保持确定且本地化。运行中的编排器会显式注入配置的远程 RAG URL。
         self.rag = rag_client or RAGServiceClient(base_url=rag_base_url or "", fallback=rag_index)
         self.trace = trace
-        self.workorder_mcp = WorkOrderMcpAdapter()
-        self.quality_mcp = QualityMcpAdapter()
-        self.report_store = build_report_store()
+        # Backend owns business persistence in the deployed topology. Keep the
+        # local adapter only for library/test callers that do not configure the
+        # Backend URL; no Agent process opens a business MySQL connection when
+        # the HTTP boundary is present.
+        self.workorder_mcp = None if self.backend_base_url else WorkOrderMcpAdapter()
+        self.quality_mcp = None if self.backend_base_url else QualityMcpAdapter()
+        self.report_store = {} if self.backend_base_url else build_report_store()
         self.mcp = McpClient({
             "get_alarm_definition": get_alarm_definition,
             "get_device_history": self._get_device_history,
@@ -167,7 +172,12 @@ class ToolRegistry:
             "persist_report": self.persist_report,
             "generate_report_file": self.generate_report_file,
             "ingest_knowledge": self.ingest_knowledge,
-        }, base_urls={"cad": self.cad_base_url})
+        }, base_urls={
+            "cad": self.cad_base_url,
+            "mes": self.backend_base_url,
+            "inventory": os.getenv("MCP_INVENTORY_URL", "").rstrip("/") or self.backend_base_url,
+            "qms": os.getenv("MCP_QMS_URL", "").rstrip("/") or self.backend_base_url,
+        })
 
     @contextmanager
     def trace_context(self, task_id: str = "", trace_id: str = "") -> Iterator[None]:
@@ -191,6 +201,8 @@ class ToolRegistry:
         return get_active_alarms_tool(device_id=device_id, base_url=self.base_url, **arguments)
 
     def get_production_status(self, device_id: str = "", **_: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("mes", "get_production_status", {"device_id": device_id})
         return get_production_status_tool(device_id=device_id)
 
     def intent_classifier_tool(self, user_text: str, **_: Any) -> Dict[str, Any]:
@@ -275,9 +287,13 @@ class ToolRegistry:
         return query_part_availability_tool(query=query, device_id=device_id, part_no=part_no, **arguments)
 
     def get_workorder_template(self, device_id: str = "", plan: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("mes", "get_workorder_template", {"device_id": device_id, "plan": dict(plan or {})})
         return get_workorder_template_tool(device_id=device_id, plan=plan)
 
     def submit_workorder_draft(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("mes", "submit_workorder_draft", arguments)
         return submit_workorder_draft_tool(**arguments)
 
     def generate_report(self, report_type: str = "maintenance", sections: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
@@ -296,6 +312,8 @@ class ToolRegistry:
         return get_trace_summary_tool(**arguments)
 
     def persist_report(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("mes", "persist_report", arguments)
         return persist_report_tool(self.report_store, **arguments)
 
     def generate_report_file(self, **arguments: Any) -> Dict[str, Any]:
@@ -347,24 +365,38 @@ class ToolRegistry:
         return query_team_availability_tool(self.workorder_mcp, **arguments)
 
     def get_production_part(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("qms", "get_production_part", arguments)
         return get_production_part_tool(self.quality_mcp, **arguments)
 
     def get_part_specification(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("qms", "get_part_specification", arguments)
         return get_part_specification_tool(self.quality_mcp, **arguments)
 
     def inspect_part_dimensions(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("qms", "inspect_part_dimensions", arguments)
         return inspect_part_dimensions_tool(self.quality_mcp, **arguments)
 
     def inspect_part_appearance(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("qms", "inspect_part_appearance", arguments)
         return inspect_part_appearance_tool(self.quality_mcp, **arguments)
 
     def inspect_part_material(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("qms", "inspect_part_material", arguments)
         return inspect_part_material_tool(self.quality_mcp, **arguments)
 
     def inspect_part_function(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("qms", "inspect_part_function", arguments)
         return inspect_part_function_tool(self.quality_mcp, **arguments)
 
     def inspect_part_process(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("qms", "inspect_part_process", arguments)
         return inspect_part_process_tool(self.quality_mcp, **arguments)
 
     def execute(self, name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:

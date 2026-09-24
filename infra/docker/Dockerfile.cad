@@ -2,10 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY services/document-cad-service/requirements-rag.txt /tmp/cad-requirements.txt
+COPY services/document-cad-service/requirements-runtime.txt /tmp/cad-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/cad-requirements.txt
 
-COPY services/document-cad-service /app/services/document-cad-service
+COPY services/document-cad-service/app/__init__.py /app/services/document-cad-service/app/__init__.py
+COPY services/document-cad-service/app/main.py /app/services/document-cad-service/app/main.py
+COPY services/document-cad-service/app/repository.py /app/services/document-cad-service/app/repository.py
 
 ENV PYTHONPATH=/app/services/document-cad-service:/app
 

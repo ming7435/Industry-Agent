@@ -17,8 +17,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r services/agent-service/requirements.txt
+          pip install -r services/backend-service/requirements.txt
+          pip install -r services/model-service/requirements.txt
           pip install -r services/rag-service/requirements.txt
-          pip install -r services/document-cad-service/requirements-rag.txt
+          pip install -r services/document-cad-service/requirements-runtime.txt
       - name: Run service and contract tests
         run: python scripts/test_all.py
 
@@ -30,9 +32,52 @@ jobs:
         run: docker compose -f infra/docker/docker-compose.yml config --quiet
       - name: Build Agent image
         run: docker build -f infra/docker/Dockerfile.agent -t industry-agent-agent:ci .
+      - name: Build Backend image
+        run: docker build -f infra/docker/Dockerfile.backend -t industry-agent-backend:ci .
+      - name: Build Model image
+        run: docker build -f infra/docker/Dockerfile.model -t industry-agent-model:ci .
       - name: Build CAD image
         run: docker build -f infra/docker/Dockerfile.cad -t industry-agent-cad:ci .
       - name: Build RAG image
         run: docker build -f infra/docker/Dockerfile.rag -t industry-agent-rag:ci .
       - name: Verify Monitor frontend is in image
         run: docker run --rm industry-agent-agent:ci test -f /app/frontend/monitor/index.html
+
+  compose-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install E2E test dependencies
+        run: python -m pip install --upgrade pip pytest
+      - name: Start deterministic five-service stack
+        env:
+          APP_ENV: ci
+          MODEL_PROVIDER: fake
+          RAG_ALLOW_LOCAL_FALLBACK: "false"
+          CAD_ALLOW_DEMO_FALLBACK: "false"
+          CAD_CI_FIXTURE: "true"
+          RAG_UPSERT_WHOOSH_ENABLED: "true"
+          RAG_UPSERT_MILVUS_ENABLED: "true"
+        run: |
+          set -euo pipefail
+          trap 'docker compose -f infra/docker/docker-compose.yml --profile apps --profile gateway down -v' EXIT
+          docker compose -f infra/docker/docker-compose.yml --profile apps --profile gateway up -d --build
+          for url in \
+            http://127.0.0.1:8030/health \
+            http://127.0.0.1:8040/health \
+            http://127.0.0.1:8010/health \
+            http://127.0.0.1:8011/health \
+            http://127.0.0.1:8020/health \
+            http://127.0.0.1:8001/; do
+            ready=0
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent --show-error "$url" >/dev/null; then ready=1; break; fi
+              sleep 5
+            done
+            test "$ready" = "1"
+          done
+          RUN_DOCKER_E2E=1 python -m pytest tests/e2e -q

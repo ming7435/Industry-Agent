@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> int:
     commands = [
+        [sys.executable, "-m", "pytest", "-c", "pytest-model.ini", "-q"],
+        [sys.executable, "-m", "pytest", "-c", "pytest-backend.ini", "-q"],
         [sys.executable, "-m", "pytest", "-c", "pytest-agent.ini", "-q"],
         [sys.executable, "-m", "pytest", "-c", "pytest-rag.ini", "-q"],
         [sys.executable, "-m", "pytest", "-c", "pytest-cad.ini", "-q"],

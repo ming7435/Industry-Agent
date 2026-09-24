@@ -116,9 +116,9 @@ services:
       MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
       MILVUS_URI: http://milvus:19530
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      MODEL_SERVICE_BASE_URL: http://model-service:8040
       RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
+      RAG_EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-1024}
       OBJECT_STORAGE_ENDPOINT: minio:9000
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
@@ -126,8 +126,15 @@ services:
         condition: service_healthy
       milvus:
         condition: service_healthy
+      model-service:
+        condition: service_healthy
     ports:
       - "${RAG_PORT:-8020}:8020"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/health', timeout=3)"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
 
   cad-service:
     profiles: ["apps"]
@@ -138,19 +145,26 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       CAD_ALLOW_DEMO_FALLBACK: ${CAD_ALLOW_DEMO_FALLBACK:-false}
+      CAD_CI_FIXTURE: ${CAD_CI_FIXTURE:-false}
       CAD_MYSQL_HOST: mysql
       CAD_MYSQL_PORT: 3306
       CAD_MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
       CAD_MYSQL_USER: ${MYSQL_USER:-industry}
       CAD_MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      MODEL_SERVICE_BASE_URL: http://model-service:8040
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
       mysql:
         condition: service_healthy
+      model-service:
+        condition: service_healthy
     ports:
       - "${CAD_PORT:-8011}:8011"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   agent-service:
     profiles: ["apps"]
@@ -164,8 +178,11 @@ services:
       SERVICE_PORT: 8010
       RAG_SERVICE_BASE_URL: http://rag-service:8020
       MCP_CAD_URL: http://cad-service:8011
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      BACKEND_SERVICE_BASE_URL: http://backend-service:8030
+      MCP_MES_URL: http://backend-service:8030
+      MCP_INVENTORY_URL: http://backend-service:8030
+      MCP_QMS_URL: http://backend-service:8030
+      MODEL_SERVICE_BASE_URL: http://model-service:8040
       EVENT_STORE_PATH: /app/.runtime/events.sqlite3
       PENDING_TASK_STORE_PATH: /app/.runtime/pending.sqlite3
       WORKORDER_STORE_PATH: /app/.runtime/workorders.sqlite3
@@ -182,10 +199,14 @@ services:
       RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
+      backend-service:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
       rag-service:
-        condition: service_started
+        condition: service_healthy
       cad-service:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
       mysql:
@@ -194,6 +215,11 @@ services:
       - agent-runtime-data:/app/.runtime
     ports:
       - "${AGENT_PORT:-8010}:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   agent-migrate:
     profiles: ["migrate"]
@@ -230,6 +256,11 @@ services:
         condition: service_started
     ports:
       - "${MONITOR_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   gateway:
     profiles: ["apps", "gateway"]
@@ -248,6 +279,56 @@ services:
         condition: service_started
       cad-service:
         condition: service_started
+      backend-service:
+        condition: service_started
+      model-service:
+        condition: service_started
+
+  backend-service:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      BACKEND_STORAGE: ${BACKEND_STORAGE:-mysql}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-industry}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8030/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "${BACKEND_PORT:-8030}:8030"
+
+  model-service:
+    profiles: ["apps"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.model
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-fake}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8040/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "${MODEL_PORT:-8040}:8040"
 
 volumes:
   agent-runtime-data:

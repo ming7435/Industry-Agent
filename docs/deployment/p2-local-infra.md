@@ -1,6 +1,6 @@
 # P2 本地基础设施
 
-`infra/docker/docker-compose.yml` 提供 Agent/RAG 联调所需的 MySQL、Redis、Milvus、etcd、MinIO 和 OTLP Collector。带 `apps` profile 时还会启动 Agent、Monitor、RAG、CAD 服务，带 `gateway` profile 时额外启动 Nginx 入口。MySQL 容器只负责初始化数据库，表结构由 Agent Service 的 Alembic 迁移器统一管理。
+`infra/docker/docker-compose.yml` 提供五服务联调所需的 MySQL、Redis、Milvus、etcd、MinIO 和 OTLP Collector。带 `apps` profile 时还会启动 Agent、Backend、Model、RAG、CAD、Monitor，带 `gateway` profile 时额外启动 Nginx 入口。业务表由各自的 Backend/CAD/RAG repository 按职责初始化。
 
 启动：
 

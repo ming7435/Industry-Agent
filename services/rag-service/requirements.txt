@@ -25,7 +25,8 @@ ezdxf>=1.3,<2
 # SiliconFlow's HTTP API; no local model runtime is required.
 
 # --- generation (online) ---
-openai>=1.40.0
+# Provider SDKs are intentionally not installed here. RAG calls Model Service
+# over HTTP; provider credentials and SDKs belong exclusively to Model Service.
 
 # --- offline metadata store ---
 pymysql>=1.1,<2

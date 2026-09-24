@@ -150,10 +150,10 @@ class Settings(BaseSettings):
     # 模型
     # ------------------------------------------------------------------
     siliconflow_api_key: str = ""
-    """用于远程向量化和重排的 SiliconFlow API 密钥。"""
+    """Deprecated compatibility field; runtime uses MODEL_SERVICE_BASE_URL."""
 
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
-    """兼容 OpenAI 接口的 SiliconFlow API 基础地址。"""
+    """Deprecated compatibility field; provider routing belongs to Model Service."""
 
     siliconflow_embedding_model: str = "BAAI/bge-m3"
     """SiliconFlow 向量模型标识。"""
@@ -350,10 +350,10 @@ class Settings(BaseSettings):
     # 大语言模型（DeepSeek）
     # ------------------------------------------------------------------
     deepseek_api_key: str = ""
-    """DeepSeek API 密钥。必须来自 ``DEEPSEEK_API_KEY``，不能硬编码。"""
+    """Deprecated compatibility field; provider keys belong to Model Service."""
 
     deepseek_base_url: str = "https://api.deepseek.com/v1"
-    """兼容 OpenAI 接口的 DeepSeek 服务基础地址。"""
+    """Deprecated compatibility field; provider routing belongs to Model Service."""
 
     deepseek_model: str = "deepseek-chat"
     """用于诊断生成的聊天模型。"""

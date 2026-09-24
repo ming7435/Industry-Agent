@@ -63,6 +63,14 @@ def _default_env() -> dict[str, str]:
     )
     defaults = {
         "RAG_SERVICE_BASE_URL": "http://127.0.0.1:8020",
+        "BACKEND_SERVICE_BASE_URL": "http://127.0.0.1:8030",
+        "MODEL_SERVICE_BASE_URL": "http://127.0.0.1:8040",
+        "MCP_MES_URL": "http://127.0.0.1:8030",
+        "MCP_INVENTORY_URL": "http://127.0.0.1:8030",
+        "MCP_QMS_URL": "http://127.0.0.1:8030",
+        "BACKEND_STORAGE": "sqlite",
+        "BACKEND_SQLITE_PATH": str(PROJECT_ROOT / ".runtime" / "backend.sqlite3"),
+        "MODEL_PROVIDER": "fake",
         "APP_ENV": "development",
         "ALLOW_DEGRADED_STORAGE": "true",
         "RAG_ALLOW_LOCAL_FALLBACK": "true",
@@ -126,6 +134,18 @@ def _terminate(processes: list[tuple[str, subprocess.Popen[str]]]) -> None:
 def main() -> int:
     python = sys.executable
     services = [
+        (
+            "model-service",
+            [python, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8040"],
+            PROJECT_ROOT,
+            PROJECT_ROOT / "services" / "model-service",
+        ),
+        (
+            "backend-service",
+            [python, "-m", "uvicorn", "app.main:app", "--app-dir", "services/backend-service", "--host", "127.0.0.1", "--port", "8030"],
+            PROJECT_ROOT,
+            PROJECT_ROOT / "services" / "backend-service",
+        ),
         (
             "rag-service",
             [python, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"],

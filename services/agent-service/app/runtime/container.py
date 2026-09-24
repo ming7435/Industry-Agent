@@ -10,6 +10,7 @@ from app.a2a.requests import A2ARequests
 from app.agents.diagnosis import DiagnosisAgent
 from app.agents.registry import build_agent_registry
 from app.closure import ClosureService
+from app.clients.backend import BackendServiceClient
 from app.harness import AgentHarness, TraceRecorder
 from app.memory import ExperienceLearningModule, build_memory_stores
 from app.skills import get_skill_registry
@@ -70,7 +71,11 @@ class AgentContainer:
         self.a2a = A2AClient(trace=self.trace)
         self.short_memory, self.long_memory = build_memory_stores()
         self.workorder_service = WorkOrderService(registry)
-        self.closure_service = ClosureService(trace=self.trace)
+        self.closure_service = (
+            BackendServiceClient(settings.backend_service_base_url)
+            if settings.backend_service_base_url
+            else ClosureService(trace=self.trace)
+        )
         self.experience_module = ExperienceLearningModule(
             self.short_memory,
             self.long_memory,

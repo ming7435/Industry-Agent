@@ -197,12 +197,9 @@ def _create_embedder() -> Any:
         ImportError: If ``app.embedding.model`` is not importable.
         TypeError: If the factory cannot be satisfied.
     """
-    from app.embedding.model import get_embedder as get_embedder_model
+    from app.clients.model import RemoteEmbedder
 
-    try:
-        return get_embedder_model()
-    except TypeError as exc:
-        raise TypeError(f"cannot construct embedder: {exc}") from exc
+    return RemoteEmbedder()
 
 
 def _create_reranker() -> Any:
@@ -212,9 +209,9 @@ def _create_reranker() -> Any:
         A ``Reranker`` instance, or ``None`` when the model cannot be loaded
         (the offline loader already logs and swallows the reason).
     """
-    from app.reranker import get_reranker as get_reranker_model
+    from app.clients.model import RemoteReranker
 
-    return get_reranker_model()
+    return RemoteReranker()
 
 
 def _create_llm() -> Any:
@@ -225,9 +222,9 @@ def _create_llm() -> Any:
         is missing: the client then reports itself as unavailable, which surfaces
         as ``degrade_reason="llm_timeout"`` per request instead of a hard error.
     """
-    from app.llm import LLMClient
+    from app.clients.model import RemoteLLM
 
-    return LLMClient()
+    return RemoteLLM()
 
 
 # ---------------------------------------------------------------------------

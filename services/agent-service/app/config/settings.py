@@ -52,6 +52,7 @@ class Settings:
     allow_degraded_storage: bool = field(default_factory=allow_degraded_storage)
     cad_service_base_url: str = field(default_factory=lambda: (os.getenv("MCP_CAD_URL") or os.getenv("CAD_SERVICE_BASE_URL") or "").rstrip("/"))
     model_service_base_url: str = field(default_factory=lambda: os.getenv("MODEL_SERVICE_BASE_URL", "").rstrip("/"))
+    backend_service_base_url: str = field(default_factory=lambda: os.getenv("BACKEND_SERVICE_BASE_URL", "").rstrip("/"))
     factory_api_base_url: str = field(default_factory=lambda: os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:4529").rstrip("/"))
     agent_service_base_url: str = field(default_factory=lambda: os.getenv("AGENT_SERVICE_BASE_URL", "http://127.0.0.1:8010").rstrip("/"))
     agent_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("AGENT_TIMEOUT_SECONDS", "45")))

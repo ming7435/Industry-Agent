@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY services/model-service/requirements.txt /tmp/model-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/model-requirements.txt
+
+COPY services/model-service /app/services/model-service
+
+ENV PYTHONPATH=/app/services/model-service:/app
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--app-dir", "/app/services/model-service", "--host", "0.0.0.0", "--port", "8040"]

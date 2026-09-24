@@ -186,12 +186,14 @@ python scripts/start_all.py
 npm run start:all
 ~~~
 
-该脚本会依次启动 RAG Service、CAD Service、Agent Service API 和监控工作台，并把日志按服务名前缀输出到同一个终端。默认地址如下：
+该脚本会依次启动五个业务服务和监控工作台，并把日志按服务名前缀输出到同一个终端。默认地址如下：
 
 | 服务 | 地址 |
 | --- | --- |
 | RAG Service | http://127.0.0.1:8020 |
 | CAD Service | http://127.0.0.1:8011 |
+| Backend Service | http://127.0.0.1:8030 |
+| Model Service | http://127.0.0.1:8040 |
 | Agent Service API | http://127.0.0.1:8010 |
 | 监控工作台 | http://127.0.0.1:8001 |
 
@@ -200,10 +202,10 @@ npm run start:all
 ### Release Candidate Docker 包
 
 RC/生产部署使用 `infra/docker/docker-compose.yml`（生产覆盖层为
-`infra/docker/docker-compose.production.yml`），当前运行时包包含 Agent、RAG、CAD
-和 Monitor。`backend-service`、`model-service` 是预留边界，不属于本地 Runtime
-启动链；外部 PLC/MES/Inventory/QMS MCP、审批身份认证和生产 Secret Manager
-需要在部署环境中提供。完整的密钥注入、持久化卷、健康检查和 fallback 策略见
+`infra/docker/docker-compose.production.yml`），当前运行时包包含 Agent、Backend、
+Model、RAG、CAD 和 Monitor；Gateway 只负责入口，不算业务服务。Agent 是智能决策
+与 Runtime 控制中心，Backend 负责确定性业务数据，RAG 负责知识检索，CAD 负责
+工程数据，Model 负责统一推理。完整的密钥注入、持久化卷、健康检查和 fallback 策略见
 [`docs/deployment/rc-packaging.md`](docs/deployment/rc-packaging.md)。
 
 ### 1. 启动 RAG Service

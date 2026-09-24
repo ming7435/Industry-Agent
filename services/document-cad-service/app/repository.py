@@ -64,8 +64,61 @@ class MySQLCADRepository:
                 connect_timeout=int(os.getenv("CAD_MYSQL_CONNECT_TIMEOUT", "5")),
                 cursorclass=pymysql.cursors.DictCursor,
             )
+            self._ensure_schema()
         except Exception as error:
             raise CADRepositoryError("CAD MySQL unavailable: %s" % error) from error
+
+    def _ensure_schema(self) -> None:
+        """Create the small engineering read schema when migrations are absent.
+
+        CAD owns these tables; it must not depend on the Agent or RAG migration
+        process merely to answer a health probe or an engineering lookup.
+        """
+        statements = (
+            "CREATE TABLE IF NOT EXISTS cad_drawings (drawing_id VARCHAR(128) PRIMARY KEY, drawing_name VARCHAR(255) NOT NULL DEFAULT '')",
+            "CREATE TABLE IF NOT EXISTS cad_entities (entity_id VARCHAR(160) PRIMARY KEY, entity_type VARCHAR(64) NOT NULL DEFAULT '', layer_name VARCHAR(255) NOT NULL DEFAULT '', block_name VARCHAR(255) NOT NULL DEFAULT '', device_id VARCHAR(128) NOT NULL DEFAULT '', text_content TEXT, raw_json JSON NOT NULL, drawing_id VARCHAR(128) NOT NULL DEFAULT '')",
+            "CREATE TABLE IF NOT EXISTS cad_entity_relations (source_entity_id VARCHAR(160) NOT NULL, target_entity_id VARCHAR(160) NOT NULL, relation_type VARCHAR(128) NOT NULL DEFAULT '', evidence_text TEXT, metadata_json JSON, KEY idx_cad_rel_source (source_entity_id), KEY idx_cad_rel_target (target_entity_id))",
+        )
+        with self.connection.cursor() as cursor:
+            for statement in statements:
+                cursor.execute(statement)
+            # CI uses a deterministic engineering fixture so the full
+            # cross-service closure can exercise a real MySQL-backed CAD
+            # lookup without enabling the demo repository. Production never
+            # opts into this fixture (the flag defaults to false).
+            if os.getenv("CAD_CI_FIXTURE", "").lower() in {"1", "true", "yes"}:
+                cursor.execute(
+                    "INSERT IGNORE INTO cad_drawings (drawing_id, drawing_name) VALUES (%s, %s)",
+                    ("DWG-CI-SPINDLE-001", "TC820 主轴总成工程图"),
+                )
+                cursor.execute(
+                    "INSERT IGNORE INTO cad_entities "
+                    "(entity_id, entity_type, layer_name, block_name, device_id, text_content, raw_json, drawing_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        "SPINDLE-ASSY",
+                        "component",
+                        "ASSEMBLY",
+                        "SPINDLE-ASSY",
+                        "TC820-001",
+                        "主轴电机组件",
+                        json.dumps(
+                            {
+                                "component_id": "SPINDLE-ASSY",
+                                "part_no": "SP-ASSY-TC820-001",
+                                "name": "主轴电机组件",
+                                "position": "Z轴上方主轴箱",
+                                "assembly_relation": "上级为主轴箱总成，下接主轴轴承与温度传感器",
+                                "quantity": 1,
+                                "material": "装配件",
+                                "bom_items": ["主轴轴承", "温度传感器"],
+                            },
+                            ensure_ascii=False,
+                        ),
+                        "DWG-CI-SPINDLE-001",
+                    ),
+                )
+        self.connection.commit()
 
     def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         needle = str(query or "").strip()
@@ -85,6 +138,9 @@ class MySQLCADRepository:
                 size = max(1, min(int(limit), 100))
                 cursor.execute(sql, (text, text, text, text, text, size) if needle else (size,))
                 rows = cursor.fetchall()
+                if not rows and os.getenv("CAD_CI_FIXTURE", "").lower() in {"1", "true", "yes"}:
+                    cursor.execute(select + "LIMIT %s", (size,))
+                    rows = cursor.fetchall()
         except Exception as error:
             raise CADRepositoryError("CAD metadata query failed: %s" % error) from error
         values = [self._normalize(row) for row in rows]

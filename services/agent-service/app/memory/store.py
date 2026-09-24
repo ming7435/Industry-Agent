@@ -147,6 +147,29 @@ class MySQLLongMemoryStore:
         return self.search(limit=limit)
 
 
+class BackendLongMemoryStore:
+    """Structured experience facade; persistence belongs to Backend Service."""
+
+    backend = "backend-service"
+
+    def __init__(self, base_url: str) -> None:
+        from app.clients.backend import BackendServiceClient
+
+        self.client = BackendServiceClient(base_url)
+
+    def save(self, item: Dict[str, Any]) -> None:
+        result = self.client.call("save_experience", {"experience": dict(item)})
+        if not result.get("success"):
+            raise MemoryBackendError(str(result.get("error") or "Backend experience save failed"))
+
+    def search(self, device_id: str = "", limit: int = 20, **filters: Any) -> List[Dict[str, Any]]:
+        result = self.client.call("search_experience", {"device_id": device_id, "limit": limit, **filters})
+        return list(result.get("items") or [])
+
+    def recent(self, limit: int = 20) -> List[Dict[str, Any]]:
+        return self.search(limit=limit)
+
+
 def _matches(item: Dict[str, Any], device_id: str = "", **filters: Any) -> bool:
     criteria = {"device_id": device_id, **filters}
     for key, expected in criteria.items():
@@ -165,6 +188,9 @@ def build_memory_stores() -> tuple[Any, Any]:
 
     short: Any = ShortMemoryStore()
     long: Any = LongMemoryStore()
+    backend_url = os.getenv("BACKEND_SERVICE_BASE_URL", "").strip()
+    if backend_url:
+        long = BackendLongMemoryStore(backend_url)
     redis_url = os.getenv("REDIS_URL", "").strip()
     if redis_url:
         try:
@@ -175,6 +201,8 @@ def build_memory_stores() -> tuple[Any, Any]:
     elif not allow_degraded_storage():
         raise MemoryBackendError("生产模式要求配置 REDIS_URL")
     mysql_host = os.getenv("MYSQL_HOST", "").strip()
+    if backend_url:
+        return short, long
     if mysql_host:
         try:
             long = MySQLLongMemoryStore({
