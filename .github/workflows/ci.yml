@@ -16,6 +16,7 @@ jobs:
       - name: Install service dependencies
         run: |
           python -m pip install --upgrade pip
+          python -m pip install pytest
           pip install -r services/agent-service/requirements.txt
           pip install -r services/backend-service/requirements.txt
           pip install -r services/model-service/requirements.txt
@@ -60,11 +61,13 @@ jobs:
           RAG_ALLOW_LOCAL_FALLBACK: "false"
           CAD_ALLOW_DEMO_FALLBACK: "false"
           CAD_CI_FIXTURE: "true"
+          MINIO_IMAGE: minio/minio:RELEASE.2024-12-18T13-15-44Z
           RAG_UPSERT_WHOOSH_ENABLED: "true"
           RAG_UPSERT_MILVUS_ENABLED: "true"
         run: |
           set -euo pipefail
           trap 'docker compose -f infra/docker/docker-compose.yml --profile apps --profile gateway down -v' EXIT
+          docker pull "$MINIO_IMAGE"
           docker compose -f infra/docker/docker-compose.yml --profile apps --profile gateway up -d --build
           for url in \
             http://127.0.0.1:8030/health \
