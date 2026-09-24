@@ -277,7 +277,6 @@ class Settings(BaseSettings):
             "cases": "industry_rag_alarm_solutions",
             "manuals": "industry_rag_manuals",
             "sop": "industry_rag_sop",
-            "cad": "industry_rag_drawings",
         }
         if not explicit and data_root.is_dir():
             for folder in sorted(data_root.iterdir(), key=lambda item: item.name.casefold()):
@@ -333,7 +332,7 @@ class Settings(BaseSettings):
     mysql_connect_timeout: int = 10
 
     # ------------------------------------------------------------------
-    # 离线解析器使用的 SiliconFlow 视觉/CAD 辅助配置
+    # 离线解析器使用的 SiliconFlow 视觉配置
     # ------------------------------------------------------------------
     siliconflow_vision_model: str = "Qwen/Qwen3-VL-8B-Instruct"
     """用于描述图像和扫描页面的 SiliconFlow 视觉模型标识。"""
@@ -342,9 +341,6 @@ class Settings(BaseSettings):
         "https://api.siliconflow.cn/v1/chat/completions"
     )
     """SiliconFlow 兼容 OpenAI 接口的视觉模型端点。"""
-
-    oda_file_converter: str = ""
-    """读取 DWG 图纸所需的 ``ODAFileConverter.exe`` 路径。"""
 
     # ------------------------------------------------------------------
     # 大语言模型（DeepSeek）

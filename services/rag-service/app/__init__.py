@@ -1,7 +1,7 @@
 """Industrial-maintenance RAG service -- one package, two halves.
 
 Offline half (``scripts/`` + the packages below)
-    ``app.ingestion``  parse PDF / DOCX / XLSX / CSV / TXT / MD / images / CAD
+    ``app.ingestion``  parse PDF / DOCX / XLSX / CSV / TXT / MD / images
     ``app.clean``      drop boilerplate and low-value blocks
     ``app.chunk``      group cleaned blocks into retrieval-ready chunks
     ``app.embedding``  bge-m3 vectors for chunks **and** for online queries

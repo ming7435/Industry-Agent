@@ -12,9 +12,8 @@ The online half adapts to the data the offline half already produces -- no
 schema change, no re-ingestion:
 
 * typed Milvus collections derived from the project data layout (for example
-  `data/alarms` -> `industry_rag_alarm_codes`, `data/sop` -> `industry_rag_sop`,
-  `data/cad` -> `industry_rag_drawings`), with metadata columns used only as a
-  refinement layer;
+  `data/alarms` -> `industry_rag_alarm_codes`, `data/sop` -> `industry_rag_sop`),
+  with metadata columns used only as a refinement layer;
 * the same embedder factory (`app.embedding.model.get_embedder`), so documents and
   queries share one set of weights;
 * the corpus label (`alarms` / `cases` / `manuals` / `sop`) is **derived at read
@@ -24,7 +23,7 @@ schema change, no re-ingestion:
   collection (`scripts/build_whoosh_index.py`).
 
 ```
-documents (PDF/DOCX/XLSX/CSV/TXT/MD/images/CAD)
+documents (PDF/DOCX/XLSX/CSV/TXT/MD/images)
         │  app.ingestion → app.clean → app.chunk → app.embedding
         ├──────────────► Milvus  typed collections ─► dense route  (app.milvus.retriever)
         ├──────────────► Whoosh  typed indexes      ─► BM25  route  (app.whoosh.retriever)
@@ -39,7 +38,7 @@ documents (PDF/DOCX/XLSX/CSV/TXT/MD/images/CAD)
 
 ```
 config/settings.py      merged settings (online budgets + offline stores) — the only config source
-app/ingestion/          multi-format parsers (PDF/VL, DOCX, XLSX, CSV, TXT/MD, images, DWG/DXF)
+app/ingestion/          multi-format parsers (PDF/VL, DOCX, XLSX, CSV, TXT/MD, images)
 app/clean/              boilerplate removal, block quality scoring
 app/chunk/              retrieval-ready chunking
 app/embedding/          SiliconFlow BGE-M3 client, chunk pipeline, and shared embedder factory
@@ -82,7 +81,7 @@ python scripts/ingest_to_milvus.py --data-dir data
 
 Offline ingestion writes each supported document into a typed Milvus collection
 based only on its first-level directory under `RAG_DATA_DIR`. This keeps alarms,
-cases, SOP, CAD/drawings and manuals physically separated while still writing
+cases, SOP and manuals physically separated while still writing
 common metadata fields for optional filtering. The same directory-derived
 collection list drives the online dense and BM25 fan-out; there is no manual
 collection-list environment variable.
@@ -139,5 +138,3 @@ request budget truncates generation and `answer` is always empty.
 ```bash
 pytest            # offline unit tests, no external services needed
 ```
-
-`RAG_OFFLINE_PIPELINE_SUMMARY.md` documents the offline pipeline in detail.

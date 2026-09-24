@@ -45,7 +45,7 @@ from app.whoosh import (
 from config.settings import load_service_env, settings
 
 
-# 默认读取项目 data/ 目录（递归扫描其分类子目录：alarms / cases / manuals / sop / cad 等）。
+# 默认读取项目 data/ 目录（递归扫描 alarms / cases / manuals / sop 等知识目录）。
 # 标准离线管道按项目数据类型分 Milvus collection，避免仅依赖不完整 metadata 过滤。
 DEFAULT_DATA_DIR = settings.rag_data_path
 LOGGER = logging.getLogger("rag_offline_ingest")
@@ -54,7 +54,6 @@ COLLECTION_BY_DATA_TYPE = {
     "cases": "industry_rag_alarm_solutions",
     "manuals": "industry_rag_manuals",
     "sop": "industry_rag_sop",
-    "cad": "industry_rag_drawings",
 }
 
 
@@ -191,7 +190,6 @@ def ingest_directory(
     build_whoosh: bool = True,
     object_storage_enabled: bool = False,
     object_storage_config: ObjectStorageConfig | None = None,
-    cad_metadata_enabled: bool = True,
     project_id: str | None = None,
     tenant_id: str | None = None,
     version_label: str | None = None,
@@ -243,7 +241,6 @@ def ingest_directory(
             "project_id": project_id,
             "tenant_id": tenant_id,
             "version_label": version_label,
-            "cad_metadata_enabled": cad_metadata_enabled,
             "object_storage_enabled": object_storage_enabled,
         },
     )
@@ -275,7 +272,7 @@ def ingest_directory(
     if mysql_enabled:
         try:
             mysql_writer = MySQLRagWriter(mysql_config or MySQLConfig.from_env())
-            mysql_writer.initialize(include_cad_metadata=cad_metadata_enabled)
+            mysql_writer.initialize()
         except Exception as exc:
             raise RuntimeError(f"MySQL metadata store unavailable: {exc}") from exc
     object_storage: ObjectStorageClient | None = None
@@ -461,9 +458,6 @@ def ingest_directory(
                         storage=document.metadata,
                         metadata=document.metadata,
                     )
-
-                if mysql_writer is not None and cad_metadata_enabled:
-                    mysql_writer.replace_cad_document(document)
 
                 with _stage_progress(path.name, "embedding_milvus"):
                     records, inserted = _embed_and_write_records(
@@ -692,20 +686,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--extensions",
         default=None,
-        help="Comma-separated extension filter, e.g. 'dxf' or 'dxf,dwg'. Defaults to all supported formats.",
+        help="Comma-separated extension filter. Defaults to all supported formats.",
     )
     parser.add_argument(
         "--object-storage",
         action="store_true",
         help="Upload original source files to MinIO/S3-compatible object storage.",
     )
-    parser.add_argument(
-        "--cad-metadata",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Persist structured DXF/DWG drawing metadata to MySQL.",
-    )
-    parser.add_argument("--project-id", default=None, help="Project identifier copied to CAD and vector metadata.")
+    parser.add_argument("--project-id", default=None, help="Project identifier copied to vector metadata.")
     parser.add_argument("--tenant-id", default=None, help="Tenant identifier used for retrieval filtering.")
     parser.add_argument("--version-label", default=None, help="Human-readable drawing version label.")
     parser.add_argument(
@@ -770,7 +758,6 @@ def main() -> int:
         extensions=extensions,
         build_whoosh=True,
         object_storage_enabled=args.object_storage,
-        cad_metadata_enabled=args.cad_metadata,
         project_id=args.project_id,
         tenant_id=args.tenant_id,
         version_label=args.version_label,

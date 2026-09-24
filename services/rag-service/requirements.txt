@@ -18,7 +18,6 @@ PyMuPDF>=1.24,<2
 python-docx>=1.1,<2
 openpyxl>=3.1,<4
 Pillow>=10.0,<12
-ezdxf>=1.3,<2
 
 # --- remote embedding / reranking ---
 # BGE-M3 embeddings and bge-reranker-v2-m3 reranking are called through
