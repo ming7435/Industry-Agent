@@ -52,10 +52,9 @@ services:
       - etcd-data:/etcd
 
   minio:
-    # Keep the image overridable for air-gapped/local registries.  This pinned
-    # public tag is available on Docker Hub and matches the local development
-    # image used by the repository.
-    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2024-12-18T13-15-44Z}
+    # Keep the image overridable for air-gapped/local registries. Quay is the
+    # official MinIO registry and is reachable from the CI runner.
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
