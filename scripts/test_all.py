@@ -15,6 +15,7 @@ def main() -> int:
         [sys.executable, "-m", "pytest", "-c", "pytest-agent.ini", "-q"],
         [sys.executable, "-m", "pytest", "-c", "pytest-rag.ini", "-q"],
         [sys.executable, "-m", "pytest", "-c", "pytest-cad.ini", "-q"],
+        [sys.executable, "-m", "pytest", "tests/integration", "tests/e2e", "tests/performance", "-o", "addopts=", "-q"],
     ]
     for command in commands:
         completed = subprocess.run(command, cwd=ROOT)
