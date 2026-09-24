@@ -44,3 +44,6 @@ class AgentState(TypedDict, total=False):
     runtime_outputs: Dict[str, Any]
     runtime_result: Dict[str, Any]
     runtime_actions: List[str]
+    runtime_policy: Dict[str, Any]
+    runtime_pending_task: Dict[str, Any]
+    runtime_resume: Dict[str, Any]

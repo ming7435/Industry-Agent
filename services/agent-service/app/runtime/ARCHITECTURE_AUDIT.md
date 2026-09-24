@@ -8,8 +8,9 @@ Goal/Event
   → Planner（只生成 Action）
   → CapabilityRegistry（按 required_capability 选 Agent）
   → LoopEngine（统一边界、超时、重复动作和停止条件）
-  → ActionModel / ExecutionManager
+  → ActionModel
   → RuntimePolicy（allow / require_approval / deny）
+  → ExecutionManager
   → Agent / Tool / MCP
   → Evidence
   → RuntimeEvaluator（continue / replan / final / blocked）
@@ -41,6 +42,12 @@ RuntimeDispatcher 在 ExecutionManager 之前调用 `RuntimePolicy`。副作用 
 `blocked`，`require_approval` 终止为 `waiting_approval`，两者都不会触发 Agent、Tool
 或 MCP 执行。Memory 的经验内容准入仍由既有 Memory Validator / Evaluator 负责，避免
 Policy 重复实现业务规则。
+
+`waiting_approval` 会由 `PendingTaskStore` 持久化完整 State、Plan、Action、策略结果
+和 `runtime_next_index`。Approval API 提供 pending 查询、approve 和 reject；approve
+通过 `RuntimeCoordinator.resume_pending()` 从原 Action/index 恢复，不重新调用 Planner；
+reject 形成 `rejected → blocked` 的终态，并写入 `approval_requested/approved/rejected/
+resumed` Trace。
 
 审查范围：`services/agent-service/app/`，以重构前 `3aed0ae` 提交的 176 个 Python 文件为依据；不以 README 作为架构依据。
 

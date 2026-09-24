@@ -57,6 +57,7 @@ class Settings:
     agent_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("AGENT_TIMEOUT_SECONDS", "45")))
     agent_max_retries: int = field(default_factory=lambda: int(os.getenv("AGENT_MAX_RETRIES", "1")))
     trace_max_records: int = field(default_factory=lambda: max(100, int(os.getenv("TRACE_MAX_RECORDS", "5000"))))
+    pending_task_store_path: str = field(default_factory=lambda: os.getenv("PENDING_TASK_STORE_PATH", "runtime_pending_tasks.sqlite3"))
     cors_origins: list[str] = field(default_factory=lambda: _csv_env(
         "AGENT_CORS_ORIGINS",
         os.getenv("CORS_ORIGINS", "http://127.0.0.1:8001,http://localhost:8001"),

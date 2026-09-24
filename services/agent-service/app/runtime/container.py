@@ -25,6 +25,7 @@ from .planner import Planner
 from .dispatcher import RuntimeDispatcher
 from .coordinator import RuntimeCoordinator
 from .policy import RuntimePolicy
+from .approval import ApprovalManager, PendingTaskStore
 
 
 class AgentContainer:
@@ -44,6 +45,8 @@ class AgentContainer:
         self.capabilities = build_capability_registry()
         self.policy = RuntimePolicy()
         self.trace = TraceRecorder()
+        self.pending_tasks = PendingTaskStore(settings.pending_task_store_path)
+        self.approvals = ApprovalManager(self.pending_tasks, trace=self.trace)
         self.execution_manager = ExecutionManager(
             timeout_seconds=settings.agent_timeout_seconds,
             max_retries=settings.agent_max_retries,
@@ -109,6 +112,7 @@ class AgentContainer:
             policy=self.policy,
         )
         self.coordinator = RuntimeCoordinator(self)
+        self.approvals.resume_callback = self.coordinator.resume_pending
         self.operations = RuntimeOperations(
             self.requests,
             self.closure_service,

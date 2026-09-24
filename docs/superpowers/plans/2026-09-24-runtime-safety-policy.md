@@ -89,3 +89,18 @@
 - [x] Run the complete Agent Service test suite and compile checks.
 - [x] Commit and push the completed Phase 2 implementation.
 
+### Task 5: Approval lifecycle completion
+
+**Files:**
+- Create `services/agent-service/app/runtime/approval.py`
+- Modify `services/agent-service/app/runtime/coordinator.py`
+- Modify `services/agent-service/app/api/server.py`
+- Modify `services/agent-service/app/graph/state.py`
+- Test `services/agent-service/tests/test_runtime_approval*.py`
+
+- [x] Persist complete pending State, Plan, Action, policy decision, and next index.
+- [x] Add formal list/get/approve/reject Approval API endpoints.
+- [x] Resume the saved Action at its original index without Planner re-entry.
+- [x] Finalize rejection as `rejected` with a blocked Runtime result.
+- [x] Verify wait → approve → resume and wait → reject E2E behavior.
+

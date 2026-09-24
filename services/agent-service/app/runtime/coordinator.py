@@ -54,7 +54,13 @@ class RuntimeCoordinator:
             "task_id": initial.get("task_id", ""),
             "trace_id": initial.get("trace_id", ""),
         }
-        plan = self.container.planner.plan(goal_event.goal, planner_context)
+        resume = initial.get("runtime_resume")
+        if isinstance(resume, Mapping) and isinstance(resume.get("plan"), Mapping):
+            plan = self._plan_from_dict(resume["plan"], goal_event.goal)
+            resume_index = int(resume.get("next_index") or 0)
+        else:
+            plan = self.container.planner.plan(goal_event.goal, planner_context)
+            resume_index = 0
         evaluator = RuntimeEvaluator(min_evidence_score=0.0, min_confidence=0.0)
         replan_count = 0
         self.container.trace.record(
@@ -69,8 +75,8 @@ class RuntimeCoordinator:
             "route_result": {"intent": "runtime", "target_agent": "runtime", "goal": goal_event.goal},
             "goal_event": goal_event.as_dict(),
             "runtime_plan": plan.as_dict(),
-            "runtime_next_index": 0,
-            "runtime_outputs": {},
+            "runtime_next_index": resume_index,
+            "runtime_outputs": dict(initial.get("runtime_outputs") or {}),
         }
 
         def step(current: dict[str, Any], _context: Any) -> dict[str, Any]:
@@ -93,6 +99,22 @@ class RuntimeCoordinator:
                             "missing_evidence": list(policy_output.get("missing_evidence") or []),
                         },
                     }
+                    if policy_status == "require_approval":
+                        approvals = getattr(self.container, "approvals", None)
+                        if approvals is not None:
+                            pending_state = {
+                                **current,
+                                "runtime_plan": plan.as_dict(),
+                                "runtime_next_index": index,
+                            }
+                            pending = approvals.create_pending(
+                                action=action.as_dict(),
+                                state=pending_state,
+                                plan=plan.as_dict(),
+                                next_index=index,
+                                policy=policy_output,
+                            )
+                            next_state["runtime_pending_task"] = pending
                     return {
                         "state": next_state,
                         "action": action,
@@ -257,6 +279,40 @@ class RuntimeCoordinator:
             final_state["status"] = result.status
             final_state["stop_reason"] = result.stop_reason
         return final_state
+
+    def resume_pending(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        """Resume the persisted Action without invoking Planner again."""
+
+        state = dict(record.get("state") or {})
+        action = dict(record.get("action") or {})
+        payload = action.get("payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        capability = str(payload.get("required_capability") or action.get("target") or "")
+        context = dict(state.get("context") or {})
+        approved = set(context.get("approved_capabilities") or [])
+        if capability:
+            approved.add(capability)
+        context.update({"approval_granted": True, "approved_capabilities": sorted(approved)})
+        state.update({
+            "context": context,
+            "runtime_resume": {
+                "plan": dict(record.get("plan") or {}),
+                "next_index": int(record.get("next_index") or 0),
+                "pending_id": str(record.get("pending_id") or ""),
+            },
+        })
+        return self.run(state)
+
+    @staticmethod
+    def _plan_from_dict(value: Mapping[str, Any], goal: str) -> Any:
+        from .planner import Plan
+
+        actions = [ActionModel.coerce(item) for item in value.get("actions") or []]
+        return Plan(
+            goal=str(value.get("goal") or goal),
+            actions=[item for item in actions if item is not None],
+            metadata=dict(value.get("metadata") or {}),
+        )
 
     @staticmethod
     def _domain_for_capability(capability: str) -> str:

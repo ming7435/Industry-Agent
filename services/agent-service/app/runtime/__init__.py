@@ -12,6 +12,7 @@ from .dispatcher import RuntimeDispatcher
 from .jev import GoalEvent, JEVParser
 from .coordinator import RuntimeCoordinator
 from .policy import PolicyDecision, PolicyStatus, RuntimePolicy
+from .approval import ApprovalManager, PendingTaskStore
 
 __all__ = [
     "AgentContainer", "Action", "ActionModel", "ActionType", "Capability", "CapabilityRegistry",
@@ -19,4 +20,5 @@ __all__ = [
     "ExecutionManager", "ExecutionRecord", "ExecutionStatus", "LoopGuard", "LoopEngine", "LoopPolicy",
     "Plan", "Planner", "RuntimeDispatcher", "GoalEvent", "JEVParser", "RuntimeCoordinator",
     "PolicyDecision", "PolicyStatus", "RuntimePolicy",
+    "ApprovalManager", "PendingTaskStore",
 ]

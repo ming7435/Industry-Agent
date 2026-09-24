@@ -117,3 +117,17 @@ def test_runtime_trace_schema_accepts_policy_decision_records() -> None:
             },
         },
     )
+
+
+def test_runtime_trace_schema_accepts_approval_lifecycle_records() -> None:
+    schema = _schema("runtime-trace.schema.json")
+    for event in ("approval_requested", "approval_approved", "approval_rejected", "approval_resumed"):
+        _assert_valid(
+            schema,
+            {
+                "event": event,
+                "task_id": "TASK-APPROVAL-CONTRACT",
+                "trace_id": "TRACE-APPROVAL-CONTRACT",
+                "state_change": {"pending_id": "PENDING-1"},
+            },
+        )

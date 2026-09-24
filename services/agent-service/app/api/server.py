@@ -11,10 +11,10 @@ try:
 except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时触发
     _load_dotenv = None
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.schemas.agent import AbnormalEventRequest, UserQuestionRequest
+from app.api.schemas.agent import ApprovalRequest, AbnormalEventRequest, RejectionRequest, UserQuestionRequest
 from app.api.schemas.closure import ClosureTaskRequest
 from app.api.schemas.memory import ExperienceSearchRequest
 from app.api.schemas.quality import PartQualityRequest, QualityAppealRequest, QualityCheckRequest
@@ -93,6 +93,44 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/v1/trace")
     def trace(trace_id: str | None = None, task_id: str | None = None, limit: int = 100) -> Dict[str, Any]:
         return {"trace": runtime.container.trace.list(trace_id=trace_id, task_id=task_id, limit=max(1, min(limit, 5000)))}
+
+    @app.get("/api/v1/runtime/approvals")
+    def runtime_approvals(status: str = "") -> Dict[str, Any]:
+        manager = getattr(runtime.container, "approvals", None)
+        if manager is None:
+            raise HTTPException(status_code=503, detail="approval manager unavailable")
+        items = manager.list(status=status)
+        return {"items": items, "count": len(items)}
+
+    @app.get("/api/v1/runtime/approvals/{pending_id}")
+    def runtime_approval(pending_id: str) -> Dict[str, Any]:
+        manager = getattr(runtime.container, "approvals", None)
+        if manager is None:
+            raise HTTPException(status_code=503, detail="approval manager unavailable")
+        record = manager.get(pending_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="pending task not found")
+        return record
+
+    @app.post("/api/v1/runtime/approvals/{pending_id}/approve")
+    def approve_runtime_task(pending_id: str, request: ApprovalRequest) -> Dict[str, Any]:
+        manager = getattr(runtime.container, "approvals", None)
+        if manager is None:
+            raise HTTPException(status_code=503, detail="approval manager unavailable")
+        try:
+            return manager.approve(pending_id, approved_by=request.approved_by, note=request.note)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/api/v1/runtime/approvals/{pending_id}/reject")
+    def reject_runtime_task(pending_id: str, request: RejectionRequest) -> Dict[str, Any]:
+        manager = getattr(runtime.container, "approvals", None)
+        if manager is None:
+            raise HTTPException(status_code=503, detail="approval manager unavailable")
+        try:
+            return manager.reject(pending_id, rejected_by=request.rejected_by, reason=request.reason)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get("/api/memory/recent")
     def memory_recent(limit: int = 20) -> Dict[str, Any]:
