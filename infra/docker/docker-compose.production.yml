@@ -1,4 +1,20 @@
 services:
+  agent-service:
+    environment:
+      APP_ENV: production
+      ALLOW_DEGRADED_STORAGE: "false"
+      RAG_ALLOW_LOCAL_FALLBACK: "false"
+      WORKORDER_BACKEND: mysql
+
+  rag-service:
+    environment:
+      RAG_ALLOW_LOCAL_FALLBACK: "false"
+
+  cad-service:
+    environment:
+      APP_ENV: production
+      CAD_ALLOW_DEMO_FALLBACK: "false"
+
   otel-collector:
     volumes:
       - ../otel/otel-collector.production.yaml:/etc/otelcol-contrib/config.yaml:ro

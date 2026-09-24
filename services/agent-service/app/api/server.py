@@ -62,6 +62,12 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     runtime = orchestrator or build_orchestrator()
     event_results = EventResultStore()
 
+    @app.get("/health")
+    def health() -> Dict[str, Any]:
+        """Operational readiness probe for the Runtime container."""
+
+        return {"status": "ok", "service": "agent-service", "runtime": "ready"}
+
     @app.post("/api/agent/question", deprecated=True)
     @app.post("/api/v1/agent/question")
     def question(request: UserQuestionRequest) -> Dict[str, Any]:
