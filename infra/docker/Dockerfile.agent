@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r /tmp/agent-requirements.txt
 
 COPY services/agent-service /app/services/agent-service
 COPY shared /app/shared
+COPY frontend/monitor /app/frontend/monitor
 RUN mkdir -p /app/.runtime
 
 ENV PYTHONPATH=/app/services/agent-service:/app
