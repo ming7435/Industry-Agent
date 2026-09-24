@@ -111,7 +111,8 @@ Goal/Event
 
 ## 4. Close-gated Learning 与独立 RAG
 
-只有 `workorder.status=closed` 且 `repair_feedback` 有效时，才允许：
+只有工单先以显式 `repair_verification.passed=true` 完成维修并关闭，且
+`workorder.status=closed`、`repair_feedback` 有效时，才允许：
 
 ```text
 Memory Learn -> RAG /documents/upsert -> Full Case Report
@@ -129,7 +130,7 @@ Memory 在写入前执行 Experience Quality Gate，输出：
 - `validation_status`：`accepted`、`duplicate` 或 `rejected`；
 - `validation_findings`：维修成功、内容完整性、人工确认和重复记录检查结果。
 
-低于质量阈值或明确失败的维修经验不会写入 Memory/RAG；`duplicate` 仍可用于
+缺少或未通过维修验证的经验不会写入 Memory/RAG；低于质量阈值或明确失败的维修经验也不会写入；`duplicate` 仍可用于
 幂等重试和补偿 RAG 写入，不会生成第二条经验。
 
 ## 5. Trace 隔离

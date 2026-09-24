@@ -17,6 +17,7 @@ class _Requests:
                 "device_id": "D-1",
                 "status": "closed",
                 "repair_feedback": {"feedback": "fixed"},
+                "repair_verification": {"passed": True, "status": "verified"},
                 "event_id": "EVT-1",
             },
         }

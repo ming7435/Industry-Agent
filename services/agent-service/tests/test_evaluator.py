@@ -82,6 +82,7 @@ def test_evaluator_accepts_valid_learning_experience():
         "domain": "learning",
         "workorder_status": "closed",
         "repair_feedback": {"feedback": "fixed", "operator": "u-1"},
+        "repair_verification": {"passed": True, "status": "verified"},
         "experience_quality_score": 0.9,
         "validation_status": "accepted",
         "done": True,
@@ -96,7 +97,11 @@ def test_evaluator_reads_quality_gate_from_nested_experience_payload():
 
     result = RuntimeEvaluator().evaluate({
         "domain": "learning",
-        "workorder": {"status": "closed", "repair_feedback": {"feedback": "fixed"}},
+        "workorder": {
+            "status": "closed",
+            "repair_feedback": {"feedback": "fixed"},
+            "repair_verification": {"passed": True, "status": "verified"},
+        },
         "experience": {
             "experience_quality_score": 0.9,
             "validation_status": "accepted",

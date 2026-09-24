@@ -44,6 +44,8 @@ class ExperienceValidator:
             score += 0.45
         else:
             findings.append("workorder_not_closed_or_feedback_missing")
+        if not WorkOrderValidator.verification_passed(workorder, repair_feedback):
+            findings.append("repair_verification_missing_or_failed")
         if str(experience.get("content") or "").strip():
             score += 0.15
         else:
@@ -68,7 +70,12 @@ class ExperienceValidator:
             findings.append("human_confirmation_missing")
 
         duplicate = ExperienceDeduplicator().contains(experience, existing or [])
-        blocking_findings = {"workorder_not_closed_or_feedback_missing", "experience_content_missing", "repair_not_successful"}
+        blocking_findings = {
+            "workorder_not_closed_or_feedback_missing",
+            "experience_content_missing",
+            "repair_not_successful",
+            "repair_verification_missing_or_failed",
+        }
         if duplicate and score >= 0.8 and not set(findings).intersection(blocking_findings):
             findings.append("duplicate_experience")
             return ExperienceValidationResult(round(min(score, 1.0), 4), "duplicate", findings)

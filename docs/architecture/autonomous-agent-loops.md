@@ -102,7 +102,8 @@ degraded compatibility behavior while the evidence metadata remains visible.
 
 ## Learning Loop
 
-Learning is only entered by a valid closed WorkOrder with repair feedback:
+Learning is only entered by a valid closed WorkOrder with repair feedback and
+an explicit passed repair verification:
 
 ```text
 Memory Learn -> RAG Upsert -> Full Case Report

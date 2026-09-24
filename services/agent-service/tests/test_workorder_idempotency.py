@@ -38,10 +38,41 @@ def test_repeated_close_returns_the_same_closed_workorder():
 
     adapter = WorkOrderMcpAdapter()
     order = adapter.create_workorder("D-1", "fault", idempotency_key="monitor:EVT-4")
-    adapter.mark_repair_completed(order["workorder_id"], {"feedback": "fixed"})
+    adapter.mark_repair_completed(order["workorder_id"], {"feedback": "fixed"}, {"passed": True})
     first = adapter.close_workorder(order["workorder_id"])
     second = adapter.close_workorder(order["workorder_id"])
 
     assert second["workorder_id"] == first["workorder_id"]
     assert second["status"] == "closed"
     assert len([event for event in second["events"] if event["to_status"] == "closed"]) == 1
+
+
+def test_close_requires_explicit_repair_verification():
+    from app.mcp.workorder import WorkOrderMcpAdapter
+
+    adapter = WorkOrderMcpAdapter()
+    order = adapter.create_workorder("D-1", "fault", idempotency_key="monitor:EVT-5")
+    with pytest.raises(ValueError, match="repair_verification"):
+        adapter.mark_repair_completed(order["workorder_id"], {"feedback": "fixed"})
+
+    completed = adapter.mark_repair_completed(
+        order["workorder_id"], {"feedback": "fixed"}, {"passed": True, "status": "verified"}
+    )
+    assert completed["status"] == "completed"
+    assert adapter.close_workorder(order["workorder_id"])["status"] == "closed"
+
+
+def test_failed_repair_verification_cannot_close_or_learn():
+    from app.mcp.workorder import WorkOrderMcpAdapter
+    from app.workorder.validator import WorkOrderValidator
+
+    adapter = WorkOrderMcpAdapter()
+    order = adapter.create_workorder("D-1", "fault", idempotency_key="monitor:EVT-6")
+    with pytest.raises(ValueError, match="repair_verification"):
+        adapter.mark_repair_completed(
+            order["workorder_id"], {"feedback": "still abnormal"}, {"passed": False, "status": "failed"}
+        )
+    assert not WorkOrderValidator.can_learn(
+        {"status": "closed", "repair_feedback": {"feedback": "still abnormal"}, "repair_verification": {"passed": False}},
+        {"feedback": "still abnormal"},
+    )

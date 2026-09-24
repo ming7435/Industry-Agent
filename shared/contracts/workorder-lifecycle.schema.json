@@ -11,12 +11,14 @@
     "learning_idempotency_key": {"type": "string"},
     "status": {"type": "string", "enum": ["open", "in_progress", "completed", "closed", "rejected", "timeout"]},
     "pipeline_status": {"type": "string", "enum": ["waiting_repair"]},
-    "repair_feedback": {"type": ["object", "string"]}
+    "repair_feedback": {"type": ["object", "string"]},
+    "repair_verification": {"type": "object"}
   },
   "x-rules": [
     "Automatic event creation uses idempotency_key=monitor:<event_id>.",
     "pipeline_status=waiting_repair is not a WorkOrder status.",
-    "Memory learning requires status=closed and non-empty repair_feedback.",
+    "A WorkOrder may close only after status=completed and repair_verification.passed=true.",
+    "Memory learning requires status=closed, non-empty repair_feedback, and a passed repair_verification.",
     "Learning uses learning_idempotency_key=workorder:<workorder_id>."
   ]
 }

@@ -30,6 +30,7 @@ def test_evaluator_blocks_low_quality_learning():
         "domain": "learning",
         "workorder_status": "closed",
         "repair_feedback": {"result": "fixed"},
+        "repair_verification": {"passed": True, "status": "verified"},
         "experience_quality_score": 0.5,
     })
 

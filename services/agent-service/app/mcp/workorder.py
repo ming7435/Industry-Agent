@@ -158,7 +158,8 @@ class WorkOrderMcpAdapter:
             raise KeyError("工单不存在：%s" % workorder_id)
         normalized = self._normalize_feedback(feedback) if feedback else self._normalize_feedback(order.get("repair_feedback"))
         verification = dict(repair_verification or {})
-        verification.setdefault("passed", True)
+        if verification.get("passed") is not True:
+            raise ValueError("维修完成必须提供明确且通过的 repair_verification")
         verification.setdefault("status", "verified")
         verification.setdefault("feedback", normalized.get("feedback") or normalized.get("summary") or normalized.get("result") or "")
         verification.setdefault("operator", normalized.get("operator") or "")
@@ -179,6 +180,9 @@ class WorkOrderMcpAdapter:
             return dict(order)
         if str(order.get("status") or "") != "completed":
             raise ValueError("工单必须先完成维修（completed）后才能关闭")
+        from app.workorder.validator import WorkOrderValidator
+        if not WorkOrderValidator.can_close(order):
+            raise ValueError("工单关闭前必须通过维修验证（repair_verification.passed=true）")
         return self.update_workorder(workorder_id, status="closed", closure_reason=reason)
 
     def reopen_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:

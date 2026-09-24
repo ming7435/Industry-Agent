@@ -128,12 +128,17 @@ class RuntimeEvaluator:
             closed = str(value.get("workorder_status") or workorder.get("status") or "").lower() == "closed"
             feedback = value.get("repair_feedback") or payload.get("repair_feedback") or workorder.get("repair_feedback")
             has_feedback = bool(feedback)
+            verification_value = value.get("repair_verification") or workorder.get("repair_verification")
+            verification = verification_value if isinstance(verification_value, Mapping) else {}
+            if not verification and isinstance(feedback, Mapping) and isinstance(feedback.get("verification"), Mapping):
+                verification = dict(feedback.get("verification") or {})
+            verification_passed = verification.get("passed") is True
             rejected = validation_status in {"rejected", "invalid", "duplicate"} or quality < self.min_experience_quality_score
             value.update({
                 "confidence": quality,
                 "evidence_score": quality,
-                "done": bool(value.get("done") or value.get("complete") or (closed and has_feedback and not rejected)),
-                "missing_evidence": [] if closed and has_feedback and not rejected else ["experience_quality"],
+                "done": bool(value.get("done") or value.get("complete") or (closed and has_feedback and verification_passed and not rejected)),
+                "missing_evidence": [] if closed and has_feedback and verification_passed and not rejected else ["repair_verification" if not verification_passed else "experience_quality"],
             })
             if rejected:
                 value.update({"blocked": True, "reason": "experience_quality_gate"})

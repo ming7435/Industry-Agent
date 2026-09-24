@@ -23,12 +23,14 @@ def test_workorder_completion_keeps_feedback_and_verification():
 
 
 def test_memory_admission_does_not_use_production_quality_result():
-    order = {"status": "closed", "repair_feedback": {}}
+    order = {"status": "closed", "repair_feedback": {}, "repair_verification": {}}
 
     assert not WorkOrderValidator.can_learn(order, {})
     assert not MemoryAgentValidator.validate_admission({"workorder": order, "quality": {"passed": True}}) == []
 
     order["repair_feedback"] = {"feedback": "现场复测正常"}
+    assert not WorkOrderValidator.can_learn(order, order["repair_feedback"])
+    order["repair_verification"] = {"passed": True, "status": "verified"}
     assert WorkOrderValidator.can_learn(order, order["repair_feedback"])
 
 

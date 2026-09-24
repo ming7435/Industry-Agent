@@ -24,8 +24,9 @@ def test_duplicate_experience_retries_failed_rag_upsert():
             "device_id": "D-1",
             "status": "closed",
             "repair_feedback": {"feedback": "replaced bearing"},
+            "repair_verification": {"passed": True, "status": "verified"},
         },
-        "repair_feedback": {"feedback": "replaced bearing"},
+        "repair_feedback": {"feedback": "replaced bearing", "verification": {"passed": True}},
         "diagnosis": {"fault": "bearing fault"},
         "maintenance_plan": {"repair_steps": ["replace bearing"]},
     }
