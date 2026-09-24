@@ -67,21 +67,14 @@ class CapabilityRegistry:
 
 
 def build_capability_registry() -> CapabilityRegistry:
+    """Build the registry from concrete Agent class declarations."""
+
+    from app.agents.registry import CORE_AGENT_REGISTRY
+
     registry = CapabilityRegistry()
-    defaults = {
-        "router": ["intent_routing"],
-        "diagnosis": ["fault_analysis", "hypothesis_generation"],
-        "knowledge": ["document_search", "case_retrieval"],
-        "cad": ["bom_query", "drawing_search"],
-        "maintenance": ["repair_planning", "risk_assessment"],
-        "workorder": ["workorder_create", "workorder_update"],
-        "quality": ["quality_inspection", "quality_review"],
-        "report": ["case_reporting"],
-        "memory": ["experience_learning", "experience_retrieval"],
-    }
-    for agent, capabilities in defaults.items():
-        for capability in capabilities:
-            registry.register(agent, capability)
+    for name, agent_type in CORE_AGENT_REGISTRY.items():
+        for capability in getattr(agent_type, "capabilities", ()):
+            registry.register(name, str(capability))
     return registry
 
 

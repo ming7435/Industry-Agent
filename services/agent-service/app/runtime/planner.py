@@ -62,30 +62,9 @@ class Planner:
         workorder_key = "monitor:%s" % event_id if event_id else "plan:%s" % sha256(goal.encode("utf-8")).hexdigest()[:16]
         payload = {"goal": goal, **context}
 
-        fallback_agents = {
-            "fault_analysis": "diagnosis",
-            "hypothesis_generation": "diagnosis",
-            "document_search": "knowledge",
-            "historical_case_search": "knowledge",
-            "evidence_retrieval": "knowledge",
-            "drawing_search": "cad",
-            "bom_query": "cad",
-            "component_relation": "cad",
-            "repair_planning": "maintenance",
-            "repair_plan": "maintenance",
-            "maintenance_replan": "maintenance",
-            "workorder_create": "workorder",
-            "workorder_update": "workorder",
-            "quality_inspection": "quality",
-            "quality_review": "quality",
-            "experience_learning": "memory",
-            "experience_retrieval": "memory",
-            "case_reporting": "report",
-        }
-
         def agent_for(capability: str, fallback: str) -> str:
             matches = self.capabilities.find(capability)
-            return matches[0] if matches else fallback_agents.get(capability, fallback)
+            return matches[0] if matches else fallback
 
         def payload_for(capability: str) -> dict[str, Any]:
             return {**payload, "required_capability": capability}
