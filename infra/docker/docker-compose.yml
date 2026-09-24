@@ -116,6 +116,9 @@ services:
       MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
       MILVUS_URI: http://milvus:19530
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
       OBJECT_STORAGE_ENDPOINT: minio:9000
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
@@ -134,11 +137,14 @@ services:
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-development}
+      CAD_ALLOW_DEMO_FALLBACK: ${CAD_ALLOW_DEMO_FALLBACK:-false}
       CAD_MYSQL_HOST: mysql
       CAD_MYSQL_PORT: 3306
       CAD_MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
       CAD_MYSQL_USER: ${MYSQL_USER:-industry}
       CAD_MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
       mysql:
@@ -158,16 +164,21 @@ services:
       SERVICE_PORT: 8010
       RAG_SERVICE_BASE_URL: http://rag-service:8020
       MCP_CAD_URL: http://cad-service:8011
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
       EVENT_STORE_PATH: /app/.runtime/events.sqlite3
+      PENDING_TASK_STORE_PATH: /app/.runtime/pending.sqlite3
       WORKORDER_STORE_PATH: /app/.runtime/workorders.sqlite3
       REPORT_STORE_PATH: /app/.runtime/reports.sqlite3
       LEARNING_RESULT_STORE_PATH: /app/.runtime/learning.sqlite3
+      REDIS_URL: redis://redis:6379/0
+      WORKORDER_BACKEND: mysql
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_USER: ${MYSQL_USER:-industry}
       MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:-industry}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
-      ALLOW_DEGRADED_STORAGE: ${ALLOW_DEGRADED_STORAGE:-true}
+      ALLOW_DEGRADED_STORAGE: ${ALLOW_DEGRADED_STORAGE:-false}
       RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
@@ -175,6 +186,12 @@ services:
         condition: service_started
       cad-service:
         condition: service_started
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    volumes:
+      - agent-runtime-data:/app/.runtime
     ports:
       - "${AGENT_PORT:-8010}:8010"
 
@@ -233,6 +250,7 @@ services:
         condition: service_started
 
 volumes:
+  agent-runtime-data:
   mysql-data:
   redis-data:
   etcd-data:
