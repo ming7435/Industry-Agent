@@ -11,7 +11,7 @@
       "type": "string",
       "enum": [
         "planner_start", "planner_end", "goal_parsed", "loop_start", "loop_continue", "evaluation_result", "action_selected", "capability_selected", "capability_blocked", "execution_start",
-        "execution_end", "evidence_added", "review_result", "replan", "loop_stop",
+        "execution_end", "evidence_added", "policy_decision", "review_result", "replan", "loop_stop",
         "node_started", "node_completed",
         "agent_start", "agent_end", "agent_started", "agent_completed", "agent_error", "agent_timeout",
         "tool_start", "tool_end", "tool_started", "tool_completed", "tool_error",

@@ -9,6 +9,7 @@ Goal/Event
   → CapabilityRegistry（按 required_capability 选 Agent）
   → LoopEngine（统一边界、超时、重复动作和停止条件）
   → ActionModel / ExecutionManager
+  → RuntimePolicy（allow / require_approval / deny）
   → Agent / Tool / MCP
   → Evidence
   → RuntimeEvaluator（continue / replan / final / blocked）
@@ -28,8 +29,18 @@ Runtime 的一次任务可以通过 `task_id + trace_id` 还原 Planner、Capabi
 CapabilityRegistry 选择执行者。Evaluator 的 `replan` 同样经过这条路径，并受限于
 有界重规划次数、执行超时、幂等键和 LoopEngine 停止条件。
 
-Safety / Policy Control（第二阶段）不在本次 Runtime 收敛范围内；本阶段只保证动作
-调度、证据闭环、重规划和执行边界可追踪、可停止。
+第一阶段不包括 Safety / Policy Control；它只保证动作调度、证据闭环、重规划和执行
+边界可追踪、可停止。第二阶段在其上增加如下执行前策略控制。
+
+### 第二阶段 Safety / Policy Control（当前实现）
+
+RuntimeDispatcher 在 ExecutionManager 之前调用 `RuntimePolicy`。副作用 Action 必须
+带幂等键；`workorder_create` 必须具备诊断、知识、CAD 和可执行维修计划证据；高风险
+或显式要求审批的变更动作必须在 Runtime state/context 中出现对应的
+`approved_capabilities`。策略结果写入 `policy_decision` Trace；`deny` 终止为
+`blocked`，`require_approval` 终止为 `waiting_approval`，两者都不会触发 Agent、Tool
+或 MCP 执行。Memory 的经验内容准入仍由既有 Memory Validator / Evaluator 负责，避免
+Policy 重复实现业务规则。
 
 审查范围：`services/agent-service/app/`，以重构前 `3aed0ae` 提交的 176 个 Python 文件为依据；不以 README 作为架构依据。
 

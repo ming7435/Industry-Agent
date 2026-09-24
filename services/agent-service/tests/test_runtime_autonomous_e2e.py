@@ -19,8 +19,14 @@ class _LifecycleAgent(BaseAgent):
             "evidence": [{"id": "%s-evidence" % self.capabilities[0]}],
             "confidence": 0.95,
         }
+        if self.capabilities[0] == "document_search":
+            output["documents"] = [{"id": "DOC-RUNTIME-1"}]
+        if self.capabilities[0] == "drawing_search":
+            output["components"] = [{"id": "PART-RUNTIME-1"}]
         if self.capabilities[0] == "workorder_create":
             output.update({"status": "open", "workorder_id": "WO-RUNTIME-1"})
+        if self.capabilities[0] == "repair_planning":
+            output.update({"workorder_ready": True})
         if self.capabilities[0] == "experience_learning":
             output.update({"rag_saved": True, "experience_id": "EXP-RUNTIME-1"})
         return output

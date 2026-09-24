@@ -104,3 +104,21 @@
 
 This completes the first Runtime-convergence phase. Safety / Policy Control remains a
 separate second phase and is intentionally not introduced here.
+
+### Task 8: Safety / Policy Control (Phase 2)
+
+**Files:**
+- Create `services/agent-service/app/runtime/policy.py`
+- Modify `services/agent-service/app/runtime/dispatcher.py`
+- Modify `services/agent-service/app/runtime/coordinator.py`
+- Modify `services/agent-service/app/runtime/loop_engine.py`
+- Modify `services/agent-service/app/runtime/container.py`
+- Modify `shared/contracts/runtime-trace.schema.json`
+- Test `services/agent-service/tests/test_runtime_policy*.py`
+
+- [x] Add deterministic pre-execution policy decisions for allow, approval, and deny.
+- [x] Gate side effects by idempotency, evidence prerequisites, and scoped approval.
+- [x] Stop Runtime immediately on policy denial or approval wait and preserve the reason.
+- [x] Trace policy decisions and verify controlled-autonomy replay behavior.
+
+This completes the second phase while preserving the first-phase Runtime control center.

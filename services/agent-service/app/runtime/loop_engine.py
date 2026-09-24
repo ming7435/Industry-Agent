@@ -204,6 +204,24 @@ class LoopEngine:
                 evidence_score = max(0.0, min(1.0, float(output.get("evidence_score", evidence_score))))
             except (TypeError, ValueError):
                 evidence_score = 0.0
+            terminal_status = str(output.get("terminal_status") or "").strip()
+            if terminal_status:
+                terminal_reason = str(output.get("terminal_reason") or terminal_status)
+                history.append({
+                    "iteration": iteration,
+                    "action": action.name if action else "",
+                    "stop_reason": terminal_reason,
+                    "terminal_status": terminal_status,
+                })
+                return stopped(LoopResult(
+                    status=terminal_status,
+                    stop_reason=terminal_reason,
+                    state=state,
+                    iterations=iteration + 1,
+                    evidence_score=evidence_score,
+                    actions=actions,
+                    history=history,
+                ))
             current_evidence = {str(item) for item in output.get("evidence_ids", []) if item}
             evidence_history.append(sorted(current_evidence))
             confidence_raw = output.get("confidence")

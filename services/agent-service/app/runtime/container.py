@@ -24,6 +24,7 @@ from .execution import ExecutionManager
 from .planner import Planner
 from .dispatcher import RuntimeDispatcher
 from .coordinator import RuntimeCoordinator
+from .policy import RuntimePolicy
 
 
 class AgentContainer:
@@ -41,6 +42,7 @@ class AgentContainer:
         self.registry = registry
         self.tools = registry
         self.capabilities = build_capability_registry()
+        self.policy = RuntimePolicy()
         self.trace = TraceRecorder()
         self.execution_manager = ExecutionManager(
             timeout_seconds=settings.agent_timeout_seconds,
@@ -104,6 +106,7 @@ class AgentContainer:
             trace=self.trace,
             tools=self.registry,
             harnesses=self.harnesses,
+            policy=self.policy,
         )
         self.coordinator = RuntimeCoordinator(self)
         self.operations = RuntimeOperations(

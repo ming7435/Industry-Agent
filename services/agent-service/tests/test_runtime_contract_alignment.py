@@ -101,3 +101,19 @@ def test_runtime_trace_schema_accepts_real_harness_and_tool_lifecycle_records() 
     for record in records:
         _assert_valid(schema, {"event": record["event"], "task_id": event["task_id"], "trace_id": event["trace_id"], **record})
 
+
+def test_runtime_trace_schema_accepts_policy_decision_records() -> None:
+    schema = _schema("runtime-trace.schema.json")
+    _assert_valid(
+        schema,
+        {
+            "event": "policy_decision",
+            "task_id": "TASK-POLICY-CONTRACT",
+            "trace_id": "TRACE-POLICY-CONTRACT",
+            "state_change": {
+                "status": "require_approval",
+                "reason": "approval_required",
+                "risk_level": "high",
+            },
+        },
+    )

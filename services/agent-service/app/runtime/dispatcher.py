@@ -11,6 +11,7 @@ from app.tools.registry import ToolRegistry
 from .action import ActionModel, ActionType
 from .capability import CapabilityRegistry
 from .execution import ExecutionManager, ExecutionStatus
+from .policy import PolicyStatus, RuntimePolicy
 
 
 def action_key(state: Mapping[str, Any], payload: Mapping[str, Any]) -> str:
@@ -32,12 +33,14 @@ class RuntimeDispatcher:
         trace: TraceRecorder | None = None,
         tools: ToolRegistry | None = None,
         harnesses: Mapping[str, Any] | None = None,
+        policy: RuntimePolicy | None = None,
     ) -> None:
         self.capabilities = capabilities
         self.execution_manager = execution_manager
         self.trace = trace or TraceRecorder()
         self.tools = tools
         self.harnesses = dict(harnesses or {})
+        self.policy = policy or RuntimePolicy()
 
     def _emit(self, event: str, state: Mapping[str, Any], **payload: Any) -> None:
         record = {
@@ -63,6 +66,30 @@ class RuntimeDispatcher:
             return AgentResult(success=False, output={"error": "missing action"})
         current = dict(state or {})
         self._emit("action_selected", current, action=action.as_dict())
+
+        decision = self.policy.evaluate(action, current)
+        self._emit(
+            "policy_decision", current,
+            action_id=action.action_id,
+            required_capability=action.required_capability or action.target,
+            status=decision.status.value,
+            reason=decision.reason,
+            risk_level=decision.risk_level,
+            required_evidence=list(decision.required_evidence),
+            missing_evidence=list(decision.missing_evidence),
+        )
+        if decision.status != PolicyStatus.ALLOW:
+            return AgentResult(
+                success=False,
+                output={
+                    "status": "waiting_approval" if decision.status == PolicyStatus.REQUIRE_APPROVAL else "blocked",
+                    "policy_status": decision.status.value,
+                    "reason": decision.reason,
+                    "error": decision.reason,
+                    "risk_level": decision.risk_level,
+                    "missing_evidence": list(decision.missing_evidence),
+                },
+            )
 
         if action.action_type == ActionType.TOOL:
             return self._dispatch_tool(action, current)

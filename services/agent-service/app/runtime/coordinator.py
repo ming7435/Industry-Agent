@@ -81,6 +81,28 @@ class RuntimeCoordinator:
             action = plan.actions[index]
             result = self.container.dispatcher.dispatch(action, current)
             if not result.success:
+                policy_status = str(result.output.get("policy_status") or "")
+                if policy_status in {"deny", "require_approval"}:
+                    policy_output = dict(result.output or {})
+                    next_state = {
+                        **current,
+                        "runtime_policy": {
+                            "status": policy_status,
+                            "reason": str(policy_output.get("reason") or "policy_denied"),
+                            "risk_level": str(policy_output.get("risk_level") or "normal"),
+                            "missing_evidence": list(policy_output.get("missing_evidence") or []),
+                        },
+                    }
+                    return {
+                        "state": next_state,
+                        "action": action,
+                        "terminal_status": "waiting_approval" if policy_status == "require_approval" else "blocked",
+                        "terminal_reason": str(policy_output.get("reason") or "policy_denied"),
+                        "evidence_ids": [],
+                        "evidence_score": 0.0,
+                        "confidence": None,
+                        "done": False,
+                    }
                 raise RuntimeError(str(result.output.get("error") or "Runtime Action failed"))
             capability = action.required_capability or action.target
             outputs = dict(current.get("runtime_outputs") or {})
@@ -232,7 +254,7 @@ class RuntimeCoordinator:
         }
         final_state["runtime_actions"] = list(result.actions)
         if result.status != "completed":
-            final_state["status"] = "blocked"
+            final_state["status"] = result.status
             final_state["stop_reason"] = result.stop_reason
         return final_state
 
