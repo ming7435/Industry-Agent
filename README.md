@@ -197,6 +197,15 @@ npm run start:all
 
 按 Ctrl+C 会统一停止这些子进程。模拟工厂仍需单独提前启动。
 
+### Release Candidate Docker 包
+
+RC/生产部署使用 `infra/docker/docker-compose.yml`（生产覆盖层为
+`infra/docker/docker-compose.production.yml`），当前运行时包包含 Agent、RAG、CAD
+和 Monitor。`backend-service`、`model-service` 是预留边界，不属于本地 Runtime
+启动链；外部 PLC/MES/Inventory/QMS MCP、审批身份认证和生产 Secret Manager
+需要在部署环境中提供。完整的密钥注入、持久化卷、健康检查和 fallback 策略见
+[`docs/deployment/rc-packaging.md`](docs/deployment/rc-packaging.md)。
+
 ### 1. 启动 RAG Service
 
 ~~~powershell
