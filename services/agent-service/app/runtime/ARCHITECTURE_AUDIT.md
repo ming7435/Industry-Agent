@@ -1,5 +1,36 @@
 # Agent Service 架构审查与重构记录
 
+## Runtime 收敛后的控制路径（当前实现）
+
+```text
+Goal/Event
+  → JEVParser
+  → Planner（只生成 Action）
+  → CapabilityRegistry（按 required_capability 选 Agent）
+  → LoopEngine（统一边界、超时、重复动作和停止条件）
+  → ActionModel / ExecutionManager
+  → Agent / Tool / MCP
+  → Evidence
+  → RuntimeEvaluator（continue / replan / final / blocked）
+  → Planner 重规划或最终状态
+  → Memory Learning（由 learning Action 进入）
+```
+
+顶层 LangGraph 只注册 `runtime` 节点，负责 State 生命周期和 Runtime 入口；旧业务节点方法保留给直接调用方和兼容测试，但不再构成顶层业务边。`QualityAgent` 是生产零件质量检测的唯一质量 Agent，能力为 `quality_inspection / quality_review`。
+
+Runtime 的一次任务可以通过 `task_id + trace_id` 还原 Planner、Capability、Action、Execution、Evidence、Evaluation 和 Loop 停止原因。Runtime-managed 的 Diagnosis/Maintenance 请求不会再通过注入的 Knowledge/CAD provider 发起隐式 A2A；同查询的有效知识证据由 Dispatcher 复用。
+
+### 第一阶段边界（已完成）
+
+第一阶段的“自治”是 Runtime 驱动且有界的自治：Agent 可以通过统一的
+`AgentResult.next_actions` 提出后续能力需求，但不能直接调用另一个 Agent。Runtime
+会将显式 `required_capability` 送回 Planner，重新生成 Action，再由
+CapabilityRegistry 选择执行者。Evaluator 的 `replan` 同样经过这条路径，并受限于
+有界重规划次数、执行超时、幂等键和 LoopEngine 停止条件。
+
+Safety / Policy Control（第二阶段）不在本次 Runtime 收敛范围内；本阶段只保证动作
+调度、证据闭环、重规划和执行边界可追踪、可停止。
+
 审查范围：`services/agent-service/app/`，以重构前 `3aed0ae` 提交的 176 个 Python 文件为依据；不以 README 作为架构依据。
 
 ## 重构前调用关系
@@ -19,7 +50,11 @@ api/entrypoints.py、api/server.py、监控入口
 
 `run_user()` 提供 `entry=user`、`user_text/context`；`run_abnormal_event()` 提供 `entry=trigger`、`event`。两者共用 `_execute_graph()`，生成 `task_id/trace_id/errors`，调用同一个 LangGraph，并返回 Trace。
 
-`START → route`。用户路由可到 `diagnosis/knowledge/cad/maintenance/workorder/quality/report/memory/workorder_action/workorder_query`，`unknown/need_more_context` 直接结束。自动异常固定进入 `diagnosis → knowledge → cad → maintenance → workorder → END`；用户诊断、知识、CAD、维修计划路径最终转 `report`；零件质检为 `quality → report`。工单和 Memory 直接结束。
+历史 Graph 节点仍保留以兼容直接调用方；当前顶层 Graph 只建立
+`START → runtime → END`。因此下述旧节点关系仅描述兼容层，不再决定 Runtime 业务顺序。
+Runtime 的实际顺序由 Planner 生成的 Actions、CapabilityRegistry 和 LoopEngine
+动态决定；零件质检仍只使用现有 `QualityAgent` 的
+`quality_inspection / quality_review` 能力。
 
 `AgentState` 核心字段：`task_id, trace_id, entry, user_text, context, event, route, route_result, diagnosis, knowledge, cad, maintenance_plan, workorder, workorder_result, quality, rework_via, report, experience, memory, memory_result, repair_feedback, repair_verification, status, pending_workorder_id, errors, trace`。重构未修改字段定义。
 

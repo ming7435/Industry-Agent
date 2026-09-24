@@ -34,11 +34,9 @@
 - Modify `services/agent-service/app/runtime/coordinator.py`
 - Test `services/agent-service/tests/test_runtime_execution_policy.py`
 
-- [ ] Add a failing test proving Runtime Dispatcher executes one Agent attempt through ExecutionManager without Harness retry.
-- [ ] Add a failing test proving Runtime loop timeout is derived from the configured ExecutionManager timeout with a bounded collection margin.
-- [ ] Implement `AgentHarness.execute_once()` and route Runtime Dispatcher through it.
-- [ ] Make RuntimeCoordinator use the shared execution timeout for its outer guard.
-- [ ] Run focused execution-policy tests and the existing harness/execution tests.
+- [x] Add and run execution-policy tests for one Runtime attempt and shared timeout bounds.
+- [x] Implement `AgentHarness.execute_once()` and route Runtime Dispatcher through it.
+- [x] Make RuntimeCoordinator use the shared execution timeout for its outer guard.
 
 ### Task 2: Capability source of truth
 
@@ -47,10 +45,8 @@
 - Modify `services/agent-service/app/runtime/planner.py`
 - Test `services/agent-service/tests/test_capability_source_of_truth.py`
 
-- [ ] Add a failing test proving the default Registry exactly mirrors concrete Agent class declarations.
-- [ ] Add a failing test proving Planner does not maintain a second capability-to-Agent map.
-- [ ] Build the default Registry from `CORE_AGENT_REGISTRY` class declarations and preserve unknown capability blocking.
-- [ ] Run capability, planner, dispatcher, and Agent contract tests.
+- [x] Add and run source-of-truth tests for concrete Agent declarations and Planner resolution.
+- [x] Build the default Registry from `CORE_AGENT_REGISTRY` class declarations and preserve unknown capability blocking.
 
 ### Task 3: Real bounded Planner replan
 
@@ -59,10 +55,9 @@
 - Modify `services/agent-service/app/runtime/coordinator.py`
 - Test `services/agent-service/tests/test_runtime_replan.py`
 
-- [ ] Add a failing coordinator test where a maintenance Agent returns validation findings and Planner is called again with a new bounded capability sequence.
-- [ ] Add a failing test proving a replan is capped and cannot repeat a side-effect WorkOrder indefinitely.
-- [ ] Implement Planner replan context and RuntimeCoordinator plan replacement while preserving completed state and idempotency keys.
-- [ ] Run loop, evaluator, planner, and Runtime graph-control tests.
+- [x] Add and run coordinator tests for maintenance replanning and a capped repeated failure.
+- [x] Replace the remaining plan through Planner context while preserving completed state and WorkOrder idempotency.
+- [x] Run loop, evaluator, planner, and Runtime graph-control tests.
 
 ### Task 4: Evidence reuse and Runtime-managed Maintenance boundary
 
@@ -71,10 +66,8 @@
 - Modify `services/agent-service/app/agents/maintenance/graph.py`
 - Test `services/agent-service/tests/test_runtime_evidence_reuse.py`
 
-- [ ] Add a failing test proving Diagnosis Knowledge evidence is reused for the outer document-search Action.
-- [ ] Add a failing test proving Runtime-managed Maintenance does not issue its own Knowledge/CAD provider calls when context is present.
-- [ ] Implement task-scoped evidence reuse and an explicit Runtime-managed request flag while preserving direct legacy provider behavior.
-- [ ] Run duplicate-call, maintenance, A2A, and Runtime E2E tests.
+- [x] Add and run tests for Diagnosis evidence reuse and Runtime-managed Maintenance/Diagnosis boundaries.
+- [x] Implement task-scoped evidence reuse and an explicit Runtime-managed request flag while preserving direct provider behavior.
 
 ### Task 5: Trace and Action contract alignment
 
@@ -83,10 +76,8 @@
 - Modify `shared/contracts/runtime-action.schema.json`
 - Test `services/agent-service/tests/test_runtime_contract_alignment.py`
 
-- [ ] Add a failing schema test for actual Agent/Tool lifecycle event names.
-- [ ] Add a failing schema test requiring `required_capability` on AGENT Actions.
-- [ ] Update schemas without removing legacy event aliases or Action aliases.
-- [ ] Run shared contract and trace regression tests.
+- [x] Add and run schema tests for actual Agent/Tool lifecycle records and AGENT Action capabilities.
+- [x] Update schemas without removing legacy event or Action aliases.
 
 ### Task 6: Deterministic full Runtime E2E and documentation
 
@@ -96,8 +87,20 @@
 - Modify `services/agent-service/app/runtime/ARCHITECTURE_AUDIT.md`
 - Modify `docs/superpowers/plans/2026-09-23-runtime-convergence.md`
 
-- [ ] Add a deterministic full Runtime scenario covering JEV, Planner, capability selection, Diagnosis, Knowledge, CAD, Maintenance, WorkOrder, Quality, Memory, Evidence, Evaluation, and final stop using existing Agent contracts and test fixtures.
-- [ ] Make the external RAG dependency explicit in integration tests; no test may silently depend on an unavailable service.
-- [ ] Update architecture and completion checklists to describe the Runtime-controlled path and the single production-part QualityAgent boundary.
-- [ ] Run Agent, RAG, CAD, compile, and frontend build verification.
+- [x] Maintain deterministic full Runtime coverage for JEV, Planner, capability selection, Diagnosis, Knowledge, CAD, Maintenance, WorkOrder, Quality, Memory, Evidence, Evaluation, and final stop.
+- [x] Make the external RAG dependency explicit in integration tests; deterministic E2E enables local fallback.
+- [x] Update architecture and completion checklists for the Runtime path and single production-part QualityAgent boundary.
+- [x] Run the available repository verification matrix (Agent focused/full non-temp suite, RAG/CAD contract suites, and compile checks); external service availability remains an explicit test input.
 
+### Task 7: Dynamic outer-loop handoff
+
+**Files:**
+- Modify `services/agent-service/app/runtime/coordinator.py`
+- Test `services/agent-service/tests/test_runtime_replan.py`
+
+- [x] Accept only explicit capability requirements from `AgentResult.next_actions`.
+- [x] Return those requirements to Planner and continue through ActionModel and CapabilityRegistry.
+- [x] Trace the dynamic handoff as a Runtime `replan` while retaining bounded loop limits.
+
+This completes the first Runtime-convergence phase. Safety / Policy Control remains a
+separate second phase and is intentionally not introduced here.

@@ -45,10 +45,14 @@ def test_orchestrator_response_trace_isolated_to_current_task_and_trace():
     assert result["trace"] == []
 
 
-def test_same_event_has_one_task_and_one_workorder():
+def test_same_event_has_one_task_and_one_workorder(monkeypatch):
     from fastapi.testclient import TestClient
     from app.api.server import create_app
 
+    # This E2E exercises Runtime contracts and must not depend on an external
+    # RAG service being available in the test process.
+    monkeypatch.setenv("RAG_ALLOW_LOCAL_FALLBACK", "true")
+    monkeypatch.setenv("RAG_SERVICE_TIMEOUT_SECONDS", "1")
     client = TestClient(create_app())
     event = {"event_id": "EVT-E2E-1", "device_id": "D-1", "alarm_code": "E102", "event_type": "alarm"}
     first = client.post("/api/v1/agent/event", json={"event": event}).json()

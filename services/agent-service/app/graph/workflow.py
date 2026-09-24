@@ -22,8 +22,6 @@ class AgentOrchestrator:
         # Graph is intentionally a state/execution layer. RuntimeCoordinator
         # owns planning, capability selection, looping, and Agent execution.
         graph.add_node("runtime", self.nodes.runtime)
-        for name in ("route", "diagnosis", "knowledge", "cad", "maintenance", "workorder", "quality", "workorder_action", "workorder_query", "memory", "report"):
-            graph.add_node(name, getattr(self.nodes, name))
         graph.add_edge(START, "runtime")
         graph.add_edge("runtime", END)
         self.graph = graph.compile()

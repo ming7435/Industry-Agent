@@ -92,3 +92,24 @@ def test_runtime_state_preserves_runtime_fields_through_langgraph_schema():
     assert result["runtime_plan"] == {"actions": []}
     assert result["runtime_result"]["status"] == "completed"
     assert result["runtime_actions"] == []
+
+
+def test_graph_registers_runtime_as_the_only_business_execution_node():
+    from app.graph.workflow import AgentOrchestrator
+
+    class _Container:
+        trace = TraceRecorder()
+        requests = SimpleNamespace()
+        tracing = SimpleNamespace(
+            start=lambda *_args, **_kwargs: None,
+            finish=lambda _name, _state, payload: payload,
+        )
+
+        class _Coordinator:
+            def run(self, state):
+                return {**state, "runtime_result": {"status": "completed"}}
+
+        coordinator = _Coordinator()
+
+    orchestrator = AgentOrchestrator(container=_Container())
+    assert set(orchestrator.graph.nodes) <= {"__start__", "runtime", "__end__"}

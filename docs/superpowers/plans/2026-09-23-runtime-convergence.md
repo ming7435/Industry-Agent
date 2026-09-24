@@ -41,11 +41,9 @@
 - `GoalEvent(goal, entities, constraints, required_capabilities, source, raw)`.
 - `JEVParser.parse(payload) -> GoalEvent`.
 
-- [ ] Write failing contract tests for all nine registered Agents, AgentResult conversion, and JEV output.
-- [ ] Run the focused tests and observe failures caused by the missing contract.
-- [ ] Implement the minimal BaseAgent/AgentResult/JEV types and make each existing Agent inherit BaseAgent with its declared capability tuple.
-- [ ] Register concrete Agent instances in the Agent Registry without changing their existing `run()` implementations.
-- [ ] Run focused tests and the existing Agent registry tests.
+- [x] Write and run contract tests for all nine registered Agents, AgentResult conversion, and JEV output.
+- [x] Implement BaseAgent/AgentResult/JEV and declare capabilities on existing Agents.
+- [x] Register concrete Agent instances without changing their business `run()` implementations.
 
 ### Task 2: Capability-driven planning and Runtime dispatcher
 
@@ -62,11 +60,9 @@
 - `CapabilityRegistry.register_agent(agent)`, `resolve_agent(capability)`, and `snapshot()`.
 - `RuntimeDispatcher.dispatch(action, state) -> AgentResult`.
 
-- [ ] Write failing tests proving Planner Actions contain required capabilities, Registry resolves concrete Agents, unknown capabilities are blocked, and side-effect Actions use ExecutionManager.
-- [ ] Run the focused tests and observe failures.
-- [ ] Implement dynamic Agent registration and a dispatcher that emits capability/action/execution trace events, then calls AgentHarness/Agent.execute through ExecutionManager.
-- [ ] Preserve Planner legacy `target` values while making `required_capability` authoritative.
-- [ ] Run focused tests plus Planner, Capability, Execution, and idempotency tests.
+- [x] Test Planner capabilities, Registry resolution, unknown-capability blocking, and side-effect execution.
+- [x] Build the Dispatcher from declared capabilities and route Runtime execution through ExecutionManager.
+- [x] Preserve legacy `target` values while making `required_capability` authoritative.
 
 ### Task 3: Runtime-controlled Graph entrypoint
 
@@ -81,11 +77,9 @@
 - `AgentOrchestrator` creates a GoalEvent, asks Planner for a bounded plan, and runs the plan through RuntimeDispatcher/LoopEngine.
 - Existing `run_user()` and `run_abnormal_event()` return legacy state keys plus `runtime_plan`, `runtime_actions`, and `trace`.
 
-- [ ] Write failing tests proving an abnormal event is planned and dispatched by capability, while Graph no longer selects fixed diagnosis→knowledge→CAD edges.
-- [ ] Run the focused tests and observe the expected failure.
-- [ ] Add a Runtime node/container path in the Graph; preserve legacy node methods for direct callers and existing tests.
-- [ ] Make Planner/Dispatcher/LoopEngine determine the next Action; Graph only carries state and records lifecycle.
-- [ ] Run the complete Agent test suite and verify legacy A2A/WorkOrder behavior.
+- [x] Test abnormal-event planning and capability dispatch.
+- [x] Keep LangGraph as the single Runtime lifecycle node; preserve legacy node methods for direct callers.
+- [x] Make Planner/Dispatcher/LoopEngine determine Actions and preserve legacy A2A/WorkOrder behavior.
 
 ### Task 4: Loop and evaluator convergence
 
@@ -101,11 +95,9 @@
 - Domain normalization covers diagnosis, maintenance, and learning without introducing Agent-specific loops.
 - Loop events include `loop_continue`, `evidence_added`, `evaluation_result`, and `loop_stop`.
 
-- [ ] Write failing tests for diagnosis confidence, maintenance evidence, learning quality gate, and loop trace events.
-- [ ] Run focused tests and observe failures.
-- [ ] Implement domain-aware evidence/quality normalization and emit the canonical Runtime events.
-- [ ] Route existing review/replan behavior through LoopEngine without changing business result schemas.
-- [ ] Run loop, evaluator, learning, and evidence tests.
+- [x] Test diagnosis confidence, maintenance evidence, learning quality gates, and loop trace events.
+- [x] Implement domain-aware evaluation and canonical Runtime events.
+- [x] Route replanning through the shared LoopEngine without changing business result schemas.
 
 ### Task 5: Trace, full lifecycle E2E, and completion documentation
 
@@ -120,9 +112,8 @@
 - Canonical events: `planner_start`, `planner_end`, `capability_selected`, `action_selected`, `execution_start`, `execution_end`, `evidence_added`, `evaluation_result`, `loop_continue`, `loop_stop`.
 - E2E covers abnormal event → Planner → capability dispatch → diagnosis/knowledge/CAD/maintenance/workorder → close → memory learning/RAG experience.
 
-- [ ] Write the complete E2E test and assert every canonical event and lifecycle output.
-- [ ] Run it and observe failure before Runtime integration is complete.
-- [ ] Implement missing Trace normalization and durable result propagation without changing existing contracts.
-- [ ] Run all Agent, RAG, CAD, and frontend build checks.
-- [ ] Update architecture documentation with the final Runtime flow and completion criteria.
+- [x] Add deterministic E2E coverage for Runtime planning, capability dispatch, evidence, evaluation, WorkOrder idempotency, QualityAgent and Memory learning.
+- [x] Make external RAG dependency explicit in integration tests and use local fallback only in deterministic test setup.
+- [x] Align Trace and Action JSON Schemas with emitted lifecycle records.
+- [x] Update architecture documentation with the Runtime flow and completion criteria.
 

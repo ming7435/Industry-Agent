@@ -12,6 +12,19 @@ def test_evaluator_replans_low_confidence_diagnosis():
     assert "diagnosis_evidence" in result.missing_evidence
 
 
+def test_runtime_coordinator_can_use_a_verified_alarm_definition_as_diagnosis_evidence():
+    result = RuntimeEvaluator(min_confidence=0.0).evaluate({
+        "domain": "diagnosis",
+        "result": {
+            "confidence": 0.745,
+            "evidence": [],
+            "alarm_definition": {"found": True, "alarm_code": "E102"},
+        },
+    })
+
+    assert result.status == EvaluationStatus.FINAL
+
+
 def test_evaluator_blocks_low_quality_learning():
     result = RuntimeEvaluator().evaluate({
         "domain": "learning",

@@ -21,6 +21,25 @@
     "cost": {"type": "number", "minimum": 0},
     "fingerprint": {"type": "string"}
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"action_type": {"const": "AGENT"}}
+      },
+      "then": {
+        "required": ["payload"],
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["required_capability"],
+            "properties": {
+              "required_capability": {"type": "string", "pattern": "\\S"}
+            }
+          }
+        }
+      }
+    }
+  ],
   "x-legacy-input-aliases": {
     "kind": "action_type",
     "name": "target",

@@ -69,6 +69,15 @@ def load_diagnosis_skill(state: DiagnosisGraphState) -> Dict[str, Any]:
     for tool in get_skill_registry().merge_tools(definitions):
         if tool not in runtime.allowed_tools:
             runtime.allowed_tools.append(tool)
+    if bool((state.get("event") or {}).get("runtime_managed")):
+        # Knowledge retrieval is a separate Runtime Action. Keeping the
+        # tool out of the diagnosis boundary prevents the model from creating
+        # a second Knowledge call inside the Agent graph.
+        knowledge_tools = {
+            "search_knowledge", "search_alarm_knowledge", "search_sop",
+            "search_manual", "search_fault_cases", "search_semantic_memory",
+        }
+        runtime.allowed_tools = [tool for tool in runtime.allowed_tools if tool not in knowledge_tools]
     runtime.current_agent = "diagnosis.load_skill"
     runtime.messages.append({
         "role": "system",
@@ -120,7 +129,12 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
     runtime.messages.append(assistant)
     # 自动异常诊断需要知识证据时，通过 Orchestrator 注入的 A2A 回调调用 Knowledge。
     # 结果写回当前 Diagnosis Observation，后续模型继续基于证据判断，避免外层重复检索。
-    if not calls and getattr(agent, "knowledge_provider", None) and not tool_policy.has_tool_call(runtime, "search_knowledge"):
+    if (
+        not calls
+        and getattr(agent, "knowledge_provider", None)
+        and not bool((state.get("event") or {}).get("runtime_managed"))
+        and not tool_policy.has_tool_call(runtime, "search_knowledge")
+    ):
         query = tool_policy.knowledge_query(state["event"])
         arguments = {"query": query, "limit": 5}
         try:

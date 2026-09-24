@@ -81,6 +81,22 @@ class RuntimeDispatcher:
         self._emit("capability_selected", state, required_capability=capability, agent=agent_name)
         task = self._task_for_agent(capability, state, action.payload)
 
+        # Diagnosis may already have retrieved the exact knowledge evidence
+        # required by this Action. Reuse only a successful, non-degraded record
+        # with the same normalized query; all other searches still execute via
+        # the registered Knowledge Agent.
+        if capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
+            cached = self._cached_knowledge_result(state, task)
+            if cached is not None:
+                self._emit(
+                    "evidence_added",
+                    state,
+                    source="diagnosis_cache",
+                    required_capability=capability,
+                    evidence_count=len(cached.evidence),
+                )
+                return cached
+
         record = self.execution_manager.execute(
             action,
             lambda: self.harnesses[agent_name].execute_once(task)
@@ -100,10 +116,15 @@ class RuntimeDispatcher:
         """Adapt the canonical Runtime state to an existing Agent's request shape."""
 
         current = {**dict(state), **dict(payload)}
-        if capability == "fault_analysis":
+        if capability in {"fault_analysis", "diagnosis_review"}:
             event = dict(state.get("event") or payload.get("event") or current)
             event.setdefault("task_id", state.get("task_id", ""))
             event.setdefault("trace_id", state.get("trace_id", ""))
+            event["runtime_managed"] = True
+            event["runtime_capability"] = capability
+            if capability == "diagnosis_review":
+                event["knowledge"] = dict(state.get("knowledge") or {})
+                event["runtime_evidence"] = list(state.get("evidence") or [])
             return event
         diagnosis = dict(state.get("diagnosis") or {})
         query = str(
@@ -125,6 +146,7 @@ class RuntimeDispatcher:
                 "knowledge": dict(state.get("knowledge") or {}),
                 "cad": dict(state.get("cad") or {}),
                 "memory": dict(state.get("memory") or {}),
+                "runtime_managed": True,
                 "event_id": state.get("event", {}).get("event_id", ""),
                 "context": dict(state.get("context") or {}),
             }
@@ -152,6 +174,57 @@ class RuntimeDispatcher:
                 "query": query,
             }
         return current
+
+    @staticmethod
+    def _cached_knowledge_result(state: Mapping[str, Any], task: Mapping[str, Any]) -> AgentResult | None:
+        diagnosis = state.get("diagnosis")
+        if not isinstance(diagnosis, Mapping):
+            return None
+        expected_query = str(task.get("query") or "").strip()
+        if not expected_query:
+            return None
+        records = diagnosis.get("tool_calls") or diagnosis.get("tool_results") or []
+        if not isinstance(records, list):
+            return None
+        for record in records:
+            if not isinstance(record, Mapping):
+                continue
+            name = str(record.get("name") or record.get("tool_name") or "")
+            if name not in {
+                "search_knowledge",
+                "search_alarm_knowledge",
+                "search_sop",
+                "search_manual",
+                "search_fault_cases",
+                "search_semantic_memory",
+            }:
+                continue
+            arguments = record.get("arguments") or record.get("input") or {}
+            result = record.get("result") or record.get("output") or {}
+            if not isinstance(arguments, Mapping) or not isinstance(result, Mapping):
+                continue
+            query = str(result.get("query") or arguments.get("query") or "").strip()
+            if query != expected_query:
+                continue
+            if result.get("success") is False or result.get("degraded") or result.get("warning") or result.get("error"):
+                continue
+            evidence = result.get("documents") or result.get("items") or result.get("evidence") or []
+            if not isinstance(evidence, list) or not evidence:
+                continue
+            output = dict(result)
+            output.setdefault("query", query)
+            output.setdefault("documents", list(evidence))
+            try:
+                confidence = float(output.get("confidence") or 1.0)
+            except (TypeError, ValueError):
+                confidence = 1.0
+            return AgentResult(
+                success=True,
+                output=output,
+                evidence=list(evidence),
+                confidence=max(0.0, min(1.0, confidence)),
+            )
+        return None
 
     def _dispatch_tool(self, action: ActionModel, state: dict[str, Any]) -> AgentResult:
         if self.tools is None:

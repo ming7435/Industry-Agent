@@ -80,7 +80,11 @@ class RuntimeEvaluator:
                 return value
             raw_confidence = payload.get("confidence")
             confidence = float(raw_confidence) if raw_confidence is not None else 1.0
-            evidence = payload.get("evidence") or payload.get("evidence_records") or []
+            evidence = (
+                payload.get("evidence")
+                or payload.get("evidence_records")
+                or ([payload.get("alarm_definition")] if isinstance(payload.get("alarm_definition"), Mapping) and payload.get("alarm_definition", {}).get("found", True) else [])
+            )
             findings = payload.get("validation_errors") or payload.get("validation_findings") or []
             explicit_quality = raw_confidence is not None or bool(evidence) or bool(findings)
             ready = confidence >= self.min_confidence and (bool(evidence) or not explicit_quality) and not findings

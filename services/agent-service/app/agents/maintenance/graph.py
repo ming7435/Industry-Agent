@@ -71,7 +71,7 @@ def assess_diagnosis(state: MaintenanceGraphState) -> Dict[str, Any]:
 def request_knowledge(state: MaintenanceGraphState) -> Dict[str, Any]:
     request = state["request"]
     knowledge = dict(request.get("knowledge") or {})
-    if not knowledge:
+    if not knowledge and not request.get("runtime_managed"):
         knowledge = state["agent"].request_knowledge(state["query"], state["diagnosis"])
     return {"knowledge": knowledge, "route": "request_cad"}
 
@@ -79,7 +79,7 @@ def request_knowledge(state: MaintenanceGraphState) -> Dict[str, Any]:
 def request_cad(state: MaintenanceGraphState) -> Dict[str, Any]:
     request = state["request"]
     cad = dict(request.get("cad") or {})
-    if not cad and state.get("cad_required", True):
+    if not cad and state.get("cad_required", True) and not request.get("runtime_managed"):
         cad = state["agent"].request_cad(state["query"], state["diagnosis"], required=True)
     return {"cad": cad, "route": "plan_repair"}
 
