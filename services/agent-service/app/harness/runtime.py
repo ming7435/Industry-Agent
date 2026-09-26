@@ -43,6 +43,16 @@ class AgentHarness:
 
         return self.trace.list()
 
+    def _tool_context(self, task: Any, task_id: str, trace_id: str) -> dict[str, Any]:
+        """Build the optional shared Tool Guard context from Runtime state."""
+
+        raw = task.get("runtime_context") if isinstance(task, dict) else None
+        context = dict(raw) if isinstance(raw, dict) else {}
+        context.setdefault("agent", str(getattr(self.agent, "name", type(self.agent).__name__)))
+        context.setdefault("task_id", task_id)
+        context.setdefault("trace_id", trace_id)
+        return context
+
     def execute_once(self, abnormal_event: Any):
         """Run one attempt; RuntimeDispatcher owns timeout/retry policy."""
 
@@ -59,7 +69,7 @@ class AgentHarness:
             tools = getattr(self.agent, "tools", None)
             bind_trace = getattr(tools, "trace_context", None)
             if callable(bind_trace):
-                with bind_trace(task_id=task_id, trace_id=trace_id):
+                with bind_trace(task_id=task_id, trace_id=trace_id, context=self._tool_context(abnormal_event, task_id, trace_id)):
                     result = self.agent.run(abnormal_event)
             else:
                 result = self.agent.run(abnormal_event)
@@ -103,7 +113,7 @@ class AgentHarness:
                 tools = getattr(self.agent, "tools", None)
                 bind_trace = getattr(tools, "trace_context", None)
                 if callable(bind_trace):
-                    with bind_trace(task_id=task_id, trace_id=trace_id):
+                    with bind_trace(task_id=task_id, trace_id=trace_id, context=self._tool_context(abnormal_event, task_id, trace_id)):
                         return self.agent.run(abnormal_event)
                 return self.agent.run(abnormal_event)
 

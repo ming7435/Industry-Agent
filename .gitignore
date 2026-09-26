@@ -24,6 +24,7 @@ services/rag-service/data/index/
 services/rag-service/data/*.sqlite3
 *.log
 .runtime/
+runtime_pending_tasks.sqlite3
 
 # Editors / OS
 .idea/

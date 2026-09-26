@@ -11,6 +11,9 @@ steps:
   - validate_experience
   - persist
   - final
+  - validate_closed
+  - score_experience
+  - build_result
 tools:
   - get_workorder
 output: MemoryResult

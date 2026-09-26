@@ -7,9 +7,15 @@ steps:
   - query_part
   - query_drawing
   - validate_relation
+  - normalize_query
+  - classify_engineering_request
+  - resolve_part
+  - resolve_bom
+  - merge_engineering_context
+  - validate_engineering_context
+  - build_result
 tools:
   - query_part
   - query_drawing
   - query_relation
   - fetch_engineering_record
-

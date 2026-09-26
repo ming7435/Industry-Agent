@@ -70,7 +70,14 @@ def _default_env() -> dict[str, str]:
         "MCP_QMS_URL": "http://127.0.0.1:8030",
         "BACKEND_STORAGE": "sqlite",
         "BACKEND_SQLITE_PATH": str(PROJECT_ROOT / ".runtime" / "backend.sqlite3"),
-        "MODEL_PROVIDER": "fake",
+        # Use the configured remote provider for local runs.  CI/Docker smoke
+        # tests still set MODEL_PROVIDER=fake explicitly in their compose env.
+        "MODEL_PROVIDER": "remote",
+        # The local DeepSeek key may be present but unavailable when its
+        # account has no balance.  SiliconFlow is configured in the RAG env
+        # and provides the chat, embedding, and rerank endpoints.
+        "MODEL_CHAT_PROVIDER": "siliconflow",
+        "SILICONFLOW_CHAT_MODEL": "deepseek-ai/DeepSeek-V4-Flash",
         "APP_ENV": "development",
         "ALLOW_DEGRADED_STORAGE": "true",
         "RAG_ALLOW_LOCAL_FALLBACK": "true",
@@ -136,9 +143,22 @@ def main() -> int:
     services = [
         (
             "model-service",
-            [python, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8040"],
+            [
+                python,
+                "-m",
+                "uvicorn",
+                "app.main:app",
+                "--app-dir",
+                "services/model-service",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8040",
+            ],
             PROJECT_ROOT,
-            PROJECT_ROOT / "services" / "model-service",
+            # Model credentials are maintained with the RAG integration env;
+            # load that file into the shared model gateway as well.
+            PROJECT_ROOT / "services" / "rag-service",
         ),
         (
             "backend-service",

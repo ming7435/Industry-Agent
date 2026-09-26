@@ -69,6 +69,17 @@ class CADEngineeringValidator:
             findings.append("缺少部件位置依据")
         return cls._dedupe(findings)
 
+    @classmethod
+    def validate_result(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        findings = cls.validate(*args, **kwargs)
+        return {
+            "passed": not findings,
+            "checks": {"input": True, "evidence": not findings, "confidence": True, "consistency": not findings, "safety": True, "schema": True},
+            "findings": list(findings),
+            "missing": list(findings),
+            "recommended_action": {"type": "tool", "target": "fetch_engineering_record"} if findings else {"type": "continue"},
+        }
+
     @staticmethod
     def _dedupe(items: list[str]) -> list[str]:
         values: list[str] = []

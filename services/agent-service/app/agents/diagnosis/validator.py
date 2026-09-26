@@ -68,4 +68,13 @@ def validate_candidate(
     blocked_tools = {"create_workorder", "close_workorder", "query_inventory", "generate_report"}
     if any(item.get("name") in blocked_tools and item.get("guard") != "deny" for item in state.tool_calls):
         errors.append("调用了非 Diagnosis 权限工具")
-    return {"pass": not errors, "errors": errors, "evidence_count": len(state.evidence)}
+    return {
+        "pass": not errors,
+        "passed": not errors,
+        "errors": errors,
+        "checks": {"input": not errors, "evidence": not errors, "confidence": not errors, "consistency": not errors, "safety": True, "schema": not errors},
+        "findings": list(errors),
+        "missing": list(errors),
+        "recommended_action": {"type": "tool", "target": "get_device_history"} if errors else {"type": "continue"},
+        "evidence_count": len(state.evidence),
+    }

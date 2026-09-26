@@ -21,6 +21,7 @@ class EvaluationResult(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence_score: float = Field(default=0.0, ge=0.0, le=1.0)
     missing_evidence: list[str] = Field(default_factory=list)
+    recommended_action: str = ""
 
 
 class RuntimeEvaluator:
@@ -45,6 +46,7 @@ class RuntimeEvaluator:
                 confidence=self._confidence(value),
                 evidence_score=self._evidence_score(value),
                 missing_evidence=self._missing(value),
+                recommended_action="stop_and_escalate",
             )
         missing = self._missing(value)
         confidence = self._confidence(value)
@@ -57,6 +59,7 @@ class RuntimeEvaluator:
                 confidence=confidence,
                 evidence_score=evidence_score,
                 missing_evidence=findings or missing,
+                recommended_action="replan_with_missing_evidence",
             )
         done = bool(value.get("done") or value.get("complete"))
         if domain == "maintenance":
@@ -64,12 +67,16 @@ class RuntimeEvaluator:
         elif domain in {"knowledge", "cad"}:
             done = done or bool(value.get("documents") or value.get("evidence") or value.get("components") or value.get("parts"))
         if done and evidence_score >= self.min_evidence_score and confidence >= self.min_confidence and not missing:
-            return EvaluationResult(status=EvaluationStatus.FINAL, reason="evidence_and_confidence_sufficient", confidence=confidence, evidence_score=evidence_score, missing_evidence=[])
-        return EvaluationResult(status=EvaluationStatus.CONTINUE, reason="insufficient_evidence", confidence=confidence, evidence_score=evidence_score, missing_evidence=missing)
+            return EvaluationResult(status=EvaluationStatus.FINAL, reason="evidence_and_confidence_sufficient", confidence=confidence, evidence_score=evidence_score, missing_evidence=[], recommended_action="finalize")
+        return EvaluationResult(status=EvaluationStatus.CONTINUE, reason="insufficient_evidence", confidence=confidence, evidence_score=evidence_score, missing_evidence=missing, recommended_action="collect_missing_evidence")
 
     @staticmethod
     def _missing(value: Mapping[str, Any]) -> list[str]:
-        return [str(item) for item in (value.get("missing_evidence") or []) if item]
+        values = list(value.get("missing_evidence") or [])
+        validation = value.get("validation")
+        if isinstance(validation, Mapping):
+            values.extend(validation.get("missing") or validation.get("missing_evidence") or [])
+        return list(dict.fromkeys(str(item) for item in values if item))
 
     def _normalize_domain(self, value: dict[str, Any], domain: str) -> dict[str, Any]:
         result = value.get("result") if isinstance(value.get("result"), Mapping) else value
@@ -108,6 +115,19 @@ class RuntimeEvaluator:
             value.update({"done": ready, "workorder_ready": bool(payload.get("workorder_ready")),
                           "evidence_score": 1.0 if ready else 0.0,
                           "missing_evidence": [] if ready else ["maintenance_plan"]})
+        elif domain in {"quality", "quality_inspection"}:
+            payload = dict(result or {})
+            passed = payload.get("passed") is True or payload.get("qualified") is True or str(payload.get("status") or "").lower() == "pass"
+            evidence = payload.get("evidence") or payload.get("inspection_items") or payload.get("measurements")
+            findings = payload.get("failed_checks") or payload.get("findings") or []
+            value.update({
+                "done": bool(payload) and bool(evidence),
+                "confidence": 1.0 if passed else 0.0,
+                "evidence_score": 1.0 if evidence else 0.0,
+                "missing_evidence": [] if evidence else ["quality_inspection_evidence"],
+                "blocked": bool(payload) and not passed and bool(findings),
+                "reason": "quality_failed" if findings else "quality_evidence_pending",
+            })
         elif domain == "learning":
             nested_experience = value.get("experience") if isinstance(value.get("experience"), Mapping) else {}
             result_payload = value.get("result") if isinstance(value.get("result"), Mapping) else {}

@@ -50,6 +50,17 @@ class MaintenancePlanValidator:
     def workorder_ready(findings: list[str], plan: Mapping[str, Any]) -> bool:
         return not findings and bool(plan.get("repair_steps")) and bool(plan.get("repair_target"))
 
+    @classmethod
+    def validate_result(cls, plan: Mapping[str, Any], knowledge: Mapping[str, Any], cad: Mapping[str, Any], inventory: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        findings = cls.validate(plan, knowledge, cad, inventory)
+        return {
+            "passed": not findings,
+            "checks": {"input": True, "evidence": not findings, "confidence": True, "consistency": not findings, "safety": not findings, "schema": True},
+            "findings": list(findings),
+            "missing": list(findings),
+            "recommended_action": {"type": "replan", "target": "maintenance_replan"} if findings else {"type": "agent", "target": "workorder_create"},
+        }
+
     @staticmethod
     def _known_part_tokens(cad: Mapping[str, Any]) -> list[str]:
         tokens: list[str] = []

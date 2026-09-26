@@ -46,6 +46,28 @@ class NodeTrace:
             keys=list((payload or {}).keys()), tool_name="", latency=0.0, error="",
         )
 
+    def runtime_event(self, event: str, state: Mapping[str, Any], payload: Mapping[str, Any] | None = None) -> None:
+        """Record a normalized fine-grained Runtime lifecycle event."""
+
+        values = dict(payload or {})
+        agent = str(values.get("agent") or state.get("active_agent") or "runtime")
+        self.trace.record(
+            type="runtime", name="runtime", node="runtime", agent=agent,
+            event=event, task_id=str(state.get("task_id", "")),
+            trace_id=str(state.get("trace_id", "")), state_change=values,
+            keys=list(values), tool_name=str(values.get("tool") or ""),
+            latency=0.0, error=str(values.get("error") or ""),
+        )
+
+    def step_started(self, state: Mapping[str, Any], **payload: Any) -> None:
+        self.runtime_event("step_started", state, payload)
+
+    def step_completed(self, state: Mapping[str, Any], **payload: Any) -> None:
+        self.runtime_event("step_completed", state, payload)
+
+    def step_failed(self, state: Mapping[str, Any], **payload: Any) -> None:
+        self.runtime_event("step_failed", state, payload)
+
     @staticmethod
     def _node_agent(name: str) -> str:
         return {

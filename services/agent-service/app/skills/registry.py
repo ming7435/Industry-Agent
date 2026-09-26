@@ -12,9 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, List, Mapping
+from typing import Any, Iterable, List, Mapping, TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    from app.runtime.action import StepDefinition
 
 
 SKILLS_ROOT = Path(__file__).resolve().parent
@@ -29,10 +32,14 @@ class SkillDefinition:
     version: str = "1.0"
     goal: str = ""
     trigger: str = "default"
-    steps: tuple[str, ...] = ()
+    steps: tuple[Any, ...] = ()
     tools: tuple[str, ...] = ()
     required_inputs: tuple[str, ...] = ()
     optional_inputs: tuple[str, ...] = ()
+    required_evidence: tuple[str, ...] = ()
+    stop_conditions: tuple[str, ...] = ()
+    failure_policy: str = "stop"
+    output_schema: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
     path: str = ""
 
@@ -45,13 +52,38 @@ class SkillDefinition:
             version=str(payload.get("version") or "1.0"),
             goal=str(payload.get("goal") or ""),
             trigger=str(payload.get("trigger") or "default"),
-            steps=tuple(str(item) for item in payload.get("steps") or []),
+            steps=tuple(payload.get("steps") or []),
             tools=tuple(str(item) for item in payload.get("tools") or payload.get("allowed_tools") or []),
             required_inputs=tuple(str(item) for item in payload.get("required_inputs") or []),
             optional_inputs=tuple(str(item) for item in payload.get("optional_inputs") or []),
+            required_evidence=_as_strings(payload.get("required_evidence")),
+            stop_conditions=_as_strings(payload.get("stop_conditions")),
+            failure_policy=str(payload.get("failure_policy") or "stop"),
+            output_schema=dict(payload.get("output_schema") or {}) if isinstance(payload.get("output_schema"), Mapping) else {},
             metadata=dict(payload),
             path=str(path),
         )
+
+    def normalized_steps(self) -> list["StepDefinition"]:
+        """Return old string and new mapping steps as one executable shape."""
+
+        # Import lazily: app.runtime.__init__ wires the Agent container, while
+        # Agent graph modules also load this registry during package import.
+        from app.runtime.action import StepDefinition
+
+        normalized: list[StepDefinition] = []
+        for index, raw in enumerate(self.steps):
+            step = StepDefinition.coerce(raw)
+            # Skill-level defaults apply only when a structured step does not
+            # override them.  This keeps a compact legacy YAML meaningful.
+            if not step.required_inputs and self.required_inputs:
+                step = step.model_copy(update={"required_inputs": list(self.required_inputs)})
+            if not step.failure_policy or step.failure_policy == "stop":
+                step = step.model_copy(update={"failure_policy": self.failure_policy})
+            if not step.id:
+                step = step.model_copy(update={"id": "step-%s" % index})
+            normalized.append(step)
+        return normalized
 
 
 class SkillRegistry:
@@ -150,10 +182,18 @@ class SkillRegistry:
     def merge_steps(skills: List[SkillDefinition]) -> List[str]:
         steps: List[str] = []
         for skill in skills:
-            for step in skill.steps:
-                if step and step not in steps:
-                    steps.append(step)
+            for step in skill.normalized_steps():
+                if step.id and step.id not in steps:
+                    steps.append(step.id)
         return steps
+
+
+def _as_strings(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item) for item in value if str(item).strip())
+    return ()
 
 
 def _trigger_matches(trigger: str, context: Mapping[str, Any], text: str) -> bool:

@@ -7,6 +7,7 @@ from typing import Any, Dict, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
+from app.agents.base import trace_skill_node
 from app.contracts import RouteResult
 
 from .validator import RouterValidator
@@ -16,6 +17,11 @@ class RouterGraphState(TypedDict, total=False):
     """Router 单次运行在 LangGraph 节点之间传递的状态。"""
 
     agent: Any
+    active_agent: str
+    current_step: str
+    step_history: list[dict[str, Any]]
+    completed_steps: list[dict[str, Any]]
+    failed_steps: list[dict[str, Any]]
     task: Dict[str, Any]
     text: str
     context: Dict[str, Any]
@@ -130,7 +136,7 @@ def build_router_graph():
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, node)
+        workflow.add_node(name, trace_skill_node("router", name, node))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "classify_intent")

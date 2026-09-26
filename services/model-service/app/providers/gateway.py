@@ -99,7 +99,14 @@ class _OpenAICompatibleProvider:
         return value
 
     def chat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return self._post("/chat/completions", {**dict(payload), "model": payload.get("model") or self.model})
+        requested_model = str(payload.get("model") or "").strip()
+        # Agent/RAG clients use ``deepseek-chat`` as their generic contract
+        # default.  When the configured chat provider is SiliconFlow that
+        # model name is not valid there, so resolve it to the provider's
+        # configured model instead of forwarding a foreign provider name.
+        if not requested_model or (self.name == "siliconflow" and requested_model == "deepseek-chat"):
+            requested_model = self.model
+        return self._post("/chat/completions", {**dict(payload), "model": requested_model})
 
     def embeddings(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return self._post("/embeddings", {**dict(payload), "model": payload.get("model") or self.embedding_model})
@@ -117,14 +124,35 @@ class ModelGateway:
             self.chat_provider: Any = _FakeProvider()
             self.aux_provider: Any = self.chat_provider
         elif mode in {"remote", "deepseek", "siliconflow"}:
-            self.chat_provider = _OpenAICompatibleProvider("deepseek", os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"), os.getenv("DEEPSEEK_API_KEY", ""), os.getenv("DEEPSEEK_MODEL", "deepseek-chat"), "", "")
-            self.aux_provider = _OpenAICompatibleProvider("siliconflow", os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"), os.getenv("SILICONFLOW_API_KEY", ""), os.getenv("SILICONFLOW_VISION_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct"), os.getenv("SILICONFLOW_EMBEDDING_MODEL", "BAAI/bge-m3"), os.getenv("SILICONFLOW_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"))
+            siliconflow = _OpenAICompatibleProvider(
+                "siliconflow",
+                os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
+                os.getenv("SILICONFLOW_API_KEY", ""),
+                os.getenv("SILICONFLOW_CHAT_MODEL")
+                or os.getenv("SILICONFLOW_VISION_MODEL")
+                or "deepseek-ai/DeepSeek-V4-Flash",
+                os.getenv("SILICONFLOW_EMBEDDING_MODEL", "BAAI/bge-m3"),
+                os.getenv("SILICONFLOW_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"),
+            )
+            deepseek = _OpenAICompatibleProvider(
+                "deepseek",
+                os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+                os.getenv("DEEPSEEK_API_KEY", ""),
+                os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                "",
+                "",
+            )
+            chat_provider = os.getenv("MODEL_CHAT_PROVIDER", "deepseek").strip().lower()
+            self.chat_provider = siliconflow if chat_provider in {"siliconflow", "sf"} else deepseek
+            self.aux_provider = siliconflow
         else:
             raise ProviderError("unsupported MODEL_PROVIDER: %s" % mode)
 
     @property
     def name(self) -> str:
-        return str(self.chat_provider.name if self.chat_provider is self.aux_provider else "deepseek+siliconflow")
+        if self.chat_provider is self.aux_provider:
+            return str(self.chat_provider.name)
+        return "%s+%s" % (self.chat_provider.name, self.aux_provider.name)
 
     def chat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return dict(self.chat_provider.chat(payload))

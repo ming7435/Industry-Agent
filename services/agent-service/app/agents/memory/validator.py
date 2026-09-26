@@ -29,6 +29,19 @@ class MemoryAgentValidator:
             return ["仅允许已关闭且具有有效维修反馈的工单沉淀为维修经验"]
         return []
 
+    @classmethod
+    def validate_result(cls, request: Mapping[str, Any], *, admission: bool = False) -> dict[str, Any]:
+        checks: list[str] = []
+        checks.extend(cls.validate_action(request))
+        checks.extend(cls.validate_admission(request) if admission else cls.validate_search(request))
+        return {
+            "passed": not checks,
+            "checks": {"input": not checks, "evidence": not checks, "confidence": True, "consistency": not checks, "safety": True, "schema": True},
+            "findings": list(checks),
+            "missing": list(checks),
+            "recommended_action": {"type": "tool", "target": "get_workorder"} if checks else {"type": "persist", "target": "experience_learning"},
+        }
+
     @staticmethod
     def deduplicate(items: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
         seen: set[tuple[str, str, str, str]] = set()

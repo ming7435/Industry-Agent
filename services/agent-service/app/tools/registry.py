@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
+from hashlib import sha256
 from time import perf_counter
 from typing import Any, Dict, Iterator, Mapping
 
@@ -91,6 +93,32 @@ _TOOL_TRACE_CONTEXT: ContextVar[tuple[str, str]] = ContextVar(
     "tool_trace_context",
     default=("", ""),
 )
+_TOOL_EXECUTION_CONTEXT: ContextVar[dict[str, Any]] = ContextVar(
+    "tool_execution_context",
+    default={},
+)
+
+
+@dataclass(frozen=True)
+class ToolExecutionContext:
+    """Optional context shared by Runtime, Agent, and Tool Guard."""
+
+    agent: str = ""
+    skills: tuple[str, ...] = ()
+    step: str = ""
+    allowed_tools: tuple[str, ...] = ()
+    task_id: str = ""
+    trace_id: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "agent": self.agent,
+            "skills": list(self.skills),
+            "step": self.step,
+            "allowed_tools": list(self.allowed_tools),
+            "task_id": self.task_id,
+            "trace_id": self.trace_id,
+        }
 
 
 class ToolRegistry:
@@ -180,13 +208,25 @@ class ToolRegistry:
         })
 
     @contextmanager
-    def trace_context(self, task_id: str = "", trace_id: str = "") -> Iterator[None]:
+    def trace_context(
+        self,
+        task_id: str = "",
+        trace_id: str = "",
+        context: Mapping[str, Any] | ToolExecutionContext | None = None,
+        **metadata: Any,
+    ) -> Iterator[None]:
         """Bind the current task and trace to direct tool invocations."""
 
         token = _TOOL_TRACE_CONTEXT.set((str(task_id or ""), str(trace_id or "")))
+        base_context = context.as_dict() if isinstance(context, ToolExecutionContext) else dict(context or {})
+        execution_context = {**base_context, **metadata}
+        execution_context.setdefault("task_id", str(task_id or ""))
+        execution_context.setdefault("trace_id", str(trace_id or ""))
+        context_token = _TOOL_EXECUTION_CONTEXT.set(execution_context)
         try:
             yield
         finally:
+            _TOOL_EXECUTION_CONTEXT.reset(context_token)
             _TOOL_TRACE_CONTEXT.reset(token)
 
     def _get_device_history(self, **arguments: Any) -> Dict[str, Any]:
@@ -316,6 +356,16 @@ class ToolRegistry:
             return self.mcp.call("mes", "persist_report", arguments)
         return persist_report_tool(self.report_store, **arguments)
 
+    def list_reports(self, workorder_id: str = "", **_: Any) -> Dict[str, Any]:
+        """List persisted reports for the Report workspace."""
+
+        if self.backend_base_url:
+            return self.mcp.call("mes", "list_reports", {"workorder_id": workorder_id})
+        items = list(self.report_store.values())
+        if workorder_id:
+            items = [item for item in items if str(item.get("workorder_id") or "") == str(workorder_id)]
+        return {"success": True, "items": items, "count": len(items), "backend": "report-store"}
+
     def generate_report_file(self, **arguments: Any) -> Dict[str, Any]:
         return generate_report_file_tool(**arguments)
 
@@ -399,7 +449,13 @@ class ToolRegistry:
             return self.mcp.call("qms", "inspect_part_process", arguments)
         return inspect_part_process_tool(self.quality_mcp, **arguments)
 
-    def execute(self, name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
+    def execute(
+        self,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        context: Mapping[str, Any] | ToolExecutionContext | None = None,
+    ) -> Dict[str, Any]:
         """通过 MCP 客户端分派工具，并记录开始、失败和完成轨迹。"""
 
         # 工具名称到 MCP 服务的映射保持集中管理，避免 Agent 直接依赖外部系统。
@@ -421,8 +477,11 @@ class ToolRegistry:
             "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
             "fetch_document": "knowledge", "fetch_chunk": "knowledge", "document_parser": "knowledge", "ingest_knowledge": "knowledge",
             "generate_report": "mes", "generate_repair_plan": "mes",
-            "get_diagnosis_record": "mes", "get_maintenance_record": "mes", "get_quality_record": "mes",
-            "get_trace_summary": "mes", "persist_report": "mes", "generate_report_file": "mes",
+            # Report source readers transform records already present in the
+            # Runtime state.  They do not query Backend persistence, so keep
+            # them local even when the Backend HTTP boundary is configured.
+            "get_diagnosis_record": "local", "get_maintenance_record": "local", "get_quality_record": "local",
+            "get_trace_summary": "local", "persist_report": "mes", "generate_report_file": "local",
         }.get(name, "knowledge")
         operation = {
             "query_cad": "fetch_engineering_record",
@@ -434,6 +493,42 @@ class ToolRegistry:
         started = perf_counter()
         input_payload = dict(arguments)
         task_id, trace_id = _TOOL_TRACE_CONTEXT.get()
+        supplied_context = context.as_dict() if isinstance(context, ToolExecutionContext) else dict(context or {})
+        execution_context = {**_TOOL_EXECUTION_CONTEXT.get(), **supplied_context}
+        if execution_context.get("task_id"):
+            task_id = str(execution_context["task_id"])
+        if execution_context.get("trace_id"):
+            trace_id = str(execution_context["trace_id"])
+        allowed_tools = execution_context.get("allowed_tools")
+        allowed = {str(item) for item in allowed_tools or [] if str(item).strip()}
+        guard_error = self._guard_error(name, input_payload, execution_context, allowed)
+        if guard_error:
+            guard_payload = {
+                "allowed_tools": sorted(allowed),
+                "agent": str(execution_context.get("agent") or ""),
+                "skill": str(execution_context.get("skill") or ""),
+                "step": str(execution_context.get("step") or ""),
+                "allowed": False,
+                "reason": guard_error,
+            }
+            if self.trace:
+                self.trace.record(
+                    type="tool", name=name, event="tool_guard", tool=name,
+                    tool_name=name, mcp_server=server, arguments=input_payload,
+                    output=None, execution_time=0.0, error=guard_payload["reason"],
+                    task_id=task_id, trace_id=trace_id, **guard_payload,
+                )
+            raise PermissionError("tool %s rejected by shared guard: %s" % (name, guard_error))
+        if self.trace:
+            self.trace.record(
+                type="tool", name=name, event="tool_guard", tool=name,
+                tool_name=name, mcp_server=server, arguments=input_payload,
+                output=None, execution_time=0.0, error="", task_id=task_id,
+                trace_id=trace_id, allowed=True,
+                agent=str(execution_context.get("agent") or ""),
+                skill=str(execution_context.get("skill") or ""),
+                step=str(execution_context.get("step") or ""),
+            )
         if self.trace:
             self.trace.record(
                 type="tool", name=name, event="tool_started", tool=name, tool_name=name,
@@ -462,7 +557,29 @@ class ToolRegistry:
                         task_id=task_id, trace_id=trace_id,
                     )
                 raise
+        observation = self._normalize_observation(name, result, execution_context)
         if self.trace:
+            self.trace.record(
+                type="tool", name=name, event="tool_called", tool=name, tool_name=name,
+                mcp_server=server, arguments=input_payload, output=result,
+                execution_time=perf_counter() - started, error="", task_id=task_id, trace_id=trace_id,
+                agent=str(execution_context.get("agent") or ""),
+                skill=str(execution_context.get("skill") or ""),
+                step=str(execution_context.get("step") or ""),
+            )
+            self.trace.record(
+                type="runtime", name=name, event="observation_added", tool=name, tool_name=name,
+                mcp_server=server, state_change={"observation": observation},
+                keys=["observation"], execution_time=perf_counter() - started,
+                error="", task_id=task_id, trace_id=trace_id,
+            )
+            if observation.get("evidence"):
+                self.trace.record(
+                    type="runtime", name=name, event="evidence_added", tool=name, tool_name=name,
+                    mcp_server=server, state_change={"evidence": observation["evidence"]},
+                    keys=["evidence"], execution_time=perf_counter() - started,
+                    error="", task_id=task_id, trace_id=trace_id,
+                )
             self.trace.record(
                 type="tool", name=name, event="tool_completed", tool=name, tool_name=name,
                 mcp_server=server, arguments=input_payload, input=input_payload,
@@ -470,6 +587,93 @@ class ToolRegistry:
                 task_id=task_id, trace_id=trace_id,
             )
         return result
+
+    def _guard_error(
+        self,
+        name: str,
+        arguments: Mapping[str, Any],
+        context: Mapping[str, Any],
+        allowed: set[str],
+    ) -> str:
+        """Return one deterministic Guard finding before a handler is called."""
+
+        if name not in self.mcp.handlers:
+            return "tool_not_registered"
+        if allowed and name not in allowed:
+            return "tool_not_allowed_for_step"
+        required = {
+            "get_alarm_definition": ("alarm_code",),
+            "get_device_status": ("device_id",),
+            "get_active_alarms": ("device_id",),
+            "get_device_history": ("device_id",),
+            "get_device_logs": ("device_id",),
+            "get_production_status": ("device_id",),
+        }.get(name, ())
+        missing = [key for key in required if not arguments.get(key)]
+        if missing:
+            return "missing_required_argument:%s" % ",".join(missing)
+        calls = context.get("tool_calls") or []
+        if isinstance(calls, (list, tuple)):
+            for item in calls:
+                if not isinstance(item, Mapping):
+                    continue
+                previous = str(item.get("name") or item.get("tool") or item.get("tool_name") or "")
+                previous_args = item.get("arguments") or item.get("input") or {}
+                if previous == name and isinstance(previous_args, Mapping) and dict(previous_args) == dict(arguments):
+                    return "duplicate_tool_call"
+        return ""
+
+    def guard_call(
+        self,
+        name: str,
+        arguments: Mapping[str, Any],
+        *,
+        context: Mapping[str, Any] | ToolExecutionContext | None = None,
+    ) -> dict[str, Any]:
+        """Check a dynamic call without executing it (Diagnosis compatibility)."""
+
+        supplied = context.as_dict() if isinstance(context, ToolExecutionContext) else dict(context or {})
+        execution_context = {**_TOOL_EXECUTION_CONTEXT.get(), **supplied}
+        values = execution_context.get("allowed_tools") or []
+        allowed = {str(item) for item in values if str(item).strip()}
+        error = self._guard_error(name, arguments, execution_context, allowed)
+        decision = {"allow": not bool(error), "reason": error or "allowed"}
+        if self.trace:
+            self.trace.record(
+                type="tool", name=name, event="tool_guard", tool=name, tool_name=name,
+                arguments=dict(arguments), output=None, execution_time=0.0,
+                error=error, task_id=str(execution_context.get("task_id") or ""),
+                trace_id=str(execution_context.get("trace_id") or ""),
+                allowed=decision["allow"], reason=decision["reason"],
+                agent=str(execution_context.get("agent") or ""),
+                skill=str(execution_context.get("skill") or ""),
+                step=str(execution_context.get("step") or ""),
+            )
+        return decision
+
+    @staticmethod
+    def _normalize_observation(name: str, result: Any, context: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(result) if isinstance(result, Mapping) else {"value": result}
+        evidence = payload.get("evidence") or payload.get("documents") or payload.get("items") or []
+        facts = {key: payload[key] for key in ("query", "status", "found", "trend", "device_id", "part_no") if key in payload}
+        try:
+            confidence = max(0.0, min(1.0, float(payload.get("confidence") or 0.0)))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        observation_id = "OBS-" + sha256((name + repr(payload)[:256]).encode("utf-8")).hexdigest()[:12].upper()
+        return {
+            "observation_id": observation_id,
+            "step_id": str(context.get("step") or ""),
+            "tool": name,
+            "source": str(context.get("agent") or "tool"),
+            "type": str(payload.get("observation_type") or payload.get("type") or "tool_result"),
+            "subject": str(payload.get("device_id") or payload.get("part_id") or payload.get("query") or ""),
+            "facts": facts,
+            "valid": payload.get("success") is not False and not bool(payload.get("error")),
+            "confidence": confidence,
+            "raw": payload,
+            "evidence": list(evidence) if isinstance(evidence, list) else [],
+        }
 
     @staticmethod
     def _cad_fallback_allowed() -> bool:

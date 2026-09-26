@@ -50,6 +50,70 @@ def serialize_api_response(value: Any) -> Dict[str, Any]:
     return dict(value or {})
 
 
+def compact_question_response(value: Any) -> Dict[str, Any]:
+    """Keep the workbench Q&A response bounded while preserving evidence."""
+
+    payload = dict(value or {})
+    result = {
+        key: payload[key]
+        for key in (
+            "task_id",
+            "trace_id",
+            "entry",
+            "user_text",
+            "context",
+            "route",
+            "route_result",
+            "status",
+            "errors",
+            "evidence_status",
+            "stop_reason",
+        )
+        if key in payload
+    }
+    diagnosis = payload.get("diagnosis")
+    if isinstance(diagnosis, dict):
+        result["diagnosis"] = {
+            key: diagnosis[key]
+            for key in (
+                "status",
+                "summary",
+                "diagnosis",
+                "confidence",
+                "evidence",
+                "recommendation",
+                "alarm_definition",
+                "validation_errors",
+                "stop_reason",
+            )
+            if key in diagnosis
+        }
+    knowledge = payload.get("knowledge")
+    if isinstance(knowledge, dict):
+        result["knowledge"] = {
+            key: knowledge[key]
+            for key in (
+                "query",
+                "status",
+                "summary",
+                "answer",
+                "confidence",
+                "possible_causes",
+                "recommended_checks",
+                "documents",
+                "sources",
+                "total",
+                "backend_status",
+                "degraded",
+                "warning",
+                "validation_findings",
+                "stop_reason",
+            )
+            if key in knowledge
+        }
+    return result
+
+
 def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     app = FastAPI(title="Industrial Maintenance Agent Service", version="1.0.0")
     app.add_middleware(
@@ -72,6 +136,11 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.post("/api/v1/agent/question")
     def question(request: UserQuestionRequest) -> Dict[str, Any]:
         return runtime.run_user(request.user_text, request.context)
+
+    @app.post("/api/agent/question/summary", deprecated=True)
+    @app.post("/api/v1/agent/question/summary")
+    def question_summary(request: UserQuestionRequest) -> Dict[str, Any]:
+        return compact_question_response(runtime.run_user(request.user_text, request.context))
 
     @app.post("/api/agent/event", deprecated=True)
     @app.post("/api/v1/agent/event")
@@ -178,6 +247,22 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/workorders/{workorder_id}")
     def workorder(workorder_id: str) -> Dict[str, Any]:
         return runtime.container.operations.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router")
+
+    @app.get("/api/reports")
+    def reports(workorder_id: str = "") -> Dict[str, Any]:
+        """Expose persisted reports to the Report workspace through Runtime."""
+
+        return runtime.container.registry.list_reports(workorder_id=workorder_id)
+
+    @app.get("/api/reports/{report_id}")
+    def report(report_id: str) -> Dict[str, Any]:
+        registry = runtime.container.registry
+        result = registry.mcp.call("mes", "get_report", {"report_id": report_id}) if registry.backend_base_url else registry.report_store.get(report_id)
+        if isinstance(result, dict) and "report" in result:
+            return result
+        if result:
+            return {"success": True, "found": True, "report_id": report_id, "report": dict(result)}
+        raise HTTPException(status_code=404, detail="report not found")
 
     @app.post("/api/workorders/{workorder_id}/action")
     def workorder_action(workorder_id: str, request: WorkOrderActionRequest) -> Dict[str, Any]:

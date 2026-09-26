@@ -12,12 +12,18 @@ from app.agents.diagnosis import evidence, parsing, tool_policy
 from app.agents.diagnosis.prompt import build_diagnosis_messages
 from app.agents.diagnosis.schemas import AgentStatus, DiagnosisResult, DiagnosisState
 from app.skills import get_skill_registry
+from app.agents.base import trace_skill_node
 
 
 class DiagnosisGraphState(TypedDict, total=False):
     """LangGraph 节点之间传递的运行时状态。"""
 
     agent: Any
+    active_agent: str
+    current_step: str
+    step_history: list[dict[str, Any]]
+    completed_steps: list[dict[str, Any]]
+    failed_steps: list[dict[str, Any]]
     event: Dict[str, Any]
     agent_state: DiagnosisState
     event_id: str
@@ -196,7 +202,7 @@ def guard_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
         name = str(function.get("name") or "")
         arguments = parsing.json_arguments(function.get("arguments"))
         arguments = tool_policy.normalize_tool_arguments(name, arguments, state)
-        decision = tool_policy.guard_tool_call(name, arguments, runtime)
+        decision = tool_policy.guard_tool_call(name, arguments, runtime, agent.tools)
         normalized_call = dict(call)
         normalized_call["function"] = {"name": name, "arguments": json.dumps(arguments, ensure_ascii=False)}
         if decision["allow"]:
@@ -250,7 +256,13 @@ def execute_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
         arguments = parsing.json_arguments(function.get("arguments"))
         execution_started = perf_counter()
         try:
-            result = agent.tools.execute(name, arguments)
+            result = agent.tools.execute(name, arguments, context={
+                "agent": "diagnosis",
+                "skills": list(runtime.active_skills or []),
+                "step": "act",
+                "allowed_tools": list(runtime.allowed_tools or []),
+                "tool_calls": list(runtime.tool_calls or []),
+            })
             execution_error = ""
         except Exception as error:
             result = {
@@ -407,16 +419,19 @@ def build_diagnosis_graph():
     """构建并编译一次 Diagnosis Agent 工作流。"""
 
     workflow = StateGraph(DiagnosisGraphState)
-    workflow.add_node("initialize", initialize_diagnosis_state)
-    workflow.add_node("load_skill", load_diagnosis_skill)
-    workflow.add_node("reason", request_diagnosis_reasoning)
-    workflow.add_node("tool_guard", guard_tool_calls)
-    workflow.add_node("act", execute_tool_calls)
-    workflow.add_node("observe", record_tool_observations)
-    workflow.add_node("loop_guard", loop_guard)
-    workflow.add_node("validate", validate_diagnosis_candidate)
-    workflow.add_node("final", build_final_diagnosis_result)
-    workflow.add_node("fallback", build_fallback_diagnosis_result)
+    for name, node in (
+        ("initialize", initialize_diagnosis_state),
+        ("load_skill", load_diagnosis_skill),
+        ("reason", request_diagnosis_reasoning),
+        ("tool_guard", guard_tool_calls),
+        ("act", execute_tool_calls),
+        ("observe", record_tool_observations),
+        ("loop_guard", loop_guard),
+        ("validate", validate_diagnosis_candidate),
+        ("final", build_final_diagnosis_result),
+        ("fallback", build_fallback_diagnosis_result),
+    ):
+        workflow.add_node(name, trace_skill_node("diagnosis", name, node))
 
     workflow.add_edge(START, "initialize")
     # 初始化和 Skill 加载都可能因配置问题直接进入降级路径。

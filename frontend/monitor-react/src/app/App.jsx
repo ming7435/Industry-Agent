@@ -1,22 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { createEquator300 } from "./equator300.js";
 import "../styles.css";
 import machineImage from "../assets/trak-tc820-machine-transparent.png";
 import { buildTechnicianSummary } from "../technicianSummary.mjs";
 import { buildWorkorderSheet } from "../workorderSheet.mjs";
 import { buildAgentFlow } from "../agentFlow.mjs";
-
-const navItems = [
-  { id: "monitor", label: "监控中心", icon: "⌁", badge: "实时" },
-  { id: "diagnosis", label: "智能诊断", icon: "◇" },
-  { id: "maintenance", label: "维修决策", icon: "▣" },
-  { id: "workorder", label: "工单系统", icon: "□" },
-  { id: "quality", label: "质检系统", icon: "✓" },
-  { id: "report", label: "报告中心", icon: "≡" },
-  { id: "rag", label: "RAG知识问答", icon: "?" },
-  { id: "trace", label: "运行追踪", icon: "⋮" },
-];
+import { buildDiagnosisView } from "./diagnosisView.mjs";
+import { buildReportDisplaySections } from "./reportView.mjs";
+import { cleanDisplayText, cleanEvidenceText, documentBodyOnly, isDebugAnswer, splitTextBlocks } from "./textFormatting.mjs";
+import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
+import "../workbench.css";
 
 const workshopMachines = [
   {
@@ -60,12 +55,13 @@ const deviceTypeLabels = {
   turning_center: "数控车削中心",
   bar_feeder: "棒料送料机",
   industrial_robot: "工业机器人",
+  equator_gauge: "尺寸检测设备",
 };
 
 const deviceProfiles = {
   turning_center: {
     area: "A01 主加工单元",
-    flow: "棒料 → 车削 → 成品缓存",
+    flow: "棒料 → 车削 → 机械臂取件",
     focus: "主轴、液压、冷却与刀塔",
     metrics: [
       ["spindle_rpm", "主轴转速", "主轴", "rpm"],
@@ -95,7 +91,7 @@ const deviceProfiles = {
   },
   industrial_robot: {
     area: "A03 下料协作单元",
-    flow: "取件 → 搬运 → 装箱缓存",
+    flow: "取件 → 送检 → 合格／待处理分流",
     focus: "关节、末端力、控制器与安全 IO",
     metrics: [
       ["joint_comm_quality_percent", "关节通讯", "通讯", "%"],
@@ -107,6 +103,12 @@ const deviceProfiles = {
       ["controller_performance_pct", "控制器负载", "控制器", "%"],
       ["memory_free_mb", "剩余内存", "控制器", "MB"],
     ],
+  },
+  equator_gauge: {
+    area: "A04 尺寸检测工位",
+    flow: "机械臂送检 → 尺寸检测 → 分流",
+    focus: "测头、控制器、环境与检测过程",
+    metrics: [],
   },
 };
 
@@ -151,28 +153,6 @@ const kindLabels = {
   status: "设备状态",
   trend: "趋势异常",
   multi_metric: "多指标联合异常",
-};
-
-const diagnosisStatusLabels = {
-  idle: "等待异常",
-  running: "分析中",
-  completed: "已完成",
-  fallback: "备用诊断",
-  failed: "执行失败",
-};
-
-const diagnosisEvidenceLabels = {
-  get_alarm_definition: "报警定义库",
-  get_device_history: "历史趋势查询",
-  get_device_logs: "设备日志查询",
-  get_device_status: "实时设备状态",
-  get_production_status: "生产状态查询",
-  search_knowledge: "维修知识检索",
-  search_alarm_knowledge: "报警知识检索",
-  search_sop: "维修 SOP 检索",
-  search_manual: "维修手册检索",
-  search_fault_cases: "历史故障案例检索",
-  search_semantic_memory: "历史经验检索",
 };
 
 const workorderStatusLabels = {
@@ -449,41 +429,6 @@ function displayAlarm(sample) {
   return label || code || "无";
 }
 
-function displayToolName(item) {
-  return labelFor(diagnosisEvidenceLabels, item?.name || item?.tool) || "诊断工具";
-}
-
-function displayToolSummary(item) {
-  const result = item?.result || {};
-  if (item?.name === "get_alarm_definition") return result.name || "已查询报警定义";
-  if (item?.name === "get_device_history") return result.trend ? "已获取历史趋势" : "已获取历史采样";
-  if (item?.name === "get_device_logs") return result.logs?.length ? `已获取 ${result.logs.length} 条设备日志` : "未发现可用设备日志";
-  if (item?.name?.startsWith("search_")) return result.documents?.length ? `命中 ${result.documents.length} 条知识证据` : "未命中知识证据";
-  return item?.success === false ? "工具执行失败" : "已完成取证";
-}
-
-function readableDiagnosisText(value) {
-  return String(value || "")
-    .replace(/\bcycle_state\b/gi, "设备运行状态")
-    .replace(/\bfault_injection\b/gi, "故障注入状态")
-    .replace(/\bAUTO\b/g, "自动运行")
-    .replace(/\bvalidator_pass\b/g, "证据校验通过")
-    .replace(/\bunknown\b/gi, "未知");
-}
-
-function diagnosisParagraphs(value) {
-  const text = readableDiagnosisText(value).trim();
-  if (!text) return [];
-  return text
-    .split(/(?<=[。！？；])\s*/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function confidenceText(value) {
-  if (value === null || value === undefined || value === "") return "--";
-  return `${(Number(value) * 100).toFixed(0)}%`;
-}
 
 function alarmLevelText(latest) {
   const definition = latest?.alarm_definition || {};
@@ -493,25 +438,6 @@ function alarmLevelText(latest) {
   return match?.[1] || "待确认";
 }
 
-function compactDiagnosisSummary(latest) {
-  const raw = String(latest?.summary || "").trim();
-  if (!raw) return "等待异常事件";
-  const alarmCode = latest?.alarm_code
-    || latest?.alarm_definition?.alarm_code
-    || raw.match(/报警码\s*([A-Z0-9-]+)/i)?.[1]
-    || "未知";
-  const rule = raw.match(/触发规则为“([^”]+)”/)?.[1];
-  const state = raw.match(/cycle_state\s*为“([^”]+)”/)?.[1];
-  const health = raw.match(/健康评分\s*(\d+)/)?.[1];
-  const conclusion = String(latest?.diagnosis || "")
-    .match(/综合判断：(.+?)(?=；|。|$)/)?.[1];
-  const parts = [`检测到报警 ${alarmCode}`];
-  if (rule) parts.push(`触发规则：${rule}`);
-  if (state) parts.push(`设备状态：${state}`);
-  if (health) parts.push(`健康评分：${health}`);
-  if (conclusion) parts.push(`当前判断：${conclusion}`);
-  return readableDiagnosisText(`${parts.join("；")}。`);
-}
 
 async function request(path, options = {}) {
   const response = await fetch(path, {
@@ -557,7 +483,7 @@ function alertSeverity(alertLevel) {
 
 function buildWorkshopMachines(snapshot) {
   const devices = snapshot?.devices?.length ? snapshot.devices : workshopMachines;
-  return devices.map((device, index) => {
+  const mapped = devices.map((device, index) => {
     const id = device.device_id || device.id;
     const fallback = machineFallbacks[id] || {};
     const position = defaultMachinePositions[index % defaultMachinePositions.length];
@@ -580,6 +506,23 @@ function buildWorkshopMachines(snapshot) {
       sample,
     };
   });
+  if (!mapped.some((machine) => machine.id === "RENISHAW-EQUATOR300-001")) {
+    mapped.push({
+      id: "RENISHAW-EQUATOR300-001",
+      name: "Renishaw Equator 300",
+      line: "A线 · 尺寸检测工位",
+      area: "A04 尺寸检测工位",
+      type: "尺寸检测设备",
+      deviceType: "inspection",
+      flow: "机械臂送检 → 检测 → 合格／待处理分流",
+      focus: "仅展示三维模型，未接入测量数据",
+      live: false,
+      result: null,
+      sample: null,
+      visualOnly: true,
+    });
+  }
+  return mapped;
 }
 
 function observationLabel(item) {
@@ -660,6 +603,7 @@ function useMetricHistory(machines) {
 
 function App() {
   const [activeView, setActiveView] = useState("monitor");
+  const [ragMessages, setRagMessages] = useState([]);
   const [toast, setToast] = useState("");
   const [selectedMachineId, setSelectedMachineId] = useState(workshopMachines[0].id);
   const [bigScreen, setBigScreen] = useState(false);
@@ -668,12 +612,8 @@ function App() {
   const machines = useMemo(() => buildWorkshopMachines(snapshot), [snapshot]);
   const metricHistory = useMetricHistory(machines);
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
-  const result = selectedMachine?.result || snapshot?.latest_result;
-  const sample = result?.current_sample;
-  const healthText = sample?.health_score === null || sample?.health_score === undefined
-    ? "--"
-    : `${Number(sample.health_score).toFixed(0)} / 100`;
-  const connectionText = error || runner.last_error ? "接口异常" : "连接正常";
+  const result = selectedMachine?.result || null;
+  const sample = result?.current_sample || selectedMachine?.sample || null;
 
   function showToast(message) {
     setToast(message);
@@ -687,37 +627,35 @@ function App() {
   }, [machines, selectedMachineId]);
 
   return (
-    <div className={`platform-shell ${bigScreen ? "big-screen" : ""}`}>
-      {!bigScreen && <Sidebar activeView={activeView} onChange={setActiveView} connectionText={connectionText} hasError={Boolean(error || runner.last_error)} />}
-      <main className="app-shell">
-        <Topbar
-          snapshot={snapshot}
-          runner={runner}
-          onControl={control}
-          onReset={resetStats}
-          bigScreen={bigScreen}
-          onToggleBigScreen={() => setBigScreen((value) => !value)}
-        />
+    <div className={`platform-shell ${bigScreen ? "big-screen" : "workbench"}`}>
+      {!bigScreen && <WorkbenchSidebar activeView={activeView} onChange={setActiveView} hasError={Boolean(error || runner.last_error)} connected={Boolean(snapshot)} />}
+      <main className={`app-shell ${!bigScreen && activeView === "monitor" ? "monitor-canvas-shell" : !bigScreen ? "content-shell" : ""}`}>
+        {bigScreen ? (
+          <Topbar
+            snapshot={snapshot}
+            runner={runner}
+            onControl={control}
+            onReset={resetStats}
+            bigScreen={bigScreen}
+            onToggleBigScreen={() => setBigScreen((value) => !value)}
+          />
+        ) : null}
         {(activeView === "monitor" || bigScreen) && (
           <MonitorCenter
-            snapshot={snapshot}
             machines={machines}
             result={result}
             sample={sample}
-            runner={runner}
-            healthText={healthText}
+            dataSource={snapshot?.data_source}
             metricHistory={metricHistory}
             selectedMachineId={selectedMachineId}
             onSelectMachine={setSelectedMachineId}
           />
         )}
-        {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} />}
-        {!bigScreen && activeView === "maintenance" && <MaintenanceWorkspace snapshot={snapshot} />}
+        {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
-        {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} />}
+        {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "report" && <ReportWorkspace snapshot={snapshot} />}
-        {!bigScreen && activeView === "trace" && <TraceWorkspace snapshot={snapshot} />}
         {toast && <div className="toast-message" role="status">{toast}</div>}
         {(error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
       </main>
@@ -725,38 +663,6 @@ function App() {
   );
 }
 
-function Sidebar({ activeView, onChange, connectionText, hasError }) {
-  return (
-    <aside className="sidebar" aria-label="平台导航">
-      <div className="brand-block">
-        <span className="brand-mark">IA</span>
-        <div>
-          <strong>IND-Agent</strong>
-          <span>工业智能平台</span>
-        </div>
-      </div>
-      <nav className="side-nav">
-        {navItems.map((item) => (
-          <button
-            key={item.id}
-            className={`nav-item ${activeView === item.id ? "active" : ""}`}
-            type="button"
-            onClick={() => onChange(item.id)}
-          >
-            <span className="nav-icon">{item.icon}</span>
-            <span>{item.label}</span>
-            {item.badge && <em>{item.badge}</em>}
-          </button>
-        ))}
-      </nav>
-      <div className="sidebar-card">
-        <span>平台状态</span>
-        <strong className={hasError ? "bad" : ""}>{connectionText}</strong>
-        <p>监控服务、诊断智能体和知识工具将统一汇入平台工作台。</p>
-      </div>
-    </aside>
-  );
-}
 
 function Topbar({ snapshot, runner, onControl, onReset, bigScreen, onToggleBigScreen }) {
   const deviceCount = snapshot?.device_ids?.length || snapshot?.devices?.length || (snapshot?.device_id ? 1 : 0);
@@ -786,86 +692,39 @@ function Topbar({ snapshot, runner, onControl, onReset, bigScreen, onToggleBigSc
   );
 }
 
-function PlatformOverview() {
-  return (
-    <section className="platform-overview" aria-label="平台总览">
-      <OverviewCard primary label="当前主线" value="监控中心" text="设备快照、异常判定和智能诊断实时联动。" />
-      <OverviewCard label="工单闭环" value="已联动" text="异常诊断可转派维修工单，支持处理和验收流转。" />
-      <OverviewCard label="知识中枢" value="已接入" text="手册、历史案例、报警码和SOP统一检索。" />
-      <OverviewCard label="零件质检" value="已接入" text="生产零件的尺寸、外观、材料、功能和工艺质量检查。" />
-    </section>
-  );
-}
-
-function OverviewCard({ primary = false, label, value, text }) {
-  return (
-    <div className={`overview-card ${primary ? "primary" : ""}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <p>{text}</p>
-    </div>
-  );
-}
-
 function MonitorCenter({
-  snapshot,
   machines,
   result,
   sample,
-  runner,
-  healthText,
+  dataSource,
   metricHistory,
   selectedMachineId,
   onSelectMachine,
 }) {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0] || workshopMachines[0];
-  const isLiveMachine = Boolean(selectedMachine.live);
   const [detailOpen, setDetailOpen] = useState(false);
+  const selectFromMap = (machineId) => {
+    onSelectMachine(machineId);
+    setDetailOpen(true);
+  };
 
   return (
-    <section className="workspace-view active">
+    <section className="workspace-view active monitor-map-only" aria-label="车间流水线">
       <WorkshopMap
         machines={machines}
         selectedMachineId={selectedMachine.id}
         result={result}
-        sample={sample}
-        healthText={healthText}
-        onSelectMachine={onSelectMachine}
+        onSelectMachine={selectFromMap}
       />
-      <MachineDetailHeader machine={selectedMachine} isLiveMachine={isLiveMachine} sample={sample} result={result} healthText={healthText} onOpenDetail={() => setDetailOpen(true)} />
-      {detailOpen && <MachineDetailDrawer machine={selectedMachine} result={result} sample={sample} history={metricHistory[selectedMachine.id] || []} onClose={() => setDetailOpen(false)} />}
-      {isLiveMachine ? (
-        <>
-          <StatusStrip snapshot={snapshot} sample={sample} runner={runner} healthText={healthText} />
-          <section className="main-grid">
-            <MetricsPanel result={result} sample={sample} machine={selectedMachine} />
-            <DecisionPanel snapshot={snapshot} result={result} />
-          </section>
-          <TrendPanel machine={selectedMachine} history={metricHistory[selectedMachine.id] || []} />
-          <AlarmTimeline snapshot={snapshot} machines={machines} />
-        </>
-      ) : (
-        <section className="panel machine-empty-panel">
-          <span className="eyebrow">设备详情</span>
-          <h2>该设备暂未接入实时采集</h2>
-          <p>后续接入多设备监控接口后，这里会展示该机器的实时指标、规则判定和诊断结果。</p>
-        </section>
-      )}
+      {detailOpen && <MachineDetailDrawer machine={selectedMachine} result={result} sample={sample} dataSource={dataSource} history={metricHistory[selectedMachine.id] || []} onClose={() => setDetailOpen(false)} />}
     </section>
   );
 }
 
-function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, onSelectMachine }) {
+function WorkshopMap({ machines, selectedMachineId, result, onSelectMachine }) {
   const [viewMode, setViewMode] = useState("iso");
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
   const selectedStatus = machineStatus(selectedMachine, selectedMachine?.result || result);
-  const connectedCount = machines.filter((machine) => machine.live).length;
-  const onlineCount = connectedCount;
-  const normalCount = machines.filter((machine) => machineStatus(machine, machine.result) === "normal").length;
-  const faultCount = machines.filter((machine) => {
-    const status = machineStatus(machine, machine.result);
-    return status !== "normal" && status !== "idle";
-  }).length;
 
   return (
     <section className="panel workshop-panel">
@@ -880,7 +739,8 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
         <div className="scene-overlay">
           <div>
             <span className="eyebrow">车间总览</span>
-            <h2>车间设备状态总览</h2>
+            <h2>流水线三维视图</h2>
+            <p className="scene-click-hint">点击设备模型查看运行数据</p>
           </div>
           <div className="map-legend" aria-label="状态图例">
             <span><i className="legend-dot normal" />正常</span>
@@ -893,34 +753,6 @@ function WorkshopMap({ machines, selectedMachineId, result, sample, healthText, 
             ))}
           </div>
         </div>
-        <div className="scene-device-strip" aria-label="设备工位状态">
-          {machines.map((machine) => {
-            const localStatus = machineStatus(machine, machine.result);
-            const health = formatHealthValue(machine.sample?.health_score);
-            const leadMetric = leadMetricForMachine(machine);
-            return (
-              <button
-                key={machine.id}
-                type="button"
-                className={`scene-device-chip ${localStatus} ${machine.id === selectedMachineId ? "active" : ""}`}
-                onClick={() => onSelectMachine(machine.id)}
-              >
-                <span>{machine.area || machine.line}</span>
-                <strong>{machine.name}</strong>
-                <small>{leadMetric}</small>
-                <em>{machineStatusLabel(localStatus)} · 健康度 {health}</em>
-              </button>
-            );
-          })}
-        </div>
-        <div className="scene-control-hint">内部加工动画 · 拖动旋转 · 滚轮缩放</div>
-      </div>
-      <div className="map-summary">
-        <div><span>接入设备</span><strong>{onlineCount} / {machines.length}</strong></div>
-        <div><span>正常设备</span><strong>{normalCount}</strong></div>
-        <div><span>异常设备</span><strong>{faultCount}</strong></div>
-        <div><span>当前工位</span><strong>{selectedMachine?.area || "--"}</strong></div>
-        <div><span>工艺流向</span><strong>{selectedMachine?.flow || "--"}</strong></div>
       </div>
     </section>
   );
@@ -948,35 +780,42 @@ function formatHealthValue(value) {
   return Number.isFinite(numericValue) ? `${numericValue.toFixed(0)}/100` : String(value);
 }
 
-function leadMetricForMachine(machine) {
-  const metrics = machine?.sample?.metrics || {};
-  const profile = deviceProfiles[machine?.deviceType];
-  const preferred = profile?.metrics?.find(([key]) => metrics[key] !== null && metrics[key] !== undefined);
-  if (!preferred) return machine?.focus || "等待实时采样";
-  const [key, name, , unit] = preferred;
-  return `${name} ${formatMetricValue(metrics[key])}${unit ? ` ${unit}` : ""}`;
-}
+
+// World-space stations. All three robot handoff targets stay inside its 2.22-unit reach.
+const workshopLayout = Object.freeze({
+  robot: [5.8, -.15],
+  pickup: [4.7, 1.12],
+  inspection: [7.6, 1],
+  qualified: [7.65, -1.3],
+  rework: [6.65, -2.1],
+  robotReach: 2.22,
+});
 
 function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, onSelect }) {
   const mountRef = useRef(null);
   const onSelectRef = useRef(onSelect);
   const machinesRef = useRef(machines);
+  const selectedMachineIdRef = useRef(selectedMachineId);
+  const updateSelectionRef = useRef(null);
   const hoverTimerRef = useRef(null);
   const hoveredMachineRef = useRef(null);
   const [hoveredLabel, setHoveredLabel] = useState(null);
   const sceneMachineState = useMemo(
-    () => machines.map((machine) => `${machine.id}:${machine.live ? 1 : 0}:${machineStatus(machine, machine.result)}:${machine.id === selectedMachineId ? 1 : 0}`).join("|"),
-    [machines, selectedMachineId],
+    () => machines.map((machine) => `${machine.id}:${machine.live ? 1 : 0}:${machineStatus(machine, machine.result)}`).join("|"),
+    [machines],
   );
   const sceneViewState = viewMode || "iso";
 
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
-
   useEffect(() => {
     machinesRef.current = machines;
   }, [machines]);
+  useEffect(() => {
+    selectedMachineIdRef.current = selectedMachineId;
+    updateSelectionRef.current?.(selectedMachineId);
+  }, [selectedMachineId]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -988,25 +827,25 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     const camera = new THREE.PerspectiveCamera(39, mount.clientWidth / mount.clientHeight, 0.1, 100);
     const compactScene = mount.clientWidth < 600;
     if (compactScene) {
-      camera.fov = 44;
+      camera.fov = 55;
       camera.updateProjectionMatrix();
     }
-    camera.position.set(compactScene ? 12 : 8.2, compactScene ? 7 : 4.9, compactScene ? 22 : 9.6);
-    camera.lookAt(.4, .75, 0);
+    camera.position.set(compactScene ? 13 : 10.4, compactScene ? 12 : 5.7, compactScene ? 40 : 13.7);
+    camera.lookAt(1.3, .75, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, compactScene ? 1.25 : 1.5));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     mount.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(.4, .75, 0);
+    controls.target.set(1.3, .75, 0);
     controls.enableDamping = true;
     controls.dampingFactor = .08;
     controls.minDistance = 6.2;
-    controls.maxDistance = compactScene ? 30 : 15.5;
+    controls.maxDistance = compactScene ? 55 : 22;
     controls.minPolarAngle = Math.PI * .16;
     controls.maxPolarAngle = Math.PI * .49;
     controls.enablePan = true;
@@ -1015,16 +854,16 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     controls.zoomSpeed = .72;
     const applyCameraView = (mode) => {
       if (mode === "top") {
-        camera.position.set(0, compactScene ? 18 : 13, .1);
-        controls.target.set(.2, 0, -.2);
+        camera.position.set(1.3, compactScene ? 33 : 18, .1);
+        controls.target.set(1.3, 0, -.2);
         controls.enableRotate = false;
       } else if (mode === "line") {
-        camera.position.set(compactScene ? 4 : 2.8, compactScene ? 5.6 : 3.8, compactScene ? 18 : 13.5);
-        controls.target.set(.2, .55, .2);
+        camera.position.set(compactScene ? 7 : 3.8, compactScene ? 10 : 4.5, compactScene ? 40 : 17);
+        controls.target.set(1.3, .55, .2);
         controls.enableRotate = true;
       } else {
-        camera.position.set(compactScene ? 12 : 8.2, compactScene ? 7 : 4.9, compactScene ? 22 : 9.6);
-        controls.target.set(.4, .75, 0);
+        camera.position.set(compactScene ? 13 : 10.4, compactScene ? 12 : 5.7, compactScene ? 40 : 13.7);
+        controls.target.set(1.3, .75, 0);
         controls.enableRotate = true;
       }
       camera.lookAt(controls.target);
@@ -1040,11 +879,36 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     };
     const statusForMachine = (id) => machineStatus(machineById.get(id), machineById.get(id)?.result);
     const colorForMachine = (id) => statusColor(statusForMachine(id));
-    const isSelectedMachine = (id) => id === selectedMachineId;
+    const selectionEffects = [];
+    const machineHalos = [];
+    const isSelectedMachine = (id) => id === selectedMachineIdRef.current;
+    const updateSelection = (id) => {
+      machineHalos.forEach(({ machineId, ring }) => {
+        const fault = ["fault", "alarm"].includes(currentStatusForMachine(machineId));
+        ring.visible = fault || machineId === id;
+        ring.material.color.setHex(fault ? 0xe13b35 : 0x14aa72);
+        ring.material.emissive.setHex(fault ? 0xe13b35 : 0x14aa72);
+      });
+      selectionEffects.forEach(({ machineId, material, selectedValue, defaultValue, property }) => {
+        material[property] = machineId === id ? selectedValue : defaultValue;
+      });
+    };
+    updateSelectionRef.current = updateSelection;
     const isAlertStatus = (localStatus) => {
-      return localStatus === "fault" || localStatus === "alarm" || localStatus === "warning";
+      return localStatus === "fault" || localStatus === "alarm";
     };
     const labelForMachine = (id) => {
+      if (id === "EQUATOR300-VISUAL") {
+        const simulatedMachine = getCurrentMachine("RENISHAW-EQUATOR300-001");
+        const localStatus = machineStatus(simulatedMachine, simulatedMachine?.result);
+        return {
+          id,
+          name: "Renishaw Equator 300",
+          type: "模拟工厂质检工位 · 动画仅示意",
+          status: localStatus,
+          statusLabel: simulatedMachine ? machineStatusLabel(localStatus) : "无设备数据",
+        };
+      }
       const machine = getCurrentMachine(id);
       if (!machine) return null;
       const localStatus = currentStatusForMachine(id);
@@ -1057,9 +921,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       };
     };
     const accent = statusColor(status);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xcbd2d3, roughness: .42, metalness: .12 });
-    const roadMat = new THREE.MeshStandardMaterial({ color: 0xc4d3d0, roughness: .78, metalness: .01 });
-    const areaMat = new THREE.MeshStandardMaterial({ color: 0xe0f1ee, roughness: .82, metalness: .02, transparent: true, opacity: .58 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xd9ddde, roughness: .63, metalness: .03 });
     const wallMat = new THREE.MeshStandardMaterial({ color: 0xd7dedf, roughness: .8, metalness: .04, side: THREE.DoubleSide });
     const safetyMat = new THREE.MeshStandardMaterial({ color: 0xd9a21b, roughness: .58, metalness: .04 });
     const conveyorMat = new THREE.MeshStandardMaterial({ color: 0x405057, roughness: .6, metalness: .18 });
@@ -1094,18 +956,19 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       return root;
     };
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(26, 16), floorMat);
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -.36;
-    floor.receiveShadow = true;
+    // Opaque wall/ceiling shadow projections produced a large triangular patch on the epoxy floor.
+    floor.receiveShadow = false;
     scene.add(floor);
 
     const addSceneBox = (size, position, material, rotation = [0, 0, 0]) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
       mesh.position.set(...position);
       mesh.rotation.set(...rotation);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.castShadow = !material.transparent && size[1] > .05;
+      mesh.receiveShadow = material !== wallMat && !material.transparent;
       scene.add(mesh);
       return mesh;
     };
@@ -1113,20 +976,23 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     addSceneBox([26, 2.6, .08], [0, .92, -7.2], wallMat);
     addSceneBox([.08, 2.25, 12.5], [-12.3, .78, -.6], wallMat);
     addSceneBox([.08, 2.25, 12.5], [12.3, .78, -.6], wallMat);
-    addSceneBox([26, 2.25, .08], [0, .78, 7.2], new THREE.MeshStandardMaterial({ color: 0xe3e9e9, roughness: .8, transparent: true, opacity: .18, depthWrite: false }));
     addSceneBox([24, .08, .12], [0, 2.32, -6.95], roofMat);
     addSceneBox([.12, .08, 12], [-11.5, 2.16, -.8], roofMat);
     addSceneBox([.12, .08, 12], [11.5, 2.16, -.8], roofMat);
 
-    addSceneBox([20, .035, 1.45], [0, -.31, 3.25], roadMat);
-    addSceneBox([1.5, .035, 10.5], [-5.2, -.3, -.9], roadMat);
-    addSceneBox([6.8, .012, .07], [0, -.32, 2.0], safetyMat);
-    addSceneBox([6.8, .012, .07], [0, -.32, -1.95], safetyMat);
-    addSceneBox([.07, .012, 3.95], [-3.4, -.32, .02], safetyMat);
-    addSceneBox([.07, .012, 3.95], [3.4, -.32, .02], safetyMat);
-    const aisleMat = new THREE.MeshStandardMaterial({ color: 0xe8ebeb, roughness: .55 });
-    addSceneBox([17, .012, .045], [0, -.31, 2.52], aisleMat);
-    addSceneBox([17, .012, .045], [0, -.31, 3.92], aisleMat);
+    // Slightly raised, edge-trimmed industrial floor markings instead of coplanar decals.
+    const lineEdgeMat = new THREE.MeshStandardMaterial({ color: 0x707875, roughness: .78 });
+    const addFloorLine = (size, position, paint) => {
+      addSceneBox([size[0] + .035, .017, size[2] + .035], [position[0], -.332, position[2]], lineEdgeMat);
+      addSceneBox([size[0], .019, size[2]], [position[0], -.313, position[2]], paint);
+    };
+    addFloorLine([6.8, 0, .075], [0, 0, 2], safetyMat);
+    addFloorLine([6.8, 0, .075], [0, 0, -1.95], safetyMat);
+    addFloorLine([.075, 0, 3.95], [-3.4, 0, .02], safetyMat);
+    addFloorLine([.075, 0, 3.95], [3.4, 0, .02], safetyMat);
+    const aisleMat = new THREE.MeshStandardMaterial({ color: 0xf4f4ed, roughness: .7 });
+    addFloorLine([17, 0, .045], [0, 0, 2.52], aisleMat);
+    addFloorLine([17, 0, .045], [0, 0, 3.92], aisleMat);
 
     const addConveyor = (size, position, rotation = [0, 0, 0], edgeNormal = new THREE.Vector3(0, 0, 1)) => {
       addSceneBox(size, position, conveyorMat, rotation);
@@ -1180,30 +1046,42 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       }
     };
 
-    // 原料停在送料机处，成品通过独立输送线离开。
+    // 原料进入送料机；加工件沿出料线到机械臂，再送 Equator300 检测。
     addConveyorSegment([-5.68, 2.45], [-5.68, .72], .55, 0);
     addConveyorSegment([2.45, 1.12], [4.85, 1.12], .55, 0);
 
-    addSceneBox([1.45, .42, .75], [-6.15, -.08, -4.95], blockMat);
-    addSceneBox([1.55, .13, .85], [-6.15, .22, -4.95], roofMat);
-    addSceneBox([1.35, .38, .72], [6.05, -.08, -4.8], blockMat);
-    addSceneBox([1.45, .12, .82], [6.05, .18, -4.8], roofMat);
+    addSceneBox([1.45, .42, .75], [-6.15, -.08, -6.15], blockMat);
+    addSceneBox([1.55, .13, .85], [-6.15, .22, -6.15], roofMat);
+    addSceneBox([1.35, .38, .72], [6.05, -.08, -6.15], blockMat);
+    addSceneBox([1.45, .12, .82], [6.05, .18, -6.15], roofMat);
     const fenceFrameMat = new THREE.MeshStandardMaterial({ color: 0x596970, roughness: .46, metalness: .55 });
-    const fenceGlassMat = new THREE.MeshStandardMaterial({ color: 0x9bbfc4, roughness: .14, transparent: true, opacity: .16, depthWrite: false, side: THREE.DoubleSide });
+    const fenceGlassMat = new THREE.MeshStandardMaterial({ color: 0x9bbfc4, roughness: .18, transparent: true, opacity: .24, depthWrite: false, side: THREE.DoubleSide });
     for (const x of [-3.25, -1.65, -.05, 1.55, 3.15]) {
-      addSceneBox([.055, 1.18, .055], [x, .31, -2.25], fenceFrameMat);
+      addSceneBox([.065, 1.22, .065], [x, .31, -2.25], fenceFrameMat);
+      addSceneBox([.16, .035, .16], [x, -.32, -2.25], fenceFrameMat);
     }
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 3; i += 1) {
       const x = -2.45 + i * 1.6;
-      addSceneBox([1.54, .98, .018], [x, .32, -2.25], fenceGlassMat);
-      addSceneBox([1.54, .035, .05], [x, .87, -2.25], fenceFrameMat);
-      addSceneBox([1.54, .035, .05], [x, -.21, -2.25], fenceFrameMat);
+      addSceneBox([1.49, 1.06, .018], [x, .32, -2.25], fenceGlassMat);
+      addSceneBox([1.54, .04, .06], [x, .89, -2.25], fenceFrameMat);
+      addSceneBox([1.54, .04, .06], [x, -.25, -2.25], fenceFrameMat);
     }
-    addSceneBox([.07, 1.04, .07], [1.75, .31, -2.19], safetyMat);
+    // Framed acrylic access gate, with hinges, handle and an overhead rail.
+    addSceneBox([1.49, 1.06, .018], [2.35, .32, -2.25], fenceGlassMat);
+    addSceneBox([1.52, .045, .07], [2.35, .89, -2.25], fenceFrameMat);
+    addSceneBox([1.52, .045, .07], [2.35, -.25, -2.25], fenceFrameMat);
+    addSceneBox([.05, 1.14, .07], [1.59, .32, -2.25], fenceFrameMat);
+    addSceneBox([.05, 1.14, .07], [3.11, .32, -2.25], fenceFrameMat);
+    for (const y of [.02, .66]) addSceneBox([.09, .11, .12], [1.59, y, -2.17], railMat);
+    addSceneBox([.035, .25, .09], [2.96, .28, -2.14], railMat);
+    addSceneBox([6.48, .045, .07], [-.05, .94, -2.25], fenceFrameMat);
     for (const x of [-8.9, 8.9]) {
-      addSceneBox([.85, 1.65, .62], [x, .5, -4.6], solidBodyMat);
-      addSceneBox([.62, .35, .025], [x, .95, -4.27], darkMat);
-      for (let i = 0; i < 5; i += 1) addSceneBox([.48, .014, .015], [x, .15 + i * .055, -4.27], railMat);
+      const z = -6.35;
+      addSceneBox([.85, 1.65, .62], [x, .5, z], solidBodyMat);
+      addSceneBox([.62, .35, .025], [x, .95, z + .33], darkMat);
+      addSceneBox([.08, .2, .05], [x + .32, .45, z + .34], railMat);
+      for (let i = 0; i < 5; i += 1) addSceneBox([.48, .014, .015], [x, .15 + i * .055, z + .33], railMat);
+      for (const footX of [-.3, .3]) addSceneBox([.1, .08, .1], [x + footX, -.32, z], railMat);
     }
 
     for (let index = 0; index < 10; index += 1) {
@@ -1216,44 +1094,32 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     }
 
     const addMachineHalo = (id, position, radius = 1.45) => {
-      const color = colorForMachine(id);
       const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(radius, .024, 6, 56),
+        new THREE.TorusGeometry(radius, .035, 8, 64),
         new THREE.MeshStandardMaterial({
-          color,
+          color: 0x14aa72,
+          emissive: 0x14aa72,
+          emissiveIntensity: .35,
           transparent: true,
-          opacity: isSelectedMachine(id) ? .72 : .24,
+          opacity: .9,
           side: THREE.DoubleSide,
           depthWrite: false,
         }),
       );
       ring.rotation.x = -Math.PI / 2;
       ring.position.set(position[0], -.28, position[2]);
+      ring.visible = false;
       scene.add(ring);
+      machineHalos.push({ machineId: id, ring });
       return ring;
     };
 
-    const addMachineAlert = (id, position, radius = 1.45) => {
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(radius + .13, .035, 6, 56),
-        new THREE.MeshStandardMaterial({
-          color: 0xd91f1f,
-          transparent: true,
-          opacity: 0,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.set(position[0], -.27, position[2]);
-      ring.visible = false;
-      scene.add(ring);
-
-      const glow = new THREE.PointLight(0xff2d2d, 0, 4.2);
-      glow.position.set(position[0], 1.35, position[2]);
+    const addMachineAlert = (id, position) => {
+      const glow = new THREE.PointLight(0xff2525, 0, 4.8);
+      glow.position.set(position[0], 1.05, position[2]);
       scene.add(glow);
-      alertEffects.push({ id, ring, glow });
-      return { ring, glow };
+      alertEffects.push({ id, glow });
+      return glow;
     };
 
     const towerLamps = [];
@@ -1273,6 +1139,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       const id = "LNS-QL-SERVO-80-S2-001";
       const color = colorForMachine(id);
       const accentLocal = new THREE.MeshStandardMaterial({ color, roughness: .4, metalness: .12, emissive: color, emissiveIntensity: isSelectedMachine(id) ? .16 : .05 });
+      selectionEffects.push({ machineId: id, material: accentLocal, property: "emissiveIntensity", selectedValue: .16, defaultValue: .05 });
       const feederWhiteMat = new THREE.MeshStandardMaterial({ color: 0xe6e9ec, roughness: .56, metalness: .08 });
       const feederPanelMat = new THREE.MeshStandardMaterial({ color: 0xcfd5d8, roughness: .5, metalness: .12 });
       const feederGlassMat = new THREE.MeshStandardMaterial({ color: 0x9eb9c0, roughness: .2, metalness: .04, transparent: true, opacity: .42, side: THREE.DoubleSide });
@@ -1283,7 +1150,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       feederGroup.scale.set(.86, .86, .86);
       scene.add(feederGroup);
       addMachineHalo(id, [feederGroup.position.x, feederGroup.position.y, feederGroup.position.z], 1.5);
-      addMachineAlert(id, [feederGroup.position.x, feederGroup.position.y, feederGroup.position.z], 1.5);
+      addMachineAlert(id, [feederGroup.position.x, feederGroup.position.y, feederGroup.position.z]);
       addTowerLamp(id, -3.9, 1.7, .1);
 
       const addFeederBox = (size, position, material, rotation = [0, 0, 0]) => {
@@ -1395,16 +1262,17 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       const id = "ELITE-CS612-ROBOT-001";
       const color = colorForMachine(id);
       const accentLocal = new THREE.MeshStandardMaterial({ color, roughness: .38, metalness: .16, emissive: color, emissiveIntensity: isSelectedMachine(id) ? .18 : .06 });
+      selectionEffects.push({ machineId: id, material: accentLocal, property: "emissiveIntensity", selectedValue: .18, defaultValue: .06 });
       const robotShellMat = new THREE.MeshStandardMaterial({ color: 0xf1f3f5, roughness: .34, metalness: .08 });
       const robotArmMat = new THREE.MeshStandardMaterial({ color: 0xcfd4d8, roughness: .24, metalness: .62 });
       const robotBandMat = new THREE.MeshStandardMaterial({ color: 0x172b68, roughness: .28, metalness: .2 });
       const robotDarkMat = new THREE.MeshStandardMaterial({ color: 0x2a2f35, roughness: .42, metalness: .4 });
       const robotGroup = new THREE.Group();
-      robotGroup.position.set(5.15, -.25, -.35);
+      robotGroup.position.set(workshopLayout.robot[0], -.25, workshopLayout.robot[1]);
       scene.add(robotGroup);
-      addMachineHalo(id, [robotGroup.position.x, robotGroup.position.y, robotGroup.position.z], 1.28);
-      addMachineAlert(id, [robotGroup.position.x, robotGroup.position.y, robotGroup.position.z], 1.28);
-      addTowerLamp(id, 5.15, 1.42, -.35);
+      addMachineHalo(id, [robotGroup.position.x, robotGroup.position.y, robotGroup.position.z], .85);
+      addMachineAlert(id, [robotGroup.position.x, robotGroup.position.y, robotGroup.position.z]);
+      addTowerLamp(id, workshopLayout.robot[0], 1.42, workshopLayout.robot[1]);
 
       const addRobotCylinder = (radius, length, position, material, rotation = [0, 0, 0], segments = 40) => {
         const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, segments), material);
@@ -1495,6 +1363,17 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
 
     const feederCell = addBarFeeder();
     const robotCell = addRobotCell();
+    const inspection = createEquator300();
+    inspection.root.position.set(workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]);
+    scene.add(inspection.root);
+    addMachineHalo("RENISHAW-EQUATOR300-001", [workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]], .95);
+    addMachineAlert("RENISHAW-EQUATOR300-001", [workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]]);
+    const inspectionHitBox = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.76, 1.6), hitMat);
+    inspectionHitBox.position.set(workshopLayout.inspection[0], .56, workshopLayout.inspection[1]);
+    scene.add(inspectionHitBox);
+    registerMachineObject(inspection.root, "EQUATOR300-VISUAL", inspectionHitBox);
+    inspectionHitBox.userData.machineId = "EQUATOR300-VISUAL";
+    addTowerLamp("RENISHAW-EQUATOR300-001", workshopLayout.inspection[0], 1.57, workshopLayout.inspection[1]);
 
     const group = new THREE.Group();
     group.position.set(.05, -.1, -.08);
@@ -1697,19 +1576,39 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     }
 
     const boxMat = new THREE.MeshStandardMaterial({ color: 0x566978, roughness: .6, metalness: .22 });
-    const boxPosition = new THREE.Vector3(5.9, -.16, .45);
-    addSceneBox([1.05, .12, .82], [boxPosition.x, boxPosition.y, boxPosition.z], boxMat);
-    addSceneBox([1.05, .48, .08], [boxPosition.x, boxPosition.y + .24, boxPosition.z - .41], boxMat);
-    addSceneBox([1.05, .48, .08], [boxPosition.x, boxPosition.y + .24, boxPosition.z + .41], boxMat);
-    addSceneBox([.08, .48, .82], [boxPosition.x - .52, boxPosition.y + .24, boxPosition.z], boxMat);
-    addSceneBox([.08, .48, .82], [boxPosition.x + .52, boxPosition.y + .24, boxPosition.z], boxMat);
-    for (const x of [boxPosition.x - .36, boxPosition.x, boxPosition.x + .36]) {
-      addSceneBox([.035, .42, .03], [x, boxPosition.y + .24, boxPosition.z + .44], railMat);
-    }
-    for (const side of [-1, 1]) {
-      addSceneBox([.1, .1, .25], [boxPosition.x + side * .55, boxPosition.y + .3, boxPosition.z], railMat);
-    }
-    addSceneBox([.3, .15, .014], [boxPosition.x, boxPosition.y + .25, boxPosition.z + .455], lightMat);
+    const boxPosition = new THREE.Vector3(workshopLayout.qualified[0], -.16, workshopLayout.qualified[1]);
+    const rejectPosition = new THREE.Vector3(workshopLayout.rework[0], -.16, workshopLayout.rework[1]);
+    const rejectMat = new THREE.MeshStandardMaterial({ color: 0x9a7250, roughness: .68, metalness: .08 });
+    const addBin = (position, material, label) => {
+      const { x, y, z } = position;
+      addSceneBox([1.05, .12, .82], [x, y, z], material);
+      for (const side of [-1, 1]) {
+        addSceneBox([.08, .47, .82], [x + side * .52, y + .25, z], material);
+        addSceneBox([.16, .065, .28], [x + side * .56, y + .51, z], railMat);
+        for (const offset of [-.22, .22]) addSceneBox([.025, .4, .08], [x + side * .565, y + .25, z + offset], railMat);
+      }
+      for (const side of [-1, 1]) {
+        addSceneBox([1.05, .47, .08], [x, y + .25, z + side * .41], material);
+        for (const offset of [-.35, .35]) addSceneBox([.045, .4, .025], [x + offset, y + .25, z + side * .455], railMat);
+      }
+      addSceneBox([1.15, .065, .07], [x, y + .51, z + .41], railMat);
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 96;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#e4e8e7";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#26343b";
+      context.font = "bold 46px sans-serif";
+      context.textAlign = "center";
+      context.fillText(label, 128, 66);
+      const texture = new THREE.CanvasTexture(canvas);
+      const sticker = new THREE.Mesh(new THREE.PlaneGeometry(.5, .18), new THREE.MeshStandardMaterial({ map: texture, roughness: .75 }));
+      sticker.position.set(x, y + .26, z + .457);
+      scene.add(sticker);
+    };
+    addBin(boxPosition, boxMat, "合格品");
+    addBin(rejectPosition, rejectMat, "待处理");
 
     const boxedScrews = Array.from({ length: 9 }, (_, index) => {
       const screw = createScrewPart(index / 9, cutMetalMat);
@@ -1722,7 +1621,6 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       screw.scale.setScalar(.72);
       return screw;
     });
-
     const chips = Array.from({ length: 18 }, (_, index) => {
       const spark = index < 3;
       const material = spark ? new THREE.MeshBasicMaterial({ color: 0xffba63 }) : chipMat;
@@ -1734,7 +1632,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     });
 
     addMachineHalo("TRAK-TC820LTYSI-001", [group.position.x, group.position.y, group.position.z], 2.05);
-    addMachineAlert("TRAK-TC820LTYSI-001", [group.position.x, group.position.y, group.position.z], 2.05);
+    addMachineAlert("TRAK-TC820LTYSI-001", [group.position.x, group.position.y, group.position.z]);
     const machineHitBox = new THREE.Mesh(new THREE.BoxGeometry(5.1, 2.8, 2.3), hitMat);
     machineHitBox.position.set(.08, 1.15, .05);
     group.add(machineHitBox);
@@ -1751,11 +1649,16 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     scene.add(rim);
 
     const toolHomePosition = new THREE.Vector3(0, 1.35, .48);
-    const toolPickHoverPosition = new THREE.Vector3(-.45, 1.12, 1.47);
-    const toolPickPosition = new THREE.Vector3(-.45, .7, 1.47);
+    const toRobotLocal = (point, y) => new THREE.Vector3(point[0] - workshopLayout.robot[0], y, point[1] - workshopLayout.robot[1]);
+    const toolPickHoverPosition = toRobotLocal(workshopLayout.pickup, 1.12);
+    const toolPickPosition = toRobotLocal(workshopLayout.pickup, .7);
     const toolLiftPosition = new THREE.Vector3(.1, 1.42, 1.12);
-    const toolBoxHoverPosition = new THREE.Vector3(.75, 1.14, .8);
-    const toolBoxDropPosition = new THREE.Vector3(.75, .8, .8);
+    const toolInspectHoverPosition = toRobotLocal(workshopLayout.inspection, 1.13);
+    const toolInspectDropPosition = toRobotLocal(workshopLayout.inspection, .58);
+    const toolQualifiedHoverPosition = toRobotLocal(workshopLayout.qualified, 1.25);
+    const toolQualifiedDropPosition = toRobotLocal(workshopLayout.qualified, .95);
+    const toolReworkHoverPosition = toRobotLocal(workshopLayout.rework, 1.25);
+    const toolReworkDropPosition = toRobotLocal(workshopLayout.rework, .95);
     const handoffScrew = finishedParts[0];
     const tempA = new THREE.Vector3();
     const tempB = new THREE.Vector3();
@@ -1800,7 +1703,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       return tempA.copy(tempB).lerp(tempC, progress);
     };
     const easeInOut = (value) => value * value * (3 - 2 * value);
-    const handoffPickWorld = new THREE.Vector3(4.7, .08, 1.12);
+    const handoffPickWorld = new THREE.Vector3(workshopLayout.pickup[0], .08, workshopLayout.pickup[1]);
     const armUp = new THREE.Vector3(0, 1, 0);
     const shoulderPoint = new THREE.Vector3(0, .7, 0);
     const armAxis = new THREE.Vector3(0, 1, 0);
@@ -1834,9 +1737,9 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       const time = performance.now() * 0.001;
       const cutCycle = (Math.sin(time * 1.05) + 1) / 2;
       const lineCycle = (time * .18) % 1;
-      const robotCycle = (time % 6) / 6;
+      const robotCycle = (time % 12) / 12;
 
-      const machining = robotCycle < .62;
+      const machining = robotCycle < .38;
       spindleChuck.rotation.x = machining ? time * 8.6 : 0;
       machiningWorkpiece.rotation.x = 0;
       toolSlide.position.x = machining ? .22 + Math.sin(time * .92) * .22 : .48;
@@ -1862,29 +1765,47 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
         feederCell.pusher.position.x = -1.72 + ((time * .32) % 1) * 3.18;
       }
       if (robotCell) {
-        const carrying = robotCycle >= .38 && robotCycle < .82;
-        const gripping = robotCycle >= .34 && robotCycle < .86;
+        // Two robot handoffs in one cycle: conveyor → gauge, gauge → one illustrative output bin.
+        const outputToRework = Math.floor(time / 12) % 2 === 1;
+        const binHover = outputToRework ? toolReworkHoverPosition : toolQualifiedHoverPosition;
+        const binDrop = outputToRework ? toolReworkDropPosition : toolQualifiedDropPosition;
+        const carrying = (robotCycle >= .25 && robotCycle < .56) || (robotCycle >= .83 && robotCycle < .96);
+        const gripping = (robotCycle >= .22 && robotCycle < .6) || (robotCycle >= .78 && robotCycle < .97);
         let toolPosition = toolHomePosition;
-        if (robotCycle < .12) {
+        if (robotCycle < .1) {
           toolPosition = toolHomePosition;
-        } else if (robotCycle < .24) {
-          toolPosition = moveBetween(toolHomePosition, toolPickHoverPosition, easeInOut((robotCycle - .12) / .12));
-        } else if (robotCycle < .34) {
-          toolPosition = moveBetween(toolPickHoverPosition, toolPickPosition, easeInOut((robotCycle - .24) / .1));
-        } else if (robotCycle < .44) {
+        } else if (robotCycle < .2) {
+          toolPosition = moveBetween(toolHomePosition, toolPickHoverPosition, easeInOut((robotCycle - .1) / .1));
+        } else if (robotCycle < .25) {
+          toolPosition = moveBetween(toolPickHoverPosition, toolPickPosition, easeInOut((robotCycle - .2) / .05));
+        } else if (robotCycle < .28) {
           toolPosition = toolPickPosition;
-        } else if (robotCycle < .54) {
-          toolPosition = moveBetween(toolPickPosition, toolPickHoverPosition, easeInOut((robotCycle - .44) / .1));
-        } else if (robotCycle < .7) {
-          toolPosition = moveOverArc(toolPickHoverPosition, toolLiftPosition, toolBoxHoverPosition, easeInOut((robotCycle - .54) / .16));
-        } else if (robotCycle < .8) {
-          toolPosition = moveBetween(toolBoxHoverPosition, toolBoxDropPosition, easeInOut((robotCycle - .7) / .1));
-        } else if (robotCycle < .88) {
-          toolPosition = toolBoxDropPosition;
+        } else if (robotCycle < .38) {
+          toolPosition = moveBetween(toolPickPosition, toolPickHoverPosition, easeInOut((robotCycle - .28) / .1));
+        } else if (robotCycle < .5) {
+          toolPosition = moveOverArc(toolPickHoverPosition, toolLiftPosition, toolInspectHoverPosition, easeInOut((robotCycle - .38) / .12));
+        } else if (robotCycle < .56) {
+          toolPosition = moveBetween(toolInspectHoverPosition, toolInspectDropPosition, easeInOut((robotCycle - .5) / .06));
+        } else if (robotCycle < .6) {
+          toolPosition = toolInspectDropPosition;
+        } else if (robotCycle < .66) {
+          toolPosition = moveBetween(toolInspectDropPosition, toolInspectHoverPosition, easeInOut((robotCycle - .6) / .06));
+        } else if (robotCycle < .72) {
+          toolPosition = toolInspectHoverPosition;
+        } else if (robotCycle < .78) {
+          toolPosition = moveBetween(toolInspectHoverPosition, toolInspectDropPosition, easeInOut((robotCycle - .72) / .06));
+        } else if (robotCycle < .83) {
+          toolPosition = toolInspectDropPosition;
+        } else if (robotCycle < .87) {
+          toolPosition = moveBetween(toolInspectDropPosition, toolInspectHoverPosition, easeInOut((robotCycle - .83) / .04));
+        } else if (robotCycle < .93) {
+          toolPosition = moveOverArc(toolInspectHoverPosition, toolHomePosition, binHover, easeInOut((robotCycle - .87) / .06));
         } else if (robotCycle < .96) {
-          toolPosition = moveBetween(toolBoxDropPosition, toolBoxHoverPosition, easeInOut((robotCycle - .88) / .08));
+          toolPosition = moveBetween(binHover, binDrop, easeInOut((robotCycle - .93) / .03));
+        } else if (robotCycle < .975) {
+          toolPosition = binDrop;
         } else {
-          toolPosition = moveBetween(toolBoxHoverPosition, toolHomePosition, easeInOut((robotCycle - .96) / .04));
+          toolPosition = moveOverArc(binDrop, binHover, toolHomePosition, easeInOut((robotCycle - .975) / .025));
         }
 
         poseRobot(toolPosition);
@@ -1901,15 +1822,15 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       });
 
       if (handoffScrew) {
-        if (robotCycle < .38) {
+        if (robotCycle < .25) {
           handoffScrew.visible = true;
           handoffScrew.position.copy(handoffPickWorld);
-        } else if (robotCycle < .82) {
-          handoffScrew.visible = false;
         } else {
           handoffScrew.visible = false;
         }
       }
+      // The alternating path is a process illustration, not a measured pass/fail verdict.
+      inspection.workpiece.visible = robotCycle >= .56 && robotCycle < .83;
 
       finishedParts.slice(1).forEach((part) => {
         const progress = (time * .17 + part.userData.offset) % 1;
@@ -1920,7 +1841,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
         part.rotation.y = Math.sin(time * 1.6 + part.userData.offset) * .08;
       });
 
-      boxedScrews.forEach((screw, index) => { screw.visible = index < 3 + Math.floor(time / 6) % 7; });
+      boxedScrews.forEach((screw, index) => { screw.visible = index < 3 + Math.floor(time / 12) % 7; });
 
       chips.forEach((chip) => {
         const progress = (time * 1.4 + chip.userData.offset) % 1;
@@ -1935,19 +1856,17 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       alertEffects.forEach((effect) => {
         const shouldAlert = isAlertStatus(currentStatusForMachine(effect.id));
         const pulse = .35 + Math.abs(Math.sin(time * 4.6)) * .65;
-        effect.ring.visible = shouldAlert;
-        effect.ring.material.opacity = shouldAlert ? .18 + pulse * .44 : 0;
-        effect.ring.scale.setScalar(1 + pulse * .08);
-        effect.glow.intensity = shouldAlert ? .8 + pulse * 2.1 : 0;
+        effect.glow.intensity = shouldAlert ? 2.2 + pulse * 2.4 : 0;
       });
       towerLamps.forEach(({ id, lamps }) => {
         const current = currentStatusForMachine(id);
-        const active = current === "fault" || current === "alarm" ? 0 : current === "warning" ? 1 : 2;
+        const active = current === "idle" ? -1 : current === "fault" || current === "alarm" ? 0 : current === "warning" ? 1 : 2;
         lamps.forEach((lamp, index) => { lamp.emissiveIntensity = index === active ? (active === 0 ? .8 + Math.abs(Math.sin(time * 5)) * 1.3 : .9) : .04; });
       });
       controls.update();
       renderer.render(scene, camera);
     };
+    updateSelection(selectedMachineIdRef.current);
     animate();
 
     const handleResize = () => {
@@ -2005,12 +1924,18 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     };
 
     const handlePointerLeave = () => clearHover();
-    const handleClick = () => onSelectRef.current(hoveredMachineRef.current);
+    const handleClick = (event) => {
+      const machineId = pickMachineAtPointer(event) || hoveredMachineRef.current;
+      if (machineId === "EQUATOR300-VISUAL") {
+        if (getCurrentMachine("RENISHAW-EQUATOR300-001")) onSelectRef.current("RENISHAW-EQUATOR300-001");
+      } else if (machineId) onSelectRef.current(machineId);
+    };
     renderer.domElement.addEventListener("pointermove", handlePointerMove);
     renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
     renderer.domElement.addEventListener("click", handleClick);
 
     return () => {
+      updateSelectionRef.current = null;
       window.cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
       clearHover();
@@ -2024,7 +1949,10 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
         if (object.geometry) object.geometry.dispose();
         if (object.material) {
           if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
-          else object.material.dispose();
+          else {
+            if (object.material.map) object.material.map.dispose();
+            object.material.dispose();
+          }
         }
       });
       controls.dispose();
@@ -2056,96 +1984,6 @@ function statusColor(status) {
   return 0x087f75;
 }
 
-function MachineDetailHeader({ machine, isLiveMachine, sample, result, healthText, onOpenDetail }) {
-  const status = isLiveMachine ? machineStatus(machine, result) : "idle";
-  return (
-    <section className="machine-detail-header">
-      <div>
-        <span className="eyebrow">设备详情</span>
-        <h2>{machine.name} · {machine.type}</h2>
-        <p>{machine.area || machine.line} · {isLiveMachine ? (sample?.device_id || machine.id) : machine.id}</p>
-        <div className="machine-context">
-          <span>{machine.flow || "实时采集 → 规则判定 → Agent诊断"}</span>
-          <span>{machine.focus || "关键指标与告警状态"}</span>
-        </div>
-        <button className="button detail-button" type="button" onClick={onOpenDetail}>查看设备详情</button>
-      </div>
-      <div className="machine-detail-stats">
-        <div><span>状态</span><strong className={status}>{machineStatusLabel(status)}</strong></div>
-        <div><span>运行阶段</span><strong>{isLiveMachine ? displayCycleState(sample) : "--"}</strong></div>
-        <div><span>告警</span><strong>{isLiveMachine ? displayAlarm(sample) : "--"}</strong></div>
-        <div><span>健康度</span><strong>{isLiveMachine ? healthText : "--"}</strong></div>
-      </div>
-    </section>
-  );
-}
-
-function StatusStrip({ snapshot, sample, runner, healthText }) {
-  const items = [
-    ["监测状态", runner.enabled ? "开启" : "暂停"],
-    ["设备状态", labelFor(statusLabels, sample?.status)],
-    ["运行阶段", displayCycleState(sample)],
-    ["当前告警", displayAlarm(sample)],
-    ["采样次数", snapshot?.result_count ?? "--"],
-    ["告警事件次数", snapshot?.alarm_event_count ?? "--"],
-    ["Agent诊断任务", snapshot?.diagnosis_task_count ?? "--"],
-    ["采样周期", runner.interval_seconds ? `${runner.interval_seconds} 秒/次` : "--"],
-    ["整机健康度", healthText],
-  ];
-  return (
-    <section className="status-strip" aria-label="运行状态">
-      {items.map(([label, value]) => (
-        <div className="status-item" key={label}>
-          <span>{label}</span>
-          <strong>{value}</strong>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-function AlarmTimeline({ snapshot, machines }) {
-  const triggerEvents = (snapshot?.trigger_history || []).map((item) => ({
-    id: item.event_id || item.task_id || item.triggered_at,
-    time: item.triggered_at,
-    deviceId: item.device_id,
-    title: item.trigger_cause || "诊断触发",
-    detail: (item.rule_types || []).map((rule) => ruleLabels[rule] || rule).join("、") || item.event_id || "异常事件",
-    level: severityClass(item.status),
-  }));
-  const liveEvents = machines.flatMap((machine) => {
-    const result = machine.result;
-    return (result?.observations || []).map((item, index) => ({
-      id: `${machine.id}-${item.key || index}`,
-      time: result.current_sample?.timestamp,
-      deviceId: machine.id,
-      title: observationLabel(item),
-      detail: item.message || `${item.value ?? "--"} ${item.unit || ""}`,
-      level: alertSeverity(item.alert_level),
-    }));
-  });
-  const events = [...liveEvents, ...triggerEvents].slice(0, 8);
-
-  return (
-    <section className="panel alarm-timeline-panel">
-      <div className="panel-heading">
-        <div><span className="eyebrow">报警时间线</span><h2>最新异常与诊断移交</h2></div>
-        <span className="muted">实时观测 + 触发记录</span>
-      </div>
-      <div className="alarm-timeline">
-        {!events.length && <div className="empty-state">当前没有异常或报警事件</div>}
-        {events.map((event) => (
-          <div className={`alarm-event ${event.level}`} key={event.id}>
-            <span className="alarm-time">{formatTime(event.time)}</span>
-            <span className="alarm-device">{event.deviceId}</span>
-            <strong>{event.title}</strong>
-            <p>{event.detail}</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
 
 function TrendPanel({ machine, history }) {
   const profileMetrics = (deviceProfiles[machine?.deviceType]?.metrics || []).slice(0, 3);
@@ -2197,33 +2035,44 @@ function MiniTrend({ item }) {
   );
 }
 
-function MachineDetailDrawer({ machine, result, sample, history, onClose }) {
-  const items = buildMetricItems(result, sample, machine).slice(0, 12);
+function MachineDetailDrawer({ machine, result, sample, dataSource, history, onClose }) {
   const status = machineStatus(machine, result);
+  useEffect(() => {
+    const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
   return (
     <div className="drawer-backdrop" role="presentation" onClick={onClose}>
-      <aside className="machine-drawer" role="dialog" aria-label="设备详情" onClick={(event) => event.stopPropagation()}>
+      <aside className="machine-drawer" role="dialog" aria-modal="true" aria-label={`${machine.name}设备详情`} onClick={(event) => event.stopPropagation()}>
         <div className="drawer-heading">
           <div>
             <span className="eyebrow">{machine.area || machine.line}</span>
             <h2>{machine.name}</h2>
-            <p>{machine.type} · {machine.flow}</p>
+            <p>{machine.type} · {machine.id}</p>
+            {machine.live && <p>数据源：{dataSource || "监控服务"}{String(dataSource || "").includes("模拟") ? "（非实体测量）" : ""}</p>}
           </div>
-          <button className="button" type="button" onClick={onClose}>关闭</button>
+          <button className="button" type="button" onClick={onClose} aria-label="关闭设备详情">关闭</button>
         </div>
         <div className="drawer-status">
           <div><span>状态</span><strong className={status}>{machineStatusLabel(status)}</strong></div>
-          <div><span>健康度</span><strong>{formatHealthValue(sample?.health_score)}</strong></div>
-          <div><span>报警</span><strong>{displayAlarm(sample)}</strong></div>
+          <div><span>健康度</span><strong>{machine.live ? formatHealthValue(sample?.health_score) : "--"}</strong></div>
+          <div><span>当前报警</span><strong>{machine.live ? displayAlarm(sample) : "--"}</strong></div>
         </div>
         <div className="drawer-section">
-          <span className="eyebrow">设备关注点</span>
-          <p>{machine.focus || "关键指标与告警状态"}</p>
+          <span className="eyebrow">工位与数据</span>
+          <p>{machine.flow || "设备工艺信息暂未提供"}</p>
+          {machine.live && sample && <p>最近采样：{formatTime(sample.timestamp)} · 运行阶段：{displayCycleState(sample)}</p>}
         </div>
-        <div className="drawer-metrics">
-          {items.map((item) => <MetricCard key={item.key} item={item} result={result} />)}
-        </div>
-        <TrendPanel machine={machine} history={history} />
+        {!machine.live ? (
+          <div className="drawer-no-data"><strong>该工位尚未接入实时采集</strong><p>三维模型可查看；健康度、测量值和报警状态暂不提供。</p></div>
+        ) : sample ? (
+          <>
+            <MetricsPanel result={result} sample={sample} machine={machine} />
+            <DecisionPanel result={result} />
+            <TrendPanel machine={machine} history={history} />
+          </>
+        ) : <div className="drawer-no-data"><strong>等待设备采样</strong><p>接入正常后，实时指标与监测判定会显示在这里。</p></div>}
       </aside>
     </div>
   );
@@ -2245,7 +2094,7 @@ function MetricsPanel({ result, sample, machine }) {
       <div className="metrics-grid">
         {visibleItems.map((item) => <MetricCard key={item.key} item={item} result={result} />)}
       </div>
-      {machine?.deviceType === "turning_center" && (sample?.vibration === null || sample?.vibration === undefined) && (
+      {machine?.deviceType === "turning_center" && sample?.vibration == null && sample?.metrics?.spindle_vibration_mm_s == null && sample?.metrics?.spindle_vibration_rms == null && (
         <div className="notice">当前车削中心数据源没有提供振动字段，振动不会被其他指标替代；其他设备指标仍会继续监测。</div>
       )}
       <div className="subsection-heading"><span className="eyebrow">设备联锁与执行部件</span><strong>整机状态</strong></div>
@@ -2386,114 +2235,12 @@ function ObservationList({ observations }) {
   );
 }
 
-function TriggerPanel({ snapshot }) {
-  const history = snapshot?.trigger_history || [];
-  return (
-    <section className="panel trigger-panel">
-      <div className="panel-heading">
-        <div><span className="eyebrow">诊断移交</span><h2>诊断触发记录</h2></div>
-        <span className="muted">只记录监测器已确认的触发事件</span>
-      </div>
-      <div className="trigger-list">
-        {!history.length && <div className="empty-state">暂无触发记录</div>}
-        {history.map((trigger, index) => (
-          <div className="trigger-row" key={`${trigger.task_id || trigger.event_id || index}`}>
-            <span className="trigger-time">{formatTime(trigger.triggered_at)}</span>
-            <span className="trigger-device">{trigger.device_id}</span>
-            <span className="trigger-rules">{trigger.event_id || trigger.abnormal_event?.event_id || "--"}</span>
-            <span className="trigger-reason">{trigger.trigger_cause || "首次确认异常"} · {trigger.task_id || "--"} · {(trigger.rule_types || []).map((item) => ruleLabels[item] || item).join("、")}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
 
-function DiagnosisPanel({ snapshot }) {
-  const latest = snapshot?.diagnosis?.latest || {};
-  const status = latest.status || "idle";
-  const statusClass = status === "failed" ? "fault" : status === "fallback" ? "warning" : "normal";
-  return (
-    <section className="panel diagnosis-panel">
-      <div className="panel-heading">
-        <div><span className="eyebrow">智能诊断</span><h2>诊断结果</h2></div>
-        <span className={`severity-pill ${statusClass}`}>{labelFor(diagnosisStatusLabels, status)}</span>
-      </div>
-      <DiagnosisResult latest={latest} />
-    </section>
-  );
-}
-
-function DiagnosisResult({ latest }) {
-  if (!latest || latest.status === "idle") {
-    return <div className="diagnosis-result"><div className="empty-state">满足触发条件后自动生成诊断结果</div></div>;
-  }
-  const confidence = confidenceText(latest.confidence);
-  const definition = latest.alarm_definition || {};
-  const evidence = (latest.tool_calls || []).slice(0, 4).map(displayToolName).join("、") || "等待诊断依据";
-  const diagnosis = diagnosisParagraphs(latest.diagnosis);
-  const cells = [
-    ["设备", latest.device_id || "--"],
-    ["报警信息", latest.alarm_label || definition.name || latest.alarm_code || definition.alarm_code || "--"],
-    ["报警级别", alarmLevelText(latest)],
-    ["运行状态", readableDiagnosisText(latest.cycle_state_label || latest.cycle_state || "--")],
-    ["置信度", confidence],
-    ["取证工具", evidence],
-  ];
-  return (
-    <div className="diagnosis-result">
-      <div className="diagnosis-summary">{compactDiagnosisSummary(latest)}</div>
-      <div className="diagnosis-grid">
-        {cells.map(([label, value]) => (
-          <div key={label}><span>{label}</span><strong>{value}</strong></div>
-        ))}
-      </div>
-      <div className="diagnosis-detail"><span>诊断说明</span>{diagnosis.length ? diagnosis.map((item, index) => <p key={`${item}-${index}`}>{item}</p>) : <p>暂无详细诊断</p>}</div>
-      {latest.error && <div className="diagnosis-error">{latest.error}</div>}
-    </div>
-  );
-}
 
 function PipelineData({ snapshot }) {
   return snapshot?.diagnosis?.pipeline || {};
 }
 
-function DiagnosisWorkspace({ snapshot }) {
-  const latest = snapshot?.diagnosis?.latest || {};
-  const pipeline = PipelineData({ snapshot });
-  const plan = pipeline.maintenance_plan || {};
-  const sample = snapshot?.latest_result?.current_sample || {};
-  const summary = buildTechnicianSummary({ latest, plan, sample });
-  return (
-    <section className="workspace-view active module-board" aria-label="智能诊断中心">
-      <ModuleHero eyebrow="维修人员视图" title="智能诊断中心" text="把设备报警转换成现场能直接执行的判断、检查和安全要求。" />
-      <div className="module-grid">
-        <ModuleStat label="故障现象" value={summary.symptom} text={latest.device_id || "等待设备报警"} />
-        <ModuleStat label="故障部件" value={summary.target} text={summary.judgment} />
-        <ModuleStat label="诊断可信度" value={confidenceText(latest.confidence)} text={summary.uncertainty ? "需要现场进一步确认" : "可作为维修前检查依据"} />
-      </div>
-      <div className="ops-grid">
-        <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">现场判断</span><h2>维修人员先看这里</h2></div><span className={`severity-pill ${summary.uncertainty ? "warning" : "normal"}`}>{summary.uncertainty ? "待现场确认" : "可执行"}</span></div>
-          <div className="technician-callout">{summary.judgment}</div>
-          <TechnicianSection title="优先检查" items={summary.checks} />
-          <TechnicianSection title="安全要求" items={summary.safety} tone="safety" />
-        </section>
-        <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">维修提示</span><h2>现场确认重点</h2></div></div>
-          <div className="detail-grid technician-detail-grid">
-            <DetailCell label="设备" value={latest.device_id} />
-            <DetailCell label="报警" value={summary.symptom} />
-            <DetailCell label="报警级别" value={alarmLevelText(latest)} />
-            <DetailCell label="故障部件" value={summary.target} />
-          </div>
-          {summary.uncertainty && <div className="technician-warning">{summary.uncertainty}。请先完成“优先检查”，再决定更换部件。</div>}
-          <TechnicianSection title="诊断说明" items={[summary.judgment]} />
-        </section>
-      </div>
-    </section>
-  );
-}
 
 const agentStatusLabels = {
   completed: "已完成",
@@ -2527,66 +2274,86 @@ function AgentFlow({ snapshot }) {
   );
 }
 
-function MaintenanceWorkspace({ snapshot }) {
+function DiagnosisWorkspace({ snapshot, sample }) {
+  const view = buildDiagnosisView(snapshot);
   const pipeline = PipelineData({ snapshot });
-  const plan = pipeline.maintenance_plan || {};
-  const latest = snapshot?.diagnosis?.latest || {};
-  const sample = snapshot?.latest_result?.current_sample || {};
-  const summary = buildTechnicianSummary({ latest, plan, sample });
+  const runtime = pipeline.runtime_result || {};
+  const status = view.status === "completed" ? "已完成" : view.status === "waiting" ? "等待诊断" : view.status;
+  const confidence = view.confidence == null ? "--" : `${Math.round(view.confidence * 100)}%`;
+  const alarm = sample?.alarm_label || sample?.alarm_code || "当前无活动报警";
   return (
-    <section className="workspace-view active module-board" aria-label="维修决策中心">
-      <ModuleHero eyebrow="维修人员视图" title="维修决策中心" text="按故障部件给出可执行的检查、维修、恢复和安全要求。" />
+    <section className="workspace-view active module-board diagnosis-workspace" aria-label="智能诊断">
+      <ModuleHero eyebrow="Runtime Diagnosis" title="智能诊断" text="基于实时事件、知识证据和工程数据生成可追溯的诊断结论。" />
       <div className="module-grid">
-        <ModuleStat label="故障部件" value={summary.target} text={summary.symptom} />
-        <ModuleStat label="预计用时" value={summary.estimatedTime || "现场评估"} text="以现场检查结果为准" />
-        <ModuleStat label="需要备件" value={summary.parts.length || "暂未确定"} text={summary.uncertainty || "按检查结果决定是否更换"} />
+        <ModuleStat label="诊断状态" value={status} text={view.deviceId || "等待设备"} />
+        <ModuleStat label="置信度" value={confidence} text="Evaluator 评估结果" />
+        <ModuleStat label="当前报警" value={alarm} text={runtime.stop_reason || pipeline.stop_reason || "持续监测中"} />
       </div>
-      <div className="ops-grid">
+      <div className="answer-grid diagnosis-content-grid">
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">维修执行</span><h2>按顺序处理</h2></div></div>
-          <TechnicianSection title="故障判断" items={[summary.judgment]} />
-          <TechnicianSection title="优先检查" items={summary.checks} />
-          <TechnicianSection title="维修步骤" items={summary.steps} ordered />
-          <TechnicianSection title="恢复标准" items={summary.recovery} />
+          <div className="panel-heading"><div><span className="eyebrow">诊断结论</span><h2>当前判断</h2></div></div>
+          <FormattedText value={view.summary} className="diagnosis-summary" />
+          {view.recommendation && <div className="diagnosis-recommendation"><span className="section-kicker">处置建议</span><FormattedText value={view.recommendation} /></div>}
         </section>
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">安全与资源</span><h2>开工前确认</h2></div></div>
-          <TechnicianSection title="安全要求" items={summary.safety} tone="safety" />
-          <div className="detail-grid technician-detail-grid">
-            <DetailCell label="工器具" value={summary.tools.join("、")} />
-            <DetailCell label="备件" value={summary.parts.join("、")} />
-          </div>
-          {summary.uncertainty && <div className="technician-warning">{summary.uncertainty}。禁止仅凭系统建议直接更换部件。</div>}
+          <div className="panel-heading"><div><span className="eyebrow">Evidence</span><h2>诊断依据</h2></div><span className="step-count">{view.evidence.length} 条</span></div>
+          {view.evidence.length ? <StepList steps={view.evidence} /> : <div className="empty-state">等待 Runtime 收集证据</div>}
         </section>
       </div>
+      <section className="panel module-panel diagnosis-flow-panel">
+        <div className="panel-heading"><div><span className="eyebrow">Runtime Trace</span><h2>诊断流程</h2></div></div>
+        <AgentFlow snapshot={snapshot} />
+      </section>
     </section>
   );
 }
 
 function ReportWorkspace({ snapshot }) {
   const pipeline = PipelineData({ snapshot });
-  const report = pipeline.report || {};
+  const [reports, setReports] = useState([]);
+  const [reportError, setReportError] = useState("");
+  const [loadingReports, setLoadingReports] = useState(false);
+
+  async function loadReports() {
+    setLoadingReports(true);
+    try {
+      const body = await request("/api/reports");
+      setReports(body.items || []);
+      setReportError("");
+    } catch (error) {
+      setReportError(error.message);
+    } finally {
+      setLoadingReports(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    loadReports();
+    const timer = window.setInterval(() => {
+      if (!cancelled) loadReports();
+    }, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+  const persistedReport = reports[0]?.report && typeof reports[0].report === "object" ? reports[0].report : reports[0];
+  const report = pipeline.report || persistedReport || {};
   const sections = report.sections || {};
+  const displaySections = buildReportDisplaySections(sections);
+  const hasReport = Boolean(report.report_id || report.title || report.summary || Object.keys(sections).length);
   return (
-    <section className="workspace-view active module-board" aria-label="报告中心">
-      <ModuleHero eyebrow="Report Agent" title="报告中心" text="汇总诊断、维修方案、工单和质检结果，形成可追溯运维报告。" />
-      <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text={report.report_type || "maintenance"} /><ModuleStat label="报告标题" value={report.title || "--"} text={report.created_at ? formatTime(report.created_at) : "等待生成"} /><ModuleStat label="质量状态" value={sections.quality?.passed == null ? "--" : sections.quality.passed ? "通过" : "未通过"} text="Quality Agent" /></div>
-      <section className="panel module-panel report-panel"><div className="panel-heading"><div><span className="eyebrow">报告摘要</span><h2>{report.title || "暂无报告"}</h2></div></div><p className="answer-summary">{report.summary || "完成一次异常闭环后，将在此展示诊断报告、维修报告和质检报告内容。"}</p><JsonBlock value={sections} /></section>
+    <section className="workspace-view active module-board report-workspace" aria-label="报告中心">
+      <ModuleHero eyebrow="Report Agent" title="报告中心" text="汇总诊断、维修方案、工单和质检结果，形成可追溯运维报告。" action={<button className="button" type="button" onClick={loadReports} disabled={loadingReports}>{loadingReports ? "刷新中…" : "刷新报告"}</button>} />
+      {reportError && <div className="inline-error" role="status">报告服务暂不可用：{reportError}</div>}
+      {hasReport ? (
+        <>
+          <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text={report.report_type || "运维报告"} /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质量状态" value={sections.quality?.passed == null ? "待确认" : sections.quality.passed ? "通过" : "未通过"} text="质量协同结果" /></div>
+          <section className="panel module-panel report-panel"><div className="panel-heading"><div><span className="eyebrow">报告摘要</span><h2>{report.title || "运维报告"}</h2></div></div><FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</section>
+        </>
+      ) : <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="完成异常诊断、维修与质检闭环后，报告会自动汇总在这里。" />}
     </section>
   );
 }
 
-function TraceWorkspace({ snapshot }) {
-  const pipeline = PipelineData({ snapshot });
-  const trace = pipeline.trace || [];
-  return (
-    <section className="workspace-view active module-board" aria-label="AI运行追踪">
-      <ModuleHero eyebrow="Agent Runtime" title="AI运行追踪" text="观察 Router、Harness、Agent、Tool、MCP 和 Experience 的调用链。" />
-      <div className="module-grid"><ModuleStat label="Trace记录" value={trace.length} text={pipeline.trace_id || "当前异常流程"} /><ModuleStat label="Agent事件" value={trace.filter((item) => item.agent).length} text="生命周期记录" /><ModuleStat label="Tool事件" value={trace.filter((item) => item.tool).length} text="MCP工具调用记录" /></div>
-      <section className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">调用链</span><h2>Trace Timeline</h2></div></div><TraceList items={trace} /></section>
-    </section>
-  );
-}
 
 function WorkorderView({ snapshot, sample, onClosed }) {
   const [orders, setOrders] = useState([]);
@@ -2630,7 +2397,10 @@ function WorkorderView({ snapshot, sample, onClosed }) {
       const faultActive = Boolean(faultCode) && ["alarm", "fault", "warning"].includes(faultStatus);
       if (cancelled || autoSyncingRef.current) return;
       if (!faultActive || !deviceId) {
-        setSelectedId("");
+        // The work-order module must remain usable even when the monitor is
+        // currently healthy.  Keep the queue selection instead of clearing it
+        // just because there is no active alarm to auto-dispatch.
+        if (!selectedId && items.length) setSelectedId(items[0].workorder_id);
         return;
       }
 
@@ -2742,8 +2512,23 @@ function WorkorderView({ snapshot, sample, onClosed }) {
 
   return (
     <section className="workspace-view active workorder-page" aria-label="工单系统">
+      {!currentFaultActive && <div className="module-hero"><span className="eyebrow">维修执行</span><h1>工单系统</h1><p>跟进维修任务、执行反馈与验收。</p></div>}
+      <section className="workorder-queue" aria-label="工单队列">
+        <div className="workorder-queue-heading">
+          <div><span className="eyebrow">工单队列</span><h2>维修任务</h2></div>
+          <span>{orders.length} 条记录</span>
+        </div>
+        {orders.length ? (
+          <div className="workorder-queue-list">
+            {orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}>
+              <span><strong>{order.title || "设备维修工单"}</strong><small>{order.workorder_id} · {order.device_id}</small></span>
+              <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{labelFor(workorderStatusLabels, order.status)}</em>
+            </button>)}
+          </div>
+        ) : <div className="workorder-queue-empty">暂无工单；监控发现异常后会自动生成，或从当前故障创建工单。</div>}
+      </section>
       <WorkorderDetail
-        order={currentFaultActive ? selectedOrder : null}
+        order={selectedOrder || null}
         sample={sample}
         diagnosis={latestDiagnosis}
         plan={maintenancePlan}
@@ -2762,12 +2547,26 @@ function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error
   if (!order) {
     return (
       <section className="workorder-empty-shell">
-        <div className="empty-state">暂无工单详情，等待虚拟工厂触发故障后自动派发维修工单。{error && <div className="inline-error">{error}</div>}</div>
+        <div className="workorder-empty-content">
+          <span className="workorder-empty-icon" aria-hidden="true">□</span>
+          <span className="eyebrow">工单队列</span>
+          <h2>当前没有待处理工单</h2>
+          <p>虚拟工厂触发故障后，维修工单会自动派发并显示在这里。</p>
+          {error && <div className="inline-error" role="alert">{error}</div>}
+        </div>
       </section>
     );
   }
-  const target = resolveRepairTarget(order, sample);
-  const sheet = buildWorkorderSheet({ order, target, plan, diagnosis });
+  const sameDevice = String(diagnosis?.device_id || "") === String(order.device_id || "");
+  const sameAlarm = String(diagnosis?.alarm_code || "") === String(order.alarm_code || "");
+  const hasCurrentDiagnosis = sameDevice && sameAlarm;
+  const orderDiagnosis = order.diagnosis_context && typeof order.diagnosis_context === "object" ? order.diagnosis_context : {};
+  const matchedDiagnosis = hasCurrentDiagnosis ? diagnosis : orderDiagnosis;
+  const matchedPlan = hasCurrentDiagnosis ? plan : {};
+  const matchedSample = String(sample?.device_id || "") === String(order.device_id || "") && String(sample?.alarm_code || "") === String(order.alarm_code || "") ? sample : {};
+  const target = resolveRepairTarget(order, matchedSample);
+  const sheet = buildWorkorderSheet({ order, target, plan: matchedPlan, diagnosis: matchedDiagnosis });
+  const guidance = buildTechnicianSummary({ latest: matchedDiagnosis, plan: matchedPlan, sample: matchedSample });
   const statusLabel = labelFor(workorderStatusLabels, order.status);
   return (
     <section className="workorder-detail-page">
@@ -2780,10 +2579,33 @@ function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error
         <span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span>
       </header>
 
+      <WorkorderGuidance guidance={guidance} hasCurrentDiagnosis={hasCurrentDiagnosis} />
       <div className="workorder-bigscreen-grid cad-only">
         <RepairCadPanel order={order} target={target} />
       </div>
       <WorkorderSheet sheet={sheet} busy={busy} error={error} onUpdate={onUpdate} />
+    </section>
+  );
+}
+
+function WorkorderGuidance({ guidance, hasCurrentDiagnosis }) {
+  return (
+    <section className="workorder-guidance" aria-label="维修判断与核验">
+      <div className="workorder-guidance-heading">
+        <div><span className="eyebrow">维修判断</span><h2>先核验，再执行</h2></div>
+        <span className="workorder-guidance-source">{hasCurrentDiagnosis ? "当前故障诊断" : "工单记录与通用核验"}</span>
+      </div>
+      <div className="workorder-guidance-grid">
+        <div>
+          <TechnicianSection title="故障判断" items={[guidance.judgment]} />
+          <TechnicianSection title="优先检查" items={guidance.checks} />
+        </div>
+        <div>
+          <TechnicianSection title="恢复标准" items={guidance.recovery} />
+          {guidance.estimatedTime && <p className="workorder-guidance-time">预计用时：{guidance.estimatedTime}（以现场评估为准）</p>}
+          {guidance.uncertainty && <FormattedText value={`${guidance.uncertainty}。禁止仅凭系统建议直接更换部件。`} className="technician-warning" />}
+        </div>
+      </div>
     </section>
   );
 }
@@ -2820,7 +2642,7 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
             <span>所属系统：{sheet.system}</span>
             <span>位置：{sheet.location}</span>
           </div>
-          <strong>故障表现：{sheet.faultSymptom}</strong>
+          <FormattedText value={`故障表现：${sheet.faultSymptom}`} className="fault-symptom" />
         </section>
         <section className="sheet-section evidence-card">
           <span className="section-kicker">开工前确认</span>
@@ -2836,7 +2658,7 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
         <section className="sheet-section">
           <div className="sheet-subhead"><div><span className="section-kicker">维修步骤</span><h3>按顺序处理</h3></div><span className="step-count">{sheet.steps.length} 项</span></div>
           <ol className="workorder-checklist">
-            {sheet.steps.map((step, index) => <li key={`${step}-${index}`}><span>□</span><p>{String(index + 1).padStart(2, "0")}　{step}</p></li>)}
+            {sheet.steps.map((step, index) => <li key={`${step}-${index}`}><span>□</span><FormattedText value={`${String(index + 1).padStart(2, "0")}　${step}`} /></li>)}
           </ol>
         </section>
         <section className="sheet-section feedback-card">
@@ -2939,19 +2761,19 @@ function RepairCadPanel({ order, target }) {
   );
 }
 
-function RagWorkspace({ snapshot, sample }) {
-  const [query, setQuery] = useState(quickQuestions[0]);
-  const [answer, setAnswer] = useState(null);
-  const [ragResult, setRagResult] = useState(null);
+function RagWorkspace({ snapshot, sample, messages, setMessages }) {
+  const [query, setQuery] = useState("");
   const [status, setStatus] = useState(null);
-  const [error, setError] = useState("");
+  const [statusError, setStatusError] = useState("");
   const [busy, setBusy] = useState(false);
+  const messageListRef = useRef(null);
 
   async function loadStatus() {
     try {
       setStatus(await request("/api/rag/status"));
+      setStatusError("");
     } catch (err) {
-      setError(err.message);
+      setStatusError(err.message);
     }
   }
 
@@ -2959,61 +2781,93 @@ function RagWorkspace({ snapshot, sample }) {
     loadStatus();
   }, []);
 
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [messages]);
+
   async function askKnowledge(nextQuery = query) {
-    if (!nextQuery.trim()) return;
+    const question = nextQuery.trim();
+    if (!question || busy) return;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setMessages((current) => [...current, { id, question, pending: true }]);
+    setQuery("");
     setBusy(true);
-    try {
-      const [agentBody, ragBody] = await Promise.all([
-        request("/api/agent/question", {
-          method: "POST",
-          body: JSON.stringify({ user_text: nextQuery, context: { device_id: sample?.device_id || snapshot?.device_id || "" } }),
-        }),
-        request(`/api/rag/search?query=${encodeURIComponent(nextQuery)}&limit=5`),
-      ]);
-      setAnswer(agentBody);
-      setRagResult(ragBody);
-      setError("");
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
+    const [agentResponse, ragResponse] = await Promise.allSettled([
+      request("/api/agent/question/summary", {
+        method: "POST",
+        body: JSON.stringify({ user_text: question, context: { device_id: sample?.device_id || snapshot?.device_id || "" } }),
+      }),
+      request(`/api/rag/search?query=${encodeURIComponent(question)}&limit=5`),
+    ]);
+    const answer = agentResponse.status === "fulfilled" ? agentResponse.value : null;
+    const ragResult = ragResponse.status === "fulfilled" ? ragResponse.value : null;
+    setMessages((current) => current.map((message) => message.id === id ? {
+      ...message,
+      pending: false,
+      answer,
+      ragResult,
+      agentError: agentResponse.status === "rejected" ? String(agentResponse.reason?.message || agentResponse.reason) : "",
+      ragError: ragResponse.status === "rejected" ? String(ragResponse.reason?.message || ragResponse.reason) : "",
+    } : message));
+    setBusy(false);
+  }
+
+  function handleComposerKeyDown(event) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      askKnowledge();
     }
   }
 
-  const documents = ragResult?.documents || answer?.knowledge?.documents || [];
-  const report = answer?.report || {};
   return (
-    <section className="workspace-view active module-board" aria-label="RAG知识问答">
-      <ModuleHero eyebrow="RAG 知识中枢" title="维修知识问答" text="统一调用 Router、Knowledge 和 RAG 检索接口，展示答案摘要、命中文档与知识库状态。" />
-      <div className="module-grid">
-        <ModuleStat label="检索后端" value={status?.backend || "--"} text="支持本地 fallback 或远程 RAG" />
-        <ModuleStat label="知识记录" value={status?.record_count ?? "--"} text="当前可检索记录数" />
-        <ModuleStat label="命中文档" value={documents.length} text="本次问答引用结果" />
+    <section className="workspace-view active module-board rag-workspace rag-chat" aria-label="RAG知识问答">
+      <ModuleHero eyebrow="RAG 知识中枢" title="维修知识问答" text="围绕设备故障、报警码与 SOP 连续提问；每条回答附上对应的检索证据。" />
+      <div className="rag-chat-shell">
+        <div className="rag-chat-toolbar">
+          <div><span className="rag-chat-status-dot" /><strong>知识助手</strong><span>· {status?.backend || "检索服务待确认"}</span></div>
+          <div><span>知识记录 {status?.record_count ?? "--"}</span><button className="button" type="button" onClick={loadStatus}>刷新状态</button></div>
+        </div>
+        {statusError && <div className="rag-chat-status-error" role="status">知识库状态暂不可用：{statusError}</div>}
+        <div className="rag-chat-messages" ref={messageListRef} role="log" aria-label="知识问答对话" aria-live="polite">
+          {messages.length === 0 ? (
+            <div className="rag-chat-welcome"><span className="rag-chat-welcome-mark" aria-hidden="true">IA</span><h2>有什么设备问题需要排查？</h2><p>可以询问报警含义、维修步骤或 SOP；答案会与命中文档一起显示。</p></div>
+          ) : messages.map((message) => {
+            const documents = message.ragResult?.documents || message.answer?.knowledge?.documents || [];
+            const report = message.answer?.report || {};
+            const ragAnswer = isDebugAnswer(message.ragResult?.answer) ? "" : message.ragResult?.answer;
+            const summary = cleanDisplayText(report.summary)
+              || cleanDisplayText(message.answer?.knowledge?.answer)
+              || message.answer?.knowledge?.summary
+              || message.answer?.diagnosis?.summary
+              || message.answer?.diagnosis?.fault
+              || message.answer?.route_result?.reason
+              || cleanDisplayText(ragAnswer)
+              || "";
+            const routedToReport = message.answer?.route === "report" || message.answer?.route_result?.intent === "report";
+            return <div className="rag-chat-turn" key={message.id}>
+              <div className="rag-chat-row is-user"><span className="rag-chat-avatar">你</span><div className="rag-chat-bubble">{message.question}</div></div>
+              <div className="rag-chat-row is-assistant"><span className="rag-chat-avatar">IA</span><div className="rag-chat-bubble">
+                {message.pending ? <p className="rag-chat-pending">正在检索并整理回答…</p> : <>
+                  {routedToReport && <span className="rag-chat-result-tag">路由至报告流程 · 非知识回答</span>}
+                  {report.title && <h3>{report.title}</h3>}
+                  <FormattedText value={summary || (message.agentError ? "问答服务暂不可用，本次未生成回答。" : "本次没有可展示的回答，请尝试补充设备或报警信息。")} />
+                  {message.agentError && <FormattedText value={`问答服务异常：${message.agentError}`} className="rag-chat-error" />}
+                  {message.ragError && <FormattedText value={`文档检索异常：${message.ragError}`} className="rag-chat-error" />}
+                  {documents.length > 0 && <details className="rag-chat-citations"><summary>查看参考正文</summary><DocumentList documents={documents} compact /></details>}
+                </>}
+              </div></div>
+            </div>;
+          })}
+        </div>
+        <div className="rag-chat-composer">
+          <div className="rag-chat-suggestions">{quickQuestions.map((item) => <button className="button" type="button" key={item} disabled={busy} onClick={() => askKnowledge(item)}>{item}</button>)}</div>
+          <form onSubmit={(event) => { event.preventDefault(); askKnowledge(); }}>
+            <textarea className="qa-input" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="输入设备维修、SOP 或报警码问题…" aria-label="维修知识问题" />
+            <div className="rag-chat-composer-actions"><span>Enter 发送 · Shift+Enter 换行</span><button className="button primary" type="submit" disabled={busy || !query.trim()}>{busy ? "回答中…" : "发送问题"}</button></div>
+          </form>
+        </div>
       </div>
-      <section className="qa-shell">
-        <div className="quick-row">
-          {quickQuestions.map((item) => (
-            <button key={item} className="button" type="button" onClick={() => { setQuery(item); askKnowledge(item); }}>{item}</button>
-          ))}
-        </div>
-        <textarea className="qa-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="输入设备维修、SOP、报警码问题" />
-        <div className="action-row">
-          <button className="button primary" type="button" disabled={busy} onClick={() => askKnowledge()}>{busy ? "检索中" : "提交问答"}</button>
-          <button className="button" type="button" onClick={loadStatus}>刷新知识库状态</button>
-        </div>
-        {error && <div className="inline-error">{error}</div>}
-      </section>
-      <section className="answer-grid">
-        <div className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">Agent 回答</span><h2>{report.title || "等待提问"}</h2></div></div>
-          <p className="answer-summary">{report.summary || answer?.diagnosis?.fault || answer?.route_result?.reason || "输入问题后将展示 Router 与 Knowledge Agent 的回答。"}</p>
-          {answer?.route_result && <JsonBlock value={answer.route_result} />}
-        </div>
-        <div className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">引用文档</span><h2>RAG 命中</h2></div><span className="muted">{ragResult?.source || answer?.knowledge?.source || "--"}</span></div>
-          <DocumentList documents={documents} />
-        </div>
-      </section>
     </section>
   );
 }
@@ -3021,20 +2875,15 @@ function RagWorkspace({ snapshot, sample }) {
 function QualityWorkspace({ snapshot, sample }) {
   const [partId, setPartId] = useState("PART-001");
   const [quality, setQuality] = useState(null);
-  const [trace, setTrace] = useState([]);
   const [experiences, setExperiences] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   async function loadQualityData() {
     try {
-      const [traceBody, experienceBody] = await Promise.all([
-        request("/api/trace"),
-        request("/api/experience/search", {
+      const experienceBody = await request("/api/experience/search", {
           method: "POST",
           body: JSON.stringify({ device_id: sample?.device_id || snapshot?.device_id || "", limit: 8 }),
-        }),
-      ]);
-      setTrace(traceBody.trace || []);
+        });
       setExperiences(experienceBody.items || []);
       setError("");
     } catch (err) {
@@ -3062,99 +2911,103 @@ function QualityWorkspace({ snapshot, sample }) {
   }
 
   return (
-    <section className="workspace-view active module-board" aria-label="质检系统">
+    <section className="workspace-view active module-board quality-workspace" aria-label="质检系统">
       <ModuleHero eyebrow="QMS 质检系统" title="生产零件质量检测" text="对生产完成的零件执行尺寸、外观、材料、功能和工艺追溯检测。" />
-      <div className="module-grid">
-        <ModuleStat label="检测对象" value={quality?.part_id || partId || "--"} text={quality?.part_no || "输入生产零件编号"} />
-        <ModuleStat label="检测结果" value={quality ? (quality.qualified ? "合格" : "不合格") : "未执行"} text={quality?.quality_grade || "等待检测"} />
-        <ModuleStat label="经验记录" value={experiences.length} text="长期记忆/经验库结果" />
-      </div>
-      <div className="ops-grid">
+      <div className="ops-grid quality-primary-grid">
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">检测对象</span><h2>生产零件</h2></div><button className="button" type="button" onClick={loadQualityData}>刷新</button></div>
-          <input className="select-input" value={partId} onChange={(event) => setPartId(event.target.value)} placeholder="例如 PART-001" aria-label="生产零件编号" />
+          <div className="panel-heading"><div><span className="eyebrow">检测任务</span><h2>输入零件编号</h2></div></div>
+          <label className="field-label" htmlFor="quality-part-id">生产零件编号</label>
+          <input id="quality-part-id" className="select-input" value={partId} onChange={(event) => setPartId(event.target.value)} placeholder="例如 PART-001" />
           <div className="action-row"><button className="button primary" type="button" disabled={busy || !partId.trim()} onClick={verifyQuality}>{busy ? "检测中" : "执行质量检测"}</button></div>
           {error && <div className="inline-error">{error}</div>}
         </section>
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">检测结果</span><h2>{quality ? (quality.qualified ? "零件合格" : "零件不合格") : "等待检测"}</h2></div></div>
+          <div className="panel-heading"><div><span className="eyebrow">最近结果</span><h2>{quality ? (quality.qualified ? "零件合格" : "零件不合格") : "等待检测"}</h2></div>{quality && <span className={`severity-pill ${quality.qualified ? "normal" : "fault"}`}>{quality.qualified ? "合格" : "不合格"}</span>}</div>
           {quality ? <QualityResultView quality={quality} /> : <div className="empty-state">输入生产零件编号后，系统会返回尺寸、外观、材料、功能和工艺检测结果。</div>}
         </section>
       </div>
-      <section className="answer-grid">
-        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">经验库</span><h2>维修经验</h2></div></div><ExperienceList items={experiences} /></div>
-        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">Trace</span><h2>Agent 调用轨迹</h2></div></div><TraceList items={trace} /></div>
+      <section className="answer-grid quality-experience-grid">
+        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">经验库 · {experiences.length} 条</span><h2>相关维修经验</h2></div><button className="button" type="button" onClick={loadQualityData}>刷新经验</button></div><ExperienceList items={experiences} /></div>
       </section>
     </section>
   );
 }
 
-function ModuleHero({ eyebrow, title, text }) {
-  return <div className="module-hero"><span className="eyebrow">{eyebrow}</span><h2>{title}</h2><p>{text}</p></div>;
+function ModuleHero({ eyebrow, title, text, action = null }) {
+  return <header className="module-hero"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{text}</p></div>{action && <div className="module-hero-action">{action}</div>}</header>;
+}
+
+function WorkspaceEmpty({ eyebrow, title, text }) {
+  return <div className="workspace-empty"><span className="workspace-empty-mark" aria-hidden="true">—</span><span className="eyebrow">{eyebrow}</span><h2>{title}</h2><p>{text}</p></div>;
 }
 
 function ModuleStat({ label, value, text }) {
   return <div className="module-card"><span>{label}</span><strong>{value}</strong><p>{text}</p></div>;
 }
 
-function DetailCell({ label, value }) {
-  return <div><span>{label}</span><strong>{value || "--"}</strong></div>;
-}
-
 function TechnicianSection({ title, items = [], ordered = false, tone = "" }) {
-  const values = (items || []).filter(Boolean);
+  const values = (items || []).map(cleanEvidenceText).filter(Boolean);
   if (!values.length) return null;
+  const renderItem = (item, index) => {
+    const content = String(item);
+    const isDocumentEvidence = /本地OCR识别结果|内容类型:|^\[cad_drawing/i.test(content);
+    const detail = content.length > 220
+      ? <details className="long-evidence"><summary>{isDocumentEvidence ? "参考文档正文" : `${content.slice(0, 130).trim()}…`} <span>展开正文</span></summary><FormattedText value={content} /></details>
+      : <FormattedText value={content} />;
+    return <li key={`${index}-${content.slice(0, 40)}`}>{detail}</li>;
+  };
   return (
     <div className={`technician-section ${tone}`}>
       <h3>{title}</h3>
       {ordered ? (
-        <ol>{values.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ol>
+        <ol>{values.map(renderItem)}</ol>
       ) : (
-        <ul>{values.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
+        <ul>{values.map(renderItem)}</ul>
       )}
     </div>
   );
 }
 
 function StepList({ steps = [] }) {
-  if (!steps.length) return <div className="empty-state">暂无维修步骤</div>;
-  return <ol className="step-list">{steps.map((step, index) => <li key={`${step}-${index}`}>{step}</li>)}</ol>;
+  const visibleSteps = steps.map(cleanDisplayText).filter(Boolean);
+  if (!visibleSteps.length) return <div className="empty-state">暂无维修步骤</div>;
+  return <ol className="step-list">{visibleSteps.map((step, index) => <li key={`${step}-${index}`}><FormattedText value={step} /></li>)}</ol>;
 }
 
 function DocumentList({ documents, limit = null, compact = false }) {
   if (!documents.length) return <div className="empty-state">暂无命中文档</div>;
   const visibleDocuments = limit ? documents.slice(0, limit) : documents;
-  return <div className={`document-list ${compact ? "compact" : ""}`}>{visibleDocuments.map((doc, index) => <article key={doc.document_id || index}><strong>{doc.title || doc.document_id}</strong><p>{doc.content}</p><span>{doc.source || doc.metadata?.collection || "知识库"} · 相关度 {doc.score ?? "--"}</span></article>)}</div>;
+  return <div className={`document-list ${compact ? "compact" : ""}`}>{visibleDocuments.map((doc, index) => <article key={doc.document_id || index}><FormattedText value={cleanDisplayText(documentBodyOnly(doc)) || "暂无正文"} /></article>)}</div>;
 }
 
 function QualityResultView({ quality }) {
   const checks = quality.inspection_items || [];
-  return <div className="quality-result"><div className="check-grid">{checks.map((item) => <div key={item.name} className={item.passed ? "normal" : "fault"}><span>{item.name}</span><strong>{item.passed ? "通过" : "未通过"}</strong></div>)}</div>{quality.defects?.length > 0 && <JsonBlock value={quality.defects} />}<StepList steps={quality.findings || []} /></div>;
+  const defects = (quality.defects || []).map((item) => typeof item === "string" ? item : item?.description || item?.message || item?.name || "").filter(Boolean);
+  return <div className="quality-result"><div className="check-grid">{checks.map((item) => <div key={item.name} className={item.passed ? "normal" : "fault"}><span>{item.name}</span><strong>{item.passed ? "通过" : "未通过"}</strong></div>)}</div><StepList steps={[...defects, ...(quality.findings || [])]} /></div>;
 }
 
 function ExperienceList({ items }) {
   if (!items.length) return <div className="empty-state">暂无经验记录；闭环通过后会自动沉淀。</div>;
-  return <div className="document-list">{items.map((item, index) => <article key={item.experience_id || index}><strong>{item.title}</strong><p>{item.content}</p><span>{item.device_id || "--"} · {item.source_workorder || "历史经验"}</span></article>)}</div>;
+  return <div className="document-list">{items.map((item, index) => <article key={item.experience_id || index}><strong>{cleanDisplayText(item.title) || "维修经验"}</strong><FormattedText value={cleanDisplayText(item.content) || "暂无经验正文"} /></article>)}</div>;
 }
 
-function TraceList({ items }) {
-  if (!items.length) return <div className="empty-state">暂无调用轨迹</div>;
-  return <div className="trace-list">{items.slice(0, 12).map((item, index) => <div key={`${item.event || "trace"}-${index}`}><strong>{item.event}</strong><span>{item.summary || item.agent || item.tool || item.mcp_server || "runtime"}</span></div>)}</div>;
+function FormattedText({ value, className = "" }) {
+  const blocks = splitTextBlocks(value);
+  if (!blocks.length) return null;
+  return <div className={`formatted-text ${className}`.trim()}>{blocks.map((block, index) => block.type === "list"
+    ? <ul key={`list-${index}`}>{block.items.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{item}</li>)}</ul>
+    : <p key={`paragraph-${index}`}>{block.text}</p>)}</div>;
 }
 
-function JsonBlock({ value }) {
-  return <pre className="json-block">{JSON.stringify(value, null, 2)}</pre>;
-}
 
-function PendingView({ title }) {
-  return (
-    <section className="workspace-view active pending-view" aria-label={title}>
-      <div className="pending-board">
-        <span className="eyebrow">{title}</span>
-        <h2>待开发~</h2>
-      </div>
+function ReportDisplaySections({ sections }) {
+  return <div className="report-display-sections">{sections.map((section) => (
+    <section className="report-display-section" key={section.title}>
+      <h3>{section.title}</h3>
+      {section.body && <FormattedText value={section.body} />}
+      {section.items?.length > 0 && <StepList steps={section.items} />}
     </section>
-  );
+  ))}</div>;
 }
 
 export { App };

@@ -7,6 +7,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
+from app.agents.base import trace_skill_node
 
 from .schemas import WorkOrderGraphState, WorkOrderResult
 from .validator import WorkOrderAgentValidator
@@ -114,7 +115,7 @@ def _route(state: WorkOrderGraphState) -> str:
 def build_workorder_graph():
     workflow = StateGraph(WorkOrderGraphState)
     for name, node in (("initialize", initialize), ("load_skill", load_skill), ("validate_plan", validate_plan), ("create_order", create_order), ("collect_dispatch_context", collect_dispatch_context), ("select_assignee", select_assignee), ("assign_order", assign_order), ("execute_action", execute_action), ("validate", validate), ("final", final), ("fallback", fallback)):
-        workflow.add_node(name, node)
+        workflow.add_node(name, trace_skill_node("workorder", name, node))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "validate_plan")

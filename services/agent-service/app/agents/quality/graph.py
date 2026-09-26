@@ -7,6 +7,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
+from app.agents.base import trace_skill_node
 from app.contracts import QualityResult
 
 from .schemas import QualityQuery, QualityWorkflowState
@@ -152,7 +153,7 @@ def build_quality_graph():
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, node)
+        workflow.add_node(name, trace_skill_node("quality", name, node))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "load_part")

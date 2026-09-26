@@ -51,6 +51,11 @@ class MemoryResult(BaseModel):
 
 class MemoryGraphState(TypedDict, total=False):
     agent: Any
+    active_agent: str
+    current_step: str
+    step_history: list[dict[str, Any]]
+    completed_steps: list[dict[str, Any]]
+    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     action: str
     items: List[Dict[str, Any]]

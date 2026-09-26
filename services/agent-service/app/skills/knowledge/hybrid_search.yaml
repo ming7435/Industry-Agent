@@ -7,6 +7,14 @@ steps:
   - search_knowledge
   - rerank_evidence
   - validate_evidence
+  - normalize_query
+  - select_sources
+  - build_filters
+  - search
+  - build_evidence
+  - rank
+  - validate_sources
+  - build_result
 tools:
   - search_knowledge
   - search_sop
@@ -15,4 +23,3 @@ tools:
   - search_semantic_memory
   - fetch_document
   - fetch_chunk
-

@@ -80,8 +80,25 @@ def normalize_tool_arguments(
     return result
 
 
-def guard_tool_call(name: str, arguments: Mapping[str, Any], state: DiagnosisState) -> Dict[str, Any]:
+def guard_tool_call(name: str, arguments: Mapping[str, Any], state: DiagnosisState, tools: Any | None = None) -> Dict[str, Any]:
     """执行工具权限、必填参数和重复调用校验。"""
+
+    shared_guard = getattr(tools, "guard_call", None)
+    if callable(shared_guard):
+        decision = shared_guard(name, arguments, context={
+            "agent": "diagnosis",
+            "skills": list(state.active_skills or []),
+            "step": "tool_guard",
+            "allowed_tools": list(state.allowed_tools or []),
+            "tool_calls": list(state.tool_calls or []),
+        })
+        reason = str(decision.get("reason") or "")
+        code = {
+            "tool_not_allowed_for_step": "TOOL_NOT_ALLOWED",
+            "tool_not_registered": "TOOL_NOT_ALLOWED",
+            "duplicate_tool_call": "DUPLICATE_TOOL_CALL",
+        }.get(reason, "INVALID_ARGUMENT" if reason.startswith("missing_required_argument") else "OK")
+        return {"allow": bool(decision.get("allow")), "code": code, "message": reason or "allowed"}
 
     if name not in set(state.allowed_tools or []):
         return {"allow": False, "code": "TOOL_NOT_ALLOWED", "message": "Diagnosis Agent 不允许调用工具：%s" % name}

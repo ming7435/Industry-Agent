@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Mapping, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
+from app.agents.base import trace_skill_node
 from app.contracts import CADComponent, CADResult
 
 from .schemas import CADQuery
@@ -18,6 +19,11 @@ CAD_TOOLS = ("query_drawing", "query_bom", "query_part", "query_relation", "fetc
 
 class CADGraphState(TypedDict, total=False):
     agent: Any
+    active_agent: str
+    current_step: str
+    step_history: list[dict[str, Any]]
+    completed_steps: list[dict[str, Any]]
+    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     active_skill: str
     active_skills: List[str]
@@ -145,7 +151,7 @@ def fallback(state: CADGraphState) -> Dict[str, Any]:
 def build_cad_graph():
     workflow = StateGraph(CADGraphState)
     for name, node in (("initialize", initialize), ("load_skill", load_skill), ("resolve_component", resolve_component), ("plan_engineering_query", plan_engineering_query), ("query", query), ("observe", observe), ("validate_relation", validate_relation), ("final", final), ("fallback", fallback)):
-        workflow.add_node(name, node)
+        workflow.add_node(name, trace_skill_node("cad", name, node))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "resolve_component")

@@ -47,3 +47,16 @@ class AgentState(TypedDict, total=False):
     runtime_policy: Dict[str, Any]
     runtime_pending_task: Dict[str, Any]
     runtime_resume: Dict[str, Any]
+    active_agent: str
+    active_skills: List[str]
+    current_step: str
+    step_history: List[Dict[str, Any]]
+    completed_steps: List[Dict[str, Any]]
+    failed_steps: List[Dict[str, Any]]
+    tool_calls: List[Dict[str, Any]]
+    observations: List[Dict[str, Any]]
+    evidence: List[Dict[str, Any]]
+    evidence_records: List[Dict[str, Any]]
+    validation: Dict[str, Any]
+    validation_results: List[Dict[str, Any]]
+    next_action: Dict[str, Any]

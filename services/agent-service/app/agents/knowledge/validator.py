@@ -53,6 +53,17 @@ class KnowledgeEvidenceValidator:
             findings.append("状态为 completed 但没有知识文档")
         return cls._dedupe(findings)
 
+    @classmethod
+    def validate_result(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        findings = cls.validate(*args, **kwargs)
+        return {
+            "passed": not findings,
+            "checks": {"input": True, "evidence": not findings, "confidence": True, "consistency": not findings, "safety": True, "schema": True},
+            "findings": list(findings),
+            "missing": list(findings),
+            "recommended_action": {"type": "tool", "target": "search_knowledge"} if findings else {"type": "continue"},
+        }
+
     @staticmethod
     def _dedupe(items: list[str]) -> list[str]:
         values: list[str] = []

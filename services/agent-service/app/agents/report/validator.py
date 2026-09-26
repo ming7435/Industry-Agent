@@ -62,6 +62,17 @@ class ReportValidator:
             findings.append("报告缺少 source_refs")
         return cls._dedupe(findings)
 
+    @classmethod
+    def validate_result(cls, sections: Mapping[str, Any], source_refs: list[Mapping[str, Any]], report_type: str = "full_case_report") -> dict[str, Any]:
+        findings = cls.validate(sections, source_refs, report_type)
+        return {
+            "passed": not findings,
+            "checks": {"input": not findings, "evidence": not findings, "confidence": True, "consistency": not findings, "safety": True, "schema": not findings},
+            "findings": list(findings),
+            "missing": list(findings),
+            "recommended_action": {"type": "transform", "target": "collect_sources"} if findings else {"type": "persist", "target": "persist_report"},
+        }
+
     @staticmethod
     def _mapping(value: Any) -> dict[str, Any]:
         if hasattr(value, "model_dump"):

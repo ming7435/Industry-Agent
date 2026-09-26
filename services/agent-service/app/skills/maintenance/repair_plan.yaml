@@ -8,9 +8,12 @@ steps:
   - request_cad
   - plan_repair
   - validate_plan
+  - validate_diagnosis
+  - determine_required_parts
+  - build_safety_steps
+  - build_result
 tools:
   - query_inventory
   - query_part_availability
   - get_workorder_template
   - submit_workorder_draft
-

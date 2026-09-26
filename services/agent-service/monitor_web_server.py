@@ -11,7 +11,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -28,6 +28,148 @@ if str(SERVICE_ROOT) not in sys.path:
 # module-level registry type.  Monitor never instantiates it; all execution
 # remains behind the Agent Service HTTP boundary.
 from app.tools.registry import ToolRegistry  # noqa: E402,F401
+
+
+_PUBLIC_TRACE_FIELDS = (
+    "timestamp",
+    "type",
+    "name",
+    "node",
+    "agent",
+    "event",
+    "task_id",
+    "trace_id",
+    "tool_name",
+    "latency",
+    "error",
+)
+
+
+def _compact_trace(trace: Any) -> List[Dict[str, Any]]:
+    """Keep the monitor flow trace useful without exposing runtime state payloads."""
+
+    if not isinstance(trace, list):
+        return []
+    compacted: List[Dict[str, Any]] = []
+    for item in trace[-200:]:
+        if not isinstance(item, Mapping):
+            continue
+        compacted.append({key: item[key] for key in _PUBLIC_TRACE_FIELDS if key in item})
+    return compacted
+
+
+def _compact_stage(value: Any, fields: tuple[str, ...]) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {key: value[key] for key in fields if key in value}
+
+
+def compact_public_pipeline(pipeline: Mapping[str, Any] | None) -> Dict[str, Any]:
+    """Return the bounded pipeline contract consumed by the monitor UI.
+
+    The runtime keeps full evidence, action outputs and state transitions for the
+    trace API.  Embedding those payloads in a one-second monitor snapshot made a
+    single response grow to hundreds of megabytes and prevented every workspace
+    from loading.  The monitor only needs stage summaries, the maintenance plan,
+    report and a compact flow trace.
+    """
+
+    if not isinstance(pipeline, Mapping):
+        return {}
+    keys = (
+        "task_id",
+        "trace_id",
+        "entry",
+        "user_text",
+        "event",
+        "route",
+        "route_result",
+        "diagnosis",
+        "knowledge",
+        "cad",
+        "maintenance_plan",
+        "report",
+        "status",
+        "errors",
+        "evidence_status",
+        "stop_reason",
+        "goal_event",
+        "runtime_actions",
+    )
+    result = {key: pipeline[key] for key in keys if key in pipeline}
+    if isinstance(pipeline.get("knowledge"), Mapping):
+        result["knowledge"] = _compact_stage(
+            pipeline["knowledge"],
+            ("query", "status", "summary", "confidence", "possible_causes", "recommended_checks", "total", "backend_status", "degraded", "warning", "source", "validation_findings", "stop_reason"),
+        )
+    if isinstance(pipeline.get("maintenance_plan"), Mapping):
+        result["maintenance_plan"] = _compact_stage(
+            pipeline["maintenance_plan"],
+            ("plan_id", "diagnosis", "repair_target", "target_part", "engineering_context", "repair_steps", "tools", "parts", "safety", "required_tools", "required_parts", "safety_requirements", "pre_checks", "post_checks", "estimated_time", "estimated_duration", "cad_components", "inventory_status", "part_availability", "validation_findings", "risk_level", "workorder_ready", "workorder_draft"),
+        )
+    result["trace"] = _compact_trace(pipeline.get("trace"))
+    runtime_result = pipeline.get("runtime_result")
+    if isinstance(runtime_result, Mapping):
+        result["runtime_result"] = {
+            key: runtime_result[key]
+            for key in ("status", "stop_reason", "iterations", "evidence_score", "actions")
+            if key in runtime_result
+        }
+    return result
+
+
+def _compact_monitor_result(result: Any) -> Dict[str, Any] | None:
+    """Trim nested history from the latest monitor result for the UI payload."""
+
+    if result is None:
+        return None
+    value = dict(result.to_dict())
+    trigger = value.get("trigger")
+    if isinstance(trigger, Mapping):
+        value["trigger"] = {
+            key: trigger[key]
+            for key in (
+                "device_id",
+                "triggered_at",
+                "trigger_reasons",
+                "status",
+                "current_sample",
+                "abnormal_events",
+                "abnormal_event",
+                "task_id",
+                "event_id",
+                "trigger_cause",
+                "rule_types",
+            )
+            if key in trigger
+        }
+    return value
+
+
+def _compact_trigger_history(items: Any) -> List[Dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    compacted: List[Dict[str, Any]] = []
+    for item in items[-30:]:
+        if not isinstance(item, Mapping):
+            continue
+        compacted.append({
+            key: item[key]
+            for key in (
+                "device_id",
+                "triggered_at",
+                "trigger_reasons",
+                "status",
+                "abnormal_events",
+                "abnormal_event",
+                "task_id",
+                "event_id",
+                "trigger_cause",
+                "rule_types",
+            )
+            if key in item
+        })
+    return compacted
 
 
 def dispatch_agent_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -235,6 +377,7 @@ class MonitorWebState:
         with self.lock:
             result = self.latest_result
             results = dict(self.latest_results)
+            public_result = _compact_monitor_result(result)
             return {
                 "runner": self.runner.snapshot().__dict__,
                 "device_id": self.device_id,
@@ -246,13 +389,16 @@ class MonitorWebState:
                 "alarm_event_counts": dict(self.alarm_event_counts),
                 "diagnosis_task_count": self.diagnosis_task_count,
                 "latest_error": self.latest_error,
-                "latest_result": result.to_dict() if result else None,
+                "latest_result": public_result,
                 "latest_results": {
-                    device_id: item.to_dict()
+                    device_id: _compact_monitor_result(item)
                     for device_id, item in results.items()
                 },
-                "trigger_history": list(self.trigger_history),
-                "diagnosis": self._diagnosis_snapshot(),
+                "trigger_history": _compact_trigger_history(list(self.trigger_history)),
+                "diagnosis": {
+                    **self._diagnosis_snapshot(),
+                    "pipeline": compact_public_pipeline((self.latest_pipeline or {})),
+                },
             }
 
     def _device_snapshots(self, results: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -264,7 +410,7 @@ class MonitorWebState:
             device_id = str(device.get("device_id") or "")
             result = results.get(device_id)
             device["live"] = device_id in self.providers
-            device["latest_result"] = result.to_dict() if result else None
+            device["latest_result"] = _compact_monitor_result(result)
             device["current_sample"] = (
                 result.current_sample.to_dict() if result else None
             )
@@ -363,7 +509,13 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             "/api/trace",
             "/api/memory/",
             "/api/workorders",
+            "/api/v1/workorders",
             "/api/experience/",
+            "/api/reports",
+            "/api/quality/",
+            "/api/v1/quality/",
+            "/api/v1/closure",
+            "/api/v1/closure-tasks",
         ))
 
     def _proxy_to_agent_service(self, method: str) -> None:

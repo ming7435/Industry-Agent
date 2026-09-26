@@ -6,7 +6,8 @@ steps:
   - normalize_request
   - classify_intent
   - select_target_agent
+  - validate_route
+  - build_runtime_goal
 tools: []
 required_inputs:
   - user_text
-

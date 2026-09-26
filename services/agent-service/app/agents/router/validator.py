@@ -23,3 +23,14 @@ class RouterValidator:
         ) and not entities.get("inspection_type") == "part_quality":
             findings.append("生产零件质检请提供 part_id、part_no、batch_id 或 production_order_id")
         return findings
+
+    @classmethod
+    def validate_result(cls, intent: str, target_agent: str, entities: Mapping[str, Any], action: str = "") -> dict[str, Any]:
+        findings = cls.validate(intent, target_agent, entities, action)
+        return {
+            "passed": not findings,
+            "checks": {"input": not findings, "evidence": True, "confidence": True, "consistency": not findings, "safety": True, "schema": True},
+            "findings": list(findings),
+            "missing": list(findings),
+            "recommended_action": {"type": "wait", "target": "request_more_context"} if findings else {"type": "continue"},
+        }

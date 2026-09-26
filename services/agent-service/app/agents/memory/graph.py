@@ -7,6 +7,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
+from app.agents.base import trace_skill_node
 
 from .schemas import MemoryGraphState, MemoryResult
 from .validator import MemoryAgentValidator
@@ -130,7 +131,7 @@ def _route(state: MemoryGraphState) -> str:
 def build_memory_graph():
     workflow = StateGraph(MemoryGraphState)
     for name, node in (("initialize", initialize), ("load_skill", load_skill), ("validate_search", validate_search), ("validate_admission", validate_admission), ("retrieve_memory", retrieve_memory), ("dedup", dedup), ("rerank", rerank), ("validate", validate), ("extract_experience", extract_experience), ("dedup_experience", dedup_experience), ("validate_experience", validate_experience), ("persist", persist), ("final", final), ("fallback", fallback)):
-        workflow.add_node(name, node)
+        workflow.add_node(name, trace_skill_node("memory", name, node))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_conditional_edges("load_skill", _route, {"retrieve_memory": "retrieve_memory", "validate_search": "validate_search", "validate_admission": "validate_admission"})

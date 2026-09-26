@@ -8,9 +8,14 @@ steps:
   - enrich_with_history_or_knowledge
   - diagnose
   - validate_result
+  - normalize_event
+  - select_skills
+  - generate_candidates
+  - execute_tools
+  - collect_evidence
+  - build_result
 tools:
   - get_alarm_definition
   - get_device_history
   - get_device_logs
   - search_knowledge
-

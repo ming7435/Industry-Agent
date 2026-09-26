@@ -19,7 +19,7 @@ class QualityValidator:
         function_check: Mapping[str, Any],
         process_check: Mapping[str, Any],
     ) -> dict[str, Any]:
-        checks = [
+        check_definitions = [
             ("dimension_not_qualified", "尺寸检测", dimension_check),
             ("appearance_not_qualified", "外观检测", appearance_check),
             ("material_not_qualified", "材料检测", material_check),
@@ -30,7 +30,7 @@ class QualityValidator:
         findings: list[str] = []
         defects: list[dict[str, Any]] = []
         inspection_items: list[dict[str, Any]] = []
-        for code, label, result in checks:
+        for code, label, result in check_definitions:
             payload = dict(result or {})
             passed = bool(payload.get("passed"))
             inspection_items.append({"name": label, "passed": passed, "source": payload.get("source", "qms-mcp")})
@@ -45,6 +45,11 @@ class QualityValidator:
         if not part.get("part_id") and not part.get("part_no"):
             failed.append("part_identity_missing")
             findings.append("缺少生产零件编号，无法形成可追溯质检结果")
+        checks = [
+            {"name": item[1], "passed": bool((result or {}).get("passed"))}
+            for item in check_definitions
+            for result in [item[2]]
+        ]
         return {
             "inspection_type": "part_quality",
             "passed": passed,
@@ -56,6 +61,20 @@ class QualityValidator:
             "inspection_items": inspection_items,
             "specifications": dict(specification or {}),
             "defects": defects,
+            "validation": {
+                "passed": passed,
+                "checks": {
+                    "input": bool(part.get("part_id") or part.get("part_no")),
+                    "evidence": all(item["passed"] for item in checks),
+                    "confidence": True,
+                    "consistency": all(item["passed"] for item in checks),
+                    "safety": True,
+                    "schema": True,
+                },
+                "findings": cls._dedupe(findings),
+                "missing": list(failed),
+                "recommended_action": {"type": "continue" if passed else "wait", "target": "release_part" if passed else "hold_part_and_review"},
+            },
         }
 
     @staticmethod

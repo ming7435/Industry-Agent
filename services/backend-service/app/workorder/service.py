@@ -169,7 +169,12 @@ class BackendBusinessService:
         return {"success": True, "available": True, "team": "设备维修一组", "available_count": 1, "backend": "backend-service"}
 
     def query_spare_part(self, query: str = "", **_: Any) -> dict[str, Any]:
-        return {"success": True, "items": [{"part_no": query or "SP-ASSY-TC820-001", "available": True, "quantity": 4}], "backend": "backend-service"}
+        item = {"part_no": query or "SP-ASSY-TC820-001", "available": True, "quantity": 4, "stock": 4, "part_id": query or "SP-ASSY-TC820-001", "name": "维修备件"}
+        # Keep the generic backend contract compatible with the existing
+        # Maintenance Agent, whose local MCP adapter exposes the same record
+        # under ``parts``/``stock``.  The aliases are observational only and
+        # do not change inventory semantics.
+        return {"success": True, "items": [item], "parts": [item], "stock": [item], "backend": "backend-service"}
 
     query_inventory = query_stock = query_part_availability = query_spare_part
 
@@ -177,10 +182,14 @@ class BackendBusinessService:
         return self.inspection.call(operation, **arguments)
 
     def persist_report(self, **values: Any) -> dict[str, Any]:
-        report_id = str(values.get("report_id") or "REPORT-" + uuid4().hex[:10].upper())
-        report = {**dict(values), "report_id": report_id, "updated_at": self._now()}
+        # Agent Report tools submit {"report": ReportResult}; persist the
+        # report itself so list/get and the frontend share one flat contract.
+        submitted = values.get("report")
+        report = dict(submitted) if isinstance(submitted, Mapping) else dict(values)
+        report_id = str(report.get("report_id") or values.get("report_id") or "REPORT-" + uuid4().hex[:10].upper())
+        report = {**report, "report_id": report_id, "persisted": True, "updated_at": self._now()}
         report = self._save_record("report", report_id, report)
-        return {"success": True, "report_id": report_id, "report": report, "backend": "backend-service"}
+        return {"success": True, "persisted": True, "report_id": report_id, "report": report, "backend": "backend-service"}
 
     def get_report(self, report_id: str = "", **_: Any) -> dict[str, Any]:
         report = self._get_record("report", report_id)

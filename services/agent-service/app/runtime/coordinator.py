@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from .action import ActionModel
 from .jev import GoalEvent, JEVParser
 from .loop_engine import LoopEngine, LoopPolicy, LoopResult
 from .evaluator import RuntimeEvaluator
+from app.skills import get_skill_registry
 
 
 class RuntimeCoordinator:
@@ -77,6 +79,19 @@ class RuntimeCoordinator:
             "runtime_plan": plan.as_dict(),
             "runtime_next_index": resume_index,
             "runtime_outputs": dict(initial.get("runtime_outputs") or {}),
+            "active_agent": "runtime",
+            "active_skills": [],
+            "current_step": "",
+            "step_history": list(initial.get("step_history") or []),
+            "completed_steps": list(initial.get("completed_steps") or []),
+            "failed_steps": list(initial.get("failed_steps") or []),
+            "tool_calls": list(initial.get("tool_calls") or []),
+            "observations": list(initial.get("observations") or []),
+            "evidence": list(initial.get("evidence") or []),
+            "evidence_records": list(initial.get("evidence_records") or []),
+            "validation": dict(initial.get("validation") or {}),
+            "validation_results": list(initial.get("validation_results") or []),
+            "next_action": {},
         }
 
         def step(current: dict[str, Any], _context: Any) -> dict[str, Any]:
@@ -84,7 +99,21 @@ class RuntimeCoordinator:
             index = int(current.get("runtime_next_index") or 0)
             if index >= len(plan.actions):
                 return {"state": current, "action": ActionModel.final(), "evidence_score": 1.0, "done": True}
-            action = plan.actions[index]
+            action = self._enrich_action(plan.actions[index], current)
+            step_started_at = datetime.now(timezone.utc).isoformat()
+            current = {
+                **current,
+                "active_agent": str(action.payload.get("agent") or action.target),
+                "active_skills": list(action.payload.get("active_skills") or []),
+                "current_step": str(action.payload.get("step") or ""),
+                "next_action": action.as_dict(),
+            }
+            self.container.trace.record(
+                type="runtime", name="runtime", node="runtime", agent=str(current.get("active_agent") or "runtime"),
+                event="skill_selected", task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
+                state_change={"skills": list(current.get("active_skills") or []), "step": current.get("current_step", ""), "action": action.as_dict()},
+                keys=["skills", "step", "action"], tool_name="", latency=0.0, error="",
+            )
             result = self.container.dispatcher.dispatch(action, current)
             if not result.success:
                 policy_status = str(result.output.get("policy_status") or "")
@@ -98,6 +127,23 @@ class RuntimeCoordinator:
                             "risk_level": str(policy_output.get("risk_level") or "normal"),
                             "missing_evidence": list(policy_output.get("missing_evidence") or []),
                         },
+                        "failed_steps": [
+                            *list(current.get("failed_steps") or []),
+                            {"step": action.payload.get("step", ""), "agent": action.payload.get("agent", ""), "reason": policy_output.get("reason", "")},
+                        ],
+                        "step_history": [
+                            *list(current.get("step_history") or []),
+                            {
+                                "step_id": action.step,
+                                "started_at": step_started_at,
+                                "completed_at": datetime.now(timezone.utc).isoformat(),
+                                "status": "failed",
+                                "input_keys": sorted(action.payload),
+                                "output_keys": sorted(policy_output),
+                                "tool": action.target if action.action_type.value == "TOOL" else "",
+                                "error": str(policy_output.get("reason") or "policy_denied"),
+                            },
+                        ],
                     }
                     if policy_status == "require_approval":
                         approvals = getattr(self.container, "approvals", None)
@@ -125,20 +171,99 @@ class RuntimeCoordinator:
                         "confidence": None,
                         "done": False,
                     }
+                current["failed_steps"] = [
+                    *list(current.get("failed_steps") or []),
+                    {"step": action.step, "agent": action.target, "reason": str(result.output.get("error") or "Runtime Action failed")},
+                ]
+                current["step_history"] = [
+                    *list(current.get("step_history") or []),
+                    {
+                        "step_id": action.step,
+                        "started_at": step_started_at,
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "status": "failed",
+                        "input_keys": sorted(action.payload),
+                        "output_keys": sorted(result.output or {}),
+                        "tool": action.target if action.action_type.value == "TOOL" else "",
+                        "error": str(result.output.get("error") or "Runtime Action failed"),
+                    },
+                ]
                 raise RuntimeError(str(result.output.get("error") or "Runtime Action failed"))
             capability = action.required_capability or action.target
             outputs = dict(current.get("runtime_outputs") or {})
             outputs[self._result_key(capability)] = result.output
+            result_tool_calls = result.output.get("tool_calls") if isinstance(result.output, Mapping) else []
+            if not isinstance(result_tool_calls, list):
+                result_tool_calls = []
+            validation_payload = dict(result.validation or {
+                "passed": True,
+                "checks": {},
+                "findings": [],
+                "missing": [],
+                "recommended_action": {"type": "continue", "reason": "no_domain_validator"},
+            })
             next_state = {
                 **current,
                 "runtime_next_index": index + 1,
                 "runtime_outputs": outputs,
                 self._result_key(capability): result.output,
                 "evidence_status": "ready" if result.evidence else "pending",
+                "active_agent": str(action.payload.get("agent") or action.target),
+                "active_skills": list(action.payload.get("active_skills") or []),
+                "current_step": str(action.payload.get("step") or ""),
+                "completed_steps": [
+                    *list(current.get("completed_steps") or []),
+                    {"step": action.payload.get("step", ""), "agent": action.payload.get("agent", ""), "action_id": action.action_id, "success": result.success},
+                ],
+                "tool_calls": [*list(current.get("tool_calls") or []), *result_tool_calls],
+                "step_history": [
+                    *list(current.get("step_history") or []),
+                    {
+                        "step_id": action.step,
+                        "started_at": step_started_at,
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "status": "completed" if result.success else "failed",
+                        "input_keys": sorted(action.payload),
+                        "output_keys": sorted(result.output or {}),
+                        "tool": action.target if action.action_type.value == "TOOL" else "",
+                        "error": "",
+                    },
+                ],
+                "observations": [*list(current.get("observations") or []), *list(result.observations or [])],
+                "evidence": [*list(current.get("evidence") or []), *list(result.evidence or [])],
+                "evidence_records": [*list(current.get("evidence_records") or []), *list(result.evidence or [])],
+                "validation": validation_payload,
+                "validation_results": [*list(current.get("validation_results") or []), validation_payload],
+                "next_action": (
+                    self._enrich_action(plan.actions[index + 1], current).as_dict()
+                    if index + 1 < len(plan.actions)
+                    else {"action_type": "FINAL", "target": "final", "reason": "planned_actions_complete"}
+                ),
             }
             if capability == "workorder_create":
                 next_state["status"] = "waiting_repair"
             domain = self._domain_for_capability(capability)
+            trace_agent = str(action.payload.get("agent") or action.target)
+            if result.observations:
+                self.container.trace.record(
+                    type="runtime", name="runtime", node="runtime", agent=trace_agent,
+                    event="observation_added", task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
+                    state_change={"observations": list(result.observations), "step": action.payload.get("step", "")},
+                    keys=["observations", "step"], tool_name="", latency=0.0, error="",
+                )
+            if result.evidence:
+                self.container.trace.record(
+                    type="runtime", name="runtime", node="runtime", agent=trace_agent,
+                    event="evidence_added", task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
+                    state_change={"evidence": list(result.evidence), "step": action.payload.get("step", "")},
+                    keys=["evidence", "step"], tool_name="", latency=0.0, error="",
+                )
+            self.container.trace.record(
+                type="runtime", name="runtime", node="runtime", agent=trace_agent,
+                event="validation_result", task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
+                state_change={"validation": validation_payload, "step": action.payload.get("step", "")},
+                keys=["validation", "step"], tool_name="", latency=0.0, error="",
+            )
             evaluation = evaluator.evaluate({"domain": domain, "result": dict(result.output or {})})
             self.container.trace.record(
                 type="runtime", name="runtime_evaluator", node="runtime", agent="runtime",
@@ -151,9 +276,16 @@ class RuntimeCoordinator:
                     "confidence": evaluation.confidence,
                     "evidence_score": evaluation.evidence_score,
                     "missing_evidence": list(evaluation.missing_evidence),
+                    "recommended_action": evaluation.recommended_action,
                 },
                 keys=["capability", "domain", "status", "reason", "confidence", "evidence_score", "missing_evidence"],
                 tool_name="", latency=0.0, error="",
+            )
+            self.container.trace.record(
+                type="runtime", name="runtime_evaluator", node="runtime", agent="runtime",
+                event="decision", task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
+                state_change={"status": evaluation.status.value, "reason": evaluation.reason, "recommended_action": evaluation.recommended_action},
+                keys=["status", "reason", "recommended_action"], tool_name="", latency=0.0, error="",
             )
             if evaluation.status.value == "replan":
                 if replan_count < 2:
@@ -279,6 +411,39 @@ class RuntimeCoordinator:
             final_state["status"] = result.status
             final_state["stop_reason"] = result.stop_reason
         return final_state
+
+    def _enrich_action(self, action: ActionModel, state: Mapping[str, Any]) -> ActionModel:
+        """Attach Skill-derived execution metadata to a canonical Action."""
+
+        payload = dict(action.payload)
+        capability = action.required_capability or action.target
+        registry = get_skill_registry()
+        agent = ""
+        try:
+            matches = self.container.capabilities.find(capability)
+            agent = str(matches[0]) if matches else ""
+        except Exception:
+            agent = ""
+        agent = agent or str(payload.get("agent") or action.target).split(".", 1)[0]
+        names = payload.get("active_skills") or payload.get("skills")
+        if isinstance(names, str):
+            names = [names]
+        try:
+            selected = registry.select(agent, context={**dict(state.get("context") or {}), "capability": capability}, names=list(names or []))
+        except Exception:
+            selected = []
+        skill_names = [item.name for item in selected]
+        steps = [step for item in selected for step in item.normalized_steps()]
+        payload.setdefault("agent", agent)
+        payload.setdefault("active_skills", skill_names)
+        if steps:
+            payload.setdefault("skill", skill_names[0] if skill_names else "")
+            payload.setdefault("step", steps[0].id)
+            # Existing Agent graphs may execute several Skill steps inside one
+            # Runtime action.  The guard receives the union of that Agent's
+            # declared tools unless the Action explicitly narrows it.
+            payload.setdefault("allowed_tools", registry.merge_tools(registry.list(agent)))
+        return action.model_copy(update={"payload": payload})
 
     def resume_pending(self, record: Mapping[str, Any]) -> dict[str, Any]:
         """Resume the persisted Action without invoking Planner again."""

@@ -86,3 +86,14 @@ class WorkOrderAgentValidator:
         if action in {"create", "assign", "update", "submit_feedback", "mark_repair_completed", "close", "reopen"} and not workorder.get("workorder_id"):
             findings.append("工单业务动作未返回 workorder_id")
         return list(dict.fromkeys(item for item in findings if item))
+
+    @classmethod
+    def validate_result(cls, request: Mapping[str, Any]) -> dict[str, Any]:
+        findings = cls.validate_request(request)
+        return {
+            "passed": not findings,
+            "checks": {"input": not findings, "evidence": True, "confidence": True, "consistency": not findings, "safety": not findings, "schema": True},
+            "findings": list(findings),
+            "missing": list(findings),
+            "recommended_action": {"type": "replan", "target": "workorder_create"} if findings else {"type": "persist", "target": "workorder"},
+        }

@@ -101,6 +101,8 @@ class AgentContainer:
             workorder_service=self.workorder_service,
             experience_module=self.experience_module,
         )
+        for agent in self.agents.values():
+            agent.runtime_trace = self.trace
         self.capabilities.register_agents(self.agents)
         self.harnesses = {
             name: AgentHarness(agent, timeout_seconds=settings.agent_timeout_seconds, max_retries=settings.agent_max_retries, trace=self.trace)

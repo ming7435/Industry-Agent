@@ -11,10 +11,10 @@
       "type": "string",
       "enum": [
         "planner_start", "planner_end", "goal_parsed", "loop_start", "loop_continue", "evaluation_result", "action_selected", "capability_selected", "capability_blocked", "execution_start",
-        "execution_end", "evidence_added", "policy_decision", "approval_requested", "approval_approved", "approval_rejected", "approval_resumed", "review_result", "replan", "loop_stop",
+        "execution_end", "evidence_added", "observation_added", "validation_result", "decision", "policy_decision", "tool_guard", "approval_requested", "approval_approved", "approval_rejected", "approval_resumed", "review_result", "replan", "loop_stop",
         "node_started", "node_completed",
-        "agent_start", "agent_end", "agent_started", "agent_completed", "agent_error", "agent_timeout",
-        "tool_start", "tool_end", "tool_started", "tool_completed", "tool_error",
+        "agent_start", "agent_end", "agent_selected", "skill_selected", "step_started", "step_completed", "step_failed", "agent_started", "agent_completed", "agent_error", "agent_timeout",
+        "tool_start", "tool_end", "tool_started", "tool_called", "tool_completed", "tool_error",
         "a2a_started", "a2a_completed", "a2a_error",
         "module_started", "module_completed"
       ]

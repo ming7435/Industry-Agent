@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 import hashlib
 import json
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -17,6 +17,148 @@ class ActionType(str, Enum):
     FINAL = "FINAL"
     REPLAN = "REPLAN"
     WAIT = "WAIT"
+
+
+class StepDefinition(BaseModel):
+    """Normalized executable unit derived from an Agent Skill.
+
+    Skills historically stored steps as strings.  The Runtime uses this
+    richer shape internally while keeping every field optional so old
+    catalogs and callers remain valid.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    id: str = Field(min_length=1)
+    type: Literal["normalize", "reason", "tool", "observe", "transform", "validate", "branch", "persist"] = "reason"
+    description: str = ""
+    required_inputs: list[str] = Field(default_factory=list)
+    outputs: list[str] = Field(default_factory=list)
+    tool: str = ""
+    required: bool = True
+    preconditions: list[str] = Field(default_factory=list)
+    success_conditions: list[str] = Field(default_factory=list)
+    failure_policy: str = "stop"
+    timeout_seconds: float | None = None
+    max_retries: int | None = None
+    evidence_type: str = ""
+
+    @property
+    def step_id(self) -> str:
+        """Compatibility name used by trace and Graph consumers."""
+
+        return self.id
+
+    @classmethod
+    def coerce(cls, value: Any, *, default_type: str = "reason") -> "StepDefinition":
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, Mapping):
+            payload = dict(value)
+            payload.setdefault("id", payload.get("step_id") or payload.get("name") or "step")
+            payload.setdefault("type", default_type)
+            return cls.model_validate(payload)
+        return cls(id=str(value), type=default_type)
+
+
+class Observation(BaseModel):
+    """A normalized observation collected during one Runtime step."""
+
+    model_config = ConfigDict(extra="allow")
+
+    observation_id: str = ""
+    step_id: str = ""
+    tool: str = ""
+    source: str = ""
+    type: str = "observation"
+    subject: str = ""
+    facts: dict[str, Any] = Field(default_factory=dict)
+    valid: bool = True
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence_ids: list[str] = Field(default_factory=list)
+    raw: Any = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_shape(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        payload.setdefault("observation_id", payload.get("id") or payload.get("observation") or "")
+        payload.setdefault("type", payload.get("kind") or payload.get("observation_type") or "observation")
+        if "facts" not in payload and isinstance(payload.get("value"), Mapping):
+            payload["facts"] = dict(payload["value"])
+        return payload
+
+    @property
+    def kind(self) -> str:
+        return self.type
+
+    @property
+    def value(self) -> Any:
+        return self.facts or self.raw
+
+
+class Evidence(BaseModel):
+    """A traceable evidence item shared by Agents and Evaluators."""
+
+    model_config = ConfigDict(extra="allow")
+
+    evidence_id: str = ""
+    observation_id: str = ""
+    source: str = ""
+    type: str = ""
+    content: Any = None
+    supports: list[str] = Field(default_factory=list)
+    contradicts: list[str] = Field(default_factory=list)
+    strength: float = Field(default=0.0, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_shape(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        payload.setdefault("evidence_id", payload.get("id") or "")
+        return payload
+
+    @property
+    def id(self) -> str:
+        return self.evidence_id
+
+
+class ValidationResult(BaseModel):
+    """Granular validation output used by Agent steps and Runtime."""
+
+    model_config = ConfigDict(extra="allow")
+
+    passed: bool = False
+    checks: dict[str, bool] | list[dict[str, Any]] = Field(default_factory=dict)
+    findings: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    recommended_action: dict[str, Any] | str = Field(default_factory=dict)
+
+    @property
+    def missing_evidence(self) -> list[str]:
+        return list(self.missing)
+
+
+class StepResult(BaseModel):
+    """Uniform result for one fine-grained execution step."""
+
+    model_config = ConfigDict(extra="allow")
+
+    success: bool = False
+    status: str = "completed"
+    output: dict[str, Any] = Field(default_factory=dict)
+    observations: list[Observation] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
+    validation: ValidationResult = Field(default_factory=ValidationResult)
+    next_actions: list[dict[str, Any]] = Field(default_factory=list)
+    error: str = ""
 
 
 class ActionModel(BaseModel):
@@ -72,6 +214,21 @@ class ActionModel(BaseModel):
         """Capability required by this action, if it is an Agent action."""
 
         return str(self.payload.get("required_capability") or "").strip()
+
+    @property
+    def skill(self) -> str:
+        return str(self.payload.get("skill") or "").strip()
+
+    @property
+    def step(self) -> str:
+        return str(self.payload.get("step") or self.payload.get("current_step") or "").strip()
+
+    @property
+    def allowed_tools(self) -> list[str]:
+        values = self.payload.get("allowed_tools") or []
+        if isinstance(values, str):
+            values = [values]
+        return [str(item) for item in values if str(item).strip()]
 
     @classmethod
     def agent(cls, target: str, payload: Mapping[str, Any] | None = None, **kwargs: Any) -> "ActionModel":
@@ -140,4 +297,13 @@ class ActionModel(BaseModel):
 
 Action = ActionModel
 
-__all__ = ["ActionType", "ActionModel", "Action"]
+__all__ = [
+    "ActionType",
+    "ActionModel",
+    "Action",
+    "StepDefinition",
+    "Observation",
+    "Evidence",
+    "ValidationResult",
+    "StepResult",
+]

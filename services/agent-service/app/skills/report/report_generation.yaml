@@ -8,6 +8,10 @@ steps:
   - compose_report
   - validate_report
   - persist_report
+  - collect_event
+  - validate_completeness
+  - validate_result
+  - build_result
 tools:
   - get_diagnosis_record
   - get_maintenance_record
@@ -16,4 +20,3 @@ tools:
   - get_trace_summary
   - persist_report
   - generate_report_file
-

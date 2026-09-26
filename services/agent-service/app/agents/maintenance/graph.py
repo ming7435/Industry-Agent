@@ -7,6 +7,7 @@ from typing import Any, Dict, List, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
+from app.agents.base import trace_skill_node
 from app.contracts import DiagnosisView, MaintenancePlan
 
 from .schemas import MaintenanceQuery
@@ -15,6 +16,11 @@ from .validator import MaintenancePlanValidator
 
 class MaintenanceGraphState(TypedDict, total=False):
     agent: Any
+    active_agent: str
+    current_step: str
+    step_history: list[dict[str, Any]]
+    completed_steps: list[dict[str, Any]]
+    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     active_skill: str
     active_skills: List[str]
@@ -201,7 +207,7 @@ def build_maintenance_graph():
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, node)
+        workflow.add_node(name, trace_skill_node("maintenance", name, node))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "assess_diagnosis")

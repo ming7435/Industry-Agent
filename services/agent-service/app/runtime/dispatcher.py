@@ -106,7 +106,20 @@ class RuntimeDispatcher:
             return AgentResult(success=False, output={"error": error, "status": "blocked"})
         agent_name = str(getattr(agent, "name", type(agent).__name__))
         self._emit("capability_selected", state, required_capability=capability, agent=agent_name)
+        self._emit("agent_selected", state, required_capability=capability, agent=agent_name)
         task = self._task_for_agent(capability, state, action.payload)
+        task.setdefault("task_id", str(state.get("task_id") or ""))
+        task.setdefault("trace_id", str(state.get("trace_id") or ""))
+        runtime_context = self._runtime_context(action, state, agent_name)
+        task["runtime_context"] = runtime_context
+        self._emit(
+            "step_started",
+            state,
+            agent=agent_name,
+            skill=runtime_context.get("skill", ""),
+            step=runtime_context.get("step", ""),
+            required_capability=capability,
+        )
 
         # Diagnosis may already have retrieved the exact knowledge evidence
         # required by this Action. Reuse only a successful, non-degraded record
@@ -132,11 +145,26 @@ class RuntimeDispatcher:
             trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
         if record.status != ExecutionStatus.SUCCESS:
+            self._emit("step_failed", state, agent=agent_name, step=runtime_context.get("step", ""), error=record.error or record.status.value)
             return AgentResult(
                 success=False,
                 output={"error": record.error or record.status.value, "status": "blocked", "execution_id": record.execution_id},
             )
-        return AgentResult.from_value(record.result)
+        result = AgentResult.from_value(record.result)
+        if not result.observations and isinstance(record.result, Mapping):
+            normalizer = getattr(self.tools, "_normalize_observation", None)
+            if callable(normalizer):
+                result.observations = [normalizer(action.target, record.result, runtime_context)]
+        self._emit(
+            "step_completed",
+            state,
+            agent=agent_name,
+            skill=runtime_context.get("skill", ""),
+            step=runtime_context.get("step", ""),
+            evidence_count=len(result.evidence),
+            success=result.success,
+        )
+        return result
 
     @staticmethod
     def _task_for_agent(capability: str, state: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -166,7 +194,38 @@ class RuntimeDispatcher:
             return {"query": query, "diagnosis": diagnosis, "context": dict(state.get("context") or {})}
         if capability in {"drawing_search", "bom_query", "component_relation"}:
             context = dict(state.get("context") or {})
-            return {"query": query, "device_id": diagnosis.get("device_id") or context.get("device_id", "")}
+            event = state.get("event")
+            event = event if isinstance(event, Mapping) else {}
+            component = str(
+                payload.get("component")
+                or context.get("component")
+                or event.get("component")
+                or event.get("component_id")
+                or diagnosis.get("component")
+                or ""
+            )
+            part_no = str(
+                payload.get("part_no")
+                or context.get("part_no")
+                or event.get("part_no")
+                or diagnosis.get("part_no")
+                or ""
+            )
+            engineering_query = str(
+                payload.get("query")
+                or component
+                or part_no
+                or context.get("query")
+                or event.get("query")
+                or query
+            )
+            return {
+                "query": engineering_query,
+                "component": component,
+                "part_no": part_no,
+                "device_id": diagnosis.get("device_id") or event.get("device_id") or context.get("device_id", ""),
+                "device_model": str(payload.get("device_model") or context.get("device_model") or event.get("device_model") or ""),
+            }
         if capability in {"repair_planning", "repair_plan", "maintenance_replan"}:
             return {
                 "diagnosis": diagnosis,
@@ -187,9 +246,13 @@ class RuntimeDispatcher:
             }
         if capability in {"quality_inspection", "quality_review"}:
             context = dict(state.get("context") or {})
+            event = state.get("event")
+            event = event if isinstance(event, Mapping) else {}
+            part_no = payload.get("part_no") or context.get("part_no") or event.get("part_no") or ""
             return {
                 **current,
-                "part_id": payload.get("part_id") or context.get("part_id") or state.get("event", {}).get("part_id", ""),
+                "part_id": payload.get("part_id") or context.get("part_id") or event.get("part_id") or part_no,
+                "part_no": part_no,
             }
         if capability in {"experience_learning", "experience_retrieval"}:
             return {
@@ -257,14 +320,38 @@ class RuntimeDispatcher:
         if self.tools is None:
             return AgentResult(success=False, output={"error": "tool registry unavailable", "status": "blocked"})
         self._emit("capability_selected", state, required_capability="tool:%s" % action.target, agent="tool")
+        runtime_context = self._runtime_context(action, state, "tool")
+        self._emit("step_started", state, agent="tool", skill=runtime_context.get("skill", ""), step=runtime_context.get("step", ""), tool=action.target)
         record = self.execution_manager.execute(
             action,
-            lambda: self.tools.execute(action.target, dict(action.payload)),
+            lambda: self.tools.execute(action.target, dict(action.payload), context=runtime_context),
             trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
         if record.status != ExecutionStatus.SUCCESS:
+            self._emit("step_failed", state, agent="tool", step=runtime_context.get("step", ""), error=record.error or record.status.value)
             return AgentResult(success=False, output={"error": record.error or record.status.value, "status": "blocked"})
-        return AgentResult.from_value(record.result)
+        result = AgentResult.from_value(record.result)
+        self._emit("step_completed", state, agent="tool", skill=runtime_context.get("skill", ""), step=runtime_context.get("step", ""), tool=action.target, evidence_count=len(result.evidence), success=result.success)
+        return result
+
+    @staticmethod
+    def _runtime_context(action: ActionModel, state: Mapping[str, Any], agent: str) -> dict[str, Any]:
+        payload = dict(action.payload)
+        skills = payload.get("active_skills") or payload.get("skills") or []
+        if isinstance(skills, str):
+            skills = [skills]
+        allowed_tools = payload.get("allowed_tools") or []
+        if isinstance(allowed_tools, str):
+            allowed_tools = [allowed_tools]
+        return {
+            "agent": agent,
+            "skill": str(payload.get("skill") or (skills[0] if skills else "")),
+            "skills": [str(item) for item in skills if str(item).strip()],
+            "step": str(payload.get("step") or payload.get("current_step") or ""),
+            "allowed_tools": [str(item) for item in allowed_tools if str(item).strip()],
+            "task_id": str(state.get("task_id") or ""),
+            "trace_id": str(state.get("trace_id") or ""),
+        }
 
 
 __all__ = ["RuntimeDispatcher"]
