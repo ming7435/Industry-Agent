@@ -1,5 +1,9 @@
 from evaluation.models import EvaluationCase
-from evaluation.runner import aggregate_evaluations, evaluate_case
+import json
+
+import pytest
+
+from evaluation.runner import aggregate_evaluations, evaluate_case, run_evaluation
 
 
 def case(**overrides):
@@ -92,3 +96,81 @@ def test_aggregation_averages_only_present_metrics_and_retains_errors():
     assert report.aggregate_metrics["answer_completeness"] == 1.0
     assert report.cases[1].error == "HTTP 503"
     assert report.mode == "no_llm"
+
+
+def test_run_evaluation_posts_search_payload_and_writes_two_report_files(tmp_path):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(
+        json.dumps({"id": "one", "question": "Q1", "filters": {"device": "D1"}}, ensure_ascii=False) + "\n"
+        + json.dumps({"id": "two", "question": "Q2"}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    requests = []
+
+    def request_fn(url, payload, timeout_s):
+        requests.append((url, payload, timeout_s))
+        return response(answer="答案 [1]")
+
+    report = run_evaluation(
+        "http://rag:8020",
+        dataset,
+        tmp_path / "results",
+        top_k=3,
+        request_fn=request_fn,
+    )
+
+    assert [request[0] for request in requests] == ["http://rag:8020/search", "http://rag:8020/search"]
+    assert requests[0][1] == {"query": "Q1", "filters": {"device": "D1"}, "top_n": 3}
+    assert (tmp_path / "results" / "latest.json").exists()
+    timestamped = [path for path in (tmp_path / "results").glob("*.json") if path.name != "latest.json"]
+    assert len(timestamped) == 1
+    assert report.total_cases == 2
+    assert json.loads((tmp_path / "results" / "latest.json").read_text(encoding="utf-8"))["version"] == "1"
+
+
+def test_run_evaluation_filters_cases_limits_and_keeps_individual_errors(tmp_path):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(
+        "\n".join(json.dumps({"id": item, "question": item}) for item in ("one", "two", "three")) + "\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def request_fn(url, payload, timeout_s):
+        calls.append(payload["query"])
+        if payload["query"] == "two":
+            raise TimeoutError("timed out")
+        return response()
+
+    report = run_evaluation(
+        "http://rag",
+        dataset,
+        tmp_path / "results",
+        case_ids=["three", "two"],
+        limit=2,
+        request_fn=request_fn,
+    )
+
+    assert calls == ["three", "two"]
+    assert report.cases[1].error == "timed out"
+    assert report.failed_cases == 1
+    with pytest.raises(ValueError, match="未知题目 ID"):
+        run_evaluation("http://rag", dataset, tmp_path / "other", case_ids=["missing"], request_fn=request_fn)
+
+
+def test_no_llm_preserves_retrieval_metrics_and_nulls_answer_metrics(tmp_path):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(json.dumps({"id": "one", "question": "Q"}) + "\n", encoding="utf-8")
+
+    report = run_evaluation(
+        "http://rag",
+        dataset,
+        tmp_path / "results",
+        no_llm=True,
+        request_fn=lambda url, payload, timeout_s: response(),
+    )
+
+    assert report.mode == "no_llm"
+    assert report.cases[0].metrics["retrieval_latency_ms"] == 125.0
+    assert report.cases[0].metrics["citation_validity"] is None
+    assert report.cases[0].metrics["answer_completeness"] is None

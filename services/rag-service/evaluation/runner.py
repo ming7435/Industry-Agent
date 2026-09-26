@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import re
+import json
+import urllib.error
+import urllib.request
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from pathlib import Path
 from statistics import mean
 from typing import Any
 
@@ -172,3 +176,84 @@ def aggregate_evaluations(
         suggested_thresholds=dict(_THRESHOLDS),
         cases=cases,
     )
+
+
+def _request_search(base_url: str, payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+    request = urllib.request.Request(
+        base_url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout_s) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if not isinstance(body, dict):
+        raise ValueError("RAG 响应必须是 JSON 对象")
+    return body
+
+
+def _null_answer_metrics(result: CaseEvaluation) -> None:
+    for name in ("citation_validity", "answer_completeness", "abstention_accuracy", "answer_latency_ms"):
+        result.metrics[name] = None
+
+
+def run_evaluation(
+    base_url: str,
+    dataset_path: str | Path,
+    output_dir: str | Path,
+    limit: int | None = None,
+    no_llm: bool = False,
+    *,
+    case_ids: list[str] | None = None,
+    top_k: int = 5,
+    request_fn: Any = None,
+) -> EvaluationReport:
+    """Run the local evaluator and persist ``latest.json`` plus a timestamped report."""
+    from .models import load_dataset
+
+    cases = load_dataset(dataset_path)
+    if case_ids:
+        known = {case.id for case in cases}
+        unknown = [case_id for case_id in case_ids if case_id not in known]
+        if unknown:
+            raise ValueError(f"未知题目 ID: {', '.join(unknown)}")
+        by_id = {case.id: case for case in cases}
+        selected = [by_id[case_id] for case_id in case_ids]
+    else:
+        selected = cases
+    if limit is not None:
+        if limit < 1:
+            raise ValueError("limit 必须大于 0")
+        selected = selected[:limit]
+    if not selected:
+        raise ValueError("没有可运行的评测题目")
+    request_fn = request_fn or _request_search
+    evaluated: list[CaseEvaluation] = []
+    for case in selected:
+        payload = {"query": case.question, "filters": case.filters, "top_n": top_k}
+        try:
+            response = request_fn(f"{base_url.rstrip('/')}/search", payload, 90.0)
+            if not isinstance(response, dict):
+                raise ValueError("RAG 响应必须是 JSON 对象")
+            result = evaluate_case(case, response, top_k=top_k)
+        except (Exception) as exc:  # each case is isolated by design
+            result = evaluate_case(case, {"error": str(exc)}, top_k=top_k)
+            result.error = str(exc)
+        if no_llm:
+            _null_answer_metrics(result)
+        evaluated.append(result)
+
+    run_at = datetime.now(timezone.utc)
+    report = aggregate_evaluations(
+        evaluated,
+        base_url=base_url,
+        mode="no_llm" if no_llm else "full",
+        run_at_utc=run_at.isoformat(),
+    )
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n"
+    (destination / "latest.json").write_text(serialized, encoding="utf-8")
+    timestamp = run_at.strftime("%Y%m%dT%H%M%S.%fZ")
+    (destination / f"{timestamp}.json").write_text(serialized, encoding="utf-8")
+    return report
