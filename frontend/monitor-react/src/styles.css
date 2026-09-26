@@ -1990,6 +1990,20 @@ h2 {
   white-space: pre-wrap;
 }
 
+.formatted-text h3,
+.formatted-text h4,
+.formatted-text h5,
+.formatted-text h6 {
+  margin: 12px 0 6px;
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.formatted-text h3 { font-size: 1.08em; }
+.formatted-text h4 { font-size: 1em; }
+.formatted-text hr { margin: 12px 0; border: 0; border-top: 1px solid var(--line); }
+.formatted-text code { padding: 1px 4px; border-radius: 4px; background: #eef4f2; font-size: .92em; }
+
 .formatted-text p + p,
 .formatted-text ul + p,
 .formatted-text p + ul {

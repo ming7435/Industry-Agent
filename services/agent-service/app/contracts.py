@@ -52,6 +52,9 @@ class KnowledgeResult(BaseModel):
     status: Literal["completed", "insufficient_evidence", "error"] = "completed"
     query_type: str = "hybrid"
     summary: str = ""
+    # Final model-generated response. Retrieval summaries and document IDs
+    # are internal evidence metadata and must not replace this answer.
+    answer: str = ""
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     possible_causes: List[str] = Field(default_factory=list)
     recommended_checks: List[str] = Field(default_factory=list)

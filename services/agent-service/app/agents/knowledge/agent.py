@@ -27,7 +27,7 @@ class KnowledgeAgent(BaseAgent):
     def search_knowledge(
         self,
         query: str,
-        limit: int = 5,
+        limit: int = 8,
         filters: Mapping[str, Any] | None = None,
         required_sources: list[str] | None = None,
     ) -> KnowledgeResult:
@@ -47,6 +47,7 @@ class KnowledgeAgent(BaseAgent):
             status=status,
             query_type=query_type,
             summary=self._summary(query, documents, status),
+            answer=str(raw.get("answer") or ""),
             evidence=evidence,
             possible_causes=self._possible_causes(documents),
             recommended_checks=self._recommended_checks(documents),
@@ -77,7 +78,10 @@ class KnowledgeAgent(BaseAgent):
             return "alarm"
         if any(token in text for token in ("manual", "手册", "维修手册")):
             return "manual"
-        if any(token in text for token in ("sop", "步骤", "规程", "作业指导", "怎么检查")):
+        # "怎么检查" describes the requested operation, not the knowledge
+        # source. Without an explicit SOP/procedure marker, keep the query
+        # hybrid so cases and manuals can contribute complementary checks.
+        if any(token in text for token in ("sop", "标准作业", "规程", "作业指导")):
             return "sop"
         if any(token in text for token in ("案例", "历史", "经验", "case")):
             return "case"
@@ -230,11 +234,16 @@ class KnowledgeAgent(BaseAgent):
         summary = self._summary(query, normalized, status)
         if validation_findings and status != "completed":
             summary += " 当前结果不满足所需证据覆盖条件。"
+        answer = next(
+            (str(item.get("answer") or "").strip() for item in raw_results if str(item.get("answer") or "").strip()),
+            "",
+        )
         return KnowledgeResult(
             query=query,
             status=status,
             query_type=query_type,
             summary=summary,
+            answer=answer,
             evidence=[dict(item) for item in evidence],
             possible_causes=self._possible_causes(normalized),
             recommended_checks=self._recommended_checks(normalized),

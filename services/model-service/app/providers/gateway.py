@@ -78,7 +78,7 @@ class _OpenAICompatibleProvider:
             headers={"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json", "Accept": "application/json"},
         )
         attempts = max(1, min(5, int(os.getenv("MODEL_PROVIDER_MAX_ATTEMPTS", "2"))))
-        timeout = float(os.getenv("MODEL_PROVIDER_TIMEOUT_SECONDS", "30"))
+        timeout = float(os.getenv("MODEL_PROVIDER_TIMEOUT_SECONDS", "90"))
         for attempt in range(attempts):
             try:
                 with urlopen(request, timeout=timeout) as response:

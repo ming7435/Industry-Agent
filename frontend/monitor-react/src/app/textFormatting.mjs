@@ -10,10 +10,22 @@ function normalizeLines(value) {
 const RETRIEVAL_META_LINE = /^(?:文档|来源|页码|内容类型|标题|分数|source|title|page|content[_ -]?type|score)\s*[:：]/i;
 const OCR_PREFIX = /^\s*\[[^\]]+\]\s*本地OCR识别结果(?:（[^）]*）|\([^)]*\))?\s*[:：]?\s*/i;
 const RAW_FIELD_PATTERN = /\b(?:device_id|timestamp|temperature|vibration|rpm|alarm_code|alarm_level|health_score)\s*=/i;
+const RETRIEVAL_SUMMARY_PATTERN = /^检索到\s*\d+\s*条(?:相关)?知识证据\s*[：:]/;
 
 export function isDebugAnswer(value) {
   const text = String(value ?? "").trim();
   return /^\[fake-model\]\s*query\s*:/i.test(text) || /^query\s*:[^\n]+\n\s*evidence\s*:/i.test(text);
+}
+
+export function selectAgentAnswer(agentAnswer) {
+  const candidates = [
+    agentAnswer?.knowledge?.answer,
+    RETRIEVAL_SUMMARY_PATTERN.test(String(agentAnswer?.knowledge?.summary || "").trim()) ? "" : agentAnswer?.knowledge?.summary,
+    agentAnswer?.diagnosis?.summary,
+    agentAnswer?.diagnosis?.fault,
+    agentAnswer?.route_result?.reason,
+  ];
+  return candidates.map(cleanDisplayText).find(Boolean) || "";
 }
 
 export function cleanDisplayText(value) {
@@ -61,6 +73,19 @@ export function splitTextBlocks(value) {
       flushList();
       continue;
     }
+    const heading = line.match(/^(?:---\s+)?(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "heading", level: heading[1].length, text: heading[2].trim() });
+      continue;
+    }
+    if (/^(?:---|___|\*\*\*)+$/.test(line)) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "rule" });
+      continue;
+    }
     if (BULLET_PATTERN.test(line)) {
       flushParagraph();
       listItems.push(line.replace(BULLET_PATTERN, "").trim());
@@ -72,6 +97,19 @@ export function splitTextBlocks(value) {
   flushParagraph();
   flushList();
   return blocks;
+}
+
+export function splitInlineMarkdown(value) {
+  return String(value ?? "")
+    .split(/(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`)/g)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^\*\*[^*]+\*\*$/.test(part) || /^__[^_]+__$/.test(part)) {
+        return { type: "strong", text: part.slice(2, -2) };
+      }
+      if (/^`[^`]+`$/.test(part)) return { type: "code", text: part.slice(1, -1) };
+      return { type: "text", text: part };
+    });
 }
 
 export function documentBodyOnly(document) {

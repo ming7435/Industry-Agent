@@ -9,7 +9,9 @@ import { buildWorkorderSheet } from "../workorderSheet.mjs";
 import { buildAgentFlow } from "../agentFlow.mjs";
 import { buildDiagnosisView } from "./diagnosisView.mjs";
 import { buildReportDisplaySections } from "./reportView.mjs";
-import { cleanDisplayText, cleanEvidenceText, documentBodyOnly, isDebugAnswer, splitTextBlocks } from "./textFormatting.mjs";
+import { buildKnowledgeContext } from "./knowledgeScope.mjs";
+import { getRagStorage, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
+import { cleanDisplayText, cleanEvidenceText, documentBodyOnly, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import "../workbench.css";
 
@@ -602,8 +604,16 @@ function useMetricHistory(machines) {
 }
 
 function App() {
-  const [activeView, setActiveView] = useState("monitor");
-  const [ragMessages, setRagMessages] = useState([]);
+  const [activeView, setActiveView] = useState(() => {
+    if (typeof window === "undefined") return "monitor";
+    const requested = new URLSearchParams(window.location.search).get("view");
+    return ["monitor", "diagnosis", "workorder", "quality", "rag", "report"].includes(requested) ? requested : "monitor";
+  });
+  const [ragMessages, setRagMessages] = useState(() => {
+    if (typeof window === "undefined") return [];
+    const storage = getRagStorage(window);
+    return restoreRagMessages(storage.primary, storage.fallback);
+  });
   const [toast, setToast] = useState("");
   const [selectedMachineId, setSelectedMachineId] = useState(workshopMachines[0].id);
   const [bigScreen, setBigScreen] = useState(false);
@@ -614,6 +624,39 @@ function App() {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
   const result = selectedMachine?.result || null;
   const sample = result?.current_sample || selectedMachine?.sample || null;
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const storage = getRagStorage(window);
+      persistRagMessages(storage.primary, ragMessages, storage.fallback);
+    }
+  }, [ragMessages]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleHistoryNavigation = () => {
+      const requested = new URLSearchParams(window.location.search).get("view");
+      if (["monitor", "diagnosis", "workorder", "quality", "rag", "report"].includes(requested || "")) {
+        setActiveView(requested);
+      } else if (!requested) {
+        setActiveView("monitor");
+      }
+    };
+    window.addEventListener("popstate", handleHistoryNavigation);
+    return () => window.removeEventListener("popstate", handleHistoryNavigation);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (activeView === "monitor") params.delete("view");
+    else params.set("view", activeView);
+    const query = params.toString();
+    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+    if (nextUrl !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+      window.history.replaceState({ view: activeView }, "", nextUrl);
+    }
+  }, [activeView]);
 
   function showToast(message) {
     setToast(message);
@@ -2786,6 +2829,20 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
     if (list) list.scrollTop = list.scrollHeight;
   }, [messages]);
 
+  function buildConversationHistory() {
+    return messages
+      .filter((message) => !message.pending)
+      .slice(-6)
+      .flatMap((message) => {
+        const answer = selectAgentAnswer(message.answer) || cleanDisplayText(message.answer?.report?.summary) || "";
+        return [
+          { role: "user", content: message.question },
+          ...(answer ? [{ role: "assistant", content: answer }] : []),
+        ];
+      })
+      .slice(-12);
+  }
+
   async function askKnowledge(nextQuery = query) {
     const question = nextQuery.trim();
     if (!question || busy) return;
@@ -2793,22 +2850,27 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
     setMessages((current) => [...current, { id, question, pending: true }]);
     setQuery("");
     setBusy(true);
-    const [agentResponse, ragResponse] = await Promise.allSettled([
-      request("/api/agent/question/summary", {
+    let answer = null;
+    let agentError = "";
+    try {
+      answer = await request("/api/agent/question/summary", {
         method: "POST",
-        body: JSON.stringify({ user_text: question, context: { device_id: sample?.device_id || snapshot?.device_id || "" } }),
-      }),
-      request(`/api/rag/search?query=${encodeURIComponent(question)}&limit=5`),
-    ]);
-    const answer = agentResponse.status === "fulfilled" ? agentResponse.value : null;
-    const ragResult = ragResponse.status === "fulfilled" ? ragResponse.value : null;
+        body: JSON.stringify({
+          user_text: question,
+          context: {
+            ...buildKnowledgeContext(sample, snapshot),
+            conversation_history: buildConversationHistory(),
+          },
+        }),
+      });
+    } catch (error) {
+      agentError = String(error?.message || error);
+    }
     setMessages((current) => current.map((message) => message.id === id ? {
       ...message,
       pending: false,
       answer,
-      ragResult,
-      agentError: agentResponse.status === "rejected" ? String(agentResponse.reason?.message || agentResponse.reason) : "",
-      ragError: ragResponse.status === "rejected" ? String(ragResponse.reason?.message || ragResponse.reason) : "",
+      agentError,
     } : message));
     setBusy(false);
   }
@@ -2822,39 +2884,29 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
 
   return (
     <section className="workspace-view active module-board rag-workspace rag-chat" aria-label="RAG知识问答">
-      <ModuleHero eyebrow="RAG 知识中枢" title="维修知识问答" text="围绕设备故障、报警码与 SOP 连续提问；每条回答附上对应的检索证据。" />
+      <ModuleHero eyebrow="RAG 知识中枢" title="维修知识问答" text="围绕设备故障、报警码与 SOP 连续提问；回答只展示模型生成的正文。" />
       <div className="rag-chat-shell">
         <div className="rag-chat-toolbar">
           <div><span className="rag-chat-status-dot" /><strong>知识助手</strong><span>· {status?.backend || "检索服务待确认"}</span></div>
-          <div><span>知识记录 {status?.record_count ?? "--"}</span><button className="button" type="button" onClick={loadStatus}>刷新状态</button></div>
+          <div><span>知识记录 {status?.record_count ?? "--"}</span><span>本次对话 {messages.filter((message) => !message.pending).length} 轮</span><button className="button" type="button" onClick={() => setMessages([])} disabled={!messages.length || busy}>清空对话</button><button className="button" type="button" onClick={loadStatus}>刷新状态</button></div>
         </div>
         {statusError && <div className="rag-chat-status-error" role="status">知识库状态暂不可用：{statusError}</div>}
         <div className="rag-chat-messages" ref={messageListRef} role="log" aria-label="知识问答对话" aria-live="polite">
           {messages.length === 0 ? (
-            <div className="rag-chat-welcome"><span className="rag-chat-welcome-mark" aria-hidden="true">IA</span><h2>有什么设备问题需要排查？</h2><p>可以询问报警含义、维修步骤或 SOP；答案会与命中文档一起显示。</p></div>
+            <div className="rag-chat-welcome"><span className="rag-chat-welcome-mark" aria-hidden="true">IA</span><h2>有什么设备问题需要排查？</h2><p>可以询问报警含义、维修步骤或 SOP；回答只展示模型生成的正文。</p></div>
           ) : messages.map((message) => {
-            const documents = message.ragResult?.documents || message.answer?.knowledge?.documents || [];
             const report = message.answer?.report || {};
-            const ragAnswer = isDebugAnswer(message.ragResult?.answer) ? "" : message.ragResult?.answer;
-            const summary = cleanDisplayText(report.summary)
-              || cleanDisplayText(message.answer?.knowledge?.answer)
-              || message.answer?.knowledge?.summary
-              || message.answer?.diagnosis?.summary
-              || message.answer?.diagnosis?.fault
-              || message.answer?.route_result?.reason
-              || cleanDisplayText(ragAnswer)
-              || "";
+            const summary = selectAgentAnswer(message.answer) || cleanDisplayText(report.summary);
             const routedToReport = message.answer?.route === "report" || message.answer?.route_result?.intent === "report";
+            const legacyAnswerMissing = !summary && !message.agentError && /^检索到\s*\d+\s*条(?:相关)?知识证据\s*[：:]/.test(String(message.answer?.knowledge?.summary || "").trim());
             return <div className="rag-chat-turn" key={message.id}>
               <div className="rag-chat-row is-user"><span className="rag-chat-avatar">你</span><div className="rag-chat-bubble">{message.question}</div></div>
               <div className="rag-chat-row is-assistant"><span className="rag-chat-avatar">IA</span><div className="rag-chat-bubble">
                 {message.pending ? <p className="rag-chat-pending">正在检索并整理回答…</p> : <>
                   {routedToReport && <span className="rag-chat-result-tag">路由至报告流程 · 非知识回答</span>}
                   {report.title && <h3>{report.title}</h3>}
-                  <FormattedText value={summary || (message.agentError ? "问答服务暂不可用，本次未生成回答。" : "本次没有可展示的回答，请尝试补充设备或报警信息。")} />
+                  <FormattedText value={summary || (message.agentError ? "问答服务暂不可用，本次未生成回答。" : legacyAnswerMissing ? "这条历史记录来自旧版本，当时没有保存模型正文。请重新提问，新的回答会在刷新后保留。" : "本次没有可展示的回答，请尝试补充设备或报警信息。")} />
                   {message.agentError && <FormattedText value={`问答服务异常：${message.agentError}`} className="rag-chat-error" />}
-                  {message.ragError && <FormattedText value={`文档检索异常：${message.ragError}`} className="rag-chat-error" />}
-                  {documents.length > 0 && <details className="rag-chat-citations"><summary>查看参考正文</summary><DocumentList documents={documents} compact /></details>}
                 </>}
               </div></div>
             </div>;
@@ -2974,12 +3026,6 @@ function StepList({ steps = [] }) {
   return <ol className="step-list">{visibleSteps.map((step, index) => <li key={`${step}-${index}`}><FormattedText value={step} /></li>)}</ol>;
 }
 
-function DocumentList({ documents, limit = null, compact = false }) {
-  if (!documents.length) return <div className="empty-state">暂无命中文档</div>;
-  const visibleDocuments = limit ? documents.slice(0, limit) : documents;
-  return <div className={`document-list ${compact ? "compact" : ""}`}>{visibleDocuments.map((doc, index) => <article key={doc.document_id || index}><FormattedText value={cleanDisplayText(documentBodyOnly(doc)) || "暂无正文"} /></article>)}</div>;
-}
-
 function QualityResultView({ quality }) {
   const checks = quality.inspection_items || [];
   const defects = (quality.defects || []).map((item) => typeof item === "string" ? item : item?.description || item?.message || item?.name || "").filter(Boolean);
@@ -2994,9 +3040,21 @@ function ExperienceList({ items }) {
 function FormattedText({ value, className = "" }) {
   const blocks = splitTextBlocks(value);
   if (!blocks.length) return null;
-  return <div className={`formatted-text ${className}`.trim()}>{blocks.map((block, index) => block.type === "list"
-    ? <ul key={`list-${index}`}>{block.items.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{item}</li>)}</ul>
-    : <p key={`paragraph-${index}`}>{block.text}</p>)}</div>;
+  const inline = (text, keyPrefix) => splitInlineMarkdown(text).map((part, partIndex) => {
+    const key = `${keyPrefix}-${partIndex}`;
+    if (part.type === "strong") return <strong key={key}>{part.text}</strong>;
+    if (part.type === "code") return <code key={key}>{part.text}</code>;
+    return <React.Fragment key={key}>{part.text}</React.Fragment>;
+  });
+  return <div className={`formatted-text ${className}`.trim()}>{blocks.map((block, index) => {
+    if (block.type === "list") return <ul key={`list-${index}`}>{block.items.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{inline(item, `list-${index}-${itemIndex}`)}</li>)}</ul>;
+    if (block.type === "heading") {
+      const Heading = `h${Math.min(Math.max(block.level + 1, 3), 6)}`;
+      return <Heading key={`heading-${index}`}>{inline(block.text, `heading-${index}`)}</Heading>;
+    }
+    if (block.type === "rule") return <hr key={`rule-${index}`} />;
+    return <p key={`paragraph-${index}`}>{inline(block.text, `paragraph-${index}`)}</p>;
+  })}</div>;
 }
 
 

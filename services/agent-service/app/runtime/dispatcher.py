@@ -167,6 +167,25 @@ class RuntimeDispatcher:
         return result
 
     @staticmethod
+    def _conversation_context(context: Mapping[str, Any], query: str) -> str:
+        """Carry a bounded short conversation into the current knowledge query."""
+
+        history = context.get("conversation_history")
+        if not isinstance(history, list):
+            return query
+        lines: list[str] = []
+        for item in history[-6:]:
+            if not isinstance(item, Mapping):
+                continue
+            role = "用户" if str(item.get("role") or "user") == "user" else "助手"
+            content = str(item.get("content") or item.get("text") or "").strip()
+            if content:
+                lines.append(f"{role}：{content[:1200]}")
+        if not lines:
+            return query
+        return "历史对话：%s\n当前问题：%s" % ("\n".join(lines), query)
+
+    @staticmethod
     def _task_for_agent(capability: str, state: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
         """Adapt the canonical Runtime state to an existing Agent's request shape."""
 
@@ -191,7 +210,29 @@ class RuntimeDispatcher:
             or "工业设备维修"
         )
         if capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
-            return {"query": query, "diagnosis": diagnosis, "context": dict(state.get("context") or {})}
+            context = dict(state.get("context") or {})
+            query = RuntimeDispatcher._conversation_context(context, query)
+            event = state.get("event")
+            event = event if isinstance(event, Mapping) else {}
+            # Scope knowledge retrieval only to an active alarm. Runtime event
+            # execution carries the current machine/alarm as its scope.
+            alarm_active = bool(context.get("alarm_active"))
+            event_device_id = str(event.get("device_id") or "").strip()
+            event_alarm_code = str(event.get("alarm_code") or event.get("error_code") or "").strip()
+            if event_device_id and event_alarm_code:
+                alarm_active = True
+            scoped = {}
+            if alarm_active:
+                device_id = str(context.get("device_id") or event_device_id).strip()
+                alarm_code = str(context.get("alarm_code") or event_alarm_code).strip()
+                if device_id:
+                    scoped["device_id"] = device_id
+                if alarm_code:
+                    scoped["alarm_code"] = alarm_code
+                alarm_label = str(context.get("alarm_label") or event.get("alarm_label") or "").strip()
+                if alarm_label:
+                    scoped["alarm_label"] = alarm_label
+            return {"query": query, "diagnosis": diagnosis, "context": context, "alarm_active": alarm_active, **scoped, "filters": dict(scoped)}
         if capability in {"drawing_search", "bom_query", "component_relation"}:
             context = dict(state.get("context") or {})
             event = state.get("event")

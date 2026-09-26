@@ -21,6 +21,15 @@ SERVICE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = SERVICE_ROOT.parent.parent
 FRONTEND_ROOT = PROJECT_ROOT / "frontend" / "monitor"
 AGENT_SERVICE_BASE_URL = os.getenv("AGENT_SERVICE_BASE_URL", "http://127.0.0.1:8010")
+# Runtime actions can legitimately include more than one remote model call.
+# Keep this boundary configurable, but do not let the monitor declare a real
+# model-backed run failed before the Agent Runtime has a chance to finish.
+AGENT_EVENT_TIMEOUT_SECONDS = float(
+    os.getenv("AGENT_EVENT_TIMEOUT_SECONDS", os.getenv("AGENT_TIMEOUT_SECONDS", "180"))
+)
+MONITOR_PROXY_TIMEOUT_SECONDS = float(
+    os.getenv("MONITOR_PROXY_TIMEOUT_SECONDS", str(max(AGENT_EVENT_TIMEOUT_SECONDS, 90.0)))
+)
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
@@ -182,7 +191,7 @@ def dispatch_agent_event(event: Dict[str, Any]) -> Dict[str, Any]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(request, timeout=30) as response:
+    with urlopen(request, timeout=AGENT_EVENT_TIMEOUT_SECONDS) as response:
         result = json.loads(response.read().decode("utf-8"))
     if not isinstance(result, dict):
         raise RuntimeError("Agent Service 返回的工单结果不是对象")
@@ -533,7 +542,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             method=method,
         )
         try:
-            with urlopen(request, timeout=30) as response:
+            with urlopen(request, timeout=MONITOR_PROXY_TIMEOUT_SECONDS) as response:
                 payload = response.read()
                 self.send_response(response.status)
                 self.send_header("Content-Type", response.headers.get("Content-Type", "application/json; charset=utf-8"))
@@ -570,6 +579,11 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         body = file_path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_types.get(file_path.suffix, "application/octet-stream"))
+        # The entry document contains the current hashed bundle name.  Never let
+        # a browser keep an older index after a frontend rebuild, otherwise the
+        # page can silently run the pre-persistence bundle on refresh.
+        if file_path.suffix == ".html":
+            self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

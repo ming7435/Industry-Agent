@@ -19,7 +19,7 @@ class ModelServiceClient:
     def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
         self.base_url = str(base_url or os.getenv("MODEL_SERVICE_BASE_URL", "")).rstrip("/")
         self.model = str(model or os.getenv("MODEL_CHAT_MODEL", "deepseek-chat"))
-        self.timeout = float(os.getenv("MODEL_SERVICE_TIMEOUT_SECONDS", "30"))
+        self.timeout = float(os.getenv("MODEL_SERVICE_TIMEOUT_SECONDS", "90"))
 
     @property
     def available(self) -> bool:

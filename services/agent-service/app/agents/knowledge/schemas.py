@@ -21,7 +21,10 @@ class KnowledgeQuery(BaseModel):
     chunk_id: str = ""
     required_sources: List[str] = Field(default_factory=list)
     filters: Dict[str, Any] = Field(default_factory=dict)
-    limit: int = Field(default=5, ge=1, le=50)
+    # A single user question can require complementary alarm, SOP, manual and
+    # historical-case chunks. Eight per retrieval leg gives the evidence
+    # validator enough material without exposing the whole index to the model.
+    limit: int = Field(default=8, ge=1, le=50)
     max_steps: int = Field(default=4, ge=1, le=8)
 
     @classmethod

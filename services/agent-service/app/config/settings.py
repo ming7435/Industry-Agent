@@ -55,7 +55,10 @@ class Settings:
     backend_service_base_url: str = field(default_factory=lambda: os.getenv("BACKEND_SERVICE_BASE_URL", "").rstrip("/"))
     factory_api_base_url: str = field(default_factory=lambda: os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:4529").rstrip("/"))
     agent_service_base_url: str = field(default_factory=lambda: os.getenv("AGENT_SERVICE_BASE_URL", "http://127.0.0.1:8010").rstrip("/"))
-    agent_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("AGENT_TIMEOUT_SECONDS", "45")))
+    # A runtime action may perform several real model/tool round trips.  The
+    # old 45s default expired while the underlying Agent was still running,
+    # producing a false ``Agent Service 调用失败`` result in the monitor.
+    agent_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("AGENT_TIMEOUT_SECONDS", "90")))
     agent_max_retries: int = field(default_factory=lambda: int(os.getenv("AGENT_MAX_RETRIES", "1")))
     trace_max_records: int = field(default_factory=lambda: max(100, int(os.getenv("TRACE_MAX_RECORDS", "5000"))))
     pending_task_store_path: str = field(default_factory=lambda: os.getenv("PENDING_TASK_STORE_PATH", "runtime_pending_tasks.sqlite3"))

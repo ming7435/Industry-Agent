@@ -68,7 +68,7 @@ class RAGServiceClient:
             except Exception as error:
                 if not self.allow_fallback:
                     raise
-                result = self._humanize_result(self.fallback.search(query, limit=limit, filters=filters))
+                result = self._humanize_result(self.fallback.search(query, limit=limit, filters=self._fallback_filters(selected_filters)))
                 result["connection_status"] = "remote_unavailable_fallback"
                 result["degraded"] = True
                 result["remote_base_url"] = self.base_url
@@ -76,7 +76,7 @@ class RAGServiceClient:
                 return result
         if not self.allow_fallback:
             raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
-        result = self._humanize_result(self.fallback.search(query, limit=limit, filters=filters))
+        result = self._humanize_result(self.fallback.search(query, limit=limit, filters=self._fallback_filters(selected_filters)))
         result["connection_status"] = "local_fallback"
         result["degraded"] = True
         result["remote_base_url"] = ""
@@ -133,10 +133,36 @@ class RAGServiceClient:
             value = filters.get(key)
             if value not in (None, "", [], {}):
                 result[key] = value
-        # alarm_code, component and device_id remain in the natural-language
-        # query because the current chunk metadata does not index them as
-        # top-level filter fields.
+        # The active machine is the hard retrieval boundary. Alarm/component
+        # identifiers remain query hints because older repair records may not
+        # have those metadata fields populated; hard-filtering them would hide
+        # valid procedures for the same machine.
+        for key in ("device_id", "device_model"):
+            value = filters.get(key)
+            if value not in (None, "", [], {}):
+                result[key] = value
         return result
+
+    def _fallback_filters(self, filters: Mapping[str, Any]) -> Dict[str, Any]:
+        """Keep machine scope when the local fallback index has that metadata.
+
+        The bundled demo index predates device metadata. In that degraded mode
+        the device ID remains in the query text, while remote RAG still applies
+        the hard metadata boundary.
+        """
+
+        selected = {
+            key: value
+            for key, value in dict(filters or {}).items()
+            if key not in {"alarm_code", "error_code", "component"}
+            and value not in (None, "", [], {})
+        }
+        records = getattr(self.fallback, "_records", {})
+        has_device_metadata = any(str(item.get("device_id") or "").strip() for item in records.values())
+        if not has_device_metadata:
+            selected.pop("device_id", None)
+            selected.pop("device_model", None)
+        return selected
 
     @staticmethod
     def _normalize_remote_search(
