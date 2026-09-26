@@ -1,0 +1,7 @@
+{"id":"alarm_explanation-spindle-overheat","question":"TC820LTY 主轴过温报警 700223 的含义和安全检查步骤是什么？","filters":{},"expected_evidence_ids":[],"expected_sources":["alarms","sop"],"relevant_terms":["主轴","冷却"],"should_answer":true}
+{"id":"no_alarm_maintenance-maintenance","question":"设备没有当前报警时，主轴温度过高应该按什么顺序排查？","filters":{},"expected_evidence_ids":[],"expected_sources":["sop","cases"],"relevant_terms":["冷却","复测"],"should_answer":true}
+{"id":"spindle_cooling-cooling","question":"TC820LTY 主轴冷却系统需要检查哪些部位？","filters":{},"expected_evidence_ids":[],"expected_sources":["sop","cases"],"relevant_terms":["冷却"],"should_answer":true}
+{"id":"sop_manual-location","question":"维修主轴前应遵循哪些停机和安全操作步骤？","filters":{},"expected_evidence_ids":[],"expected_sources":["sop"],"relevant_terms":["停机"],"should_answer":true}
+{"id":"historical_case-search","question":"有没有主轴温度异常的历史维修案例可参考？","filters":{},"expected_evidence_ids":[],"expected_sources":["cases"],"relevant_terms":["主轴"],"should_answer":true}
+{"id":"device_scope-tc820","question":"TC820LTY 设备发生主轴过温报警时应检查什么？","filters":{"device_model":"TC820LTY"},"expected_evidence_ids":[],"expected_sources":["alarms"],"relevant_terms":["主轴"],"should_answer":true}
+{"id":"no_evidence-unknown","question":"不存在的设备型号 ZZ99999 出现不存在的报警码 999999，应更换哪个特定零件？","filters":{"device_model":"ZZ99999"},"expected_evidence_ids":[],"expected_sources":[],"relevant_terms":[],"should_answer":false}
