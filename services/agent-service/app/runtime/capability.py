@@ -169,11 +169,18 @@ class CapabilityRegistry:
 
     def get(self, capability: str) -> CapabilityDefinition | None:
         name = str(capability or "").strip()
+        canonical = self._aliases.get(name, name)
+        return self._definitions.get(canonical)
+
+    def metadata_for(self, capability: str) -> CapabilityDefinition | None:
+        """Return registered metadata, or catalog metadata for defaults."""
+
+        name = str(capability or "").strip()
         canonical = self._aliases.get(name, self._catalog_aliases.get(name, name))
         return self._definitions.get(canonical) or self._catalog.get(canonical)
 
     def canonical_name(self, capability: str) -> str:
-        definition = self.get(capability)
+        definition = self.metadata_for(capability)
         return definition.name if definition else str(capability or "").strip()
 
     def resolve_agent(self, capability: str) -> Any | None:
@@ -197,29 +204,29 @@ class CapabilityRegistry:
         return tuple(self._definitions.values())
 
     def default_capabilities(self) -> list[str]:
-        return [name for name in DEFAULT_PLAN_CAPABILITIES if self.get(name) is not None]
+        return [name for name in DEFAULT_PLAN_CAPABILITIES if self.metadata_for(name) is not None]
 
     def all_capabilities(self) -> list[str]:
         return list(self._definitions)
 
     def domain_for(self, capability: str) -> str:
-        definition = self.get(capability)
+        definition = self.metadata_for(capability)
         return definition.domain if definition else ""
 
     def result_key_for(self, capability: str) -> str:
-        definition = self.get(capability)
+        definition = self.metadata_for(capability)
         return definition.result_key if definition else str(capability or "").replace(".", "_")
 
     def side_effect_for(self, capability: str) -> bool:
-        definition = self.get(capability)
+        definition = self.metadata_for(capability)
         return bool(definition.side_effect) if definition else False
 
     def requires_approval_for(self, capability: str) -> bool:
-        definition = self.get(capability)
+        definition = self.metadata_for(capability)
         return bool(definition.requires_approval) if definition else False
 
     def reason_for(self, capability: str, fallback: str = "") -> str:
-        definition = self.get(capability)
+        definition = self.metadata_for(capability)
         return (definition.default_reason if definition else "") or fallback
 
     def agents(self) -> list[str]:

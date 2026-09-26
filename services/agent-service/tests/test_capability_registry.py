@@ -50,3 +50,12 @@ def test_capability_registry_metadata_helpers_use_one_definition():
     assert registry.result_key_for("drawing_search") == "cad"
     assert registry.side_effect_for("workorder_create") is True
     assert registry.requires_approval_for("workorder_update") is True
+
+
+def test_empty_capability_registry_does_not_report_unregistered_capabilities():
+    from app.runtime.capability import CapabilityRegistry
+
+    registry = CapabilityRegistry()
+
+    assert registry.get("document_search") is None
+    assert registry.find("document_search") == []

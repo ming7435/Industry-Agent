@@ -99,6 +99,7 @@ class RuntimeDispatcher:
 
     def _dispatch_agent(self, action: ActionModel, state: dict[str, Any]) -> AgentResult:
         capability = action.required_capability or action.target
+        canonical_capability = self.capabilities.canonical_name(capability)
         agent = self.capabilities.resolve_agent(capability)
         if agent is None:
             error = "capability not registered: %s" % capability
@@ -107,7 +108,10 @@ class RuntimeDispatcher:
         agent_name = str(getattr(agent, "name", type(agent).__name__))
         self._emit("capability_selected", state, required_capability=capability, agent=agent_name)
         self._emit("agent_selected", state, required_capability=capability, agent=agent_name)
-        task = self._task_for_agent(capability, state, action.payload)
+        # Registry aliases are accepted at the boundary, but task adapters
+        # must receive the canonical capability so every Agent gets its
+        # domain-specific request shape.
+        task = self._task_for_agent(canonical_capability, state, action.payload)
         task.setdefault("task_id", str(state.get("task_id") or ""))
         task.setdefault("trace_id", str(state.get("trace_id") or ""))
         runtime_context = self._runtime_context(action, state, agent_name)
@@ -125,7 +129,7 @@ class RuntimeDispatcher:
         # required by this Action. Reuse only a successful, non-degraded record
         # with the same normalized query; all other searches still execute via
         # the registered Knowledge Agent.
-        if capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
+        if canonical_capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
             cached = self._cached_knowledge_result(state, task)
             if cached is not None:
                 self._emit(

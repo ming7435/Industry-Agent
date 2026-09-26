@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 from .action import ActionModel, ActionType
-from .capability import CapabilityRegistry
+from .capability import CAPABILITY_DEFINITIONS, CapabilityRegistry
 
 
 class PolicyStatus(str, Enum):
@@ -41,7 +41,7 @@ class RuntimePolicy:
     _HIGH_RISK = frozenset({"high", "critical", "r3", "r4"})
 
     def __init__(self, capabilities: CapabilityRegistry | None = None) -> None:
-        self.capabilities = capabilities or CapabilityRegistry()
+        self.capabilities = capabilities or CapabilityRegistry(CAPABILITY_DEFINITIONS)
 
     def evaluate(self, action: ActionModel, state: Mapping[str, Any] | None = None) -> PolicyDecision:
         current = dict(state or {})
@@ -58,7 +58,7 @@ class RuntimePolicy:
             or payload.get("risk_level")
             or "normal"
         ).strip().lower()
-        definition = self.capabilities.get(capability)
+        definition = self.capabilities.metadata_for(capability)
         is_mutation = (
             action.side_effect
             or bool(definition and definition.side_effect)
@@ -76,7 +76,7 @@ class RuntimePolicy:
                     required_evidence=required, missing_evidence=missing,
                 )
 
-        if capability in {"quality_inspection", "quality_review"}:
+        if canonical_capability in {"quality_inspection", "quality_review"}:
             inspection_type = str(
                 payload.get("inspection_type")
                 or context.get("inspection_type")

@@ -21,6 +21,12 @@ def test_trace_skill_node_accepts_explicit_graph_binding_without_global_aliases(
     assert result["step_history"][0]["step_id"] == "generate_candidates"
 
 
+def test_capability_definition_is_exported_from_runtime_package():
+    from app.runtime import CapabilityDefinition
+
+    assert CapabilityDefinition("x", "agent", "domain", "result").name == "x"
+
+
 def test_core_agents_declare_the_unified_contract_and_capabilities():
     assert set(CORE_AGENT_REGISTRY) == {
         "router", "diagnosis", "knowledge", "cad", "maintenance",

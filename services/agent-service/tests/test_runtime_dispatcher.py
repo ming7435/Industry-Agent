@@ -62,3 +62,31 @@ def test_dispatcher_reuses_side_effect_execution_record():
 
     assert first.output == second.output
 
+
+def test_dispatcher_task_adapter_canonicalizes_capability_aliases():
+    from app.runtime.dispatcher import RuntimeDispatcher
+    from app.runtime.capability import CapabilityDefinition
+
+    class _KnowledgeAgent(BaseAgent):
+        name = "knowledge"
+        capabilities = ("document_search",)
+
+        def run(self, task):
+            self.task = task
+            return {"success": True, "documents": [{"id": "DOC-1"}], "confidence": 1.0}
+
+    agent = _KnowledgeAgent()
+    registry = CapabilityRegistry([CapabilityDefinition(
+        "document_search", "knowledge", "knowledge", "knowledge", aliases=("knowledge_search",),
+    )])
+    registry.register_agent(agent)
+    dispatcher = RuntimeDispatcher(registry, ExecutionManager())
+
+    result = dispatcher.dispatch(
+        ActionModel.agent("legacy-target", {"required_capability": "knowledge_search"}),
+        {"task_id": "TASK-ALIAS", "trace_id": "TRACE-ALIAS", "diagnosis": {"summary": "主轴温度异常"}, "context": {}},
+    )
+
+    assert result.success is True
+    assert agent.task["query"] == "主轴温度异常"
+
