@@ -323,6 +323,48 @@ POST http://127.0.0.1:8010/api/rag/ingest
 
 RAG 不可用时，RAG_ALLOW_LOCAL_FALLBACK=true 才会使用 Agent Service 的本地演示索引；生产联调建议配置独立 RAG 地址并将其设为 false，这样可以明确暴露 RAG 服务不可用问题。
 
+### RAG 效果评测（本地人工复核）
+
+评测工具位于 `services/rag-service/evaluation`，题集来自仓库语料，
+`dataset.jsonl` 中的 `expected_evidence_ids`、`expected_sources` 和
+`relevant_terms` 需要人工复核后再作为金标准。评测不会修改线上 `/search` 接口，
+也不会接入 CI；它通过真实 RAG 服务运行，报告只保存指标、错误、证据 ID 和来源，
+不复制文档正文。
+
+先确保 RAG 服务运行在 `http://127.0.0.1:8020`，再执行检索/证据评测：
+
+~~~powershell
+L:/anaconda/python.exe services/rag-service/evaluation/run.py `
+  --base-url http://127.0.0.1:8020 `
+  --no-llm `
+  --top-k 5 `
+  --output-dir evaluation-results
+~~~
+
+完整模式会同时检查回答中的引用、必要概念和无证据拒答：
+
+~~~powershell
+L:/anaconda/python.exe services/rag-service/evaluation/run.py `
+  --base-url http://127.0.0.1:8020 `
+  --case alarm_explanation-spindle-overheat `
+  --limit 1 `
+  --top-k 5 `
+  --output-dir evaluation-results
+~~~
+
+`--case` 可以重复传入多个题目 ID；`--limit` 限制运行数量。结果写入
+`evaluation-results/latest.json` 和 UTC 时间戳文件。缺少人工标注或答案的指标为
+`null`，不会被当作 0；建议人工关注 `recall_at_k >= 0.80`、来源覆盖率 >= 0.80、
+引用有效性 >= 0.95、拒答准确率 >= 0.90。单题网络、HTTP 或 JSON 错误会记录在该题，
+不会阻断其他题目。
+
+评测测试使用独立的 RAG 配置：
+
+~~~powershell
+L:/anaconda/python.exe -m pytest services/rag-service/tests -q `
+  --override-ini pythonpath=services/rag-service
+~~~
+
 ## Agent 和业务接口
 
 ### 用户问题和异常事件
