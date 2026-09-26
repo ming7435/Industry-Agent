@@ -114,10 +114,18 @@ def evaluate_case(case: EvaluationCase, response: dict[str, Any], top_k: int = 5
     answer = str(answer) if answer is not None else None
     answer_completeness = _fraction(sum(1 for term in terms if term in answer.casefold()), len(terms)) if answer is not None and terms else None
     latency = response.get("latency_ms")
+    llm_latency = None
+    if isinstance(latency, dict):
+        llm_latency = latency.get("llm")
+        latency = latency.get("total")
     try:
         retrieval_latency = float(latency) if latency is not None else None
     except (TypeError, ValueError):
         retrieval_latency = None
+    try:
+        answer_latency = float(llm_latency) if llm_latency is not None else retrieval_latency
+    except (TypeError, ValueError):
+        answer_latency = None
 
     return CaseEvaluation(
         id=case.id,
@@ -129,7 +137,7 @@ def evaluate_case(case: EvaluationCase, response: dict[str, Any], top_k: int = 5
             "citation_validity": _citation_validity(answer, len(hits)),
             "answer_completeness": answer_completeness,
             "abstention_accuracy": _abstention_accuracy(answer, case.should_answer),
-            "answer_latency_ms": retrieval_latency,
+            "answer_latency_ms": answer_latency,
         },
         evidence_ids=evidence_ids,
         evidence_sources=evidence_sources,
@@ -153,7 +161,7 @@ def aggregate_evaluations(
     run_at_utc: str | None = None,
 ) -> EvaluationReport:
     """Build a report while excluding null metrics from averages."""
-    failed = sum(1 for item in cases if item.error)
+    failed = sum(1 for item in cases if item.error or item.degraded)
     metric_names = (
         "recall_at_k",
         "source_coverage",
@@ -194,6 +202,11 @@ def _request_search(base_url: str, payload: dict[str, Any], timeout_s: float) ->
 
 def _null_answer_metrics(result: CaseEvaluation) -> None:
     for name in ("citation_validity", "answer_completeness", "abstention_accuracy", "answer_latency_ms"):
+        result.metrics[name] = None
+
+
+def _null_all_metrics(result: CaseEvaluation) -> None:
+    for name in result.metrics:
         result.metrics[name] = None
 
 
@@ -239,6 +252,7 @@ def run_evaluation(
         except (Exception) as exc:  # each case is isolated by design
             result = evaluate_case(case, {"error": str(exc)}, top_k=top_k)
             result.error = str(exc)
+            _null_all_metrics(result)
         if no_llm:
             _null_answer_metrics(result)
         evaluated.append(result)

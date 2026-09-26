@@ -46,6 +46,13 @@ def test_evidence_ids_take_precedence_and_evidence_metrics_are_computed():
     assert result.metrics["retrieval_latency_ms"] == 125.0
 
 
+def test_latency_breakdown_uses_total_for_retrieval_and_llm_for_answer():
+    result = evaluate_case(case(), response(latency_ms={"total": 125, "llm": 40}), top_k=2)
+
+    assert result.metrics["retrieval_latency_ms"] == 125.0
+    assert result.metrics["answer_latency_ms"] == 40.0
+
+
 def test_source_fallback_is_case_insensitive_and_empty_terms_are_null():
     result = evaluate_case(
         case(expected_evidence_ids=[], expected_sources=["SOP", "cases"], relevant_terms=[]),
@@ -81,6 +88,7 @@ def test_degraded_response_is_recorded_and_missing_answer_metrics_are_null():
     assert result.degrade_reason == "embedding unavailable"
     assert result.metrics["citation_validity"] is None
     assert result.metrics["answer_completeness"] is None
+    assert aggregate_evaluations([result], base_url="http://rag", mode="no_llm").failed_cases == 1
 
 
 def test_aggregation_averages_only_present_metrics_and_retains_errors():
@@ -153,6 +161,7 @@ def test_run_evaluation_filters_cases_limits_and_keeps_individual_errors(tmp_pat
 
     assert calls == ["three", "two"]
     assert report.cases[1].error == "timed out"
+    assert report.cases[1].metrics["recall_at_k"] is None
     assert report.failed_cases == 1
     with pytest.raises(ValueError, match="未知题目 ID"):
         run_evaluation("http://rag", dataset, tmp_path / "other", case_ids=["missing"], request_fn=request_fn)
@@ -174,3 +183,22 @@ def test_no_llm_preserves_retrieval_metrics_and_nulls_answer_metrics(tmp_path):
     assert report.cases[0].metrics["retrieval_latency_ms"] == 125.0
     assert report.cases[0].metrics["citation_validity"] is None
     assert report.cases[0].metrics["answer_completeness"] is None
+
+
+def test_failed_request_does_not_turn_expected_sources_into_zero_score(tmp_path):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text(
+        json.dumps({"id": "one", "question": "Q", "expected_sources": ["sop"]}) + "\n",
+        encoding="utf-8",
+    )
+
+    report = run_evaluation(
+        "http://rag",
+        dataset,
+        tmp_path / "results",
+        request_fn=lambda url, payload, timeout_s: (_ for _ in ()).throw(TimeoutError("timed out")),
+    )
+
+    assert report.cases[0].error == "timed out"
+    assert report.cases[0].metrics["recall_at_k"] is None
+    assert report.cases[0].metrics["source_coverage"] is None
