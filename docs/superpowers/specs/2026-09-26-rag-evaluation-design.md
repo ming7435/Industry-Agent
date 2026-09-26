@@ -23,6 +23,7 @@
   "id": "spindle-overheat-001",
   "question": "主轴温度过高怎么检查？",
   "filters": {},
+  "expected_evidence_ids": [],
   "expected_sources": ["cases", "sop", "manuals"],
   "relevant_terms": ["冷却", "LOTO", "复测"],
   "should_answer": true
@@ -34,6 +35,7 @@
 - `id` 在数据集内唯一。
 - `question` 为真实用户问题，不能为空。
 - `filters` 与现有 `/search` 请求一致。
+- `expected_evidence_ids` 是人工复核后的目标证据 ID，可为空；填写时优先用于 `recall_at_k`。
 - `expected_sources` 是人工复核后的目标语料来源；允许为空，表示来源不作硬要求。
 - `relevant_terms` 是人工复核的必要概念，不要求固定措辞。
 - `should_answer=false` 表示应明确说明证据不足，不得强行给结论。
@@ -118,4 +120,3 @@
 - 不新增 Agent、Tool、MCP 或数据库表。
 - 不在首版自动修改题集或让模型自动生成金标准。
 - 不把 LLM 自评、BLEU/ROUGE 等文本相似度作为唯一答案质量标准。
-
