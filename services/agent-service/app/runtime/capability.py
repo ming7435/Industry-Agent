@@ -25,6 +25,7 @@ class CapabilityDefinition:
     requires_approval: bool = False
     default_reason: str = ""
     aliases: tuple[str, ...] = ()
+    replan_capabilities: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", str(self.name).strip())
@@ -32,6 +33,7 @@ class CapabilityDefinition:
         object.__setattr__(self, "domain", str(self.domain).strip())
         object.__setattr__(self, "result_key", str(self.result_key).strip())
         object.__setattr__(self, "aliases", tuple(str(item).strip() for item in self.aliases if str(item).strip()))
+        object.__setattr__(self, "replan_capabilities", tuple(str(item).strip() for item in self.replan_capabilities if str(item).strip()))
 
     @property
     def reason(self) -> str:
@@ -49,18 +51,18 @@ class Capability:
 
 CAPABILITY_DEFINITIONS: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition("intent_routing", "router", "routing", "route", "classify and route a request", default_reason="route request"),
-    CapabilityDefinition("fault_analysis", "diagnosis", "diagnosis", "diagnosis", "analyze abnormal event", default_reason="analyze abnormal event", aliases=("fault_diagnosis",)),
+    CapabilityDefinition("fault_analysis", "diagnosis", "diagnosis", "diagnosis", "analyze abnormal event", default_reason="analyze abnormal event", aliases=("fault_diagnosis",), replan_capabilities=("document_search", "diagnosis_review")),
     CapabilityDefinition("hypothesis_generation", "diagnosis", "diagnosis", "diagnosis", "generate diagnostic hypotheses", default_reason="generate diagnostic hypotheses"),
-    CapabilityDefinition("diagnosis_review", "diagnosis", "diagnosis", "diagnosis", "review diagnostic evidence", default_reason="review diagnostic evidence"),
+    CapabilityDefinition("diagnosis_review", "diagnosis", "diagnosis", "diagnosis", "review diagnostic evidence", default_reason="review diagnostic evidence", replan_capabilities=("document_search", "diagnosis_review")),
     CapabilityDefinition("document_search", "knowledge", "knowledge", "knowledge", "retrieve supporting evidence", default_reason="retrieve supporting evidence", aliases=("knowledge_search",)),
     CapabilityDefinition("historical_case_search", "knowledge", "knowledge", "knowledge", "retrieve historical cases", default_reason="retrieve historical cases"),
     CapabilityDefinition("evidence_retrieval", "knowledge", "knowledge", "knowledge", "retrieve supporting evidence", default_reason="retrieve supporting evidence"),
     CapabilityDefinition("drawing_search", "cad", "cad", "cad", "resolve engineering context", default_reason="resolve engineering context", aliases=("drawing_lookup",)),
     CapabilityDefinition("bom_query", "cad", "cad", "cad", "resolve BOM context", default_reason="resolve BOM context"),
     CapabilityDefinition("component_relation", "cad", "cad", "cad", "resolve component relations", default_reason="resolve component relations"),
-    CapabilityDefinition("repair_plan", "maintenance", "maintenance", "maintenance_plan", "prepare executable repair plan", default_reason="prepare executable repair plan"),
-    CapabilityDefinition("repair_planning", "maintenance", "maintenance", "maintenance_plan", "prepare executable repair plan", default_reason="prepare executable repair plan"),
-    CapabilityDefinition("maintenance_replan", "maintenance", "maintenance", "maintenance_plan", "replan an insufficient maintenance plan", default_reason="replan an insufficient maintenance plan"),
+    CapabilityDefinition("repair_plan", "maintenance", "maintenance", "maintenance_plan", "prepare executable repair plan", default_reason="prepare executable repair plan", replan_capabilities=("maintenance_replan", "workorder_create")),
+    CapabilityDefinition("repair_planning", "maintenance", "maintenance", "maintenance_plan", "prepare executable repair plan", default_reason="prepare executable repair plan", replan_capabilities=("maintenance_replan", "workorder_create")),
+    CapabilityDefinition("maintenance_replan", "maintenance", "maintenance", "maintenance_plan", "replan an insufficient maintenance plan", default_reason="replan an insufficient maintenance plan", replan_capabilities=("maintenance_replan", "workorder_create")),
     CapabilityDefinition("workorder_create", "workorder", "workorder", "workorder", "create one idempotent work order", side_effect=True, default_reason="create one idempotent work order", aliases=("create_workorder",)),
     CapabilityDefinition("workorder_update", "workorder", "workorder", "workorder", "update an existing work order", side_effect=True, requires_approval=True, default_reason="update an existing work order"),
     CapabilityDefinition("quality_inspection", "quality", "quality", "quality", "verify the produced part when requested", default_reason="verify the produced part when requested"),

@@ -468,12 +468,10 @@ class RuntimeCoordinator:
             metadata=dict(value.get("metadata") or {}),
         )
 
-    @staticmethod
-    def _replan_capabilities(capability: str, output: Mapping[str, Any], remaining: list[ActionModel]) -> list[str]:
-        if capability in {"fault_analysis", "diagnosis_review"}:
-            return ["document_search", "diagnosis_review"]
-        if capability in {"repair_planning", "repair_plan", "maintenance_replan"}:
-            return ["maintenance_replan", "workorder_create"]
+    def _replan_capabilities(self, capability: str, output: Mapping[str, Any], remaining: list[ActionModel]) -> list[str]:
+        definition = self.capabilities.get(capability)
+        if definition and definition.replan_capabilities:
+            return list(definition.replan_capabilities)
         return [item.required_capability for item in remaining if item.required_capability] or [capability]
 
     @staticmethod

@@ -74,8 +74,8 @@ AgentOrchestrator
 ```
 
 `CapabilityDefinition` 现在集中保存 capability 的 Agent、domain、result key、说明、
-副作用、审批要求、默认 reason 和 aliases。Planner 的默认动作和请求动作都从 Registry
-读取这些 metadata；Coordinator 使用 Registry 读取 domain/result key；RuntimePolicy 使用
+副作用、审批要求、默认 reason、aliases 和声明式重规划动作。Planner 的默认动作和请求动作都从 Registry
+读取这些 metadata；Coordinator 使用 Registry 读取 domain/result key/replan；RuntimePolicy 使用
 Registry 判断副作用和审批要求。旧的 `find`、`lookup`、`for_agent`、`snapshot` 和
 `Capability` 注册接口仍兼容。
 

@@ -28,6 +28,7 @@ def test_capability_registry_exposes_canonical_metadata_and_aliases():
     assert definition.domain == "workorder"
     assert definition.result_key == "workorder"
     assert definition.side_effect is True
+    assert registry.get("fault_analysis").replan_capabilities == ("document_search", "diagnosis_review")
 
     registry.register(CapabilityDefinition(
         name="legacy_fault_lookup",

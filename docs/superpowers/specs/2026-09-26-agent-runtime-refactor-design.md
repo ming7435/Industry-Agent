@@ -19,9 +19,9 @@
 
 ### Capability metadata
 
-新增不可变 `CapabilityDefinition`，字段为 `name`、`agent`、`domain`、`result_key`、`description`、`side_effect`、`requires_approval`、`default_reason` 和 `aliases`。Registry 以 canonical name 和 alias 索引定义，并继续提供现有 `find`、`lookup`、`for_agent`、`snapshot` 和 Agent 实例解析 API。
+新增不可变 `CapabilityDefinition`，字段为 `name`、`agent`、`domain`、`result_key`、`description`、`side_effect`、`requires_approval`、`default_reason`、`aliases` 和声明式 `replan_capabilities`。Registry 以 canonical name 和 alias 索引定义，并继续提供现有 `find`、`lookup`、`for_agent`、`snapshot` 和 Agent 实例解析 API。
 
-Planner 从 Registry 读取默认 reason、side effect、idempotency 和目标 Agent；Coordinator 从 Registry 读取 result key、domain 和 side effect 相关信息；Dispatcher 使用 Registry 解析 capability。未知 capability 保持显式失败或兼容 fallback，不通过新的字符串映射扩散。
+Planner 从 Registry 读取默认 reason、side effect、idempotency 和目标 Agent；Coordinator 从 Registry 读取 result key、domain 和声明式重规划动作；Dispatcher 使用 Registry 解析 capability。未知 capability 保持显式失败或兼容 fallback，不通过新的字符串映射扩散。
 
 ### Skill/node binding
 
