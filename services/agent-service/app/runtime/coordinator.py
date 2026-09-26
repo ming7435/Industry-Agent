@@ -469,7 +469,7 @@ class RuntimeCoordinator:
         )
 
     def _replan_capabilities(self, capability: str, output: Mapping[str, Any], remaining: list[ActionModel]) -> list[str]:
-        definition = self.capabilities.get(capability)
+        definition = self.capabilities.metadata_for(capability)
         if definition and definition.replan_capabilities:
             return list(definition.replan_capabilities)
         return [item.required_capability for item in remaining if item.required_capability] or [capability]
