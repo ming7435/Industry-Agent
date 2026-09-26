@@ -85,6 +85,31 @@ def test_runtime_replan_calls_planner_again_and_replaces_remaining_actions():
     assert any(item["event"] == "replan" for item in trace.list(trace_id="TRACE-REPLAN"))
 
 
+def test_runtime_replan_reads_catalog_metadata_for_empty_explicit_registry():
+    from app.runtime.capability import CapabilityRegistry
+
+    planner = _ReplanningPlanner()
+    dispatcher = _ReplanningDispatcher()
+    trace = TraceRecorder()
+    container = SimpleNamespace(
+        planner=planner,
+        dispatcher=dispatcher,
+        capabilities=CapabilityRegistry(),
+        trace=trace,
+        execution_manager=SimpleNamespace(timeout_seconds=2.0),
+    )
+
+    RuntimeCoordinator(container).run({
+        "entry": "trigger",
+        "task_id": "TASK-REPLAN-CATALOG",
+        "trace_id": "TRACE-REPLAN-CATALOG",
+        "event": {"event_id": "EVT-REPLAN-CATALOG", "event_type": "alarm"},
+    })
+
+    assert planner.calls[1]["required_capabilities"] == ["maintenance_replan", "workorder_create"]
+    assert dispatcher.capabilities == ["repair_planning", "maintenance_replan", "workorder_create"]
+
+
 def test_runtime_replan_is_bounded_when_replanned_action_keeps_failing():
     planner = _ReplanningPlanner()
     dispatcher = _ReplanningDispatcher(always_findings=True)

@@ -89,7 +89,7 @@ Registry 判断副作用和审批要求。旧的 `find`、`lookup`、`for_agent`
 
 - `AgentOrchestrator._after_diagnosis/_after_knowledge/_after_cad/_after_maintenance` 仍保留为历史兼容方法；顶层 Graph 不注册它们，新 Runtime 不依赖它们。
 - Runtime 仍在 `runtime/` 单目录内提供逻辑分层，尚未物理移动为 `input/planning/execution/control` 子目录，以降低外部 import 风险。
-- `_replan_capabilities` 仍保留少量业务重规划策略；它不再承载通用 domain/result key/Agent 映射，后续可在有业务用例时迁移为更丰富的 Capability metadata。
+- `_replan_capabilities` 仅编排重规划和剩余 action 的兜底；具体 capability 重规划序列由 `CapabilityDefinition.replan_capabilities` 提供。
 - `RuntimePolicy` 的工单证据门禁和工具级变更集合仍是业务安全规则，保持显式以便审计。
 
 审查范围：`services/agent-service/app/`，以重构前 `3aed0ae` 提交的 176 个 Python 文件为依据；不以 README 作为架构依据。
