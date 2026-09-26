@@ -90,7 +90,13 @@ class BaseAgent:
         return None
 
 
-def trace_skill_node(agent_name: str, node_name: str, node: Callable[[Mapping[str, Any]], Mapping[str, Any]]) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
+def trace_skill_node(
+    agent_name: str,
+    node_name: str,
+    node: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    *,
+    skill_step: str | None = None,
+) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
     """Attach real Graph-node execution to an existing Skill step.
 
     This is deliberately a small wrapper, not a Skill interpreter: the
@@ -114,18 +120,9 @@ def trace_skill_node(agent_name: str, node_name: str, node: Callable[[Mapping[st
         definitions = [skill for name in selected if (skill := registry.get(agent_name, str(name))) is not None]
         if not definitions:
             definitions = registry.select(agent_name, request)
-        aliases = {
-            "router": {"initialize": "normalize_request", "load_skill": "select_target_agent", "classify_intent": "classify_intent", "extract_entities": "extract_entities", "validate_route": "validate_route", "final": "build_runtime_goal"},
-            "diagnosis": {"initialize": "normalize_event", "load_skill": "select_skills", "reason": "generate_candidates", "act": "execute_tools", "observe": "collect_evidence", "validate": "validate_result", "final": "build_result"},
-            "knowledge": {"initialize": "normalize_query", "load_skill": "select_sources", "plan_retrieval": "build_filters", "retrieve": "search", "observe": "build_evidence", "rerank": "rank", "validate": "validate_sources", "final": "build_result"},
-            "cad": {"initialize": "normalize_query", "load_skill": "classify_engineering_request", "resolve_component": "resolve_part", "query": "resolve_bom", "observe": "merge_engineering_context", "validate_relation": "validate_engineering_context", "final": "build_result"},
-            "maintenance": {"initialize": "validate_diagnosis", "load_skill": "select_skills", "check_parts_tools": "determine_required_parts", "safety_validate": "build_safety_steps", "prepare_workorder": "build_result", "final": "build_result"},
-            "workorder": {"final": "validate_result"},
-            "quality": {"initialize": "identify_part", "load_skill": "select_skills", "decision": "determine_pass_fail", "final": "build_result"},
-            "memory": {"initialize": "validate_closed", "load_skill": "select_skills", "rerank": "score_experience", "final": "build_result"},
-            "report": {"initialize": "collect_event", "load_skill": "select_skills", "check_completeness": "validate_completeness", "compose": "compose_report", "validate": "validate_result", "final": "build_result"},
-        }
-        skill_step_id = aliases.get(agent_name, {}).get(node_name, node_name)
+        # Domain Graphs pass this binding beside their node declarations. The
+        # base wrapper remains unaware of domain node names and aliases.
+        skill_step_id = str(skill_step or node_name)
         match = next(
             ((skill, step) for skill in definitions for step in skill.normalized_steps() if step.id == skill_step_id),
             None,

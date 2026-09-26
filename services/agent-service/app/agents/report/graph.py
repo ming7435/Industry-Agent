@@ -151,12 +151,20 @@ def fallback(state: ReportWorkflowState) -> Dict[str, Any]:
 
 def build_report_graph():
     workflow = StateGraph(ReportWorkflowState)
+    node_skill_steps = {
+        "initialize": "collect_event",
+        "load_skill": "select_skills",
+        "check_completeness": "validate_completeness",
+        "compose": "compose_report",
+        "validate": "validate_result",
+        "final": "build_result",
+    }
     for name, node in (
         ("initialize", initialize), ("load_skill", load_skill), ("collect_sources", collect_sources),
         ("check_completeness", check_completeness), ("compose", compose), ("validate", validate),
         ("persist", persist), ("final", final), ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("report", name, node))
+        workflow.add_node(name, trace_skill_node("report", name, node, skill_step=node_skill_steps.get(name, name)))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "collect_sources")

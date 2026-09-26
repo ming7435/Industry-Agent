@@ -150,8 +150,17 @@ def fallback(state: CADGraphState) -> Dict[str, Any]:
 
 def build_cad_graph():
     workflow = StateGraph(CADGraphState)
+    node_skill_steps = {
+        "initialize": "normalize_query",
+        "load_skill": "classify_engineering_request",
+        "resolve_component": "resolve_part",
+        "query": "resolve_bom",
+        "observe": "merge_engineering_context",
+        "validate_relation": "validate_engineering_context",
+        "final": "build_result",
+    }
     for name, node in (("initialize", initialize), ("load_skill", load_skill), ("resolve_component", resolve_component), ("plan_engineering_query", plan_engineering_query), ("query", query), ("observe", observe), ("validate_relation", validate_relation), ("final", final), ("fallback", fallback)):
-        workflow.add_node(name, trace_skill_node("cad", name, node))
+        workflow.add_node(name, trace_skill_node("cad", name, node, skill_step=node_skill_steps.get(name, name)))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "resolve_component")

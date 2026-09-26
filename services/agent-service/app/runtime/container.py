@@ -44,7 +44,7 @@ class AgentContainer:
         self.registry = registry
         self.tools = registry
         self.capabilities = build_capability_registry()
-        self.policy = RuntimePolicy()
+        self.policy = RuntimePolicy(self.capabilities)
         self.trace = TraceRecorder()
         self.pending_tasks = PendingTaskStore(settings.pending_task_store_path)
         self.approvals = ApprovalManager(self.pending_tasks, trace=self.trace)

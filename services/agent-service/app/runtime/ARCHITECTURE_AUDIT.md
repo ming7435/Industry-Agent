@@ -49,6 +49,49 @@ Policy 重复实现业务规则。
 reject 形成 `rejected → blocked` 的终态，并写入 `approval_requested/approved/rejected/
 resumed` Trace。
 
+## Capability 与 Skill 重构后的现状
+
+本次审计后的 Runtime 连接关系为：
+
+```text
+AgentOrchestrator
+  → LangGraph START/runtime/END
+  → OrchestratorNodes.runtime
+  → RuntimeCoordinator
+  → JEVParser
+  → Planner
+  → CapabilityRegistry(CapabilityDefinition)
+  → LoopEngine
+  → RuntimeDispatcher
+  → RuntimePolicy
+  → ExecutionManager
+  → AgentHarness
+  → Agent Graph / Skill / Tool
+  → A2A / MCP / Service
+  → Evidence / Observation / Validation
+  → RuntimeEvaluator
+  → Continue / Replan / Final / Blocked
+```
+
+`CapabilityDefinition` 现在集中保存 capability 的 Agent、domain、result key、说明、
+副作用、审批要求、默认 reason 和 aliases。Planner 的默认动作和请求动作都从 Registry
+读取这些 metadata；Coordinator 使用 Registry 读取 domain/result key；RuntimePolicy 使用
+Registry 判断副作用和审批要求。旧的 `find`、`lookup`、`for_agent`、`snapshot` 和
+`Capability` 注册接口仍兼容。
+
+`trace_skill_node` 只实现通用 Skill 查找、trace 和状态记录，接受调用方显式传入的
+`skill_step`。九个 Agent 的 node→skill step 绑定分别位于各自 `graph.py`，
+`agents/base.py` 不再维护所有领域节点的中央 aliases。`step_started`、
+`step_completed`、`step_failed`、`step_history`、`completed_steps`、`active_agent`、
+`current_step` 和 `active_skills` 的状态与 trace 行为保持不变。
+
+## 兼容路径与剩余技术债
+
+- `AgentOrchestrator._after_diagnosis/_after_knowledge/_after_cad/_after_maintenance` 仍保留为历史兼容方法；顶层 Graph 不注册它们，新 Runtime 不依赖它们。
+- Runtime 仍在 `runtime/` 单目录内提供逻辑分层，尚未物理移动为 `input/planning/execution/control` 子目录，以降低外部 import 风险。
+- `_replan_capabilities` 仍保留少量业务重规划策略；它不再承载通用 domain/result key/Agent 映射，后续可在有业务用例时迁移为更丰富的 Capability metadata。
+- `RuntimePolicy` 的工单证据门禁和工具级变更集合仍是业务安全规则，保持显式以便审计。
+
 审查范围：`services/agent-service/app/`，以重构前 `3aed0ae` 提交的 176 个 Python 文件为依据；不以 README 作为架构依据。
 
 ## 重构前调用关系

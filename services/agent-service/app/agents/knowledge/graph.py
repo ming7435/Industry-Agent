@@ -257,6 +257,18 @@ def _route(state: KnowledgeGraphState) -> str:
     return str(state.get("route") or "fallback")
 
 
+NODE_SKILL_STEPS = {
+    "initialize": "normalize_query",
+    "load_skill": "select_sources",
+    "plan_retrieval": "build_filters",
+    "retrieve": "search",
+    "observe": "build_evidence",
+    "rerank": "rank",
+    "validate": "validate_sources",
+    "final": "build_result",
+}
+
+
 def build_knowledge_graph():
     workflow = StateGraph(KnowledgeGraphState)
     for name, node in (
@@ -272,7 +284,7 @@ def build_knowledge_graph():
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("knowledge", name, node))
+        workflow.add_node(name, trace_skill_node("knowledge", name, node, skill_step=NODE_SKILL_STEPS.get(name, name)))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "classify_query")

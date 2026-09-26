@@ -127,6 +127,11 @@ def build_router_graph():
     """构建并编译 Router Agent 工作流。"""
 
     workflow = StateGraph(RouterGraphState)
+    node_skill_steps = {
+        "initialize": "normalize_request",
+        "load_skill": "select_target_agent",
+        "final": "build_runtime_goal",
+    }
     for name, node in (
         ("initialize", initialize),
         ("load_skill", load_skill),
@@ -136,7 +141,7 @@ def build_router_graph():
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("router", name, node))
+        workflow.add_node(name, trace_skill_node("router", name, node, skill_step=node_skill_steps.get(name, name)))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "classify_intent")

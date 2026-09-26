@@ -415,6 +415,17 @@ def select_next_diagnosis_route(state: DiagnosisGraphState) -> str:
     return state.get("route", "fallback")
 
 
+NODE_SKILL_STEPS = {
+    "initialize": "normalize_event",
+    "load_skill": "select_skills",
+    "reason": "generate_candidates",
+    "act": "execute_tools",
+    "observe": "collect_evidence",
+    "validate": "validate_result",
+    "final": "build_result",
+}
+
+
 def build_diagnosis_graph():
     """构建并编译一次 Diagnosis Agent 工作流。"""
 
@@ -431,7 +442,7 @@ def build_diagnosis_graph():
         ("final", build_final_diagnosis_result),
         ("fallback", build_fallback_diagnosis_result),
     ):
-        workflow.add_node(name, trace_skill_node("diagnosis", name, node))
+        workflow.add_node(name, trace_skill_node("diagnosis", name, node, skill_step=NODE_SKILL_STEPS.get(name, name)))
 
     workflow.add_edge(START, "initialize")
     # 初始化和 Skill 加载都可能因配置问题直接进入降级路径。

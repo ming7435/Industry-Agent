@@ -3,6 +3,24 @@ from app.agents.registry import CORE_AGENT_REGISTRY
 from app.runtime.jev import GoalEvent, JEVParser
 
 
+def test_trace_skill_node_accepts_explicit_graph_binding_without_global_aliases():
+    from app.agents.base import trace_skill_node
+
+    def node(state):
+        return {"value": state["value"] + 1}
+
+    wrapped = trace_skill_node(
+        "diagnosis",
+        "reason",
+        node,
+        skill_step="generate_candidates",
+    )
+    result = wrapped({"value": 1, "step_history": [], "completed_steps": []})
+
+    assert result["current_step"] == "generate_candidates"
+    assert result["step_history"][0]["step_id"] == "generate_candidates"
+
+
 def test_core_agents_declare_the_unified_contract_and_capabilities():
     assert set(CORE_AGENT_REGISTRY) == {
         "router", "diagnosis", "knowledge", "cad", "maintenance",

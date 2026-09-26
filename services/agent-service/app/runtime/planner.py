@@ -69,49 +69,26 @@ class Planner:
         def payload_for(capability: str) -> dict[str, Any]:
             return {**payload, "required_capability": capability}
 
-        base_definitions = [
-            ("fault_analysis", "analyze abnormal event", False),
-            ("document_search", "retrieve supporting evidence", False),
-            ("drawing_search", "resolve engineering context", False),
-            ("repair_planning", "prepare executable repair plan", False),
-            ("workorder_create", "create one idempotent work order", True),
-        ]
-        optional_definitions = [
-            ("hypothesis_generation", "generate diagnostic hypotheses", False),
-            ("historical_case_search", "retrieve historical cases", False),
-            ("evidence_retrieval", "retrieve supporting evidence", False),
-            ("bom_query", "resolve BOM context", False),
-            ("component_relation", "resolve component relations", False),
-            ("repair_plan", "prepare executable repair plan", False),
-            ("maintenance_replan", "replan an insufficient maintenance plan", False),
-            ("workorder_update", "update an existing work order", False),
-            ("quality_review", "review part quality", False),
-            ("case_reporting", "compose a case report", False),
-            ("experience_retrieval", "retrieve validated experience", False),
-            ("experience_learning", "persist validated repair experience", True),
-        ]
+        base_definitions = self.capabilities.default_capabilities()
         definitions = list(base_definitions)
         requested = context.get("required_capabilities")
         requested_set = {str(item) for item in requested} if isinstance(requested, (list, tuple, set)) else set()
         if requested_set:
             definitions = [
-                *base_definitions,
-                ("quality_inspection", "verify the produced part when requested", False),
-                *optional_definitions,
-            ]
-            known = {item[0]: item for item in definitions}
-            definitions = [
-                known.get(capability, (capability, "execute requested capability", False))
+                str(capability).strip()
                 for capability in requested
                 if str(capability).strip()
             ]
         actions = []
-        for capability, reason, side_effect in definitions:
+        for capability in definitions:
+            canonical = self.capabilities.canonical_name(capability)
+            reason = self.capabilities.reason_for(capability, "execute requested capability")
+            side_effect = self.capabilities.side_effect_for(capability)
             kwargs: dict[str, Any] = {"reason": reason, "confidence": 0.7, "side_effect": side_effect}
             if side_effect:
                 kwargs["idempotency_key"] = (
                     "experience:%s" % event_id
-                    if capability == "experience_learning" and event_id
+                    if canonical == "experience_learning" and event_id
                     else workorder_key
                 )
             actions.append(ActionModel.agent(

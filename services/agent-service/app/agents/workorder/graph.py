@@ -114,8 +114,9 @@ def _route(state: WorkOrderGraphState) -> str:
 
 def build_workorder_graph():
     workflow = StateGraph(WorkOrderGraphState)
+    node_skill_steps = {"final": "validate_result"}
     for name, node in (("initialize", initialize), ("load_skill", load_skill), ("validate_plan", validate_plan), ("create_order", create_order), ("collect_dispatch_context", collect_dispatch_context), ("select_assignee", select_assignee), ("assign_order", assign_order), ("execute_action", execute_action), ("validate", validate), ("final", final), ("fallback", fallback)):
-        workflow.add_node(name, trace_skill_node("workorder", name, node))
+        workflow.add_node(name, trace_skill_node("workorder", name, node, skill_step=node_skill_steps.get(name, name)))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "validate_plan")

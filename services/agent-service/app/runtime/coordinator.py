@@ -9,6 +9,7 @@ from .action import ActionModel
 from .jev import GoalEvent, JEVParser
 from .loop_engine import LoopEngine, LoopPolicy, LoopResult
 from .evaluator import RuntimeEvaluator
+from .capability import build_capability_registry
 from app.skills import get_skill_registry
 
 
@@ -18,28 +19,14 @@ class RuntimeCoordinator:
     def __init__(self, container: Any) -> None:
         self.container = container
         self.jev = JEVParser()
-
-    @staticmethod
-    def _result_key(capability: str) -> str:
-        return {
-            "fault_analysis": "diagnosis",
-            "document_search": "knowledge",
-            "historical_case_search": "knowledge",
-            "evidence_retrieval": "knowledge",
-            "drawing_search": "cad",
-            "bom_query": "cad",
-            "component_relation": "cad",
-            "repair_planning": "maintenance_plan",
-            "repair_plan": "maintenance_plan",
-            "maintenance_replan": "maintenance_plan",
-            "workorder_create": "workorder",
-            "workorder_update": "workorder",
-            "quality_inspection": "quality",
-            "quality_review": "quality",
-            "experience_learning": "memory",
-            "experience_retrieval": "memory",
-            "case_reporting": "report",
-        }.get(capability, capability.replace(".", "_"))
+        # Small compatibility containers used by direct Runtime tests may
+        # provide only planner/dispatcher/trace. Keep the metadata boundary
+        # available without requiring the full application container.
+        self.capabilities = (
+            getattr(container, "capabilities", None)
+            or getattr(getattr(container, "dispatcher", None), "capabilities", None)
+            or build_capability_registry()
+        )
 
     def run(self, state: Mapping[str, Any]) -> dict[str, Any]:
         initial = dict(state)
@@ -190,8 +177,10 @@ class RuntimeCoordinator:
                 ]
                 raise RuntimeError(str(result.output.get("error") or "Runtime Action failed"))
             capability = action.required_capability or action.target
+            canonical_capability = self.capabilities.canonical_name(capability)
             outputs = dict(current.get("runtime_outputs") or {})
-            outputs[self._result_key(capability)] = result.output
+            result_key = self.capabilities.result_key_for(capability)
+            outputs[result_key] = result.output
             result_tool_calls = result.output.get("tool_calls") if isinstance(result.output, Mapping) else []
             if not isinstance(result_tool_calls, list):
                 result_tool_calls = []
@@ -206,7 +195,7 @@ class RuntimeCoordinator:
                 **current,
                 "runtime_next_index": index + 1,
                 "runtime_outputs": outputs,
-                self._result_key(capability): result.output,
+                result_key: result.output,
                 "evidence_status": "ready" if result.evidence else "pending",
                 "active_agent": str(action.payload.get("agent") or action.target),
                 "active_skills": list(action.payload.get("active_skills") or []),
@@ -240,9 +229,9 @@ class RuntimeCoordinator:
                     else {"action_type": "FINAL", "target": "final", "reason": "planned_actions_complete"}
                 ),
             }
-            if capability == "workorder_create":
+            if canonical_capability == "workorder_create":
                 next_state["status"] = "waiting_repair"
-            domain = self._domain_for_capability(capability)
+            domain = self.capabilities.domain_for(capability)
             trace_agent = str(action.payload.get("agent") or action.target)
             if result.observations:
                 self.container.trace.record(
@@ -420,7 +409,7 @@ class RuntimeCoordinator:
         registry = get_skill_registry()
         agent = ""
         try:
-            matches = self.container.capabilities.find(capability)
+            matches = self.capabilities.find(capability)
             agent = str(matches[0]) if matches else ""
         except Exception:
             agent = ""
@@ -478,20 +467,6 @@ class RuntimeCoordinator:
             actions=[item for item in actions if item is not None],
             metadata=dict(value.get("metadata") or {}),
         )
-
-    @staticmethod
-    def _domain_for_capability(capability: str) -> str:
-        if capability in {"fault_analysis", "hypothesis_generation", "diagnosis_review"}:
-            return "diagnosis"
-        if capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
-            return "knowledge"
-        if capability in {"drawing_search", "bom_query", "component_relation"}:
-            return "cad"
-        if capability in {"repair_planning", "repair_plan", "maintenance_replan"}:
-            return "maintenance"
-        if capability in {"experience_learning", "experience_retrieval"}:
-            return "learning"
-        return ""
 
     @staticmethod
     def _replan_capabilities(capability: str, output: Mapping[str, Any], remaining: list[ActionModel]) -> list[str]:

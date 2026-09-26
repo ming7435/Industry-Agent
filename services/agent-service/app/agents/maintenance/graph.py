@@ -193,6 +193,14 @@ def _drawing_context(engineering_context: Dict[str, Any]) -> Dict[str, str]:
 
 def build_maintenance_graph():
     workflow = StateGraph(MaintenanceGraphState)
+    node_skill_steps = {
+        "initialize": "validate_diagnosis",
+        "load_skill": "select_skills",
+        "check_parts_tools": "determine_required_parts",
+        "safety_validate": "build_safety_steps",
+        "prepare_workorder": "build_result",
+        "final": "build_result",
+    }
     for name, node in (
         ("initialize", initialize),
         ("load_skill", load_skill),
@@ -207,7 +215,7 @@ def build_maintenance_graph():
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("maintenance", name, node))
+        workflow.add_node(name, trace_skill_node("maintenance", name, node, skill_step=node_skill_steps.get(name, name)))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "assess_diagnosis")

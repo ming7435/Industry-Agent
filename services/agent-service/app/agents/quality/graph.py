@@ -138,6 +138,12 @@ def fallback(state: QualityWorkflowState) -> Dict[str, Any]:
 
 def build_quality_graph():
     workflow = StateGraph(QualityWorkflowState)
+    node_skill_steps = {
+        "initialize": "identify_part",
+        "load_skill": "select_skills",
+        "decision": "determine_pass_fail",
+        "final": "build_result",
+    }
     for name, node in (
         ("initialize", initialize),
         ("load_skill", load_skill),
@@ -153,7 +159,7 @@ def build_quality_graph():
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("quality", name, node))
+        workflow.add_node(name, trace_skill_node("quality", name, node, skill_step=node_skill_steps.get(name, name)))
     workflow.add_edge(START, "initialize")
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "load_part")

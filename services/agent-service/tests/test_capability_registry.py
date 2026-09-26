@@ -15,3 +15,37 @@ def test_capability_registry_can_resolve_all_matching_agents():
     registry = build_capability_registry()
 
     assert registry.lookup("document_search") == ["knowledge"]
+
+
+def test_capability_registry_exposes_canonical_metadata_and_aliases():
+    from app.runtime.capability import CapabilityDefinition, build_capability_registry
+
+    registry = build_capability_registry()
+    definition = registry.get("workorder_create")
+
+    assert definition is not None
+    assert definition.agent == "workorder"
+    assert definition.domain == "workorder"
+    assert definition.result_key == "workorder"
+    assert definition.side_effect is True
+
+    registry.register(CapabilityDefinition(
+        name="legacy_fault_lookup",
+        agent="diagnosis",
+        domain="diagnosis",
+        result_key="diagnosis",
+        aliases=("legacy_fault",),
+    ))
+    assert registry.get("legacy_fault").name == "legacy_fault_lookup"
+    assert registry.find("legacy_fault") == ["diagnosis"]
+
+
+def test_capability_registry_metadata_helpers_use_one_definition():
+    from app.runtime.capability import build_capability_registry
+
+    registry = build_capability_registry()
+
+    assert registry.domain_for("document_search") == "knowledge"
+    assert registry.result_key_for("drawing_search") == "cad"
+    assert registry.side_effect_for("workorder_create") is True
+    assert registry.requires_approval_for("workorder_update") is True
