@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from threading import Lock
 from typing import Any, Mapping
 
@@ -38,6 +39,10 @@ class DemoCADRepository:
                 exact.append(dict(item))
             elif any(token and any(token in value for value in values) for token in text.replace("/", " ").replace("-", " ").split()):
                 fuzzy.append(dict(item))
+        # A structured component/part identifier must never degrade to a
+        # partial-token match: LUBRICATION-PUMP is not COOLING-PUMP.
+        if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+", text):
+            return exact[:limit]
         return (exact or fuzzy)[:limit]
 
     def count(self) -> int:

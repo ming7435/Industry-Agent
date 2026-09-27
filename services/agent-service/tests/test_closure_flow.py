@@ -148,3 +148,67 @@ def test_api_workorder_and_part_quality_flows_are_connected():
     checks = client.get("/api/v1/quality/checks").json()
     assert checks["count"] == 1
     assert checks["items"][0]["target_type"] == "production_part"
+
+
+def test_api_allows_operator_to_delete_workorder_and_report():
+    from fastapi.testclient import TestClient
+
+    from app.api.server import create_app
+
+    client = TestClient(create_app())
+    created = client.post("/api/workorders", json={"device_id": "D-DELETE", "title": "删除测试"})
+    assert created.status_code == 200
+    workorder_id = created.json()["workorder_id"]
+    deleted = client.delete(f"/api/workorders/{workorder_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+
+    assert "/api/reports/{report_id}" in client.get("/openapi.json").json()["paths"]
+
+
+def test_report_detail_returns_not_found_after_report_is_deleted():
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from app.api.server import create_app
+
+    class FakeMcp:
+        def __init__(self):
+            self.reports = {"RPT-DELETE-1": {"report_id": "RPT-DELETE-1", "title": "temporary"}}
+
+        def call(self, _server, tool, arguments):
+            report_id = arguments["report_id"]
+            if tool == "get_report":
+                report = self.reports.get(report_id)
+                return {"success": bool(report), "found": bool(report), "report_id": report_id, "report": dict(report or {})}
+            if tool == "delete_report":
+                deleted = self.reports.pop(report_id, None) is not None
+                return {"success": deleted, "deleted": deleted, "found": deleted, "report_id": report_id}
+            raise AssertionError(tool)
+
+    mcp = FakeMcp()
+    registry = SimpleNamespace(
+        backend_base_url="http://backend",
+        mcp=mcp,
+        delete_report=lambda report_id: mcp.call("mes", "delete_report", {"report_id": report_id}),
+    )
+    runtime = SimpleNamespace(container=SimpleNamespace(registry=registry))
+    client = TestClient(create_app(runtime))
+
+    assert client.get("/api/reports/RPT-DELETE-1").status_code == 200
+    assert client.delete("/api/reports/RPT-DELETE-1").status_code == 200
+    assert client.get("/api/reports/RPT-DELETE-1").status_code == 404
+
+
+def test_cad_resolution_returns_real_record_or_explicit_not_found():
+    from fastapi.testclient import TestClient
+
+    from app.api.server import create_app
+
+    client = TestClient(create_app())
+    found = client.get("/api/cad/resolve?component=COOLING-PUMP")
+    assert found.status_code == 200
+    assert found.json()["part"]["component_id"] == "COOLING-PUMP"
+    missing = client.get("/api/cad/resolve?component=LUBRICATION-PUMP")
+    assert missing.status_code == 404

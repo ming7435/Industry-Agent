@@ -42,12 +42,18 @@ class KnowledgeAgent(BaseAgent):
             documents, required_sources or [], query=query, degraded=bool(raw.get("degraded", False))
         )
         confidence = confidence_details["overall"]
+        retrieval_scope = str(raw.get("retrieval_scope") or ("device" if selected_filters.get("device_id") else "all"))
         return KnowledgeResult(
             query=query,
             status=status,
             query_type=query_type,
             summary=self._summary(query, documents, status),
-            answer=str(raw.get("answer") or ""),
+            answer=self._format_grounded_answer(
+                str(raw.get("answer") or ""),
+                query=query,
+                documents=[item.model_dump(mode="json") for item in documents],
+                retrieval_scope=retrieval_scope,
+            ),
             evidence=evidence,
             possible_causes=self._possible_causes(documents),
             recommended_checks=self._recommended_checks(documents),
@@ -61,6 +67,9 @@ class KnowledgeAgent(BaseAgent):
             warning=str(raw.get("warning") or ""),
             source=raw.get("source", "rag-service-compatible"),
             confidence_details=confidence_details,
+            retrieval_scope=retrieval_scope,
+            retrieval_fallback=bool(raw.get("retrieval_fallback", False)),
+            retrieval_fallback_reason=str(raw.get("retrieval_fallback_reason") or ""),
         )
 
     def run(self, task: Any) -> KnowledgeResult:
@@ -137,6 +146,37 @@ class KnowledgeAgent(BaseAgent):
             return "未检索到与“%s”直接相关的可追踪知识证据。" % query
         titles = "、".join(doc.title for doc in documents[:3])
         return "检索到 %s 条相关知识证据：%s。" % (len(documents), titles)
+
+    @staticmethod
+    def _format_grounded_answer(
+        answer: str,
+        query: str,
+        documents: list[Mapping[str, Any]],
+        retrieval_scope: str,
+    ) -> str:
+        """Normalize the model answer and guarantee a concise final summary."""
+
+        text = str(answer or "").strip()
+        if not text:
+            return ""
+        blocks = []
+        seen: set[str] = set()
+        for block in re.split(r"\n\s*\n", text):
+            normalized = re.sub(r"\s+", " ", block).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            blocks.append(block.strip())
+        text = "\n\n".join(blocks)
+        if re.search(r"(?:最后总结|结论总结|总结)\s*[：:]", text):
+            return text
+        scope_text = "当前报警机器" if retrieval_scope == "device" else "全库"
+        evidence_text = "已返回 %d 条可追踪证据" % len(documents) if documents else "暂无足够可追踪证据"
+        return "%s\n\n**最后总结：** 本次按%s优先级检索，%s；请以现场报警状态和证据编号对应的原文为准，参数不一致时先停止操作并补充现场数据。" % (
+            text,
+            scope_text,
+            evidence_text,
+        )
 
     @staticmethod
     def _possible_causes(documents: list[KnowledgeDocument]) -> list[str]:
@@ -238,6 +278,16 @@ class KnowledgeAgent(BaseAgent):
             (str(item.get("answer") or "").strip() for item in raw_results if str(item.get("answer") or "").strip()),
             "",
         )
+        retrieval_scope = next(
+            (str(item.get("retrieval_scope") or "") for item in raw_results if str(item.get("retrieval_scope") or "").strip()),
+            "device" if (request.get("filters") or {}).get("device_id") else "all",
+        )
+        retrieval_fallback = any(bool(item.get("retrieval_fallback")) for item in raw_results)
+        retrieval_fallback_reason = next(
+            (str(item.get("retrieval_fallback_reason") or "") for item in raw_results if str(item.get("retrieval_fallback_reason") or "").strip()),
+            "",
+        )
+        answer = self._format_grounded_answer(answer, query=query, documents=[item.model_dump(mode="json") for item in normalized], retrieval_scope=retrieval_scope)
         return KnowledgeResult(
             query=query,
             status=status,
@@ -260,4 +310,7 @@ class KnowledgeAgent(BaseAgent):
             stop_reason="evidence_ready" if status == "completed" else "insufficient_evidence",
             retrieval_trace=[dict(item) for item in observations],
             confidence_details=confidence_details,
+            retrieval_scope=retrieval_scope,
+            retrieval_fallback=retrieval_fallback,
+            retrieval_fallback_reason=retrieval_fallback_reason,
         )

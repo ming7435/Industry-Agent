@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Mapping
 
 
@@ -23,6 +24,8 @@ def match_components(query: str, components: list[Dict[str, Any]] | None = None)
         exact_values = (item.get("component_id"), item.get("part_no"), item.get("name"), item.get("drawing_ref"))
         if text in {str(value or "").lower().strip() for value in exact_values}:
             return [dict(item)]
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+", text):
+        return []
     aliases = {
         "温度": ("TEMP-PT100", "SPINDLE-ASSY", "COOLING-PUMP"),
         "过热": ("TEMP-PT100", "SPINDLE-ASSY", "COOLING-PUMP"),

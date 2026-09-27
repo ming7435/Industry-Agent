@@ -25,8 +25,16 @@ def get_device_history(
     metric_keys: Optional[Iterable[str]] = None,
     limit: int = 20,
     base_url: Optional[str] = None,
+    metric: Optional[str] = None,
+    alarm_code: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """读取设备过去一段时间的指标采样，并返回适合 Agent 分析的序列。"""
+    """读取设备过去一段时间的指标采样，并返回适合 Agent 分析的序列。
+
+    ``alarm_code`` is accepted as diagnostic context for model generated tool
+    calls.  The factory history endpoint is already scoped by ``device_id``;
+    keeping the optional argument here makes that boundary explicit without
+    leaking an unsupported query parameter to the factory API.
+    """
 
     device_id = str(device_id or "").strip()
     if not device_id:
@@ -47,10 +55,18 @@ def get_device_history(
         limit = 20
     if isinstance(metric_keys, str):
         metric_keys = [metric_keys]
+    requested_metrics = list(metric_keys or [])
+    if metric and metric not in requested_metrics:
+        requested_metrics.append(metric)
     requested = []
-    for item in metric_keys or []:
+    for item in requested_metrics:
         key = str(item or "").strip()
         if not key:
+            continue
+        # Models sometimes use the generic name instead of a concrete sensor
+        # key.  Keep the full sample so downstream diagnosis can resolve the
+        # relevant pressure metric rather than failing the tool call.
+        if key.casefold() in {"pressure", "压力", "液压"}:
             continue
         normalized = METRIC_ALIASES.get(key.lower(), METRIC_ALIASES.get(key, key))
         if normalized not in requested:

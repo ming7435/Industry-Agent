@@ -4,8 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { createEquator300 } from "./equator300.js";
 import "../styles.css";
 import machineImage from "../assets/trak-tc820-machine-transparent.png";
-import { buildTechnicianSummary } from "../technicianSummary.mjs";
-import { buildWorkorderSheet } from "../workorderSheet.mjs";
+import { buildMaintenancePlanView, buildWorkorderSheet, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
 import { buildAgentFlow } from "../agentFlow.mjs";
 import { buildDiagnosisView } from "./diagnosisView.mjs";
 import { buildReportDisplaySections } from "./reportView.mjs";
@@ -316,14 +315,13 @@ function resolveRepairTarget(order, sample) {
   const stored = order?.repair_target;
   const storedLooksPlaceholder = !stored || typeof stored !== "object"
     || ["待确认故障部件", "UNMAPPED-COMPONENT", "待补充"].includes(String(stored.part_name || stored.component || stored.part_no || ""));
+  // A persisted workorder target is the authoritative operator/diagnosis result.
+  // Do not replace it with the current monitor alarm's static catalog entry;
+  // doing so can point an older workorder at the wrong CAD component.
+  if (!storedLooksPlaceholder) return { ...stored, alarm_code: stored.alarm_code || alarmCode };
   if (catalogTarget) {
-    const supplemental = storedLooksPlaceholder ? {} : {
-      cad_node_id: stored.cad_node_id,
-      cad_node_name: stored.cad_node_name,
-    };
-    return { ...catalogTarget, ...supplemental, alarm_code: alarmCode };
+    return { ...catalogTarget, alarm_code: alarmCode };
   }
-  if (!storedLooksPlaceholder) return { ...stored, alarm_code: alarmCode };
   return {
     alarm_code: alarmCode,
     component: "UNMAPPED-COMPONENT",
@@ -607,7 +605,7 @@ function App() {
   const [activeView, setActiveView] = useState(() => {
     if (typeof window === "undefined") return "monitor";
     const requested = new URLSearchParams(window.location.search).get("view");
-    return ["monitor", "diagnosis", "workorder", "quality", "rag", "report"].includes(requested) ? requested : "monitor";
+    return ["monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "report"].includes(requested) ? requested : "monitor";
   });
   const [ragMessages, setRagMessages] = useState(() => {
     if (typeof window === "undefined") return [];
@@ -636,7 +634,7 @@ function App() {
     if (typeof window === "undefined") return undefined;
     const handleHistoryNavigation = () => {
       const requested = new URLSearchParams(window.location.search).get("view");
-      if (["monitor", "diagnosis", "workorder", "quality", "rag", "report"].includes(requested || "")) {
+      if (["monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "report"].includes(requested || "")) {
         setActiveView(requested);
       } else if (!requested) {
         setActiveView("monitor");
@@ -695,6 +693,7 @@ function App() {
           />
         )}
         {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} sample={sample} />}
+        {!bigScreen && activeView === "maintenance" && <MaintenancePlanWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
@@ -2336,7 +2335,9 @@ function DiagnosisWorkspace({ snapshot, sample }) {
         <section className="panel module-panel">
           <div className="panel-heading"><div><span className="eyebrow">诊断结论</span><h2>当前判断</h2></div></div>
           <FormattedText value={view.summary} className="diagnosis-summary" />
+          {view.cause && <div className="diagnosis-recommendation"><span className="section-kicker">根因判断</span><FormattedText value={view.cause} /></div>}
           {view.recommendation && <div className="diagnosis-recommendation"><span className="section-kicker">处置建议</span><FormattedText value={view.recommendation} /></div>}
+          {view.nextAction && <div className="diagnosis-recommendation"><span className="section-kicker">下一步</span><FormattedText value={view.nextAction} /></div>}
         </section>
         <section className="panel module-panel">
           <div className="panel-heading"><div><span className="eyebrow">Evidence</span><h2>诊断依据</h2></div><span className="step-count">{view.evidence.length} 条</span></div>
@@ -2351,9 +2352,18 @@ function DiagnosisWorkspace({ snapshot, sample }) {
   );
 }
 
+function preferredWorkorderId(items, sample, snapshot) {
+  const deviceId = String(sample?.device_id || snapshot?.device_id || "").trim();
+  const alarmCode = String(sample?.alarm_code || snapshot?.latest_result?.current_sample?.alarm_code || "").trim();
+  const exact = items.find((item) => String(item.device_id || "") === deviceId && alarmCode && String(item.alarm_code || "") === alarmCode);
+  const sameDevice = items.find((item) => String(item.device_id || "") === deviceId);
+  return exact?.workorder_id || sameDevice?.workorder_id || items[0]?.workorder_id || "";
+}
+
 function ReportWorkspace({ snapshot }) {
   const pipeline = PipelineData({ snapshot });
   const [reports, setReports] = useState([]);
+  const [selectedReportId, setSelectedReportId] = useState("");
   const [reportError, setReportError] = useState("");
   const [loadingReports, setLoadingReports] = useState(false);
 
@@ -2362,6 +2372,7 @@ function ReportWorkspace({ snapshot }) {
     try {
       const body = await request("/api/reports");
       setReports(body.items || []);
+      setSelectedReportId((current) => current || body.items?.[0]?.report_id || "");
       setReportError("");
     } catch (error) {
       setReportError(error.message);
@@ -2378,15 +2389,35 @@ function ReportWorkspace({ snapshot }) {
     }, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
-  const persistedReport = reports[0]?.report && typeof reports[0].report === "object" ? reports[0].report : reports[0];
-  const report = pipeline.report || persistedReport || {};
+  const reportItems = reports.map((item) => item?.report && typeof item.report === "object" ? item.report : item).filter(Boolean);
+  const persistedReport = reportItems.find((item) => item.report_id === selectedReportId) || reportItems[0];
+  const report = persistedReport || pipeline.report || {};
   const sections = report.sections || {};
   const displaySections = buildReportDisplaySections(sections);
   const hasReport = Boolean(report.report_id || report.title || report.summary || Object.keys(sections).length);
+  async function deleteReport(reportId) {
+    if (!reportId || !window.confirm(`确定删除报告 ${reportId} 吗？删除后不可恢复。`)) return;
+    try {
+      await request(`/api/reports/${encodeURIComponent(reportId)}`, { method: "DELETE" });
+      const remaining = reportItems.filter((item) => item.report_id !== reportId);
+      setReports(remaining);
+      setSelectedReportId(remaining[0]?.report_id || "");
+      setReportError("");
+    } catch (error) {
+      setReportError(error.message);
+    }
+  }
   return (
     <section className="workspace-view active module-board report-workspace" aria-label="报告中心">
       <ModuleHero eyebrow="Report Agent" title="报告中心" text="汇总诊断、维修方案、工单和质检结果，形成可追溯运维报告。" action={<button className="button" type="button" onClick={loadReports} disabled={loadingReports}>{loadingReports ? "刷新中…" : "刷新报告"}</button>} />
       {reportError && <div className="inline-error" role="status">报告服务暂不可用：{reportError}</div>}
+      <section className="panel module-panel report-list-panel" aria-label="已持久化报告列表">
+        <div className="panel-heading"><div><span className="eyebrow">持久化记录 · {reportItems.length} 份</span><h2>报告列表</h2></div></div>
+        {reportItems.length ? <div className="report-list">{reportItems.map((item) => <div className={`report-list-item ${item.report_id === report.report_id ? "is-selected" : ""}`} key={item.report_id}>
+          <button type="button" className="report-list-select" onClick={() => setSelectedReportId(item.report_id)}><strong>{item.title || "运维报告"}</strong><span>{item.report_id} · {formatTime(item.created_at || item.updated_at)}</span></button>
+          <button type="button" className="button danger-button" onClick={() => deleteReport(item.report_id)}>删除</button>
+        </div>)}</div> : <div className="empty-state">暂无持久化报告</div>}
+      </section>
       {hasReport ? (
         <>
           <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text={report.report_type || "运维报告"} /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质量状态" value={sections.quality?.passed == null ? "待确认" : sections.quality.passed ? "通过" : "未通过"} text="质量协同结果" /></div>
@@ -2398,13 +2429,64 @@ function ReportWorkspace({ snapshot }) {
 }
 
 
+function MaintenancePlanWorkspace({ snapshot, sample }) {
+  const [orders, setOrders] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [error, setError] = useState("");
+  const latestDiagnosis = snapshot?.diagnosis?.latest || {};
+  const pipelinePlan = snapshot?.diagnosis?.pipeline?.maintenance_plan || {};
+  const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
+  const currentAlarm = String(sample?.alarm_code || latestDiagnosis?.alarm_code || "").trim();
+  const hasCurrentDiagnosis = Boolean(selectedOrder)
+    && String(selectedOrder.device_id || "") === String(sample?.device_id || snapshot?.device_id || "")
+    && (!currentAlarm || String(selectedOrder.alarm_code || "") === currentAlarm)
+    && Object.keys(latestDiagnosis).length > 0;
+  const plan = buildMaintenancePlanView({
+    order: selectedOrder || {},
+    plan: hasCurrentDiagnosis ? pipelinePlan : {},
+    diagnosis: hasCurrentDiagnosis ? latestDiagnosis : {},
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    request("/api/workorders")
+      .then((body) => {
+        if (cancelled) return;
+        const items = (body.items || []).map(normalizeWorkorderResponse);
+        setOrders(items);
+        setSelectedId((current) => current || preferredWorkorderId(items, sample, snapshot));
+        setError("");
+      })
+      .catch((err) => { if (!cancelled) setError(err.message); });
+    return () => { cancelled = true; };
+  }, []);
+
+  function openWorkorder() {
+    const params = new URLSearchParams(window.location.search);
+    params.set("view", "workorder");
+    window.history.pushState({ view: "workorder" }, "", `${window.location.pathname}?${params.toString()}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+
+  return (
+    <section className="workspace-view active maintenance-workspace" aria-label="维修方案">
+      <ModuleHero eyebrow="Maintenance Agent" title="维修方案" text="独立承载故障分析、维修步骤、工具、备件与 Evidence；工单只负责执行反馈。" action={<button className="button primary" type="button" onClick={openWorkorder}>进入工单执行</button>} />
+      {error && <div className="inline-error" role="status">维修方案服务暂不可用：{error}</div>}
+      <section className="workorder-queue maintenance-plan-queue" aria-label="方案关联工单">
+        <div className="workorder-queue-heading"><div><span className="eyebrow">方案关联</span><h2>选择工单查看维修方案</h2></div><span>{orders.length} 条记录</span></div>
+        {orders.length ? <div className="workorder-queue-list">{orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}><span><strong>{getWorkorderDisplayTitle(order, order.repair_target)}</strong><small>{order.workorder_id} · {order.device_id}</small></span><em>{labelFor(workorderStatusLabels, order.status)}</em></button>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title="暂无关联工单" text="完成诊断并生成工单后，维修方案会在这里显示。" />}
+      </section>
+      {selectedOrder && <MaintenancePlanPanel plan={plan} hasCurrentDiagnosis={hasCurrentDiagnosis} />}
+    </section>
+  );
+}
+
 function WorkorderView({ snapshot, sample, onClosed }) {
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [assignee, setAssignee] = useState("维修一组");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const autoSyncingRef = useRef(false);
   const latestDiagnosis = snapshot?.diagnosis?.latest || {};
   const maintenancePlan = snapshot?.diagnosis?.pipeline?.maintenance_plan || {};
   const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
@@ -2421,7 +2503,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
       const body = await request("/api/workorders");
       const items = (body.items || []).map(normalizeWorkorderResponse);
       setOrders(items);
-      if (!selectedId && items.length) setSelectedId(items[0].workorder_id);
+      if (!selectedId && items.length) setSelectedId(preferredWorkorderId(items, sample, snapshot));
       setError("");
       return items;
     } catch (err) {
@@ -2431,72 +2513,11 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   }
 
   useEffect(() => {
-    let cancelled = false;
-    async function syncCurrentFault() {
-      const items = await loadOrders();
-      const faultCode = String(liveSample?.alarm_code || "").trim();
-      const deviceId = liveSample?.device_id || snapshot?.device_id || "";
-      const faultStatus = String(liveSample?.status || "").toLowerCase();
-      const faultActive = Boolean(faultCode) && ["alarm", "fault", "warning"].includes(faultStatus);
-      if (cancelled || autoSyncingRef.current) return;
-      if (!faultActive || !deviceId) {
-        // The work-order module must remain usable even when the monitor is
-        // currently healthy.  Keep the queue selection instead of clearing it
-        // just because there is no active alarm to auto-dispatch.
-        if (!selectedId && items.length) setSelectedId(items[0].workorder_id);
-        return;
-      }
-
-      const existing = items.find((item) => (
-        String(item.device_id || "") === String(deviceId)
-        && String(item.alarm_code || "") === faultCode
-      ));
-      if (existing) {
-        setSelectedId(existing.workorder_id);
-        return;
-      }
-
-      autoSyncingRef.current = true;
-      try {
-        const target = resolveRepairTarget({ alarm_code: faultCode, diagnosis_context: latestDiagnosis }, liveSample);
-        const title = buildWorkorderTitle(latestDiagnosis, target, liveSample, snapshot);
-        const response = await request("/api/workorders", {
-          method: "POST",
-          body: JSON.stringify({
-            device_id: deviceId,
-            title,
-            steps: buildRepairSteps(latestDiagnosis, target),
-            assignee,
-            alarm_code: faultCode,
-            diagnosis_context: latestDiagnosis,
-            repair_target: target,
-            source: "monitor",
-            idempotency_key: `monitor:${latestDiagnosis?.event_id || `${deviceId}:${faultCode}`}`,
-            drawing_context: {
-              model_url: "http://127.0.0.1:8023/",
-              mesh_name: target.component,
-              location: target.location,
-              drawing_url: "TC820si.html",
-            },
-          }),
-        });
-        const order = normalizeWorkorderResponse(response);
-        if (!cancelled) {
-          setOrders((current) => [...current.filter((item) => item.workorder_id !== order.workorder_id), order]);
-          setSelectedId(order.workorder_id);
-          setError("");
-        }
-      } catch (err) {
-        if (!cancelled) setError(`故障工单自动生成失败：${err.message}`);
-      } finally {
-        autoSyncingRef.current = false;
-      }
-    }
-
-    syncCurrentFault();
+    // Runtime owns alarm-triggered creation; viewing the queue must not create
+    // or recreate a workorder that the operator has explicitly deleted.
+    loadOrders();
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    return () => { cancelled = true; };
-  }, [liveSample?.device_id, liveSample?.alarm_code, liveSample?.status, latestDiagnosis?.alarm_code]);
+  }, []);
 
   async function createOrder() {
     setBusy(true);
@@ -2514,10 +2535,9 @@ function WorkorderView({ snapshot, sample, onClosed }) {
           diagnosis_context: latestDiagnosis,
           repair_target: target,
           drawing_context: {
-            model_url: "http://127.0.0.1:8023/",
             mesh_name: target.component,
             location: target.location,
-            drawing_url: "TC820si.html",
+            drawing_url: target.drawing_ref || "",
           },
         }),
       });
@@ -2553,6 +2573,22 @@ function WorkorderView({ snapshot, sample, onClosed }) {
     }
   }
 
+  async function deleteOrder(order) {
+    if (!order?.workorder_id || !window.confirm(`确定删除工单 ${order.workorder_id} 吗？删除后不可恢复。`)) return;
+    setBusy(true);
+    try {
+      await request(`/api/workorders/${encodeURIComponent(order.workorder_id)}`, { method: "DELETE" });
+      const remaining = orders.filter((item) => item.workorder_id !== order.workorder_id);
+      setOrders(remaining);
+      setSelectedId(remaining[0]?.workorder_id || "");
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="workspace-view active workorder-page" aria-label="工单系统">
       {!currentFaultActive && <div className="module-hero"><span className="eyebrow">维修执行</span><h1>工单系统</h1><p>跟进维修任务、执行反馈与验收。</p></div>}
@@ -2564,7 +2600,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
         {orders.length ? (
           <div className="workorder-queue-list">
             {orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}>
-              <span><strong>{order.title || "设备维修工单"}</strong><small>{order.workorder_id} · {order.device_id}</small></span>
+              <span><strong>{getWorkorderDisplayTitle(order, order.repair_target)}</strong><small>{order.workorder_id} · {order.device_id}</small></span>
               <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{labelFor(workorderStatusLabels, order.status)}</em>
             </button>)}
           </div>
@@ -2578,12 +2614,13 @@ function WorkorderView({ snapshot, sample, onClosed }) {
         busy={busy}
         error={error}
         onUpdate={updateOrder}
+        onDelete={deleteOrder}
       />
     </section>
   );
 }
 
-function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error, onUpdate }) {
+function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error, onUpdate, onDelete }) {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [order?.workorder_id]);
@@ -2608,21 +2645,21 @@ function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error
   const matchedPlan = hasCurrentDiagnosis ? plan : {};
   const matchedSample = String(sample?.device_id || "") === String(order.device_id || "") && String(sample?.alarm_code || "") === String(order.alarm_code || "") ? sample : {};
   const target = resolveRepairTarget(order, matchedSample);
+  const maintenancePlanView = buildMaintenancePlanView({ order, plan: matchedPlan, diagnosis: matchedDiagnosis });
   const sheet = buildWorkorderSheet({ order, target, plan: matchedPlan, diagnosis: matchedDiagnosis });
-  const guidance = buildTechnicianSummary({ latest: matchedDiagnosis, plan: matchedPlan, sample: matchedSample });
   const statusLabel = labelFor(workorderStatusLabels, order.status);
   return (
     <section className="workorder-detail-page">
       <header className="workorder-titlebar">
         <div>
           <span className="eyebrow">维修工单详情</span>
-          <h1>{order.title}</h1>
+          <h1>{getWorkorderDisplayTitle(order, target)}</h1>
           <p>{order.workorder_id} · {order.device_id} · {order.assignee || "未分配"} · {formatTime(order.updated_at)}</p>
         </div>
-        <span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span>
+        <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy} onClick={() => onDelete?.(order)}>删除工单</button></div>
       </header>
 
-      <WorkorderGuidance guidance={guidance} hasCurrentDiagnosis={hasCurrentDiagnosis} />
+      <MaintenancePlanPanel plan={maintenancePlanView} hasCurrentDiagnosis={hasCurrentDiagnosis} />
       <div className="workorder-bigscreen-grid cad-only">
         <RepairCadPanel order={order} target={target} />
       </div>
@@ -2631,26 +2668,57 @@ function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error
   );
 }
 
-function WorkorderGuidance({ guidance, hasCurrentDiagnosis }) {
+function MaintenancePlanPanel({ plan, hasCurrentDiagnosis }) {
+  const diagnosis = plan.diagnosis || {};
+  const evidence = (plan.evidence || []).map((item) => {
+    if (typeof item === "string") return item;
+    return item.title || item.content || item.evidence_text || item.source || item.document_id || item.component_id || "维修证据";
+  }).filter(Boolean);
+  const sourceLabel = plan.source === "maintenance-plan"
+    ? "独立维修方案"
+    : plan.source === "legacy-workorder-snapshot"
+      ? "历史工单方案快照"
+      : "未关联维修方案";
   return (
-    <section className="workorder-guidance" aria-label="维修判断与核验">
-      <div className="workorder-guidance-heading">
-        <div><span className="eyebrow">维修判断</span><h2>先核验，再执行</h2></div>
-        <span className="workorder-guidance-source">{hasCurrentDiagnosis ? "当前故障诊断" : "工单记录与通用核验"}</span>
+    <section className="maintenance-plan-panel" aria-label="维修方案">
+      <div className="maintenance-plan-heading">
+        <div><span className="eyebrow">Maintenance Plan</span><h2>维修方案</h2><p>由 Diagnosis Agent → Maintenance Agent 生成，工单仅引用并负责执行。</p></div>
+        <div className="maintenance-plan-meta"><span>{sourceLabel}</span>{plan.planId && <strong>{plan.planId}</strong>}</div>
       </div>
-      <div className="workorder-guidance-grid">
-        <div>
-          <TechnicianSection title="故障判断" items={[guidance.judgment]} />
-          <TechnicianSection title="优先检查" items={guidance.checks} />
-        </div>
-        <div>
-          <TechnicianSection title="恢复标准" items={guidance.recovery} />
-          {guidance.estimatedTime && <p className="workorder-guidance-time">预计用时：{guidance.estimatedTime}（以现场评估为准）</p>}
-          {guidance.uncertainty && <FormattedText value={`${guidance.uncertainty}。禁止仅凭系统建议直接更换部件。`} className="technician-warning" />}
-        </div>
-      </div>
+      {plan.source === "unavailable" ? (
+        <div className="maintenance-plan-empty">当前工单没有可读取的维修方案。故障定位仍保留在下方工单详情中，不会用工单字段伪造维修方案。</div>
+      ) : (
+        <>
+          <div className="maintenance-plan-diagnosis">
+            <div><span>故障分析</span><strong>{diagnosis.fault || diagnosis.summary || "待确认"}</strong><p>{diagnosis.cause || diagnosis.diagnosis || "暂无原因分析"}</p></div>
+            <div><span>建议与风险</span><strong>{diagnosis.recommendation || "按方案步骤执行并复测"}</strong><p>{diagnosis.severity || plan.riskLevel || "风险等级待确认"}{plan.estimatedTime ? ` · 预计 ${plan.estimatedTime}` : ""}{hasCurrentDiagnosis ? " · 当前诊断" : " · 工单记录"}</p></div>
+          </div>
+          <div className="maintenance-plan-grid">
+            <PlanList title="维修步骤" items={plan.steps} ordered />
+            <PlanList title="工具与备件" items={[...plan.tools.map((item) => `工具：${item}`), ...plan.parts.map((item) => `备件：${item}`)]} />
+            <PlanList title="安全与检查" items={[...plan.safety, ...plan.preChecks, ...plan.postChecks]} />
+            <PlanList title="Evidence 维修证据" items={evidence} />
+          </div>
+        </>
+      )}
     </section>
   );
+}
+
+function PlanList({ title, items = [], ordered = false }) {
+  const values = items.filter(Boolean);
+  return <section className="maintenance-plan-section"><div className="maintenance-plan-section-head"><h3>{title}</h3><span>{values.length} 项</span></div>{values.length ? (ordered ? <ol>{values.map((item, index) => <li key={`${item}-${index}`}><FormattedText value={item} /></li>)}</ol> : <ul>{values.map((item, index) => <li key={`${item}-${index}`}><FormattedText value={item} /></li>)}</ul>) : <p className="maintenance-plan-muted">暂无记录</p>}</section>;
+}
+
+function resolveWorkorderDrawing(order = {}, target = {}) {
+  const identity = [order.device_id, order.drawing_context?.drawing_url, target.component, target.part_name]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (identity.includes("qls80") || identity.includes("ql-servo") || identity.includes("lns")) return "/drawings/QLS80S2.html";
+  if (identity.includes("equator") || identity.includes("renishaw")) return "/drawings/Equator300.html";
+  if (identity.includes("tc820") || identity.includes("trak") || identity.includes("lubrication-pump") || identity.includes("cooling-pump")) return "/drawings/TC820si.html";
+  return "";
 }
 
 function WorkorderSheet({ sheet, busy, error, onUpdate }) {
@@ -2663,7 +2731,7 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
         <div>
           <span className="eyebrow">自动派发工单</span>
           <h2>维修工单</h2>
-          <p className="sheet-subtitle">故障确认后由系统自动派出，维修人员按下方步骤处理。</p>
+          <p className="sheet-subtitle">故障确认后由系统自动派出，维修人员按维修方案执行并提交反馈。</p>
         </div>
         <span className={isDone ? "sheet-status done" : "sheet-status"}>{labelFor(workorderStatusLabels, sheet.status)}</span>
       </div>
@@ -2675,7 +2743,7 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
         <div><span>派发方式</span><strong>{sheet.autoDispatched ? "系统自动派发" : "系统工单"}</strong></div>
       </div>
 
-      <div className="sheet-section-grid">
+      <div className="sheet-execution-grid">
         <section className="sheet-section fault-summary-card">
           <span className="section-kicker">故障信息</span>
           <h3>{sheet.title}</h3>
@@ -2687,25 +2755,8 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
           </div>
           <FormattedText value={`故障表现：${sheet.faultSymptom}`} className="fault-symptom" />
         </section>
-        <section className="sheet-section evidence-card">
-          <span className="section-kicker">开工前确认</span>
-          <dl>
-            <div><dt>工器具</dt><dd>{sheet.tools.length ? sheet.tools.join("、") : "按现场检查准备"}</dd></div>
-            <div><dt>备件</dt><dd>{sheet.parts.length ? sheet.parts.join("、") : "检查后决定是否更换"}</dd></div>
-            <div><dt>安全要求</dt><dd>{sheet.safety.length ? sheet.safety.join("；") : "确认停机、断电后再操作"}</dd></div>
-          </dl>
-        </section>
-      </div>
-
-      <div className="sheet-bottom-grid">
-        <section className="sheet-section">
-          <div className="sheet-subhead"><div><span className="section-kicker">维修步骤</span><h3>按顺序处理</h3></div><span className="step-count">{sheet.steps.length} 项</span></div>
-          <ol className="workorder-checklist">
-            {sheet.steps.map((step, index) => <li key={`${step}-${index}`}><span>□</span><FormattedText value={`${String(index + 1).padStart(2, "0")}　${step}`} /></li>)}
-          </ol>
-        </section>
         <section className="sheet-section feedback-card">
-          <div className="sheet-subhead"><div><span className="section-kicker">处理记录</span><h3>完成后提交结果</h3></div></div>
+          <div className="sheet-subhead"><div><span className="section-kicker">WorkOrder 执行反馈</span><h3>完成后提交结果</h3></div></div>
           <label htmlFor="repair-feedback">处理说明</label>
           <textarea id="repair-feedback" value={repairFeedback} onChange={(event) => setRepairFeedback(event.target.value)} placeholder="填写处理结果、复测数据或未解决原因" disabled={isDone} />
           {error && <div className="inline-error">{error}</div>}
@@ -2720,61 +2771,25 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
 }
 
 function RepairCadPanel({ order, target }) {
-  const [exploded, setExploded] = useState(true);
-  const [resetView, setResetView] = useState(false);
-  const cadFrameRef = useRef(null);
+  const [cad, setCad] = useState(null);
+  const [cadError, setCadError] = useState("");
+  const sceneMountRef = useRef(null);
   const targetComponent = target.component || target.part_no || target.part_name || "";
-  const viewerParams = new URLSearchParams({
-    fault: targetComponent,
-    component: targetComponent,
-    part: target.part_name || "",
-    part_no: target.part_no || "",
-    alarm_code: target.alarm_code || order?.alarm_code || "",
-    device_id: order?.device_id || "TRAK-TC820LTYSI-001",
-    mode: "workorder",
-    highlight: "1",
-    action: "explode",
-  });
-  const viewerUrl = `http://127.0.0.1:8023/?${viewerParams.toString()}`;
-
-  function sendViewerCommand(command, extra = {}) {
-    const payload = {
-      type: "tc820si-cad-command",
-      command,
-      target: targetComponent,
-      component: targetComponent,
-      part: target.part_name,
-      part_no: target.part_no,
-      cad_part_numbers: target.cad_part_numbers || [],
-      alarm_code: target.alarm_code || order?.alarm_code || "",
-      device_id: order?.device_id || "TRAK-TC820LTYSI-001",
-      keepHighlight: true,
-      ...extra,
-    };
-    if (cadFrameRef.current?.contentWindow) {
-      cadFrameRef.current.contentWindow.postMessage(payload, "http://127.0.0.1:8023");
-      return;
-    }
-    window.open(`${viewerUrl}&action=${encodeURIComponent(command)}`, "tc820si-repair-view");
-  }
-
-  function focusFaultPart() {
-    sendViewerCommand("focus", { action: "focus" });
-  }
+  const drawingUrl = resolveWorkorderDrawing(order, target);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (cadFrameRef.current?.contentWindow) focusFaultPart();
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [viewerUrl, targetComponent, target.part_no]);
+    let cancelled = false;
+    setCad(null);
+    setCadError("");
+    if (!targetComponent) return undefined;
+    request(`/api/cad/resolve?component=${encodeURIComponent(targetComponent)}&part_no=${encodeURIComponent(target.part_no || "")}&device_id=${encodeURIComponent(order?.device_id || "")}`)
+      .then((body) => { if (!cancelled) setCad(body); })
+      .catch((error) => { if (!cancelled) setCadError(error.message); });
+    return () => { cancelled = true; };
+  }, [targetComponent, target.part_no, order?.device_id]);
 
   function openFullscreen() {
-    if (cadFrameRef.current?.requestFullscreen) {
-      cadFrameRef.current.requestFullscreen();
-      return;
-    }
-    window.open(viewerUrl, "tc820si-repair-view");
+    sceneMountRef.current?.requestFullscreen?.();
   }
 
   return (
@@ -2783,22 +2798,18 @@ function RepairCadPanel({ order, target }) {
         <div>
           <span className="eyebrow">3D 故障定位</span>
           <h2>{target.part_name}</h2>
-          <p>{target.location} · CAD 对应：{targetComponent}</p>
+          <p>{target.location} · 工单目标：{targetComponent}</p>
         </div>
         <div className="repair-visual-actions">
-          <button className={`button ${exploded ? "active" : ""}`} type="button" onClick={() => { const next = !exploded; setExploded(next); setResetView(false); sendViewerCommand(next ? "explode" : "collapse", { action: next ? "explode" : "collapse" }); }}>{exploded ? "收回部件" : "爆炸查看"}</button>
-          <button className="button" type="button" onClick={() => { setExploded(false); setResetView(true); sendViewerCommand("reset", { action: "reset", keepHighlight: true }); }}>恢复装配</button>
           <button className="button ghost-button" type="button" onClick={openFullscreen}>全屏</button>
         </div>
       </div>
-      <div className={`repair-visual-body ${exploded ? "is-exploded" : ""} ${resetView ? "is-reset" : ""}`}>
-        <iframe
-          className="repair-cad-frame"
-          title={`${target.part_name} CAD 维修视图`}
-          src={viewerUrl}
-          ref={cadFrameRef}
-          onLoad={focusFaultPart}
-        />
+      <div className="repair-visual-body">
+        <div className="repair-cad-scene" ref={sceneMountRef} aria-label="CAD 结构定位视图">
+          {drawingUrl ? <iframe className="repair-drawing-frame" title={`${target.part_name || order?.device_id || "设备"} 工单图纸`} src={drawingUrl} /> : <div className="cad-scene-status is-error"><strong>未匹配到工单图纸</strong><span>当前设备：{order?.device_id || "未知"}</span><small>没有可确认的机器图纸，不显示虚构模型。</small></div>}
+          {cadError && <div className="cad-scene-status is-error repair-cad-notice"><strong>CAD 部件关系暂不可用</strong><span>{cadError}</span><small>工单图纸仍保留；部件定位请以图纸和现场核验为准。</small></div>}
+          {cad?.part && <div className="cad-scene-status repair-cad-notice"><strong>已匹配：{cad.part.name} · {cad.part.part_no}</strong><span>{cad.part.position}</span><small>CAD 来源：{cad.source}。图纸为本工单对应机器的真实离线查看器。</small></div>}
+        </div>
       </div>
     </section>
   );
@@ -2896,14 +2907,17 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
             <div className="rag-chat-welcome"><span className="rag-chat-welcome-mark" aria-hidden="true">IA</span><h2>有什么设备问题需要排查？</h2><p>可以询问报警含义、维修步骤或 SOP；回答只展示模型生成的正文。</p></div>
           ) : messages.map((message) => {
             const report = message.answer?.report || {};
+            const knowledge = message.answer?.knowledge || {};
             const summary = selectAgentAnswer(message.answer) || cleanDisplayText(report.summary);
             const routedToReport = message.answer?.route === "report" || message.answer?.route_result?.intent === "report";
             const legacyAnswerMissing = !summary && !message.agentError && /^检索到\s*\d+\s*条(?:相关)?知识证据\s*[：:]/.test(String(message.answer?.knowledge?.summary || "").trim());
+            const retrievalScope = knowledge.retrieval_scope === "device" ? "当前报警机器优先" : knowledge.retrieval_scope === "all" ? "全库检索" : "检索范围待确认";
             return <div className="rag-chat-turn" key={message.id}>
               <div className="rag-chat-row is-user"><span className="rag-chat-avatar">你</span><div className="rag-chat-bubble">{message.question}</div></div>
               <div className="rag-chat-row is-assistant"><span className="rag-chat-avatar">IA</span><div className="rag-chat-bubble">
                 {message.pending ? <p className="rag-chat-pending">正在检索并整理回答…</p> : <>
                   {routedToReport && <span className="rag-chat-result-tag">路由至报告流程 · 非知识回答</span>}
+                  {!message.agentError && knowledge.retrieval_scope && <span className={`rag-chat-scope-tag ${knowledge.retrieval_scope}`}>{retrievalScope}{knowledge.retrieval_fallback ? " · 已扩大到全库" : ""}</span>}
                   {report.title && <h3>{report.title}</h3>}
                   <FormattedText value={summary || (message.agentError ? "问答服务暂不可用，本次未生成回答。" : legacyAnswerMissing ? "这条历史记录来自旧版本，当时没有保存模型正文。请重新提问，新的回答会在刷新后保留。" : "本次没有可展示的回答，请尝试补充设备或报警信息。")} />
                   {message.agentError && <FormattedText value={`问答服务异常：${message.agentError}`} className="rag-chat-error" />}
@@ -2930,6 +2944,7 @@ function QualityWorkspace({ snapshot, sample }) {
   const [experiences, setExperiences] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [qualityHistory, setQualityHistory] = useState([]);
   async function loadQualityData() {
     try {
       const experienceBody = await request("/api/experience/search", {
@@ -2937,6 +2952,8 @@ function QualityWorkspace({ snapshot, sample }) {
           body: JSON.stringify({ device_id: sample?.device_id || snapshot?.device_id || "", limit: 8 }),
         });
       setExperiences(experienceBody.items || []);
+      const history = await request(`/api/v1/quality/checks?target_id=${encodeURIComponent(partId.trim())}`);
+      setQualityHistory(history.items || []);
       setError("");
     } catch (err) {
       setError(err.message);
@@ -2953,6 +2970,9 @@ function QualityWorkspace({ snapshot, sample }) {
     try {
       const body = await request(`/api/quality/parts/${encodeURIComponent(partId.trim())}`, { method: "POST", body: "{}" });
       setQuality(body);
+      setQualityHistory((items) => body.quality_check_id && !items.some((item) => item.quality_check_id === body.quality_check_id)
+        ? [{ quality_check_id: body.quality_check_id, target_id: partId.trim(), result: body.status, score: body.score, created_at: body.checked_at }, ...items]
+        : items);
       await loadQualityData();
       setError("");
     } catch (err) {
@@ -2980,6 +3000,7 @@ function QualityWorkspace({ snapshot, sample }) {
       </div>
       <section className="answer-grid quality-experience-grid">
         <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">经验库 · {experiences.length} 条</span><h2>相关维修经验</h2></div><button className="button" type="button" onClick={loadQualityData}>刷新经验</button></div><ExperienceList items={experiences} /></div>
+        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">真实记录 · {qualityHistory.length} 条</span><h2>质检历史</h2></div></div>{qualityHistory.length ? <div className="document-list">{qualityHistory.map((item) => <article key={item.quality_check_id}><strong>{item.quality_check_id}</strong><span>{item.target_id || partId} · {item.result || "待确认"} · {formatTime(item.created_at)}</span></article>)}</div> : <div className="empty-state">完成检测后，质检记录会写入后端并显示在这里。</div>}</div>
       </section>
     </section>
   );

@@ -94,6 +94,7 @@ def compact_question_response(value: Any) -> Dict[str, Any]:
             key: knowledge[key]
             for key in (
                 "query",
+                "filters",
                 "status",
                 "summary",
                 "answer",
@@ -106,6 +107,9 @@ def compact_question_response(value: Any) -> Dict[str, Any]:
                 "backend_status",
                 "degraded",
                 "warning",
+                "retrieval_scope",
+                "retrieval_fallback",
+                "retrieval_fallback_reason",
                 "validation_findings",
                 "stop_reason",
             )
@@ -248,6 +252,13 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def workorder(workorder_id: str) -> Dict[str, Any]:
         return runtime.container.operations.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router")
 
+    @app.delete("/api/workorders/{workorder_id}")
+    def delete_workorder(workorder_id: str) -> Dict[str, Any]:
+        result = runtime.container.registry.execute("delete_workorder", {"workorder_id": workorder_id}, context={"agent": "router", "step": "delete_workorder"})
+        if not result.get("deleted"):
+            raise HTTPException(status_code=404, detail="工单不存在：%s" % workorder_id)
+        return result
+
     @app.get("/api/reports")
     def reports(workorder_id: str = "") -> Dict[str, Any]:
         """Expose persisted reports to the Report workspace through Runtime."""
@@ -259,10 +270,37 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         registry = runtime.container.registry
         result = registry.mcp.call("mes", "get_report", {"report_id": report_id}) if registry.backend_base_url else registry.report_store.get(report_id)
         if isinstance(result, dict) and "report" in result:
+            if not result.get("found", result.get("success", bool(result.get("report")))):
+                raise HTTPException(status_code=404, detail="report not found")
             return result
         if result:
             return {"success": True, "found": True, "report_id": report_id, "report": dict(result)}
         raise HTTPException(status_code=404, detail="report not found")
+
+    @app.get("/api/cad/resolve")
+    def resolve_cad(component: str = "", part_no: str = "", device_id: str = "") -> Dict[str, Any]:
+        """Return the authoritative CAD metadata used by the repair viewer."""
+
+        query = part_no or component
+        if not query:
+            raise HTTPException(status_code=400, detail="component 或 part_no 不能为空")
+        part = runtime.container.registry.execute("query_part", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
+        relation = runtime.container.registry.execute("query_relation", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
+        drawing = runtime.container.registry.execute("query_drawing", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
+        parts = list(part.get("parts") or part.get("components") or [])
+        requested_id = str(component or part_no or "").strip().casefold()
+        if requested_id and ("-" in requested_id or requested_id.isalnum()):
+            parts = [item for item in parts if str(item.get("component_id") or item.get("part_no") or "").strip().casefold() in {requested_id, str(part_no or "").strip().casefold()}]
+        if not parts:
+            raise HTTPException(status_code=404, detail="CAD 未找到部件：%s" % query)
+        return {"success": True, "source": part.get("source") or "document-cad-service", "part": parts[0], "parts": parts, "relations": relation.get("relations") or relation.get("assembly_relations") or [], "locations": relation.get("locations") or [], "drawings": drawing.get("drawings") or []}
+
+    @app.delete("/api/reports/{report_id}")
+    def delete_report(report_id: str) -> Dict[str, Any]:
+        result = runtime.container.registry.delete_report(report_id=report_id)
+        if not result.get("deleted"):
+            raise HTTPException(status_code=404, detail="report not found")
+        return result
 
     @app.post("/api/workorders/{workorder_id}/action")
     def workorder_action(workorder_id: str, request: WorkOrderActionRequest) -> Dict[str, Any]:

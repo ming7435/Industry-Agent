@@ -41,6 +41,10 @@ class MemoryWorkOrderRepository:
         with self._lock:
             return [dict(value) for value in self._orders.values()]
 
+    def delete(self, workorder_id: str) -> bool:
+        with self._lock:
+            return self._orders.pop(str(workorder_id), None) is not None
+
 
 class SQLiteWorkOrderRepository:
     def __init__(self, path: str) -> None:
@@ -94,6 +98,11 @@ class SQLiteWorkOrderRepository:
         with self._lock, self._connect() as connection:
             rows = connection.execute("SELECT payload FROM workorders ORDER BY rowid").fetchall()
         return [dict(json.loads(row[0])) for row in rows]
+
+    def delete(self, workorder_id: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM workorders WHERE workorder_id = ?", (str(workorder_id),))
+            return bool(cursor.rowcount)
 
 
 class MySQLWorkOrderRepository:
@@ -174,6 +183,19 @@ class MySQLWorkOrderRepository:
         rows = cursor.fetchall()
         cursor.close()
         return [dict(json.loads(row["payload"])) for row in rows]
+
+    def delete(self, workorder_id: str) -> bool:
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("DELETE FROM workorders WHERE workorder_id=%s", (str(workorder_id),))
+            deleted = cursor.rowcount > 0
+            self.connection.commit()
+            return deleted
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
 
 
 def build_workorder_repository(path: str | None = None) -> MemoryWorkOrderRepository | SQLiteWorkOrderRepository | MySQLWorkOrderRepository:

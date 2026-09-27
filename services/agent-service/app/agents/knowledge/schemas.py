@@ -41,7 +41,7 @@ class KnowledgeQuery(BaseModel):
         if not values.get("required_sources"):
             values["required_sources"] = values.get("required_knowledge_types") or []
         filters = dict(values.get("filters") or {})
-        for key in ("device_id", "alarm_code", "component", "document_id", "chunk_id"):
+        for key in ("alarm_active", "device_id", "alarm_code", "component", "document_id", "chunk_id"):
             if values.get(key) and key not in filters:
                 filters[key] = values[key]
         values["filters"] = filters

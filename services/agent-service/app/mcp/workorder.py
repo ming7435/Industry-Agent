@@ -117,6 +117,12 @@ class WorkOrderMcpAdapter:
         ]
         return {"items": values, "total": len(values)}
 
+    def delete_workorder(self, workorder_id: str = "", **_: Any) -> Dict[str, Any]:
+        workorder_id = str(workorder_id or "").strip()
+        deleter = getattr(self.repository, "delete", None)
+        deleted = bool(deleter(workorder_id)) if callable(deleter) and workorder_id else False
+        return {"success": deleted, "deleted": deleted, "found": deleted, "workorder_id": workorder_id, "source": "mes-mcp"}
+
     def assign_workorder(self, workorder_id: str, assignee: str = "", **_: Any) -> Dict[str, Any]:
         order = self.repository.get(workorder_id)
         if order is None:

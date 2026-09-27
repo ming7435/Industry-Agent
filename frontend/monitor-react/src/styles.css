@@ -1637,6 +1637,119 @@ h2 {
   color: var(--red);
 }
 
+.maintenance-plan-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(27, 45, 53, .08);
+  border-radius: 16px;
+  background: #f8fbfb;
+}
+
+.maintenance-plan-heading,
+.maintenance-plan-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.maintenance-plan-heading h2 {
+  margin: 4px 0 0;
+  color: #10242c;
+}
+
+.maintenance-plan-heading p {
+  margin-top: 6px;
+  color: #6b7c84;
+  font-size: 12px;
+}
+
+.maintenance-plan-meta {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  color: #147254;
+  font-size: 12px;
+}
+
+.maintenance-plan-meta span {
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #e8f7f2;
+}
+
+.maintenance-plan-meta strong { color: #10242c; }
+
+.maintenance-plan-diagnosis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.maintenance-plan-diagnosis > div,
+.maintenance-plan-section {
+  padding: 12px;
+  border: 1px solid rgba(27, 45, 53, .08);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.maintenance-plan-diagnosis span,
+.maintenance-plan-section-head span {
+  color: #7d8d94;
+  font-size: 12px;
+}
+
+.maintenance-plan-diagnosis strong {
+  display: block;
+  margin-top: 6px;
+  color: #10242c;
+}
+
+.maintenance-plan-diagnosis p {
+  margin-top: 6px;
+  color: #52656f;
+  line-height: 1.5;
+}
+
+.maintenance-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.maintenance-plan-section h3 {
+  margin: 0;
+  color: #10242c;
+  font-size: 15px;
+}
+
+.maintenance-plan-section ol,
+.maintenance-plan-section ul {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: #40555e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.maintenance-plan-muted,
+.maintenance-plan-empty {
+  color: #71868d;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.maintenance-plan-empty {
+  padding: 18px;
+  border: 1px dashed rgba(27, 45, 53, .18);
+  border-radius: 10px;
+  background: #fff;
+}
+
 .repair-visual-body {
   position: relative;
   height: 100%;
@@ -1766,6 +1879,12 @@ h2 {
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, .65fr);
 }
 
+.sheet-execution-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, .9fr);
+  gap: 12px;
+}
+
 .sheet-bottom-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr);
@@ -1876,6 +1995,61 @@ h2 {
   line-height: 1.35;
   font-size: 12px;
 }
+
+.repair-cad-scene {
+  position: relative;
+  min-height: 390px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 32%, #ffffff 0, #eef4f6 48%, #dce7eb 100%);
+}
+
+.repair-drawing-frame {
+  width: 100%;
+  height: 100%;
+  min-height: 390px;
+  border: 0;
+  display: block;
+  background: #fff;
+}
+
+.cad-scene-status {
+  display: grid;
+  gap: 8px;
+  max-width: 560px;
+  padding: 28px;
+  text-align: center;
+  color: #46616a;
+}
+
+.cad-scene-status strong { color: #10242c; font-size: 20px; }
+.cad-scene-status.is-error strong { color: #ad3a35; }
+.cad-scene-status small { color: #71868d; }
+.repair-cad-notice {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  max-width: min(440px, calc(100% - 24px));
+  padding: 10px 12px;
+  border: 1px solid rgba(27, 45, 53, .12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 8px 24px rgba(27, 45, 53, .12);
+  text-align: left;
+}
+.repair-cad-notice strong { font-size: 13px; }
+.repair-cad-notice span,
+.repair-cad-notice small { display: block; margin-top: 4px; }
+
+.report-list { display: grid; gap: 8px; }
+.report-list-item { display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid rgba(27,45,53,.1); border-radius: 10px; }
+.report-list-item.is-selected { border-color: rgba(20,170,114,.5); background: #f2fbf8; }
+.report-list-select { flex: 1; display: grid; gap: 4px; text-align: left; border: 0; background: transparent; cursor: pointer; color: inherit; }
+.report-list-select span { color: #71868d; font-size: 12px; }
+.danger-button { border-color: rgba(182,55,50,.35); color: #ad3a35; background: #fff8f7; }
+.workorder-titlebar-actions { display: flex; align-items: center; gap: 10px; }
 
 .workorder-checklist .formatted-text {
   min-width: 0;
@@ -2170,6 +2344,9 @@ h2 {
   .check-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trend-grid,
   .drawer-metrics { grid-template-columns: 1fr; }
+  .maintenance-plan-diagnosis,
+  .maintenance-plan-grid,
+  .sheet-execution-grid { grid-template-columns: 1fr; }
   .drawer-status { grid-template-columns: 1fr; }
   .drawer-heading { flex-direction: column; }
   .scene-view-toggle { margin-top: 10px; }
@@ -2205,4 +2382,6 @@ h2 {
   .repair-visual-body { height: 390px; min-height: 390px; }
   .workorder-bigscreen-grid.cad-only { height: 520px; min-height: 520px; }
   .target-detail-grid { grid-template-columns: 1fr; }
+  .maintenance-plan-heading { flex-direction: column; }
+  .maintenance-plan-meta { justify-items: start; }
 }

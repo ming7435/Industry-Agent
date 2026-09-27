@@ -55,3 +55,72 @@ def test_backend_qms_part_inspection_is_deterministic(tmp_path, monkeypatch):
     part = client.post("/tools/call", json={"tool": "get_production_part", "arguments": {"part_id": "PART-001"}}).json()["part"]
     result = client.post("/tools/call", json={"tool": "inspect_part_dimensions", "arguments": {"part": part}}).json()
     assert result["passed"] is True
+
+
+def test_backend_quality_tool_preserves_production_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("BACKEND_STORAGE", "sqlite")
+    monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "quality-metadata.sqlite3"))
+    import app.main as main
+    main._service = None
+    client = TestClient(app)
+
+    response = client.post(
+        "/tools/call",
+        json={
+            "tool": "create_quality_check",
+            "arguments": {
+                "part_id": "PART-META-001",
+                "batch_id": "BATCH-META-001",
+                "production_order_id": "PO-META-001",
+                "inspection_type": "part_quality",
+                "risk_level": "R3",
+                "result": "passed",
+            },
+        },
+    )
+    assert response.status_code == 200
+    check = response.json()["quality_check"]
+    assert check["batch_id"] == "BATCH-META-001"
+    assert check["production_order_id"] == "PO-META-001"
+    assert check["inspection_type"] == "part_quality"
+    assert check["risk_level"] == "R3"
+
+    appealed = client.post(
+        "/tools/call",
+        json={
+            "tool": "submit_quality_appeal",
+            "arguments": {
+                "check_id": response.json()["quality_check_id"],
+                "reason": "review",
+                "applicant": "operator-1",
+            },
+        },
+    )
+    assert appealed.status_code == 200
+    assert appealed.json()["appeal"]["applicant"] == "operator-1"
+
+
+def test_backend_supports_explicit_deletion_for_workorders_and_reports(tmp_path, monkeypatch):
+    monkeypatch.setenv("BACKEND_STORAGE", "sqlite")
+    monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "delete.sqlite3"))
+    import app.main as main
+    main._service = None
+    client = TestClient(app)
+
+    created = client.post("/tools/call", json={"tool": "create_workorder", "arguments": {"device_id": "CNC-DELETE", "title": "待删除"}})
+    assert created.status_code == 200
+    workorder_id = created.json()["workorder_id"]
+    deleted = client.delete(f"/api/workorders/{workorder_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+    assert client.get(f"/api/workorders/{workorder_id}").json()["found"] is False
+
+    report = client.post("/tools/call", json={"tool": "persist_report", "arguments": {"title": "可查看报告"}}).json()
+    report_id = report["report_id"]
+    detail = client.get(f"/api/reports/{report_id}")
+    assert detail.status_code == 200
+    assert detail.json()["report"]["report_id"] == report_id
+    report_deleted = client.delete(f"/api/reports/{report_id}")
+    assert report_deleted.status_code == 200
+    assert report_deleted.json()["deleted"] is True
+    assert client.get(f"/api/reports/{report_id}").status_code == 404

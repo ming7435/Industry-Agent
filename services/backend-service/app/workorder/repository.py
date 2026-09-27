@@ -52,6 +52,11 @@ class SQLiteRepository:
             rows = connection.execute("SELECT payload FROM workorders ORDER BY rowid").fetchall()
         return [dict(json.loads(row[0])) for row in rows]
 
+    def delete(self, workorder_id: str) -> bool:
+        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+            cursor = connection.execute("DELETE FROM workorders WHERE workorder_id=?", (str(workorder_id),))
+            return bool(cursor.rowcount)
+
     def save_record(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(payload)
         with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
@@ -71,6 +76,11 @@ class SQLiteRepository:
         with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
             rows = connection.execute("SELECT payload FROM business_records WHERE record_type=? ORDER BY updated_at", (str(record_type),)).fetchall()
         return [dict(json.loads(row[0])) for row in rows]
+
+    def delete_record(self, record_type: str, record_id: str) -> bool:
+        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+            cursor = connection.execute("DELETE FROM business_records WHERE record_type=? AND record_id=?", (str(record_type), str(record_id)))
+            return bool(cursor.rowcount)
 
 
 class MySQLRepository:
@@ -139,6 +149,19 @@ class MySQLRepository:
         cursor.close()
         return [dict(json.loads(row["payload"])) for row in rows]
 
+    def delete(self, workorder_id: str) -> bool:
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("DELETE FROM workorders WHERE workorder_id=%s", (str(workorder_id),))
+            deleted = cursor.rowcount > 0
+            self.connection.commit()
+            return deleted
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
+
     def save_record(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(payload)
         cursor = self.connection.cursor()
@@ -169,6 +192,19 @@ class MySQLRepository:
         rows = cursor.fetchall()
         cursor.close()
         return [dict(json.loads(row["payload"])) for row in rows]
+
+    def delete_record(self, record_type: str, record_id: str) -> bool:
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("DELETE FROM business_records WHERE record_type=%s AND record_id=%s", (str(record_type), str(record_id)))
+            deleted = cursor.rowcount > 0
+            self.connection.commit()
+            return deleted
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
 
 
 def build_repository() -> SQLiteRepository | MySQLRepository:

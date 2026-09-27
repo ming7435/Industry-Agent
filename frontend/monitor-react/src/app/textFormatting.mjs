@@ -11,6 +11,20 @@ const RETRIEVAL_META_LINE = /^(?:文档|来源|页码|内容类型|标题|分数
 const OCR_PREFIX = /^\s*\[[^\]]+\]\s*本地OCR识别结果(?:（[^）]*）|\([^)]*\))?\s*[:：]?\s*/i;
 const RAW_FIELD_PATTERN = /\b(?:device_id|timestamp|temperature|vibration|rpm|alarm_code|alarm_level|health_score)\s*=/i;
 const RETRIEVAL_SUMMARY_PATTERN = /^检索到\s*\d+\s*条(?:相关)?知识证据\s*[：:]/;
+const JSON_FENCE_PATTERN = /```(?:json)?\s*([\s\S]*?)```/gi;
+
+export function parseEmbeddedJson(value) {
+  const source = String(value ?? "");
+  for (const match of source.matchAll(JSON_FENCE_PATTERN)) {
+    try {
+      const parsed = JSON.parse(match[1].trim());
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // Ignore malformed model output and keep the readable narrative.
+    }
+  }
+  return null;
+}
 
 export function isDebugAnswer(value) {
   const text = String(value ?? "").trim();
@@ -31,7 +45,7 @@ export function selectAgentAnswer(agentAnswer) {
 export function cleanDisplayText(value) {
   const source = documentBodyOnly(value);
   if (!source || isDebugAnswer(source)) return "";
-  return normalizeLines(source)
+  return normalizeLines(source.replace(JSON_FENCE_PATTERN, ""))
     .map((line) => line.replace(OCR_PREFIX, "").trim())
     .filter((line) => line && !RETRIEVAL_META_LINE.test(line) && !/^\[[^\]]+\s*\|[^\]]+\]\s*$/i.test(line))
     .join("\n")
@@ -41,6 +55,8 @@ export function cleanDisplayText(value) {
 export function cleanEvidenceText(value) {
   const text = cleanDisplayText(value);
   if (!text) return "";
+  if (/^\[(?:table|cad_drawing)\b/i.test(text) || /^(?:文档|页码|内容类型|本地OCR识别结果|表格行\d+)\s*[:：]/i.test(text)) return "";
+  if (/表格行\d+\s*[:：]/i.test(text)) return "";
   if (!RAW_FIELD_PATTERN.test(text)) return text;
   const prefix = text.split(/\b(?:device_id|timestamp|temperature|vibration|rpm|alarm_code|alarm_level|health_score)\s*=/i)[0]
     .replace(/[：:]\s*$/, "")

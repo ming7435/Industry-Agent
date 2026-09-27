@@ -71,6 +71,9 @@ class KnowledgeResult(BaseModel):
     validation_findings: List[str] = Field(default_factory=list)
     stop_reason: str = ""
     retrieval_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    retrieval_scope: str = "unknown"
+    retrieval_fallback: bool = False
+    retrieval_fallback_reason: str = ""
 
 
 class CADComponent(BaseModel):

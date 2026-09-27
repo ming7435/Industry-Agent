@@ -4,6 +4,7 @@ const groups = [
   { label: "生产运营", items: [
     { id: "monitor", label: "监控中心", icon: "monitor" },
     { id: "diagnosis", label: "智能诊断", icon: "diagnosis" },
+    { id: "maintenance", label: "维修方案", icon: "maintenance" },
     { id: "workorder", label: "工单系统", icon: "workorder" },
     { id: "quality", label: "质检系统", icon: "quality" },
   ] },
@@ -16,6 +17,7 @@ const groups = [
 const pages = {
   monitor: { title: "监控中心", description: "查看设备运行状态与异常处置进度", category: "生产运营" },
   diagnosis: { title: "智能诊断", description: "查看 Runtime 诊断结论、证据与处置建议", category: "生产运营" },
+  maintenance: { title: "维修方案", description: "查看诊断生成的维修步骤、工具、备件与证据", category: "生产运营" },
   workorder: { title: "工单系统", description: "跟进维修任务、执行反馈与验收", category: "生产运营" },
   quality: { title: "质检系统", description: "执行零件质量检测并追踪结果", category: "生产运营" },
   rag: { title: "知识问答", description: "检索维修知识与可引用的文档证据", category: "知识资产" },
@@ -28,6 +30,7 @@ function WorkbenchIcon({ name }) {
     diagnosis: <><path d="M12 3a6 6 0 0 0-3.7 10.7L7 18h10l-1.3-4.3A6 6 0 0 0 12 3Z" /><path d="M9 21h6M10 18h4" /></>,
     workorder: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4.5V3h6v1.5M9 10h6M9 14h6M9 18h4" /></>,
     quality: <><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z" /><path d="m8.5 12 2.5 2.5 4.5-5" /></>,
+    maintenance: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 7h8M8 11h8M8 15h5M8 18h3" /></>,
     knowledge: <><path d="M12 6c-2.5-2-5.5-2.3-9-1v14c3.5-1.3 6.5-1 9 1 2.5-2 5.5-2.3 9-1V5c-3.5-1.3-6.5-1-9 1ZM12 6v14" /></>,
     report: <><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M9 8h6M9 12h6M9 16h4" /></>,
   };

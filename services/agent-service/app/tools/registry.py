@@ -175,6 +175,7 @@ class ToolRegistry:
             "get_workorder": self.get_workorder,
             "query_workorder": self.query_workorder,
             "list_workorders": self.list_workorders,
+            "delete_workorder": self.delete_workorder,
             "assign_workorder": self.assign_workorder,
             "submit_repair_feedback": self.submit_repair_feedback,
             "mark_repair_completed": self.mark_repair_completed,
@@ -198,6 +199,7 @@ class ToolRegistry:
             "get_quality_record": self.get_quality_record,
             "get_trace_summary": self.get_trace_summary,
             "persist_report": self.persist_report,
+            "delete_report": self.delete_report,
             "generate_report_file": self.generate_report_file,
             "ingest_knowledge": self.ingest_knowledge,
         }, base_urls={
@@ -366,6 +368,15 @@ class ToolRegistry:
             items = [item for item in items if str(item.get("workorder_id") or "") == str(workorder_id)]
         return {"success": True, "items": items, "count": len(items), "backend": "report-store"}
 
+    def delete_report(self, report_id: str = "", **_: Any) -> Dict[str, Any]:
+        report_id = str(report_id or "").strip()
+        if self.backend_base_url:
+            return self.mcp.call("mes", "delete_report", {"report_id": report_id})
+        if not report_id or report_id not in self.report_store:
+            return {"success": False, "deleted": False, "found": False, "report_id": report_id, "backend": "report-store"}
+        del self.report_store[report_id]
+        return {"success": True, "deleted": True, "found": True, "report_id": report_id, "backend": "report-store"}
+
     def generate_report_file(self, **arguments: Any) -> Dict[str, Any]:
         return generate_report_file_tool(**arguments)
 
@@ -383,6 +394,11 @@ class ToolRegistry:
 
     def list_workorders(self, **arguments: Any) -> Dict[str, Any]:
         return list_workorders_tool(self.workorder_mcp, **arguments)
+
+    def delete_workorder(self, workorder_id: str = "", **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("mes", "delete_workorder", {"workorder_id": workorder_id, **arguments})
+        return self.workorder_mcp.delete_workorder(workorder_id=workorder_id, **arguments)
 
     def assign_workorder(self, **arguments: Any) -> Dict[str, Any]:
         return assign_workorder_tool(self.workorder_mcp, **arguments)
@@ -466,7 +482,7 @@ class ToolRegistry:
             "query_part": "cad", "query_part_relation": "cad", "query_assembly_relation": "cad",
             "get_drawing_metadata": "cad", "get_component_location": "cad",
             "create_workorder": "mes", "update_workorder": "mes", "get_workorder": "mes", "query_workorder": "mes",
-            "list_workorders": "mes", "assign_workorder": "mes", "submit_repair_feedback": "mes",
+            "list_workorders": "mes", "delete_workorder": "mes", "assign_workorder": "mes", "submit_repair_feedback": "mes",
             "get_workorder_template": "mes", "submit_workorder_draft": "mes",
             "mark_repair_completed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
             "query_technicians": "mes", "query_technician_skills": "mes", "query_technician_workload": "mes", "query_shift": "mes", "query_team_availability": "mes",
@@ -481,7 +497,7 @@ class ToolRegistry:
             # Runtime state.  They do not query Backend persistence, so keep
             # them local even when the Backend HTTP boundary is configured.
             "get_diagnosis_record": "local", "get_maintenance_record": "local", "get_quality_record": "local",
-            "get_trace_summary": "local", "persist_report": "mes", "generate_report_file": "local",
+            "get_trace_summary": "local", "persist_report": "mes", "delete_report": "mes", "generate_report_file": "local",
         }.get(name, "knowledge")
         operation = {
             "query_cad": "fetch_engineering_record",
@@ -722,6 +738,7 @@ class ToolRegistry:
             "get_workorder": "获取单个维修工单",
             "query_workorder": "查询维修工单",
             "list_workorders": "查询工单列表",
+            "delete_workorder": "删除维修工单",
             "assign_workorder": "派工并更新负责人",
             "submit_repair_feedback": "提交维修反馈",
             "mark_repair_completed": "标记维修完成",
@@ -745,6 +762,7 @@ class ToolRegistry:
             "get_quality_record": "获取已有质检记录",
             "get_trace_summary": "获取流程 Trace 摘要",
             "persist_report": "持久化结构化报告",
+            "delete_report": "删除结构化报告",
             "generate_report_file": "导出报告文件",
             "ingest_knowledge": "将维修手册 JSONL 入库到 RAG",
         }.items()]

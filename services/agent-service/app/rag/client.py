@@ -53,14 +53,48 @@ class RAGServiceClient:
 
     def search(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None) -> Dict[str, Any]:
         selected_filters = dict(filters or {})
+        remote_query = self._build_remote_query(query, selected_filters)
+        # The remote API contract caps natural-language queries at 2000
+        # characters.  Model-generated diagnostic context can be much longer;
+        # bound it at the client boundary so retrieval degrades gracefully
+        # instead of returning HTTP 422.
+        remote_query = remote_query[:2000]
         payload = {
-            "query": self._build_remote_query(query, selected_filters),
+            "query": remote_query,
             "top_n": limit,
             "filters": self._normalize_remote_filters(selected_filters),
         }
         if self.base_url:
             try:
                 result = self._normalize_remote_search(self._post("/search", payload), query, selected_filters)
+                scoped_device = str(selected_filters.get("device_id") or "").strip()
+                alarm_active = bool(selected_filters.get("alarm_active")) and bool(scoped_device)
+                if alarm_active and not result.get("documents"):
+                    # A machine scope is preferred, but older corpora may not
+                    # carry device metadata. Retry the same alarm query across
+                    # the full corpus so the operator still receives grounded
+                    # evidence instead of a generic empty answer.
+                    fallback_filters = dict(selected_filters)
+                    fallback_filters.pop("device_id", None)
+                    fallback_filters.pop("device_model", None)
+                    fallback_filters.pop("alarm_active", None)
+                    fallback_query = self._build_remote_query(query, fallback_filters)[:2000]
+                    fallback_payload = {
+                        "query": fallback_query,
+                        "top_n": limit,
+                        "filters": self._normalize_remote_filters(fallback_filters),
+                    }
+                    fallback = self._normalize_remote_search(
+                        self._post("/search", fallback_payload), query, fallback_filters
+                    )
+                    if fallback.get("documents"):
+                        result = fallback
+                    result["retrieval_scope"] = "all"
+                    result["retrieval_fallback"] = True
+                    result["retrieval_fallback_reason"] = "当前报警机器无匹配证据，已扩大到全库检索"
+                if "retrieval_scope" not in result:
+                    result["retrieval_scope"] = "device" if alarm_active else "all"
+                    result["retrieval_fallback"] = False
                 result.setdefault("backend", "remote-rag-service")
                 result.setdefault("connection_status", "connected")
                 result.setdefault("degraded", False)
@@ -73,6 +107,10 @@ class RAGServiceClient:
                 result["degraded"] = True
                 result["remote_base_url"] = self.base_url
                 result["warning"] = "%s: %s" % (type(error).__name__, error)
+                result["retrieval_scope"] = self._fallback_scope(selected_filters)
+                result["retrieval_fallback"] = result["retrieval_scope"] == "all" and bool(selected_filters.get("alarm_active"))
+                if result["retrieval_fallback"]:
+                    result["retrieval_fallback_reason"] = "远程服务不可用，当前仅有全库本地索引"
                 return result
         if not self.allow_fallback:
             raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
@@ -81,7 +119,19 @@ class RAGServiceClient:
         result["degraded"] = True
         result["remote_base_url"] = ""
         result["warning"] = "RAG_SERVICE_BASE_URL 未配置，当前使用本地演示知识索引。"
+        result["retrieval_scope"] = self._fallback_scope(selected_filters)
+        result["retrieval_fallback"] = result["retrieval_scope"] == "all" and bool(selected_filters.get("alarm_active"))
+        if result["retrieval_fallback"]:
+            result["retrieval_fallback_reason"] = "当前本地索引没有设备元数据，已使用全库检索"
         return result
+
+    def _fallback_scope(self, filters: Mapping[str, Any]) -> str:
+        active = bool(filters.get("alarm_active")) and bool(str(filters.get("device_id") or "").strip())
+        if not active:
+            return "all"
+        records = getattr(self.fallback, "_records", {})
+        has_device_metadata = any(str(item.get("device_id") or "").strip() for item in records.values())
+        return "device" if has_device_metadata else "all"
 
     @staticmethod
     def _humanize_result(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -154,7 +204,7 @@ class RAGServiceClient:
         selected = {
             key: value
             for key, value in dict(filters or {}).items()
-            if key not in {"alarm_code", "error_code", "component"}
+            if key not in {"alarm_active", "alarm_code", "error_code", "component"}
             and value not in (None, "", [], {})
         }
         records = getattr(self.fallback, "_records", {})

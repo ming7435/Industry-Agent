@@ -152,11 +152,18 @@
 .is-user .rag-chat-bubble { border-color: #b8ddd2; border-radius: 14px 4px 14px 14px; background: #e8f5ef; }
 .rag-chat-bubble h3 { margin: 0 0 7px; color: var(--ink); font-size: 15px; }
 .rag-chat-result-tag { display: inline-block; margin-bottom: 8px; padding: 3px 7px; border-radius: 5px; background: #fff4df; color: #8a6017; font-size: 11px; font-weight: 700; }
+.rag-chat-scope-tag { display: inline-block; margin: 0 0 8px 7px; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: 800; }
+.rag-chat-scope-tag.device { background: #fff0ed; color: #b42318; }
+.rag-chat-scope-tag.all { background: #e7f5ef; color: #087c70; }
+.rag-chat-scope-tag.unknown { background: #eef2f3; color: #5c7078; }
 .rag-chat-bubble .formatted-text p { margin: 0; white-space: pre-wrap; }
 .rag-chat-bubble .formatted-text p + p,
 .rag-chat-bubble .formatted-text ul + p,
 .rag-chat-bubble .formatted-text p + ul { margin-top: 9px; }
 .rag-chat-bubble .formatted-text ul { margin: 0; padding-left: 21px; }
+.rag-chat-bubble .formatted-text strong { color: #b42318; font-weight: 850; }
+.rag-chat-bubble .formatted-text h3,
+.rag-chat-bubble .formatted-text h4 { color: #8f271f; }
 .rag-chat-pending { color: var(--muted); }
 .rag-chat-error { color: #aa443f; font-size: 12px; }
 .rag-chat-citations, .rag-chat-route { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }

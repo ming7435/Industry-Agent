@@ -503,6 +503,13 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         except Exception as error:
             self._error(HTTPStatus.BAD_GATEWAY, str(error))
 
+    def do_DELETE(self) -> None:  # noqa: N802，沿用标准库处理器要求的方法名。
+        parsed = urlparse(self.path)
+        if self._should_proxy(parsed.path):
+            self._proxy_to_agent_service("DELETE")
+            return
+        self._error(HTTPStatus.NOT_FOUND, "endpoint not found")
+
     def log_message(self, format: str, *args: Any) -> None:
         """关闭默认访问日志，保持控制台输出简洁。"""
 
@@ -521,6 +528,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             "/api/v1/workorders",
             "/api/experience/",
             "/api/reports",
+            "/api/cad/",
             "/api/quality/",
             "/api/v1/quality/",
             "/api/v1/closure",

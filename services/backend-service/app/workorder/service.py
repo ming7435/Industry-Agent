@@ -77,6 +77,13 @@ class BackendBusinessService:
         values = [item for item in self.repository.list() if (not device_id or item.get("device_id") == device_id) and (not status or item.get("status") == status)]
         return {"success": True, "items": values, "total": len(values), "backend": "backend-service"}
 
+    def delete_workorder(self, workorder_id: str = "", **_: Any) -> dict[str, Any]:
+        workorder_id = str(workorder_id or "").strip()
+        if not workorder_id:
+            raise ValueError("workorder_id 不能为空")
+        deleted = bool(getattr(self.repository, "delete", lambda _id: False)(workorder_id))
+        return {"success": deleted, "deleted": deleted, "found": deleted, "workorder_id": workorder_id, "backend": "backend-service"}
+
     def update_workorder(self, workorder_id: str, status: str = "in_progress", **fields: Any) -> dict[str, Any]:
         order = self.repository.get(workorder_id)
         if order is None:
@@ -199,6 +206,13 @@ class BackendBusinessService:
         items = [item for item in self._list_records("report") if not workorder_id or str(item.get("workorder_id") or "") == workorder_id]
         return {"success": True, "items": items, "count": len(items), "backend": "backend-service"}
 
+    def delete_report(self, report_id: str = "", **_: Any) -> dict[str, Any]:
+        report_id = str(report_id or "").strip()
+        if not report_id:
+            raise ValueError("report_id 不能为空")
+        deleted = bool(getattr(self.repository, "delete_record", lambda *_args: False)("report", report_id))
+        return {"success": deleted, "deleted": deleted, "found": deleted, "report_id": report_id, "backend": "backend-service"}
+
     def save_experience(self, experience: Mapping[str, Any] | None = None, **values: Any) -> dict[str, Any]:
         item = dict(experience or values)
         key = str(item.get("experience_id") or "EXP-" + uuid4().hex[:10].upper())
@@ -214,7 +228,26 @@ class BackendBusinessService:
 
     def create_quality_check(self, operator: str = "", **values: Any) -> dict[str, Any]:
         check_id = "QC-" + uuid4().hex[:12].upper()
-        record = {"quality_check_id": check_id, "target_type": "production_part", "target_id": str(values.get("target_id") or values.get("part_id") or ""), "workorder_id": str(values.get("workorder_id") or ""), "part_id": str(values.get("part_id") or ""), "part_no": str(values.get("part_no") or ""), "result": str(values.get("result") or "pending"), "score": values.get("score"), "findings": list(values.get("findings") or []), "items": list(values.get("items") or []), "reviewer": str(values.get("reviewer") or operator), "status": "open", "created_at": self._now(), "updated_at": self._now()}
+        record = {
+            "quality_check_id": check_id,
+            "target_type": "production_part",
+            "target_id": str(values.get("target_id") or values.get("part_id") or ""),
+            "workorder_id": str(values.get("workorder_id") or ""),
+            "part_id": str(values.get("part_id") or ""),
+            "part_no": str(values.get("part_no") or ""),
+            "batch_id": str(values.get("batch_id") or ""),
+            "production_order_id": str(values.get("production_order_id") or ""),
+            "inspection_type": str(values.get("inspection_type") or "part_quality"),
+            "score": values.get("score"),
+            "result": str(values.get("result") or "pending"),
+            "findings": list(values.get("findings") or []),
+            "items": list(values.get("items") or []),
+            "reviewer": str(values.get("reviewer") or operator),
+            "risk_level": str(values.get("risk_level") or "R1"),
+            "status": "open",
+            "created_at": self._now(),
+            "updated_at": self._now(),
+        }
         self._quality[check_id] = self._save_record("quality", check_id, record)
         self._append_audit({"audit_id": "AUDIT-" + uuid4().hex[:10].upper(), "action": "quality_check_created", "object_id": check_id, "operator": operator, "created_at": self._now()})
         return {"success": True, "quality_check_id": check_id, "quality_check": dict(record), "backend": "backend-service"}
@@ -227,11 +260,11 @@ class BackendBusinessService:
         item = self._quality.get(check_id) or self._get_record("quality", check_id)
         return {"success": bool(item), "quality_check": dict(item or {}), "quality_check_id": check_id, "backend": "backend-service"}
 
-    def submit_quality_appeal(self, check_id: str, reason: str = "", evidence: list[Any] | None = None, operator: str = "", **_: Any) -> dict[str, Any]:
+    def submit_quality_appeal(self, check_id: str, reason: str = "", evidence: list[Any] | None = None, operator: str = "", applicant: str = "", **_: Any) -> dict[str, Any]:
         item = self._quality.get(check_id)
         if item is None:
             raise KeyError("质检记录不存在：%s" % check_id)
-        appeal = {"appeal_id": "APPEAL-" + uuid4().hex[:10].upper(), "quality_check_id": check_id, "reason": reason, "evidence": list(evidence or []), "applicant": operator, "status": "pending", "created_at": self._now()}
+        appeal = {"appeal_id": "APPEAL-" + uuid4().hex[:10].upper(), "quality_check_id": check_id, "reason": reason, "evidence": list(evidence or []), "applicant": applicant or operator, "status": "pending", "created_at": self._now()}
         item["status"] = "appealed"
         item.setdefault("appeals", []).append(appeal)
         self._quality[check_id] = self._save_record("quality", check_id, item)
@@ -240,7 +273,7 @@ class BackendBusinessService:
 
     def create_closure_task(self, operator: str = "", **values: Any) -> dict[str, Any]:
         task_id = "CLOSE-" + uuid4().hex[:12].upper()
-        task = {"closure_task_id": task_id, "workorder_id": str(values.get("workorder_id") or ""), "quality_check_id": str(values.get("quality_check_id") or ""), "title": str(values.get("title") or ""), "owner": str(values.get("owner") or ""), "actions": list(values.get("actions") or []), "status": "open", "created_by": operator, "created_at": self._now(), "updated_at": self._now()}
+        task = {"closure_task_id": task_id, "workorder_id": str(values.get("workorder_id") or ""), "quality_check_id": str(values.get("quality_check_id") or ""), "title": str(values.get("title") or ""), "owner": str(values.get("owner") or ""), "actions": list(values.get("actions") or []), "due_at": str(values.get("due_at") or ""), "status": "open", "created_by": operator, "created_at": self._now(), "updated_at": self._now()}
         self._closure_tasks[task_id] = self._save_record("closure", task_id, task)
         self._append_audit({"audit_id": "AUDIT-" + uuid4().hex[:10].upper(), "action": "closure_task_created", "object_id": task_id, "operator": operator, "created_at": self._now()})
         return {"success": True, "closure_task_id": task_id, "closure_task": dict(task), "backend": "backend-service"}
