@@ -12,3 +12,15 @@
 **/data/indexes
 **/data/milvus
 *.pyc
+node_modules
+**/node_modules
+.runtime
+.codex
+.agents
+**/.ingestion_cache
+**/data/index
+**/data/indexes
+**/*.sqlite3
+**/*.sqlite3-wal
+**/*.sqlite3-shm
+infra/nginx/*.htpasswd

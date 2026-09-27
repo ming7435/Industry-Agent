@@ -1,4 +1,13 @@
 services:
+  mysql:
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?set MYSQL_APP_PASSWORD}
+
+  minio:
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+
   agent-service:
     environment:
       APP_ENV: production
@@ -7,10 +16,17 @@ services:
       WORKORDER_BACKEND: mysql
       BACKEND_SERVICE_BASE_URL: http://backend-service:8030
       MODEL_SERVICE_BASE_URL: http://model-service:8040
+      FACTORY_API_BASE_URL: ${FACTORY_API_BASE_URL:?set a reachable private factory URL}
 
   rag-service:
     environment:
+      APP_ENV: production
       RAG_ALLOW_LOCAL_FALLBACK: "false"
+      RAG_DATA_DIR: /data/rag
+      WHOOSH_INDEX_DIR: /data/rag/index/whoosh
+      INGESTION_CACHE_DIR: /data/rag/.ingestion_cache
+    volumes:
+      - rag-data:/data/rag
 
   cad-service:
     environment:
@@ -25,7 +41,19 @@ services:
   model-service:
     environment:
       APP_ENV: production
-      MODEL_PROVIDER: ${MODEL_PROVIDER:-deepseek}
+      MODEL_PROVIDER: remote
+      MODEL_CHAT_PROVIDER: siliconflow
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:?set SILICONFLOW_API_KEY}
+
+  monitor-web:
+    environment:
+      APP_ENV: production
+      FACTORY_API_BASE_URL: ${FACTORY_API_BASE_URL:?set a reachable private factory URL}
+
+  gateway:
+    volumes:
+      - ../nginx/nginx.production.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/production.htpasswd:/etc/nginx/production.htpasswd:ro
 
   otel-collector:
     volumes:
@@ -33,3 +61,6 @@ services:
     environment:
       OTEL_BACKEND_ENDPOINT: ${OTEL_BACKEND_ENDPOINT:?set OTEL_BACKEND_ENDPOINT for production observability}
       OTEL_BACKEND_AUTH: ${OTEL_BACKEND_AUTH:-}
+
+volumes:
+  rag-data:

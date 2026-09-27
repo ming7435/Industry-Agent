@@ -43,3 +43,21 @@ def test_agent_runtime_volume_and_health_dependencies_are_declared():
     assert "agent-runtime-data:/app/.runtime" in agent["volumes"]
     assert agent["depends_on"]["redis"]["condition"] == "service_healthy"
     assert "agent-runtime-data" in compose["volumes"]
+
+
+def test_internal_ports_are_loopback_only():
+    for name, service in _compose()["services"].items():
+        if name != "gateway":
+            assert all(port.startswith("127.0.0.1:") for port in service.get("ports", [])), name
+
+
+def test_production_persists_rag_and_protects_gateway():
+    production = yaml.safe_load((ROOT / "infra/docker/docker-compose.production.yml").read_text(encoding="utf-8"))
+    services = production["services"]
+    assert "rag-data:/data/rag" in services["rag-service"]["volumes"]
+    assert services["model-service"]["environment"]["MODEL_PROVIDER"] == "remote"
+    assert "FACTORY_API_BASE_URL" in services["monitor-web"]["environment"]
+    nginx = (ROOT / "infra/nginx/nginx.production.conf").read_text(encoding="utf-8")
+    assert "auth_basic_user_file" in nginx
+    assert "proxy_pass http://monitor_web" in nginx
+    assert "proxy_pass http://agent_service" not in nginx
