@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -112,6 +113,28 @@ def _env_for_service(service_root: Path) -> dict[str, str]:
     return env
 
 
+def service_port(name: str, command: list[str], monitor_port: int = 8001) -> int | None:
+    """Return the TCP port owned by a managed service, when it has one."""
+
+    if name == "monitor-web":
+        return int(monitor_port)
+    try:
+        index = command.index("--port")
+        return int(command[index + 1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _port_in_use(host: str, port: int) -> bool:
+    """Detect an already-running local service before spawning a duplicate."""
+
+    try:
+        with socket.create_connection((host, port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
 def _stream_logs(name: str, process: subprocess.Popen[str]) -> None:
     """把子进程输出加服务名前缀后转发到当前终端。"""
 
@@ -206,6 +229,10 @@ def main() -> int:
     print("监控工作台：http://127.0.0.1:8001，按 Ctrl+C 统一停止。")
     try:
         for name, command, cwd, env_root in services:
+            port = service_port(name, command, monitor_port=int(os.getenv("MONITOR_WEB_PORT", "8001")))
+            if port is not None and _port_in_use("127.0.0.1", port):
+                print(f"{name} 已在 127.0.0.1:{port} 运行，复用现有服务。")
+                continue
             print(f"启动 {name} ...")
             process = subprocess.Popen(
                 command,

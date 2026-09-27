@@ -19,6 +19,7 @@ class NodeTrace:
             type="node", name=name, node=name, agent=self._node_agent(name),
             event="node_started", task_id=task_id, trace_id=str(state.get("trace_id", "")), state_change={},
             tool_name="", latency=0.0, error="",
+            context={"agent": self._node_agent(name), "node": name, "task_id": task_id, "trace_id": str(state.get("trace_id", ""))},
         )
 
     def finish(self, name: str, state: Mapping[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -33,6 +34,7 @@ class NodeTrace:
             state_change={"changed_keys": sorted(changed), "output_keys": list(payload)},
             tool_name="", latency=perf_counter() - started,
             error="; ".join(str(item) for item in payload.get("errors", []) if item),
+            context={"agent": self._node_agent(name), "node": name, "task_id": task_id, "trace_id": str(state.get("trace_id", ""))},
         )
         return payload
 
@@ -44,6 +46,7 @@ class NodeTrace:
             event=event, task_id=str(state.get("task_id", "")),
             trace_id=str(state.get("trace_id", "")), state_change=dict(payload or {}),
             keys=list((payload or {}).keys()), tool_name="", latency=0.0, error="",
+            context={"agent": "runtime", "node": loop_name, "task_id": str(state.get("task_id", "")), "trace_id": str(state.get("trace_id", ""))},
         )
 
     def runtime_event(self, event: str, state: Mapping[str, Any], payload: Mapping[str, Any] | None = None) -> None:
@@ -57,6 +60,7 @@ class NodeTrace:
             trace_id=str(state.get("trace_id", "")), state_change=values,
             keys=list(values), tool_name=str(values.get("tool") or ""),
             latency=0.0, error=str(values.get("error") or ""),
+            context={"agent": agent, "node": "runtime", "task_id": str(state.get("task_id", "")), "trace_id": str(state.get("trace_id", ""))},
         )
 
     def step_started(self, state: Mapping[str, Any], **payload: Any) -> None:

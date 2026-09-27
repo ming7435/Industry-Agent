@@ -49,7 +49,7 @@ function normalizeDiagnosis(value) {
     summary,
     cause,
     diagnosis: cause,
-    recommendation: cleanDisplayText(source.recommendation || embedded.recommendation),
+    recommendation: cleanDisplayText(embedded.recommendation || source.recommendation),
     nextAction: cleanDisplayText(source.next_action || embedded.next_action),
     severity: cleanDisplayText(source.severity || embedded.severity),
   };
@@ -100,6 +100,25 @@ export function getWorkorderDisplayTitle(order = {}, target = {}) {
     : `${targetName}维修`;
 }
 
+export function buildRepairCompletionPayload({ feedback = "", operator = "", deviceId = "" } = {}) {
+  const normalizedFeedback = text(feedback);
+  const normalizedOperator = text(operator);
+  return {
+    action: "mark_repair_completed",
+    repair_feedback: {
+      feedback: normalizedFeedback,
+      operator: normalizedOperator,
+    },
+    repair_verification: {
+      passed: true,
+      status: "verified",
+      device_id: text(deviceId),
+      operator: normalizedOperator,
+      verified_at: new Date().toISOString(),
+    },
+  };
+}
+
 export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagnosis = {} } = {}) {
   const diagnosisContext = order.diagnosis_context && typeof order.diagnosis_context === "object"
     ? order.diagnosis_context
@@ -111,6 +130,7 @@ export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagno
     deviceId: text(order.device_id),
     assignee: text(order.assignee) || "维修一组",
     status: text(order.status) || "open",
+    machineControl: order.machine_control && typeof order.machine_control === "object" ? order.machine_control : null,
     partName: text(target.part_name) || "待确认故障部件",
     partNo: text(target.part_no) || "待补充",
     system: text(target.system) || "待确认",

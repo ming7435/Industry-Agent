@@ -400,6 +400,99 @@ h2 {
   overflow: hidden;
 }
 
+.device-alert-board {
+  padding: 18px;
+  border-top: 1px solid var(--line);
+  background: #fbfcfd;
+}
+
+.device-alert-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.device-alert-heading h2 {
+  margin-top: 4px;
+  font-size: 18px;
+}
+
+.device-alert-heading > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.device-alert-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.device-alert-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--teal);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.device-alert-card:hover { border-color: #8bc9be; background: #f5fbf9; }
+.device-alert-card.warning { border-left-color: var(--amber); }
+.device-alert-card.alarm,
+.device-alert-card.fault { border-left-color: var(--red); }
+.device-alert-card.idle { border-left-color: #8b9aa2; cursor: default; }
+
+.device-alert-card-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.device-alert-card-top strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-alert-card-top em {
+  margin-left: auto;
+  color: var(--teal);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.device-alert-card.warning .device-alert-card-top em,
+.device-alert-card.alarm .device-alert-card-top em { color: var(--amber); }
+.device-alert-card.fault .device-alert-card-top em { color: var(--red); }
+.device-alert-card.idle .device-alert-card-top em { color: #7d8c93; }
+
+.device-alert-reason {
+  display: block;
+  min-height: 38px;
+  margin-top: 8px;
+  color: #52656f;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.device-alert-card small {
+  display: block;
+  margin-top: 8px;
+  color: #8a989d;
+  font-size: 11px;
+}
+
 .workshop-heading {
   align-items: center;
 }
@@ -740,6 +833,20 @@ h2 {
 .decision-panel {
   padding: 18px;
 }
+
+.decision-reason {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border-left: 3px solid var(--teal);
+  border-radius: 0 8px 8px 0;
+  background: #f2faf7;
+}
+
+.decision-reason.warning,
+.decision-reason.alarm { border-left-color: var(--amber); background: #fff9ed; }
+.decision-reason.fault { border-left-color: var(--red); background: #fff4f3; }
+.decision-reason span { display: block; color: var(--muted); font-size: 12px; }
+.decision-reason strong { display: block; margin-top: 5px; color: var(--ink); line-height: 1.55; }
 
 .panel-heading {
   display: flex;
@@ -1111,6 +1218,13 @@ h2 {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
   margin-top: 16px;
+}
+
+/* Long diagnosis and plan text should flow vertically instead of being
+   forced into equal-width columns with mismatched heights. */
+.diagnosis-content-grid,
+.maintenance-plan-diagnosis {
+  grid-template-columns: 1fr;
 }
 
 .module-panel {
@@ -1637,6 +1751,21 @@ h2 {
   color: var(--red);
 }
 
+.machine-control-result {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--teal);
+  background: #eaf7f3;
+  color: #0b756c;
+  font-size: 12px;
+}
+
+.machine-control-result.is-error {
+  border-left-color: var(--red);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
 .maintenance-plan-panel {
   display: grid;
   gap: 12px;
@@ -1683,7 +1812,7 @@ h2 {
 
 .maintenance-plan-diagnosis {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -1715,7 +1844,7 @@ h2 {
 
 .maintenance-plan-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -2150,6 +2279,12 @@ h2 {
   line-height: 1.7;
 }
 
+.diagnosis-recommendation .section-kicker {
+  color: var(--teal);
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
 .diagnosis-flow-panel {
   margin-top: 18px;
 }
@@ -2162,6 +2297,11 @@ h2 {
 .formatted-text p {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.formatted-text strong {
+  color: var(--teal);
+  font-weight: 750;
 }
 
 .formatted-text h3,
@@ -2299,6 +2439,7 @@ h2 {
 @media (max-width: 1180px) {
   .platform-shell { grid-template-columns: 220px minmax(0, 1fr); }
   .metrics-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .device-alert-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ops-grid,
   .answer-grid { grid-template-columns: 1fr; }
 }
@@ -2342,6 +2483,7 @@ h2 {
   .equipment-grid,
   .detail-grid,
   .check-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .device-alert-grid { grid-template-columns: 1fr; }
   .trend-grid,
   .drawer-metrics { grid-template-columns: 1fr; }
   .maintenance-plan-diagnosis,

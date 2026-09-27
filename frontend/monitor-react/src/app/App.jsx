@@ -4,11 +4,11 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { createEquator300 } from "./equator300.js";
 import "../styles.css";
 import machineImage from "../assets/trak-tc820-machine-transparent.png";
-import { buildMaintenancePlanView, buildWorkorderSheet, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
-import { buildAgentFlow } from "../agentFlow.mjs";
-import { buildDiagnosisView } from "./diagnosisView.mjs";
+import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
+import { buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLatestPipeline } from "./diagnosisView.mjs";
 import { buildReportDisplaySections } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
+import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { cleanDisplayText, cleanEvidenceText, documentBodyOnly, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
@@ -118,6 +118,13 @@ const defaultMachinePositions = [
   { x: 23, y: 46 },
   { x: 68, y: 42 },
   { x: 78, y: 62 },
+];
+
+const knownMachineDefinitions = [
+  { id: "TRAK-TC820LTYSI-001", device_type: "turning_center", name: "TRAK TC820LTYsi 车削中心" },
+  { id: "LNS-QL-SERVO-80-S2-001", device_type: "bar_feeder", name: "LNS QL Servo 80 S2 棒料送料机" },
+  { id: "ELITE-CS612-ROBOT-001", device_type: "industrial_robot", name: "ELITE ROBOTS CS612 六轴协作机器人" },
+  { id: "RENISHAW-EQUATOR300-001", device_type: "equator_gauge", name: "Renishaw Equator 300 比对仪" },
 ];
 
 const ruleLabels = {
@@ -452,7 +459,12 @@ async function request(path, options = {}) {
 
 function normalizeWorkorderResponse(body) {
   if (body?.workorder && typeof body.workorder === "object") {
-    return { ...body.workorder, dispatch_context: body.dispatch_context, candidates: body.candidates };
+    return {
+      ...body.workorder,
+      dispatch_context: body.dispatch_context,
+      candidates: body.candidates,
+      machine_control: body.machine_control,
+    };
   }
   return body;
 }
@@ -483,7 +495,12 @@ function alertSeverity(alertLevel) {
 
 function buildWorkshopMachines(snapshot) {
   const devices = snapshot?.devices?.length ? snapshot.devices : workshopMachines;
-  const mapped = devices.map((device, index) => {
+  const knownIds = new Set(devices.map((device) => String(device.device_id || device.id || "")));
+  const missingDefinitions = knownMachineDefinitions
+    .filter((definition) => !knownIds.has(definition.id))
+    .map((definition) => ({ ...definition, live: false, data_unavailable: true }));
+  const allDevices = [...devices, ...missingDefinitions];
+  const mapped = allDevices.map((device, index) => {
     const id = device.device_id || device.id;
     const fallback = machineFallbacks[id] || {};
     const position = defaultMachinePositions[index % defaultMachinePositions.length];
@@ -500,7 +517,7 @@ function buildWorkshopMachines(snapshot) {
       focus: deviceProfiles[device.device_type || device.type]?.focus || "关键指标与告警状态",
       x: fallback.x ?? device.x ?? position.x,
       y: fallback.y ?? device.y ?? position.y,
-      live: device.live !== false,
+      live: device.live !== false && !device.data_unavailable,
       image: fallback.image || device.image,
       result,
       sample,
@@ -605,7 +622,7 @@ function App() {
   const [activeView, setActiveView] = useState(() => {
     if (typeof window === "undefined") return "monitor";
     const requested = new URLSearchParams(window.location.search).get("view");
-    return ["monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "report"].includes(requested) ? requested : "monitor";
+    return ["monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested) ? requested : "monitor";
   });
   const [ragMessages, setRagMessages] = useState(() => {
     if (typeof window === "undefined") return [];
@@ -634,7 +651,7 @@ function App() {
     if (typeof window === "undefined") return undefined;
     const handleHistoryNavigation = () => {
       const requested = new URLSearchParams(window.location.search).get("view");
-      if (["monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "report"].includes(requested || "")) {
+      if (["monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested || "")) {
         setActiveView(requested);
       } else if (!requested) {
         setActiveView("monitor");
@@ -696,6 +713,7 @@ function App() {
         {!bigScreen && activeView === "maintenance" && <MaintenancePlanWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
+        {!bigScreen && activeView === "logs" && <LogsWorkspace snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "report" && <ReportWorkspace snapshot={snapshot} />}
         {toast && <div className="toast-message" role="status">{toast}</div>}
@@ -715,7 +733,6 @@ function Topbar({ snapshot, runner, onControl, onReset, bigScreen, onToggleBigSc
         <span className="eyebrow">工业运营中台</span>
         <h1>智能制造统一工作台</h1>
         <p className="subline">{deviceLabel}</p>
-        <AgentFlow snapshot={snapshot} />
       </div>
       <div className="toolbar">
         <label className="switch-control" title="开启或暂停自动监测">
@@ -795,6 +812,38 @@ function WorkshopMap({ machines, selectedMachineId, result, onSelectMachine }) {
             ))}
           </div>
         </div>
+      </div>
+      <DeviceAlertBoard machines={machines} onSelectMachine={onSelectMachine} />
+    </section>
+  );
+}
+
+function DeviceAlertBoard({ machines = [], onSelectMachine }) {
+  const liveMachines = machines.filter((machine) => machine.live);
+  const alertMachines = liveMachines.filter((machine) => ["fault", "alarm", "warning"].includes(machineStatus(machine, machine.result)));
+  return (
+    <section className="device-alert-board" aria-label="设备状态与预警">
+      <div className="device-alert-heading">
+        <div><span className="eyebrow">设备监测</span><h2>设备状态与预警</h2></div>
+        <span>{liveMachines.length} 台设备 · {alertMachines.length} 项预警</span>
+      </div>
+      <div className="device-alert-grid">
+        {machines.map((machine) => {
+          const status = machineStatus(machine, machine.result);
+          const sample = machine.result?.current_sample || machine.sample;
+          return (
+            <button
+              className={`device-alert-card ${status}`}
+              key={machine.id}
+              type="button"
+              onClick={() => onSelectMachine(machine.id)}
+            >
+              <span className="device-alert-card-top"><i className={`legend-dot ${status === "normal" ? "normal" : status === "idle" ? "idle" : status}`} /><strong>{machine.name}</strong><em>{machineStatusLabel(status)}</em></span>
+              <span className="device-alert-reason">{machineAlertReason(machine)}</span>
+              <small>{machine.live && sample?.timestamp ? `最近采样 ${formatTime(sample.timestamp)}` : "暂无实时采样"}</small>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
@@ -926,10 +975,12 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     const isSelectedMachine = (id) => id === selectedMachineIdRef.current;
     const updateSelection = (id) => {
       machineHalos.forEach(({ machineId, ring }) => {
-        const fault = ["fault", "alarm"].includes(currentStatusForMachine(machineId));
-        ring.visible = fault || machineId === id;
-        ring.material.color.setHex(fault ? 0xe13b35 : 0x14aa72);
-        ring.material.emissive.setHex(fault ? 0xe13b35 : 0x14aa72);
+        const current = currentStatusForMachine(machineId);
+        const alert = ["fault", "alarm", "warning"].includes(current);
+        const color = current === "fault" ? 0xe13b35 : current === "alarm" ? 0xd27a12 : current === "warning" ? 0xe0a229 : 0x14aa72;
+        ring.visible = alert || machineId === id;
+        ring.material.color.setHex(alert ? color : 0x14aa72);
+        ring.material.emissive.setHex(alert ? color : 0x14aa72);
       });
       selectionEffects.forEach(({ machineId, material, selectedValue, defaultValue, property }) => {
         material[property] = machineId === id ? selectedValue : defaultValue;
@@ -937,7 +988,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     };
     updateSelectionRef.current = updateSelection;
     const isAlertStatus = (localStatus) => {
-      return localStatus === "fault" || localStatus === "alarm";
+      return localStatus === "fault" || localStatus === "alarm" || localStatus === "warning";
     };
     const labelForMachine = (id) => {
       if (id === "EQUATOR300-VISUAL") {
@@ -2111,7 +2162,7 @@ function MachineDetailDrawer({ machine, result, sample, dataSource, history, onC
         ) : sample ? (
           <>
             <MetricsPanel result={result} sample={sample} machine={machine} />
-            <DecisionPanel result={result} />
+            <DecisionPanel result={result} sample={sample} />
             <TrendPanel machine={machine} history={history} />
           </>
         ) : <div className="drawer-no-data"><strong>等待设备采样</strong><p>接入正常后，实时指标与监测判定会显示在这里。</p></div>}
@@ -2239,15 +2290,20 @@ function EquipmentStates({ sample }) {
   );
 }
 
-function DecisionPanel({ result }) {
+function DecisionPanel({ result, sample }) {
   const status = result?.status || "normal";
+  const observations = result?.observations || [];
   return (
     <section className="panel decision-panel">
       <div className="panel-heading">
         <div><span className="eyebrow">监测判定</span><h2>规则引擎</h2></div>
         <span className={`severity-pill ${severityClass(status)}`}>{labelFor(statusLabels, status)}</span>
       </div>
-      <ObservationList observations={result?.observations || []} />
+      <div className={`decision-reason ${severityClass(status)}`}>
+        <span>故障 / 预警原因</span>
+        <strong>{machineAlertReason({ result, sample })}</strong>
+      </div>
+      <ObservationList observations={observations} />
       <div className="threshold-note">
         <span>触发条件</span>
         <strong>关键故障立即触发；普通指标阈值+5秒；间歇故障5分钟内3次；趋势/联合异常</strong>
@@ -2284,40 +2340,8 @@ function PipelineData({ snapshot }) {
 }
 
 
-const agentStatusLabels = {
-  completed: "已完成",
-  running: "运行中",
-  waiting: "等待",
-  error: "异常",
-};
-
-function AgentFlow({ snapshot }) {
-  const agents = buildAgentFlow(snapshot);
-  const completedCount = agents.filter((agent) => agent.status === "completed").length;
-  return (
-    <div className="agent-flow" aria-label="九个核心 Agent 运行流程">
-      <div className="agent-flow-heading">
-        <span>Agent运行流程</span>
-        <em>{completedCount}/9 已完成</em>
-      </div>
-      <div className="agent-flow-track">
-        {agents.map((agent, index) => (
-          <React.Fragment key={agent.id}>
-            <div className={`agent-flow-node ${agent.status}`} title={`${agent.label}：${agent.id === "quality" && agent.status === "waiting" ? "未触发" : agentStatusLabels[agent.status]}`}>
-              <span className="agent-flow-dot" aria-hidden="true" />
-              <span className="agent-flow-name">{agent.label}</span>
-              <small>{agent.id === "quality" && agent.status === "waiting" ? "未触发" : agentStatusLabels[agent.status]}</small>
-            </div>
-            {index < agents.length - 1 && <span className="agent-flow-arrow" aria-hidden="true">›</span>}
-          </React.Fragment>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function DiagnosisWorkspace({ snapshot, sample }) {
-  const view = buildDiagnosisView(snapshot);
+  const view = buildDiagnosisView(snapshot, sample);
   const pipeline = PipelineData({ snapshot });
   const runtime = pipeline.runtime_result || {};
   const status = view.status === "completed" ? "已完成" : view.status === "waiting" ? "等待诊断" : view.status;
@@ -2344,20 +2368,190 @@ function DiagnosisWorkspace({ snapshot, sample }) {
           {view.evidence.length ? <StepList steps={view.evidence} /> : <div className="empty-state">等待 Runtime 收集证据</div>}
         </section>
       </div>
-      <section className="panel module-panel diagnosis-flow-panel">
-        <div className="panel-heading"><div><span className="eyebrow">Runtime Trace</span><h2>诊断流程</h2></div></div>
-        <AgentFlow snapshot={snapshot} />
-      </section>
     </section>
   );
 }
 
+function machineAlertReason(machine) {
+  const result = machine?.result;
+  const sample = result?.current_sample || machine?.sample;
+  const observations = Array.isArray(result?.observations) ? result.observations : [];
+  if (observations.length) {
+    return observations
+      .slice(0, 3)
+      .map((item) => `${item.label || observationLabel(item)}：${item.message || "检测值异常"}`)
+      .join("；");
+  }
+  if (sample?.alarm_code) return `${sample.alarm_label || "设备报警"}（报警 ${sample.alarm_code}）`;
+  if (result?.status === "fault") return "设备当前状态不可运行";
+  if (machine?.live === false || (!machine?.live && !sample && !result)) return "未接入实时采集，无法判断故障原因";
+  return "当前未检测到异常";
+}
+
 function preferredWorkorderId(items, sample, snapshot) {
   const deviceId = String(sample?.device_id || snapshot?.device_id || "").trim();
-  const alarmCode = String(sample?.alarm_code || snapshot?.latest_result?.current_sample?.alarm_code || "").trim();
+  const alarmCode = String(
+    sample?.alarm_code
+      || snapshot?.latest_result?.current_sample?.alarm_code
+      || snapshot?.diagnosis?.latest?.alarm_code
+      || "",
+  ).trim();
   const exact = items.find((item) => String(item.device_id || "") === deviceId && alarmCode && String(item.alarm_code || "") === alarmCode);
   const sameDevice = items.find((item) => String(item.device_id || "") === deviceId);
-  return exact?.workorder_id || sameDevice?.workorder_id || items[0]?.workorder_id || "";
+  // When an alarm is present, never silently fall back to another alarm's
+  // workorder. That makes a historical order look like the current incident.
+  if (alarmCode) return exact?.workorder_id || "";
+  return sameDevice?.workorder_id || items[0]?.workorder_id || "";
+}
+
+function LogsWorkspace({ snapshot }) {
+  const [runRecords, setRunRecords] = useState([]);
+  const [indexRecords, setIndexRecords] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [filter, setFilter] = useState("all");
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [selectedTraceId, setSelectedTraceId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [error, setError] = useState("");
+  const snapshotRef = useRef(snapshot);
+
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
+  async function loadTraceIndex() {
+    setLoading(true);
+    try {
+      const body = await request("/api/runs?limit=5000");
+      const nextRuns = normalizeRunResponse(body);
+      setRunRecords(nextRuns);
+      setSelectedRunId((current) => current && nextRuns.some((run) => run.run_id === current)
+        ? current
+        : nextRuns[0]?.run_id || "");
+      const traceBody = await request("/api/trace?limit=5000&summary=true");
+      setIndexRecords(normalizeTraceResponse(traceBody));
+      setError("");
+    } catch (requestError) {
+      const fallback = normalizeTraceResponse(snapshotRef.current?.diagnosis?.pipeline?.trace);
+      setRunRecords([]);
+      setIndexRecords(fallback);
+      setRecords(fallback);
+      setError(requestError.message || "日志服务暂不可用");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadTraceDetails(traceId, run = null) {
+    const traceIds = Array.isArray(run?.trace_ids) && run.trace_ids.length ? run.trace_ids : [traceId];
+    if (!traceIds.some((value) => value && !String(value).startsWith("event-"))) return;
+    setLoadingDetails(true);
+    try {
+      const bodies = await Promise.all(traceIds
+        .filter((value) => value && !String(value).startsWith("event-"))
+        .map((value) => request(`/api/trace?trace_id=${encodeURIComponent(value)}&limit=5000`)));
+      setRecords(bodies.flatMap((body) => normalizeTraceResponse(body)));
+      setError("");
+    } catch (requestError) {
+      setError(requestError.message || "完整日志读取失败");
+    } finally {
+      setLoadingDetails(false);
+    }
+  }
+
+  useEffect(() => {
+    loadTraceIndex();
+    const timer = window.setInterval(loadTraceIndex, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const selectedRun = runRecords.find((run) => run.run_id === selectedRunId) || null;
+  const selectedTraceIdsKey = (Array.isArray(selectedRun?.trace_ids) ? selectedRun.trace_ids.join("|") : selectedRun?.trace_id) || "";
+  const selectedRunEventCount = selectedRun?.event_count || 0;
+
+  useEffect(() => {
+    const traceId = selectedRun?.trace_id || "";
+    setSelectedTraceId(traceId);
+    if (traceId) loadTraceDetails(traceId, selectedRun);
+  }, [selectedRunId, selectedTraceIdsKey, selectedRunEventCount]);
+
+  const filteredRecords = records.filter((record) => {
+    if (selectedRun && !runEventMatches(selectedRun, record)) return false;
+    if (filter === "all") return true;
+    if (filter === "error") return Boolean(record.error) || /error|failed|timeout/i.test(String(record.event || ""));
+    return String(record.type || "").toLowerCase() === filter;
+  }).slice().reverse();
+  const traceCount = runRecords.length;
+  const qualityRunCount = runRecords.filter((run) => run.run_type === "quality").length;
+  const toolCount = records.filter((record) => record.type === "tool" || record.tool_name || record.tool).length;
+  const errorCount = records.filter((record) => Boolean(record.error) || /error|failed|timeout/i.test(String(record.event || ""))).length;
+  const agentInvocations = useMemo(() => buildAgentInvocations(records), [records]);
+  const statusText = (status) => ({ completed: "已完成", running: "进行中", error: "异常", pending: "待执行" }[status] || status || "待执行");
+
+  return (
+    <section className="workspace-view active module-board logs-workspace" aria-label="日志系统">
+      <ModuleHero eyebrow="Runtime Logs" title="日志系统" text="一次完整故障闭环只形成一条运行记录：监控 → 诊断 → 维修方案 → 工单派发 → 报告中心 → 经验总结；质检始终独立成单。" action={<button className="button" type="button" onClick={loadTraceIndex} disabled={loading}>{loading ? "刷新中…" : "刷新运行记录"}</button>} />
+      {error && <div className="workspace-notice logs-notice" role="status">日志接口暂不可用，当前显示快照中的最近记录：{error}</div>}
+      <div className="module-grid logs-stat-grid">
+        <ModuleStat label="事件总数" value={records.length} text="Trace Recorder 保留记录" />
+        <ModuleStat label="运行记录" value={traceCount} text="故障闭环与普通任务" />
+        <ModuleStat label="独立质检" value={qualityRunCount} text="不会并入故障闭环" />
+        <ModuleStat label="工具调用" value={toolCount} text="含输入参数与返回体" />
+        <ModuleStat label="异常事件" value={errorCount} text={errorCount ? "需要进一步检查" : "当前没有错误记录"} />
+      </div>
+      <section className="panel module-panel logs-panel logs-runs-panel" aria-label="运行记录">
+        <div className="panel-heading logs-panel-heading"><div><span className="eyebrow">Lifecycle Runs</span><h2>运行记录</h2></div><span className="logs-run-hint">故障从监控开始，到报告与经验总结结束</span></div>
+        {runRecords.length ? <div className="logs-runs-list">{runRecords.map((run) => <button key={run.run_id} type="button" className={`logs-run-card ${selectedRunId === run.run_id ? "is-selected" : ""}`} onClick={() => setSelectedRunId(run.run_id)}>
+          <div className="logs-run-card-head"><strong>{run.label || (run.run_type === "quality" ? "质检运行" : "运行记录")}</strong><span className={`logs-run-status logs-run-${run.status}`}>{statusText(run.status)}</span></div>
+          <div className="logs-run-card-title">{run.device_id || "未绑定设备"}{run.alarm_code ? ` · 报警 ${run.alarm_code}` : ""}</div>
+          <div className="logs-run-card-meta"><span>{run.started_at ? formatTime(run.started_at) : "--"}</span><span>{run.event_count || 0} 个事件</span><span>{run.error_count || 0} 个异常</span></div>
+          <div className="logs-run-phases">{(run.phases || []).map((phase) => <span key={phase.id} className={`logs-phase logs-phase-${phase.status}`}><i />{phase.label} · {statusText(phase.status)}</span>)}</div>
+          <div className="logs-run-id">{run.run_id}</div>
+        </button>)}</div> : <div className="empty-state logs-empty">暂无运行记录；监控确认故障或执行质检后，这里会生成生命周期记录。</div>}
+      </section>
+      <section className="panel module-panel logs-panel" aria-label="执行日志">
+        <div className="panel-heading logs-panel-heading">
+          <div><span className="eyebrow">Execution Timeline</span><h2>执行明细</h2></div>
+          <div className="logs-filter" aria-label="日志筛选">
+            <select className="select-input logs-trace-select" value={selectedRunId} onChange={(event) => setSelectedRunId(event.target.value)} aria-label="按运行记录筛选"><option value="">选择运行记录</option>{runRecords.map((run) => <option key={run.run_id} value={run.run_id}>{run.label || "运行记录"} · {run.run_id}</option>)}</select>
+            {[['all', '全部'], ['agent', 'Agent'], ['tool', '工具'], ['runtime', '运行时'], ['error', '异常']].map(([value, label]) => <button key={value} type="button" className={`logs-filter-button ${filter === value ? "is-active" : ""}`} onClick={() => setFilter(value)}>{label}</button>)}
+          </div>
+        </div>
+        {!loadingDetails && <section className="agent-invocations" aria-label="Agent调用明细">
+          <div className="agent-invocations-heading"><div><span className="eyebrow">Agent Invocation I/O</span><h3>Agent 调用明细</h3></div><span className="logs-run-hint">每次调用独立编号，完整展示输入 → 上下文 → 工具 → 输出</span></div>
+          {agentInvocations.length ? <div className="agent-invocation-list">{agentInvocations.map((invocation) => <article className={`agent-invocation-card agent-invocation-${invocation.status === "异常" ? "error" : invocation.status === "执行中" ? "running" : "done"}`} key={invocation.id}>
+            <div className="agent-invocation-head">
+              <div><span className="agent-invocation-kicker">第 {invocation.invocation_no} 次 Agent 调用</span><h4>{invocation.agent}</h4></div>
+              <span className="log-event-status">{invocation.status}</span>
+            </div>
+            <div className="agent-invocation-meta"><span>agent_run_id：{invocation.agent_run_id}</span><span>Trace：{invocation.trace_id || "--"}</span><span>Task：{invocation.task_id || "--"}</span><span>开始：{invocation.started_at ? formatTime(invocation.started_at) : "--"}</span><span>结束：{invocation.ended_at ? formatTime(invocation.ended_at) : "--"}</span><span>耗时：{invocation.duration}</span><span>事件：{invocation.event_count}</span></div>
+            {invocation.error && <div className="log-event-error agent-invocation-error-text">错误：{invocation.error}</div>}
+            <div className="agent-io-stack">
+              <section className="agent-io-block"><h5>输入（Input）</h5><pre className="log-json">{formatTraceValue(invocation.input)}</pre></section>
+              <section className="agent-io-block"><h5>上下文（Context）</h5><pre className="log-json">{formatTraceValue(invocation.context)}</pre></section>
+              <section className="agent-io-block agent-tool-chain"><h5>工具调用链（Tool Calls） · {invocation.tool_calls.length} 次</h5>{invocation.tool_calls.length ? <div className="agent-tool-list">{invocation.tool_calls.map((tool) => <section className="agent-tool-call" key={`${invocation.id}-${tool.call_no}-${tool.tool_name}`}><div className="agent-tool-head"><strong>#{tool.call_no} {tool.tool_name}</strong><span>{tool.status}{tool.mcp_server ? ` · MCP ${tool.mcp_server}` : ""} · {tool.duration}</span></div><div className="agent-tool-meta"><span>开始：{tool.started_at ? formatTime(tool.started_at) : "--"}</span><span>结束：{tool.ended_at ? formatTime(tool.ended_at) : "--"}</span><span>事件：{tool.event_count}</span></div><div className="agent-tool-io"><div><h6>工具输入</h6><pre className="log-json">{formatTraceValue(tool.input)}</pre></div><div><h6>工具输出</h6><pre className="log-json">{formatTraceValue(tool.output)}</pre></div></div>{tool.error && <div className="log-event-error">错误：{tool.error}</div>}</section>)}</div> : <div className="agent-io-empty">本次 Agent 没有记录工具调用。</div>}</section>
+              <section className="agent-io-block"><h5>输出（Output）</h5><pre className="log-json">{formatTraceValue(invocation.output)}</pre></section>
+            </div>
+          </article>)}</div> : <div className="empty-state logs-empty">当前运行记录没有 Agent 生命周期事件；请刷新或先执行一次监控→诊断→维修方案→工单闭环。</div>}
+        </section>}
+        <div className="logs-subsection-heading"><span className="eyebrow">Raw Events</span><h3>底层事件明细</h3><span>保留每条原始记录，便于核对调用顺序与返回体</span></div>
+        {loadingDetails ? <div className="empty-state logs-empty">正在加载所选执行链路的完整返回体…</div> : filteredRecords.length ? <div className="logs-list">{filteredRecords.map((record, index) => {
+          const summary = traceEventSummary(record);
+          const identity = traceIdentity(record, index);
+          return <article className={`log-event log-event-${summary.status === "异常" ? "error" : summary.status === "执行中" ? "running" : "done"}`} key={`${identity}-${index}`}>
+            <div className="log-event-head">
+              <div className="log-event-title"><span className="log-event-index">{filteredRecords.length - index}</span><div><strong>{summary.label}</strong><h3>{summary.operation}</h3></div></div>
+              <span className="log-event-status">{summary.status}</span>
+            </div>
+            <div className="log-event-meta"><span>{record.timestamp ? formatTime(record.timestamp) : "--"}</span><span>类型：{record.type || "--"}</span><span>事件：{record.event || "--"}</span><span>Trace：{record.trace_id || "--"}</span><span>Task：{record.task_id || "--"}</span>{summary.server && <span>MCP：{summary.server}</span>}{summary.duration !== "--" && <span>耗时：{summary.duration}</span>}</div>
+            {record.error && <div className="log-event-error">错误：{record.error}</div>}
+            <div className="log-event-details">{traceDetailSections(record).map((detail) => <details key={detail.key} className="log-detail" open={detail.key === "operation"}><summary>{detail.title}</summary><pre className="log-json">{detail.value}</pre></details>)}</div>
+          </article>;
+        })}</div> : <div className="empty-state logs-empty">暂无执行日志；触发一次诊断、知识检索或工单操作后，这里会显示完整执行链路。</div>}
+      </section>
+    </section>
+  );
 }
 
 function ReportWorkspace({ snapshot }) {
@@ -2433,18 +2627,26 @@ function MaintenancePlanWorkspace({ snapshot, sample }) {
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
-  const latestDiagnosis = snapshot?.diagnosis?.latest || {};
-  const pipelinePlan = snapshot?.diagnosis?.pipeline?.maintenance_plan || {};
-  const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
+  const candidateDiagnosis = getLatestDiagnosis(snapshot, sample);
+  const diagnosisIsCurrent = diagnosisMatchesCurrent(snapshot, sample, candidateDiagnosis);
+  const latestDiagnosis = diagnosisIsCurrent ? candidateDiagnosis : {};
+  const pipeline = diagnosisIsCurrent ? getLatestPipeline(snapshot, sample) : {};
+  const pipelinePlan = pipeline?.maintenance_plan || {};
   const currentAlarm = String(sample?.alarm_code || latestDiagnosis?.alarm_code || "").trim();
+  const currentDevice = String(sample?.device_id || snapshot?.device_id || "").trim();
+  const currentFaultActive = Boolean(sample?.alarm_code) && ["alarm", "fault", "warning"].includes(String(sample?.status || "").toLowerCase());
+  const hasCurrentIncident = Boolean(currentAlarm || Object.keys(latestDiagnosis).length);
+  const selectedOrder = orders.find((order) => order.workorder_id === selectedId)
+    || (!hasCurrentIncident ? orders[0] : undefined);
   const hasCurrentDiagnosis = Boolean(selectedOrder)
-    && String(selectedOrder.device_id || "") === String(sample?.device_id || snapshot?.device_id || "")
+    && String(selectedOrder.device_id || "") === currentDevice
     && (!currentAlarm || String(selectedOrder.alarm_code || "") === currentAlarm)
     && Object.keys(latestDiagnosis).length > 0;
+  const showCurrentPipeline = !selectedOrder && Object.keys(latestDiagnosis).length > 0 && Boolean(pipelinePlan.plan_id || pipelinePlan.repair_steps?.length);
   const plan = buildMaintenancePlanView({
-    order: selectedOrder || {},
-    plan: hasCurrentDiagnosis ? pipelinePlan : {},
-    diagnosis: hasCurrentDiagnosis ? latestDiagnosis : {},
+    order: selectedOrder || { device_id: currentDevice, alarm_code: currentAlarm },
+    plan: hasCurrentDiagnosis || showCurrentPipeline ? pipelinePlan : {},
+    diagnosis: hasCurrentDiagnosis || showCurrentPipeline ? latestDiagnosis : {},
   });
 
   useEffect(() => {
@@ -2476,7 +2678,8 @@ function MaintenancePlanWorkspace({ snapshot, sample }) {
         <div className="workorder-queue-heading"><div><span className="eyebrow">方案关联</span><h2>选择工单查看维修方案</h2></div><span>{orders.length} 条记录</span></div>
         {orders.length ? <div className="workorder-queue-list">{orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}><span><strong>{getWorkorderDisplayTitle(order, order.repair_target)}</strong><small>{order.workorder_id} · {order.device_id}</small></span><em>{labelFor(workorderStatusLabels, order.status)}</em></button>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title="暂无关联工单" text="完成诊断并生成工单后，维修方案会在这里显示。" />}
       </section>
-      {selectedOrder && <MaintenancePlanPanel plan={plan} hasCurrentDiagnosis={hasCurrentDiagnosis} />}
+      {hasCurrentIncident && !selectedOrder && <div className="workspace-notice" role="status">{currentFaultActive ? `当前报警 ${currentAlarm}` : `最新诊断报警 ${currentAlarm}`} 尚未关联工单；下方显示的是诊断阶段生成的维修方案，请先完成工单派发。</div>}
+      {(selectedOrder || showCurrentPipeline) && <MaintenancePlanPanel plan={plan} hasCurrentDiagnosis={hasCurrentDiagnosis || showCurrentPipeline} />}
     </section>
   );
 }
@@ -2487,9 +2690,8 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   const [assignee, setAssignee] = useState("维修一组");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const latestDiagnosis = snapshot?.diagnosis?.latest || {};
-  const maintenancePlan = snapshot?.diagnosis?.pipeline?.maintenance_plan || {};
-  const selectedOrder = orders.find((order) => order.workorder_id === selectedId) || orders[0];
+  const candidateDiagnosis = getLatestDiagnosis(snapshot, sample);
+  const latestDiagnosis = diagnosisMatchesCurrent(snapshot, sample, candidateDiagnosis) ? candidateDiagnosis : {};
   const liveSample = sample
     || snapshot?.latest_result?.current_sample
     || snapshot?.devices?.find((device) => device.device_id === snapshot?.device_id)?.current_sample
@@ -2497,6 +2699,10 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   const currentFaultCode = String(liveSample?.alarm_code || "").trim();
   const currentFaultStatus = String(liveSample?.status || "").toLowerCase();
   const currentFaultActive = Boolean(currentFaultCode) && ["alarm", "fault", "warning"].includes(currentFaultStatus);
+  const currentIncidentCode = currentFaultCode || String(latestDiagnosis?.alarm_code || "").trim();
+  const hasCurrentIncident = Boolean(currentIncidentCode);
+  const selectedOrder = orders.find((order) => order.workorder_id === selectedId)
+    || (!hasCurrentIncident ? orders[0] : undefined);
 
   async function loadOrders() {
     try {
@@ -2557,7 +2763,11 @@ function WorkorderView({ snapshot, sample, onClosed }) {
     if (!selectedOrder) return;
     setBusy(true);
     try {
-      const action = status === "closed" ? "close" : "update";
+      const action = status === "closed"
+        ? "close"
+        : status === "completed"
+          ? "mark_repair_completed"
+          : "update";
       const response = await request(`/api/workorders/${selectedOrder.workorder_id}/action`, {
         method: "POST",
         body: JSON.stringify({ action, status, assignee, ...fields }),
@@ -2580,7 +2790,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
       await request(`/api/workorders/${encodeURIComponent(order.workorder_id)}`, { method: "DELETE" });
       const remaining = orders.filter((item) => item.workorder_id !== order.workorder_id);
       setOrders(remaining);
-      setSelectedId(remaining[0]?.workorder_id || "");
+      setSelectedId(preferredWorkorderId(remaining, sample, snapshot));
       setError("");
     } catch (err) {
       setError(err.message);
@@ -2606,11 +2816,11 @@ function WorkorderView({ snapshot, sample, onClosed }) {
           </div>
         ) : <div className="workorder-queue-empty">暂无工单；监控发现异常后会自动生成，或从当前故障创建工单。</div>}
       </section>
+      {hasCurrentIncident && !selectedOrder && <div className="workspace-notice" role="status">{currentFaultActive ? `当前报警 ${currentIncidentCode}` : `最新诊断报警 ${currentIncidentCode}`} 尚未关联工单；列表中的记录为历史工单，请先完成工单派发。</div>}
       <WorkorderDetail
         order={selectedOrder || null}
         sample={sample}
         diagnosis={latestDiagnosis}
-        plan={maintenancePlan}
         busy={busy}
         error={error}
         onUpdate={updateOrder}
@@ -2620,7 +2830,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   );
 }
 
-function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error, onUpdate, onDelete }) {
+function WorkorderDetail({ order, sample, diagnosis = {}, busy, error, onUpdate, onDelete }) {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [order?.workorder_id]);
@@ -2642,11 +2852,9 @@ function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error
   const hasCurrentDiagnosis = sameDevice && sameAlarm;
   const orderDiagnosis = order.diagnosis_context && typeof order.diagnosis_context === "object" ? order.diagnosis_context : {};
   const matchedDiagnosis = hasCurrentDiagnosis ? diagnosis : orderDiagnosis;
-  const matchedPlan = hasCurrentDiagnosis ? plan : {};
   const matchedSample = String(sample?.device_id || "") === String(order.device_id || "") && String(sample?.alarm_code || "") === String(order.alarm_code || "") ? sample : {};
   const target = resolveRepairTarget(order, matchedSample);
-  const maintenancePlanView = buildMaintenancePlanView({ order, plan: matchedPlan, diagnosis: matchedDiagnosis });
-  const sheet = buildWorkorderSheet({ order, target, plan: matchedPlan, diagnosis: matchedDiagnosis });
+  const sheet = buildWorkorderSheet({ order, target, diagnosis: matchedDiagnosis });
   const statusLabel = labelFor(workorderStatusLabels, order.status);
   return (
     <section className="workorder-detail-page">
@@ -2659,7 +2867,6 @@ function WorkorderDetail({ order, sample, diagnosis = {}, plan = {}, busy, error
         <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy} onClick={() => onDelete?.(order)}>删除工单</button></div>
       </header>
 
-      <MaintenancePlanPanel plan={maintenancePlanView} hasCurrentDiagnosis={hasCurrentDiagnosis} />
       <div className="workorder-bigscreen-grid cad-only">
         <RepairCadPanel order={order} target={target} />
       </div>
@@ -2760,9 +2967,21 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
           <label htmlFor="repair-feedback">处理说明</label>
           <textarea id="repair-feedback" value={repairFeedback} onChange={(event) => setRepairFeedback(event.target.value)} placeholder="填写处理结果、复测数据或未解决原因" disabled={isDone} />
           {error && <div className="inline-error">{error}</div>}
+          {sheet.machineControl && (
+            <div className={`machine-control-result ${sheet.machineControl.accepted ? "is-ok" : "is-error"}`} role="status">
+              {sheet.machineControl.accepted
+                ? "维修验证通过，设备已收到恢复运行指令。"
+                : `维修已完成，但设备未启动：${sheet.machineControl.error || "控制接口未确认"}`}
+            </div>
+          )}
           <div className="sheet-actions">
             <button className="button" type="button" disabled={busy || isStarted} onClick={() => onUpdate("in_progress")}>{busy ? "处理中" : "开始处理"}</button>
-            <button className="button primary" type="button" disabled={busy || isDone || !repairFeedback.trim()} onClick={() => onUpdate("completed", { repair_feedback: { feedback: repairFeedback.trim(), operator: sheet.assignee } })}>提交结果</button>
+            <button
+              className="button primary"
+              type="button"
+              disabled={busy || isDone || !repairFeedback.trim()}
+              onClick={() => onUpdate("completed", buildRepairCompletionPayload({ feedback: repairFeedback, operator: sheet.assignee, deviceId: sheet.deviceId }))}
+            >提交结果</button>
           </div>
         </section>
       </div>

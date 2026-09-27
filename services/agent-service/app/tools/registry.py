@@ -515,6 +515,10 @@ class ToolRegistry:
             task_id = str(execution_context["task_id"])
         if execution_context.get("trace_id"):
             trace_id = str(execution_context["trace_id"])
+        # Keep the effective runtime context beside every tool event so the
+        # log viewer can explain not only what was called, but why and under
+        # which device/agent/step scope it was called.
+        trace_context = dict(execution_context)
         allowed_tools = execution_context.get("allowed_tools")
         allowed = {str(item) for item in allowed_tools or [] if str(item).strip()}
         guard_error = self._guard_error(name, input_payload, execution_context, allowed)
@@ -532,7 +536,7 @@ class ToolRegistry:
                     type="tool", name=name, event="tool_guard", tool=name,
                     tool_name=name, mcp_server=server, arguments=input_payload,
                     output=None, execution_time=0.0, error=guard_payload["reason"],
-                    task_id=task_id, trace_id=trace_id, **guard_payload,
+                    task_id=task_id, trace_id=trace_id, context=trace_context, **guard_payload,
                 )
             raise PermissionError("tool %s rejected by shared guard: %s" % (name, guard_error))
         if self.trace:
@@ -544,12 +548,14 @@ class ToolRegistry:
                 agent=str(execution_context.get("agent") or ""),
                 skill=str(execution_context.get("skill") or ""),
                 step=str(execution_context.get("step") or ""),
+                context=trace_context,
             )
         if self.trace:
             self.trace.record(
                 type="tool", name=name, event="tool_started", tool=name, tool_name=name,
                 mcp_server=server, arguments=input_payload, input=input_payload,
                 output=None, execution_time=0.0, error="", task_id=task_id, trace_id=trace_id,
+                context=trace_context,
             )
         try:
             if server == "cad" and not self.cad_base_url and not self._cad_fallback_allowed():
@@ -570,7 +576,7 @@ class ToolRegistry:
                         type="tool", name=name, event="tool_error", tool=name, tool_name=name,
                         mcp_server=server, arguments=input_payload, input=input_payload,
                         output=None, execution_time=perf_counter() - started, error=str(error),
-                        task_id=task_id, trace_id=trace_id,
+                        task_id=task_id, trace_id=trace_id, context=trace_context,
                     )
                 raise
         observation = self._normalize_observation(name, result, execution_context)
@@ -582,25 +588,26 @@ class ToolRegistry:
                 agent=str(execution_context.get("agent") or ""),
                 skill=str(execution_context.get("skill") or ""),
                 step=str(execution_context.get("step") or ""),
+                context=trace_context,
             )
             self.trace.record(
                 type="runtime", name=name, event="observation_added", tool=name, tool_name=name,
                 mcp_server=server, state_change={"observation": observation},
                 keys=["observation"], execution_time=perf_counter() - started,
-                error="", task_id=task_id, trace_id=trace_id,
+                error="", task_id=task_id, trace_id=trace_id, context=trace_context,
             )
             if observation.get("evidence"):
                 self.trace.record(
                     type="runtime", name=name, event="evidence_added", tool=name, tool_name=name,
                     mcp_server=server, state_change={"evidence": observation["evidence"]},
                     keys=["evidence"], execution_time=perf_counter() - started,
-                    error="", task_id=task_id, trace_id=trace_id,
+                    error="", task_id=task_id, trace_id=trace_id, context=trace_context,
                 )
             self.trace.record(
                 type="tool", name=name, event="tool_completed", tool=name, tool_name=name,
                 mcp_server=server, arguments=input_payload, input=input_payload,
                 output=result, execution_time=perf_counter() - started, error="",
-                task_id=task_id, trace_id=trace_id,
+                task_id=task_id, trace_id=trace_id, context=trace_context,
             )
         return result
 

@@ -67,6 +67,45 @@ class FactoryApiClient:
             raise FactoryApiError("factory devices response must be a JSON array")
         return [item for item in result if isinstance(item, dict)]
 
+    def control_device(self, device_id: str, action: str, reason: str = "") -> Dict[str, Any]:
+        """Send an explicit start/stop command to one factory device.
+
+        The factory service is the source of truth for whether the command was
+        accepted.  This method never treats a transport response as a
+        successful control action unless the response is a JSON object with
+        ``ok`` set by the factory endpoint.
+        """
+
+        payload = json.dumps(
+            {"action": str(action or "").strip().lower(), "reason": str(reason or "")},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        request = Request(
+            "%s/api/devices/%s/control" % (self.base_url, str(device_id or "").strip()),
+            data=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                body = response.read().decode("utf-8")
+        except (HTTPError, URLError, TimeoutError) as error:
+            raise FactoryApiError("failed to control factory device: %s" % error) from error
+        try:
+            result = json.loads(body)
+        except json.JSONDecodeError as error:
+            raise FactoryApiError("factory control response is not valid JSON") from error
+        if not isinstance(result, dict):
+            raise FactoryApiError("factory control response must be a JSON object")
+        if result.get("ok") is not True:
+            raise FactoryApiError(
+                "factory control was not accepted: %s" % (result.get("error") or "unknown_error")
+            )
+        return result
+
 
 class FactorySnapshotProvider:
     """把工厂快照转换为监控器使用的 ``DeviceSample``。"""

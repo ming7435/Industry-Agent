@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Mapping
 from pathlib import Path
 
 _load_dotenv: Callable[..., Any] | None
@@ -21,6 +21,7 @@ from app.api.schemas.quality import PartQualityRequest, QualityAppealRequest, Qu
 from app.api.schemas.rag import RAGIngestRequest
 from app.api.schemas.workorder import RepairFeedbackRequest, WorkOrderActionRequest, WorkOrderCreateRequest
 from app.graph import AgentOrchestrator, build_orchestrator
+from app.harness.runs import build_run_records
 from app.runtime.event_store import EventResultStore
 
 
@@ -118,6 +119,25 @@ def compact_question_response(value: Any) -> Dict[str, Any]:
     return result
 
 
+_TRACE_SUMMARY_FIELDS = (
+    "timestamp", "type", "name", "node", "agent", "event", "task_id", "trace_id",
+    "tool_name", "tool", "mcp_server", "latency", "latency_ms", "execution_time",
+    "elapsed_ms", "error", "allowed", "step", "skill", "keys",
+)
+
+
+def compact_trace_summary(records: Any) -> list[Dict[str, Any]]:
+    """Return a cheap trace index; full payloads remain available by trace_id."""
+
+    if not isinstance(records, list):
+        return []
+    return [
+        {key: item[key] for key in _TRACE_SUMMARY_FIELDS if key in item}
+        for item in records
+        if isinstance(item, Mapping)
+    ]
+
+
 def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     app = FastAPI(title="Industrial Maintenance Agent Service", version="1.0.0")
     app.add_middleware(
@@ -170,8 +190,18 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/trace", deprecated=True)
     @app.get("/api/v1/trace")
-    def trace(trace_id: str | None = None, task_id: str | None = None, limit: int = 100) -> Dict[str, Any]:
-        return {"trace": runtime.container.trace.list(trace_id=trace_id, task_id=task_id, limit=max(1, min(limit, 5000)))}
+    def trace(trace_id: str | None = None, task_id: str | None = None, limit: int = 100, summary: bool = False) -> Dict[str, Any]:
+        records = runtime.container.trace.list(trace_id=trace_id, task_id=task_id, limit=max(1, min(limit, 5000)))
+        return {"trace": compact_trace_summary(records) if summary else records}
+
+    @app.get("/api/runs", deprecated=True)
+    @app.get("/api/v1/runs")
+    def runs(limit: int = 5000) -> Dict[str, Any]:
+        """Return one record per fault lifecycle; quality runs stay independent."""
+
+        records = runtime.container.trace.list(limit=max(1, min(limit, 5000)))
+        items = build_run_records(records)
+        return {"runs": items, "count": len(items)}
 
     @app.get("/api/v1/runtime/approvals")
     def runtime_approvals(status: str = "") -> Dict[str, Any]:

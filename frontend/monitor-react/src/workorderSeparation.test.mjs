@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildMaintenancePlanView, buildWorkorderSheet } from "./workorderSheet.mjs";
+import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet } from "./workorderSheet.mjs";
 
 test("frontend separates maintenance plan fields from the WorkOrder sheet", () => {
   const order = {
@@ -54,4 +54,21 @@ test("frontend removes embedded model JSON and retrieval table fragments", () =>
   assert.equal(plan.diagnosis.cause, "优先检查冷却系统");
   assert.deepEqual(plan.steps, ["检查冷却泵"]);
   assert.equal(sheet.title, "冷却泵维修");
+});
+
+test("repair completion sends a verified lifecycle action instead of a generic update", () => {
+  const payload = buildRepairCompletionPayload({
+    feedback: "更换冷却泵并复测正常",
+    operator: "维修一组",
+    deviceId: "MACHINE-1",
+  });
+
+  assert.equal(payload.action, "mark_repair_completed");
+  assert.deepEqual(payload.repair_feedback, {
+    feedback: "更换冷却泵并复测正常",
+    operator: "维修一组",
+  });
+  assert.equal(payload.repair_verification.passed, true);
+  assert.equal(payload.repair_verification.device_id, "MACHINE-1");
+  assert.equal(typeof payload.repair_verification.verified_at, "string");
 });

@@ -11,6 +11,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
+from time import monotonic
 from typing import Any, Dict, List, Mapping, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -203,6 +204,7 @@ from app.monitor import (  # noqa: E402，路径注入后再导入本地应用�
     FactorySnapshotProvider,
     MonitorRunner,
 )
+from app.monitor.control_policy import result_requires_emergency_stop
 
 
 class MonitorWebState:
@@ -230,6 +232,7 @@ class MonitorWebState:
         self.result_count = 0
         self.alarm_event_count = 0
         self.alarm_event_counts: Dict[str, int] = {}
+        self.machine_controls: Dict[str, Any] = {}
         self.diagnosis_task_count = 0
         self._last_alarm_codes: Dict[str, Optional[str]] = {}
         self.trigger_history = deque(maxlen=30)
@@ -239,6 +242,13 @@ class MonitorWebState:
         )
         self.latest_diagnosis: Optional[Dict[str, Any]] = None
         self.latest_pipeline: Optional[Dict[str, Any]] = None
+        self.latest_diagnoses_by_device: Dict[str, Dict[str, Any]] = {}
+        self.latest_pipelines_by_device: Dict[str, Dict[str, Any]] = {}
+        self._last_device_discovery = 0.0
+        self._device_discovery_interval = max(
+            1.0,
+            float(os.getenv("MONITOR_DEVICE_DISCOVERY_SECONDS", "5")),
+        )
         self.diagnosis_history = deque(maxlen=30)
         self.diagnosis_pending = 0
         self._diagnosis_generation = 0
@@ -281,7 +291,42 @@ class MonitorWebState:
     def _read_all_samples(self):
         """读取当前接入的全部设备采样。"""
 
-        return [self.providers[device_id].read() for device_id in self.device_ids]
+        self._refresh_devices()
+        with self.lock:
+            providers = [self.providers[device_id] for device_id in self.device_ids]
+        return [provider.read() for provider in providers]
+
+    def _refresh_devices(self, force: bool = False) -> None:
+        """周期性重新发现工厂设备，避免服务启动过早时永久只监控回退设备。"""
+
+        now = monotonic()
+        if not force and now - self._last_device_discovery < self._device_discovery_interval:
+            return
+        self._last_device_discovery = now
+        configured_ids = self._configured_device_ids()
+        try:
+            api_devices = self.client.devices()
+        except Exception as error:
+            # 保留当前设备集合继续监测；采样错误会通过 runner 暴露给前端。
+            self.latest_error = "%s: %s" % (type(error).__name__, error)
+            return
+        if configured_ids:
+            by_id = {str(item.get("device_id")): dict(item) for item in api_devices if item.get("device_id")}
+            discovered = [by_id.get(device_id, {"device_id": device_id, "name": device_id}) for device_id in configured_ids]
+        else:
+            discovered = [dict(item) for item in api_devices if item.get("device_id")]
+        if not discovered:
+            return
+        device_ids = [str(item.get("device_id")) for item in discovered if item.get("device_id")]
+        with self.lock:
+            current_ids = list(self.device_ids)
+            self.devices = discovered
+            self.device_ids = device_ids
+            for device_id in device_ids:
+                self.providers.setdefault(device_id, FactorySnapshotProvider(self.client, device_id))
+            self._last_device_discovery = now
+            if current_ids != device_ids:
+                self.latest_error = None
 
     def start(self) -> None:
         """启动后台自动监测。"""
@@ -311,6 +356,46 @@ class MonitorWebState:
             if result.trigger:
                 self.diagnosis_task_count += 1
                 self.trigger_history.appendleft(result.trigger.to_dict())
+        self._apply_machine_safety_control(result)
+
+    def _apply_machine_safety_control(self, result) -> None:
+        """Stop a device once when monitoring confirms a severe fault."""
+
+        device_id = str(result.device_id or "").strip()
+        if not device_id or not result_requires_emergency_stop(result):
+            return
+        with self.lock:
+            previous = self.machine_controls.get(device_id) or {}
+            current_sample = result.current_sample
+            current_status = str(getattr(current_sample, "status", "") or "").lower()
+            current_cycle = str(getattr(current_sample, "cycle_state", "") or "").lower()
+            if (
+                previous.get("action") == "emergency_stop"
+                and previous.get("accepted") is True
+                and current_status in {"emergency_stop", "e_stop"}
+                and current_cycle in {"emergency_stop", "e_stop"}
+            ):
+                return
+        reason = "监控确认高级故障"
+        try:
+            response = self.client.control_device(device_id, "emergency_stop", reason=reason)
+            control = {
+                "device_id": device_id,
+                "action": "emergency_stop",
+                "accepted": True,
+                "reason": reason,
+                "response": response,
+            }
+        except Exception as error:  # 保留监控结果，明确展示控制失败而不伪造停机。
+            control = {
+                "device_id": device_id,
+                "action": "emergency_stop",
+                "accepted": False,
+                "reason": reason,
+                "error": "%s: %s" % (type(error).__name__, error),
+            }
+        with self.lock:
+            self.machine_controls[device_id] = control
 
     def _on_trigger(self, trigger) -> None:
         """把确认后的异常事件异步交给 Diagnosis Agent。"""
@@ -352,6 +437,14 @@ class MonitorWebState:
                 return
             self.latest_diagnosis = diagnosis
             self.latest_pipeline = pipeline
+            device_id = str(
+                (event or {}).get("device_id")
+                or diagnosis.get("device_id")
+                or ""
+            ).strip()
+            if device_id:
+                self.latest_diagnoses_by_device[device_id] = diagnosis
+                self.latest_pipelines_by_device[device_id] = pipeline
             self.diagnosis_history.appendleft(diagnosis)
 
     def _diagnosis_snapshot(self) -> Dict[str, Any]:
@@ -361,6 +454,11 @@ class MonitorWebState:
             return {
                 "pending": self.diagnosis_pending,
                 "latest": self.latest_diagnosis,
+                "latest_by_device": dict(self.latest_diagnoses_by_device),
+                "pipeline_by_device": {
+                    device_id: compact_public_pipeline(pipeline)
+                    for device_id, pipeline in self.latest_pipelines_by_device.items()
+                },
                 "history": list(self.diagnosis_history),
                 "pipeline": self.latest_pipeline or {},
             }
@@ -369,6 +467,11 @@ class MonitorWebState:
             "latest": {
                 "status": "running" if self.diagnosis_pending else "idle",
                 "summary": "诊断智能体正在分析" if self.diagnosis_pending else "等待异常事件",
+            },
+            "latest_by_device": dict(self.latest_diagnoses_by_device),
+            "pipeline_by_device": {
+                device_id: compact_public_pipeline(pipeline)
+                for device_id, pipeline in self.latest_pipelines_by_device.items()
             },
             "history": [],
             "pipeline": {},
@@ -398,6 +501,7 @@ class MonitorWebState:
                 "alarm_event_counts": dict(self.alarm_event_counts),
                 "diagnosis_task_count": self.diagnosis_task_count,
                 "latest_error": self.latest_error,
+                "machine_controls": dict(self.machine_controls),
                 "latest_result": public_result,
                 "latest_results": {
                     device_id: _compact_monitor_result(item)
@@ -451,8 +555,11 @@ class MonitorWebState:
             self.trigger_history.clear()
             self.latest_diagnosis = None
             self.latest_pipeline = None
+            self.latest_diagnoses_by_device.clear()
+            self.latest_pipelines_by_device.clear()
             self.diagnosis_history.clear()
             self.diagnosis_pending = 0
+            self.machine_controls.clear()
         if was_running:
             self.runner.start()
         return self.snapshot()
@@ -523,6 +630,8 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             "/api/agent/",
             "/api/rag/",
             "/api/trace",
+            "/api/runs",
+            "/api/v1/runs",
             "/api/memory/",
             "/api/workorders",
             "/api/v1/workorders",

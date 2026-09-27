@@ -10,6 +10,7 @@ const groups = [
   ] },
   { label: "知识资产", items: [
     { id: "rag", label: "知识问答", icon: "knowledge" },
+    { id: "logs", label: "日志系统", icon: "logs" },
     { id: "report", label: "报告中心", icon: "report" },
   ] },
 ];
@@ -21,6 +22,7 @@ const pages = {
   workorder: { title: "工单系统", description: "跟进维修任务、执行反馈与验收", category: "生产运营" },
   quality: { title: "质检系统", description: "执行零件质量检测并追踪结果", category: "生产运营" },
   rag: { title: "知识问答", description: "检索维修知识与可引用的文档证据", category: "知识资产" },
+  logs: { title: "日志系统", description: "查看每一步执行操作、工具调用、上下文与返回体", category: "知识资产" },
   report: { title: "报告中心", description: "汇总诊断、维修与质量闭环报告", category: "知识资产" },
 };
 
@@ -32,6 +34,7 @@ function WorkbenchIcon({ name }) {
     quality: <><path d="M12 2 4 5v6c0 5 3.4 8.5 8 11 4.6-2.5 8-6 8-11V5l-8-3Z" /><path d="m8.5 12 2.5 2.5 4.5-5" /></>,
     maintenance: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 7h8M8 11h8M8 15h5M8 18h3" /></>,
     knowledge: <><path d="M12 6c-2.5-2-5.5-2.3-9-1v14c3.5-1.3 6.5-1 9 1 2.5-2 5.5-2.3 9-1V5c-3.5-1.3-6.5-1-9 1ZM12 6v14" /></>,
+    logs: <><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M8.5 8h7M8.5 12h7M8.5 16h4M8 8h.01M8 12h.01M8 16h.01" /></>,
     report: <><rect x="5" y="3" width="14" height="18" rx="2" /><path d="M9 8h6M9 12h6M9 16h4" /></>,
   };
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;

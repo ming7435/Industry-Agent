@@ -16,6 +16,7 @@ from app.memory import ExperienceLearningModule, build_memory_stores
 from app.skills import get_skill_registry
 from app.tools.registry import ToolRegistry
 from app.workorder import WorkOrderService
+from app.monitor.factory_api import FactoryApiClient
 from app.config import Settings, get_settings
 
 from .operations import RuntimeOperations
@@ -126,5 +127,6 @@ class AgentContainer:
             report_harness=self.harnesses.get("report"),
             learning_store_path=os.getenv("LEARNING_RESULT_STORE_PATH", ""),
             trace=self.trace,
+            factory_client=FactoryApiClient(settings.factory_api_base_url),
         )
         self.tracing = NodeTrace(self.trace)

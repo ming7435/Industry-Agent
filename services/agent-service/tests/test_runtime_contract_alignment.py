@@ -98,6 +98,11 @@ def test_runtime_trace_schema_accepts_real_harness_and_tool_lifecycle_records() 
         "tool_started",
         "tool_completed",
     }
+    agent_started = next(record for record in records if record["event"] == "agent_started")
+    agent_completed = next(record for record in records if record["event"] == "agent_completed")
+    assert agent_started["input"]["task_id"] == event["task_id"]
+    assert agent_completed["output"]["task_id"] == event["task_id"]
+    assert agent_started["agent_run_id"] == agent_started["context"]["agent_run_id"]
     for record in records:
         _assert_valid(schema, {"event": record["event"], "task_id": event["task_id"], "trace_id": event["trace_id"], **record})
 
