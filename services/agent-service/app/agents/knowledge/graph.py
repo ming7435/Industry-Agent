@@ -173,10 +173,9 @@ def observe(state: KnowledgeGraphState) -> Dict[str, Any]:
     found_types = {normalize_source(item.get("metadata", {}).get("knowledge_type")) for item in documents}
     covered = not required or all(normalize_source(item) in found_types for item in required)
     requested_lookup = bool(state["request"].get("document_id") or state["request"].get("chunk_id"))
-    # Do not stop after the first hit.  Complementary sources (alarm + SOP or
-    # manual + historical case) are part of the evidence quality calculation.
-    # Exact document/chunk fetches are the exception: they already identify the
-    # requested evidence and should not fan out into broad retrieval.
+    # 不要在命中第一条结果后停止。互补来源（报警 + SOP、手册 + 历史案例）
+    # 是证据质量计算的一部分。精确文档/分块获取是例外，因为它已经明确
+    # 指向所需证据，不应扩散为全库检索。
     should_complete = requested_lookup or (covered and not pending)
     if should_complete:
         route = "rerank"

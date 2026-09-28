@@ -173,7 +173,7 @@ class LLMClient:
                 stream=False,
             )
         except _CLIENT_ERRORS as exc:
-            # The key is intentionally absent from the log payload.
+            # 密钥按设计不会写入日志负载。
             logger.warning(
                 "llm request failed model={} error_type={}",
                 self.model,

@@ -1,16 +1,15 @@
-# Agent Service database migrations
+# Agent Service 数据库迁移
 
-This directory contains the canonical Alembic environment for the Agent Service.
+此目录包含 Agent Service 的规范 Alembic 环境。
 
-Run migrations from the repository root with:
+从仓库根目录运行迁移：
 
 ```powershell
 python -m alembic -c services/agent-service/alembic.ini upgrade head
 ```
 
-The migration URL is resolved from `DATABASE_URL` when set, otherwise from
-the `MYSQL_*` environment variables used by the service.
+迁移 URL 优先读取 `DATABASE_URL`；未设置时读取服务使用的
+`MYSQL_*` 环境变量。
 
-Compose calls the same runner through the `agent-migrate` profile. The SQL file
-under `infra/mysql/migrations/` is a compatibility snapshot for external
-bootstrap tools and is not executed by Compose.
+Compose 通过 `agent-migrate` profile 调用同一个迁移运行器。`infra/mysql/migrations/`
+下的 SQL 文件只是供外部初始化工具使用的兼容快照，Compose 不会执行它。

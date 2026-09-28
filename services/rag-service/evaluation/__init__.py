@@ -1,4 +1,4 @@
-"""Local, human-reviewed RAG evaluation utilities."""
+"""本地人工复核的 RAG 评测工具。"""
 
 from .models import CaseEvaluation, EvaluationCase, EvaluationReport, load_dataset
 

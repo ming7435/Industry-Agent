@@ -2,8 +2,8 @@
 
 One schema, two users:
 
-* :mod:`app.whoosh.indexer` writes it after (or during) ingestion;
-* :mod:`app.whoosh.retriever` reads it for the lexical leg of the online chain.
+* :mod:`app.whoosh.indexer` 在入库后（或入库过程中）写入；
+* :mod:`app.whoosh.retriever` 在在线链路的词法检索阶段读取。
 
 The analyser is chosen once here so both halves tokenise identically -- an index
 built with one analyser and queried with another returns nothing. Chinese text is

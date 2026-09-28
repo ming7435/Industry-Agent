@@ -183,9 +183,8 @@ class MaintenanceAgent(BaseAgent):
     @staticmethod
     def _pre_checks(diagnosis: DiagnosisView, knowledge: Mapping[str, Any], components: list[Mapping[str, Any]]) -> list[str]:
         checks = ["确认设备处于安全停机状态", "复核报警码、实时状态和异常趋势"]
-        for item in knowledge.get("recommended_checks") or []:
-            text = str(item).strip()
-            if text and text not in checks:
+        for text in MaintenanceAgent._safe_recommended_checks(knowledge):
+            if text not in checks:
                 checks.append(text)
         for component in components[:3]:
             name = str(component.get("name") or component.get("component_id") or "").strip()
@@ -220,15 +219,38 @@ class MaintenanceAgent(BaseAgent):
                 "根据报警定义和知识证据检查相关部件",
                 "修复后复测异常指标并确认设备恢复",
             ]
-        for item in knowledge.get("recommended_checks") or []:
-            text = str(item).strip()
-            if text and text not in steps:
+        for text in MaintenanceAgent._safe_recommended_checks(knowledge):
+            if text not in steps:
                 steps.insert(max(1, len(steps) - 1), text)
         if components:
             refs = "、".join(str(item.get("drawing_ref") or item.get("component_id") or "") for item in components[:3] if item.get("drawing_ref") or item.get("component_id"))
             if refs:
                 steps.insert(1, "按 CAD/BOM 依据定位维修部件：%s" % refs)
         return MaintenanceAgent._dedupe(steps)[:10]
+
+    @staticmethod
+    def _safe_recommended_checks(knowledge: Mapping[str, Any]) -> list[str]:
+        """只允许短小、可执行的检查项进入维修步骤，隔离原始证据正文。"""
+        checks: list[str] = []
+        blocked_markers = (
+            "本地ocr识别结果",
+            "内容类型:",
+            "evidence.",
+            "steps.action",
+            "steps.safety",
+            "positioningerror",
+            "encoderlost",
+            "alarm dictionary",
+            "报警字典",
+        )
+        for item in knowledge.get("recommended_checks") or []:
+            text = " ".join(str(item or "").split()).strip()
+            lowered = text.lower()
+            if not text or len(text) > 120 or any(marker in lowered for marker in blocked_markers):
+                continue
+            if text not in checks:
+                checks.append(text)
+        return checks[:6]
 
     @staticmethod
     def _post_checks(profile: Mapping[str, Any]) -> list[str]:

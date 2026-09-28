@@ -1,2 +1,2 @@
-// The supplied TC820 drawing is self-contained; this module is kept as a safe
-// no-op so the viewer's optional extension reference resolves locally.
+// 提供的 TC820 图纸本身已经自包含；保留此模块作为安全的空操作，
+// 使查看器对可选扩展的本地引用能够正常解析。

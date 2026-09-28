@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时�
     _load_dotenv = None
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.schemas.agent import ApprovalRequest, AbnormalEventRequest, RejectionRequest, UserQuestionRequest
@@ -23,6 +24,7 @@ from app.api.schemas.workorder import RepairFeedbackRequest, WorkOrderActionRequ
 from app.graph import AgentOrchestrator, build_orchestrator
 from app.harness.runs import build_run_records
 from app.runtime.event_store import EventResultStore
+from app.tools.report.generate_report_file import get_report_file_path
 
 
 def _load_project_env() -> None:
@@ -197,7 +199,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/runs", deprecated=True)
     @app.get("/api/v1/runs")
     def runs(limit: int = 5000) -> Dict[str, Any]:
-        """Return one record per fault lifecycle; quality runs stay independent."""
+        """Return one record per fault, standalone RAG answer, or quality run."""
 
         records = runtime.container.trace.list(limit=max(1, min(limit, 5000)))
         items = build_run_records(records)
@@ -295,17 +297,61 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
         return runtime.container.registry.list_reports(workorder_id=workorder_id)
 
-    @app.get("/api/reports/{report_id}")
-    def report(report_id: str) -> Dict[str, Any]:
+    def _load_report(report_id: str) -> tuple[str, Dict[str, Any]]:
+        """从当前配置的报告存储读取报告，并兼容历史外层编号。"""
+
         registry = runtime.container.registry
         result = registry.mcp.call("mes", "get_report", {"report_id": report_id}) if registry.backend_base_url else registry.report_store.get(report_id)
         if isinstance(result, dict) and "report" in result:
-            if not result.get("found", result.get("success", bool(result.get("report")))):
-                raise HTTPException(status_code=404, detail="report not found")
-            return result
-        if result:
-            return {"success": True, "found": True, "report_id": report_id, "report": dict(result)}
+            if result.get("found", result.get("success", bool(result.get("report")))):
+                return report_id, dict(result.get("report") or {})
+        if result and not (isinstance(result, dict) and "report" in result):
+            return report_id, dict(result)
+        # 历史版本曾把报告包在 {report_id: 外层编号, report: {...}} 中，
+        # 页面显示的是内层编号。通过列表回查一次，避免迁移或删除历史数据。
+        list_reports = getattr(registry, "list_reports", None)
+        listing = list_reports() if callable(list_reports) else {}
+        for item in listing.get("items") or []:
+            if not isinstance(item, Mapping):
+                continue
+            nested = item.get("report") if isinstance(item.get("report"), Mapping) else item
+            if str(nested.get("report_id") or "") == str(report_id) or str(item.get("report_id") or "") == str(report_id):
+                return str(item.get("report_id") or nested.get("report_id") or report_id), dict(nested)
         raise HTTPException(status_code=404, detail="report not found")
+
+    @app.get("/api/reports/{report_id}")
+    def report(report_id: str) -> Dict[str, Any]:
+        storage_id, report_value = _load_report(report_id)
+        return {"success": True, "found": True, "report_id": storage_id, "report": report_value}
+
+    @app.post("/api/reports/{report_id}/pdf")
+    def generate_report_pdf(report_id: str) -> Dict[str, Any]:
+        """根据已持久化报告生成真实 PDF 文件。"""
+
+        _, report_value = _load_report(report_id)
+        result = runtime.container.registry.generate_report_file(
+            report=report_value,
+            format="pdf",
+            path=str(get_report_file_path(report_id, "pdf")),
+        )
+        if not result.get("success"):
+            raise HTTPException(status_code=503, detail=result.get("error") or "PDF 生成失败")
+        return {**result, "open_url": f"/api/reports/{report_id}/pdf", "download_url": f"/api/reports/{report_id}/pdf"}
+
+    @app.get("/api/reports/{report_id}/pdf")
+    def open_report_pdf(report_id: str, download: bool = False) -> FileResponse:
+        """打开已生成的 PDF；传入 download=1 时强制浏览器下载。"""
+
+        path = get_report_file_path(report_id, "pdf")
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="PDF 尚未生成，请先点击生成 PDF")
+        filename = path.name
+        disposition = "attachment" if download else "inline"
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
+        )
 
     @app.get("/api/cad/resolve")
     def resolve_cad(component: str = "", part_no: str = "", device_id: str = "") -> Dict[str, Any]:
@@ -327,9 +373,14 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.delete("/api/reports/{report_id}")
     def delete_report(report_id: str) -> Dict[str, Any]:
-        result = runtime.container.registry.delete_report(report_id=report_id)
+        storage_id, _ = _load_report(report_id)
+        result = runtime.container.registry.delete_report(report_id=storage_id)
         if not result.get("deleted"):
             raise HTTPException(status_code=404, detail="report not found")
+        for pdf_id in {str(report_id), str(storage_id)}:
+            pdf_path = get_report_file_path(pdf_id, "pdf")
+            if pdf_path.is_file():
+                pdf_path.unlink()
         return result
 
     @app.post("/api/workorders/{workorder_id}/action")

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .vision import ImageDescriber, VisionError
+from config.settings import load_service_env
 
 
 class OcrError(VisionError):
@@ -38,12 +39,7 @@ class LocalOcrConfig:
 
     @classmethod
     def from_env(cls) -> "LocalOcrConfig":
-        try:
-            from dotenv import load_dotenv
-        except ImportError:
-            pass
-        else:
-            load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+        load_service_env()
         return cls(
             backend=os.getenv("LOCAL_OCR_BACKEND", cls.backend),
             language=os.getenv("LOCAL_OCR_LANGUAGE", cls.language),

@@ -1,4 +1,4 @@
-"""Parse industrial PDFs into ordered text, table, and visual blocks."""
+"""将工业 PDF 解析为有序的文本、表格和视觉分块。"""
 
 from __future__ import annotations
 

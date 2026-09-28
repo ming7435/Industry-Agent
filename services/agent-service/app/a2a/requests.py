@@ -74,8 +74,7 @@ class A2ARequests:
     def request_cad_for_maintenance(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
         return self._cad_a2a(str(context.get("task_id") or ""), "maintenance", query, context)
 
-    # Compatibility aliases for integrations written against the original
-    # provider injection names. New Runtime code should use the public methods.
+    # 为使用原提供方注入名称的集成保留兼容别名；新的 Runtime 代码应使用公开方法。
     def _maintenance_knowledge_request(self, context: Mapping[str, Any], query: str) -> Dict[str, Any]:
         return self.request_knowledge_for_maintenance(context, query)
 

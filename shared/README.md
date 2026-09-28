@@ -1,4 +1,4 @@
-# Shared contracts
+# 共享契约
 
 `shared/` 保存跨服务、跨语言都能读取的契约快照。它不是新的运行时，也不创建
 Agent；Agent Service、RAG Service 和前端仍然由各自的源码模型负责行为实现。

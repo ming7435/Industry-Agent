@@ -1,4 +1,4 @@
-"""Shared retrieval primitives used by dense and BM25 routes."""
+"""稠密和 BM25 路径共用的检索基础类型。"""
 
 from __future__ import annotations
 

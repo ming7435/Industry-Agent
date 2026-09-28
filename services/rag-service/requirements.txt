@@ -1,30 +1,28 @@
-# RAG service dependencies (Python 3.11+).
-# Both halves of the service share this file: the offline ingestion pipeline and
-# the online retrieval/generation API. Nothing here is test-only.
+# RAG 服务依赖（Python 3.11+）。
+# 服务的离线入库管道和在线检索/生成 API 共用此文件；这里没有仅供测试使用的依赖。
 
-# --- web layer (online) ---
+# --- Web 层（在线）---
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
 
-# --- retrieval stores ---
+# --- 检索存储 ---
 pymilvus>=2.5.0
 whoosh==2.7.4
 jieba>=0.42.1
 
-# --- offline document parsing ---
+# --- 离线文档解析 ---
 PyMuPDF>=1.24,<2
 python-docx>=1.1,<2
 openpyxl>=3.1,<4
 Pillow>=10.0,<12
 
-# --- remote embedding / reranking ---
-# BGE-M3 embeddings and bge-reranker-v2-m3 reranking are called through
-# SiliconFlow's HTTP API; no local model runtime is required.
+# --- 远程向量化/重排 ---
+# BGE-M3 向量化和 bge-reranker-v2-m3 重排通过 SiliconFlow HTTP API 调用；无需本地模型运行时。
 
-# --- generation (online) ---
-# Provider SDKs are intentionally not installed here. RAG calls Model Service
+# --- 生成（在线）---
+# 这里有意不安装提供方 SDK；RAG 通过模型服务调用
 # over HTTP; provider credentials and SDKs belong exclusively to Model Service.
 
 # --- offline metadata store ---

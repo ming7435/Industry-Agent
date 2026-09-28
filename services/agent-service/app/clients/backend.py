@@ -1,4 +1,4 @@
-"""Agent-side HTTP facade for Backend business tools."""
+"""Agent 侧后端业务工具的 HTTP 门面。"""
 
 from __future__ import annotations
 

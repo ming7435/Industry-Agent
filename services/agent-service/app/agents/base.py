@@ -1,8 +1,7 @@
-"""Unified Agent boundary used by the Runtime dispatcher.
+"""Runtime dispatcher 使用的统一 Agent 边界。
 
-The existing Agent implementations keep their domain-specific ``run`` methods.
-This module adds a small, stable boundary around those methods so Runtime code
-does not need to know each Agent's result model.
+现有 Agent 实现保留各自领域的 ``run`` 方法。本模块在这些方法外增加小而稳定的边界，
+让 Runtime 代码无需了解每个 Agent 的结果模型。
 """
 
 from __future__ import annotations
@@ -120,8 +119,7 @@ def trace_skill_node(
         definitions = [skill for name in selected if (skill := registry.get(agent_name, str(name))) is not None]
         if not definitions:
             definitions = registry.select(agent_name, request)
-        # Domain Graphs pass this binding beside their node declarations. The
-        # base wrapper remains unaware of domain node names and aliases.
+        # 领域 Graph 会在节点声明旁传入该绑定；基础包装器不感知领域节点名称和别名。
         skill_step_id = str(skill_step or node_name)
         match = next(
             ((skill, step) for skill in definitions for step in skill.normalized_steps() if step.id == skill_step_id),

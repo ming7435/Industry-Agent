@@ -1,4 +1,4 @@
-"""Configuration fingerprints and read-only checks for offline ingestion."""
+"""离线入库的配置指纹和只读检查。"""
 
 from __future__ import annotations
 

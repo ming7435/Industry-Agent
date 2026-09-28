@@ -115,9 +115,8 @@ class AgentHarness:
 
         last_error: Exception | None = None
         agent_name_for_policy = str(getattr(self.agent, "name", type(self.agent).__name__)).lower()
-        # A timed-out Python thread cannot be forcefully stopped.  Retrying a
-        # side-effecting Agent would therefore run two writes concurrently;
-        # those Agents must rely on their idempotency boundary and execute once.
+        # 超时的 Python 线程无法被强制停止。如果重试带副作用的 Agent，
+        # 可能会并发执行两次写入；这类 Agent 必须依赖幂等边界并只执行一次。
         max_retries = 0 if agent_name_for_policy in {"workorder", "memory", "quality"} else self.config.max_retries
         for attempt in range(max_retries + 1):
             started = perf_counter()

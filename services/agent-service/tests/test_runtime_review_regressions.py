@@ -14,10 +14,10 @@ def test_planner_supports_declared_capabilities_and_keeps_unknown_capability_vis
     ]
 
 
-def test_jev_reports_malformed_input_without_losing_goal_boundary():
-    from app.runtime.jev import JEVParser
+def test_runtime_input_reports_malformed_input_without_losing_goal_boundary():
+    from app.runtime.coordinator import RuntimeInputParser
 
-    parsed = JEVParser().parse({"user_text": "", "required_capabilities": "not-a-list"})
+    parsed = RuntimeInputParser().parse({"user_text": "", "required_capabilities": "not-a-list"})
 
     assert parsed.goal
     assert parsed.validation_findings

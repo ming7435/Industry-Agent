@@ -22,6 +22,7 @@ FAULT_PHASES = (
     ("experience", "经验总结"),
 )
 QUALITY_PHASES = (("quality", "质检"),)
+RAG_PHASES = (("rag", "RAG 问答"),)
 
 
 def _as_dict(value: Any) -> Mapping[str, Any]:
@@ -83,10 +84,26 @@ def _record_text(record: Mapping[str, Any]) -> str:
 
 def _is_quality(record: Mapping[str, Any]) -> bool:
     text = _record_text(record)
-    # Do not classify a generic quality field in a report body as a quality run;
-    # only the execution envelope can establish the run type.
+    # 不能因为报告正文包含普通质量字段就判定为质检运行；只有执行
+    # 事件封装才能确定运行类型。
     return any(token in text for token in (
         "quality", "质检", "inspect_quality", "quality_check", "part_quality",
+    ))
+
+
+def _is_rag(record: Mapping[str, Any]) -> bool:
+    """Identify a standalone knowledge/RAG interaction.
+
+    Knowledge retrieval that belongs to a triggered fault still stays inside
+    the fault run; callers decide that precedence while grouping.  This
+    predicate only describes the event envelope, never a free-text report
+    field, so a maintenance result cannot accidentally create a RAG card.
+    """
+
+    text = _record_text(record)
+    return any(token in text for token in (
+        "rag", "knowledge", "search_knowledge", "knowledge_search",
+        "vector_search", "document_search", "retrieval", "检索", "知识问答",
     ))
 
 
@@ -98,8 +115,8 @@ def _phase_for(record: Mapping[str, Any], quality: bool) -> str | None:
     source = str(state_change.get("source") or "").lower()
     if str(record.get("event") or "").lower() == "goal_parsed" and source == "trigger":
         return "monitor"
-    # Knowledge and CAD are evidence-gathering parts of diagnosis, not extra
-    # lifecycle cards.  They stay visible in the detailed trace under diagnosis.
+    # 知识和 CAD 是诊断阶段的取证步骤，不应额外生成生命周期卡片；
+    # 它们会继续显示在诊断阶段的详细 Trace 中。
     if any(token in text for token in ("diagnos", "knowledge", "cad", "alarm_knowledge", "fault_case")):
         return "diagnosis"
     if any(token in text for token in ("maintenance", "repair_plan", "maintenance_plan", "plan_maintenance")):
@@ -157,12 +174,17 @@ def _run_status(phases: list[Mapping[str, Any]]) -> str:
 
 
 def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate flat trace events into one fault record and separate quality records."""
+    """Aggregate trace events into user-visible fault, RAG, and quality runs.
+
+    A raw trace also contains implementation-only tool calls (for example a
+    technician lookup opened from the workorder page).  Those events remain
+    available from the trace endpoint but do not become standalone lifecycle
+    records.  This keeps one card equal to one meaningful user operation.
+    """
 
     source_records = [dict(item) for item in records if isinstance(item, Mapping)]
-    # The monitor event id is usually present only on the first goal/context
-    # event.  Carry it across the rest of the same trace so the whole lifecycle
-    # cannot split into a monitor-only card and an agent-only card.
+    # 监控事件 ID 通常只出现在第一条目标/上下文事件中。将它传递给
+    # 同一 Trace 的其余事件，避免整个生命周期拆成监控卡和 Agent 卡。
     event_ids_by_identity: dict[str, str] = {}
     trigger_by_identity: set[str] = set()
     for item in source_records:
@@ -179,21 +201,31 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
         task_id = str(item.get("task_id") or "")
         trace_id = str(item.get("trace_id") or "")
         quality_identity = str(_first(item, ("quality_check_id", "check_id", "object_id", "target_id")) or "")
-        identity = task_id or trace_id or quality_identity or f"event-{index}"
+        # Trace 是 RAG/质检交互的稳定边界；同一次回答内部的工具 Task
+        # 可以合法变化。
+        identity = trace_id or task_id or quality_identity or f"event-{index}"
         event_id = _event_id(item) or event_ids_by_identity.get(task_id) or event_ids_by_identity.get(trace_id) or ""
+        is_fault = bool(event_id or task_id in trigger_by_identity or trace_id in trigger_by_identity)
+        rag = _is_rag(item) and not is_fault
         if quality:
             group_key = f"quality:{identity}"
             run_type = "quality"
+        elif is_fault:
+            group_key = f"fault:{event_id}" if event_id else f"fault:{identity}"
+            run_type = "fault"
+        elif rag:
+            group_key = f"rag:{identity}"
+            run_type = "rag"
         else:
-            is_fault = bool(event_id or task_id in trigger_by_identity or trace_id in trigger_by_identity)
-            group_key = f"fault:{event_id}" if is_fault and event_id else f"fault:{identity}" if is_fault else f"task:{identity}"
-            run_type = "fault" if is_fault else "task"
+            # 仅用于实现的内部 Task 不生成运行记录。
+            continue
         group = groups.setdefault(group_key, {
             "run_type": run_type,
             "run_key": group_key,
             "records": [],
             "trace_ids": [],
             "task_ids": [],
+            "event_ids": [],
             "event_id": event_id,
             "device_id": str(_first(item, ("device_id",)) or ""),
             "alarm_code": str(_first(item, ("alarm_code", "alarm")) or ""),
@@ -203,6 +235,8 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
             group["trace_ids"].append(trace_id)
         if task_id and task_id not in group["task_ids"]:
             group["task_ids"].append(task_id)
+        if event_id and event_id not in group["event_ids"]:
+            group["event_ids"].append(event_id)
         if not group["event_id"] and event_id:
             group["event_id"] = event_id
         for field, keys in (("device_id", ("device_id",)), ("alarm_code", ("alarm_code", "alarm"))):
@@ -213,18 +247,15 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
     for group in groups.values():
         items = sorted(group["records"], key=lambda item: _timestamp(item.get("timestamp")))
         quality = group["run_type"] == "quality"
-        if group["run_type"] == "task":
-            phases = [_phase_record(items, "execution", "执行")]
-        else:
-            phase_defs = QUALITY_PHASES if quality else FAULT_PHASES
-            phases = [
-                _phase_record(
-                    [item for item in items if _phase_for(item, quality) == phase_id],
-                    phase_id,
-                    label,
-                )
-                for phase_id, label in phase_defs
-            ]
+        phase_defs = QUALITY_PHASES if quality else RAG_PHASES if group["run_type"] == "rag" else FAULT_PHASES
+        phases = [
+            _phase_record(
+                [item for item in items if _phase_for(item, quality) == phase_id or (group["run_type"] == "rag" and _is_rag(item))],
+                phase_id,
+                label,
+            )
+            for phase_id, label in phase_defs
+        ]
         timestamps = [_timestamp(item.get("timestamp")) for item in items]
         first_at = min(timestamps) if timestamps else datetime.min
         last_at = max(timestamps) if timestamps else datetime.min
@@ -232,9 +263,10 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
         result.append({
             "run_id": run_id,
             "run_type": group["run_type"],
-            "label": "质检运行" if quality else "故障闭环" if group["run_type"] == "fault" else "普通任务",
+            "label": "质检运行" if quality else "故障闭环" if group["run_type"] == "fault" else "RAG 问答",
             "status": _run_status(phases),
             "event_id": group["event_id"],
+            "event_ids": group["event_ids"],
             "trace_id": group["trace_ids"][0] if group["trace_ids"] else "",
             "trace_ids": group["trace_ids"],
             "task_id": group["task_ids"][0] if group["task_ids"] else "",

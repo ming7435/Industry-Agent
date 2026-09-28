@@ -7,7 +7,7 @@ function firstAlarmCode(value = {}) {
   return String(values.find((item) => String(item || "").trim()) || "").trim();
 }
 
-/** Build a device scope only when the selected machine has an active alarm. */
+/** 只有选定机器存在活动报警时才构建设备检索范围。 */
 export function buildKnowledgeContext(sample = {}, snapshot = {}) {
   const deviceId = String(sample?.device_id || snapshot?.device_id || "").trim();
   const device = (snapshot?.devices || []).find((item) => String(item?.device_id || "").trim() === deviceId) || {};

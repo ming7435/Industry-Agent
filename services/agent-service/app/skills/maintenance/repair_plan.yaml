@@ -13,6 +13,7 @@ steps:
   - build_safety_steps
   - build_result
 tools:
+  - generate_repair_plan
   - query_inventory
   - query_part_availability
   - get_workorder_template

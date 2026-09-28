@@ -75,7 +75,7 @@ def test_quality_is_not_merged_into_fault_record():
         "first_event_at": "2026-09-27T08:00:00+00:00",
         "last_event_at": "2026-09-27T08:00:00+00:00",
     }]
-    assert quality["run_id"] == "quality:TASK-QUALITY"
+    assert quality["run_id"] == "quality:TRACE-QUALITY"
 
 
 def test_incomplete_fault_is_running_and_unobserved_phases_stay_pending():
@@ -112,3 +112,38 @@ def test_runs_api_returns_aggregated_lifecycle_records():
     assert payload["count"] == 1
     assert payload["runs"][0]["run_id"] == "fault:EVT-API"
     assert payload["runs"][0]["phases"][0]["status"] == "completed"
+
+
+def test_only_fault_rag_and_quality_runs_are_listed_and_events_stay_grouped():
+    records = [
+        _event(
+            "goal_parsed",
+            trace="TRACE-FAULT-2",
+            task="TASK-FAULT-2",
+            state_change={
+                "source": "trigger",
+                "raw": {"event_id": "EVT-200", "device_id": "D-2", "alarm_code": "700012"},
+            },
+        ),
+        _event("agent_completed", trace="TRACE-FAULT-2", task="TASK-DIAG-2", agent="diagnosis", node="diagnosis"),
+        _event("tool_completed", trace="TRACE-FAULT-2", task="TASK-WO-2", type="tool", agent="workorder", tool_name="create_workorder"),
+        _event("tool_completed", trace="TRACE-RAG-2", task="TASK-RAG-2", type="tool", agent="rag", tool_name="search_knowledge", output={"matches": 2}),
+        _event("agent_completed", trace="TRACE-RAG-2", task="TASK-RAG-2", agent="knowledge", node="rag"),
+        _event("agent_completed", trace="TRACE-QUALITY-2", task="TASK-QUALITY-2", agent="quality", node="quality"),
+        _event("tool_completed", trace="TRACE-QUALITY-2", task="TASK-QUALITY-2", type="tool", agent="quality", tool_name="create_quality_check"),
+        # 手动打开的工单任务没有生命周期触发器，不能单独形成用户可见的运行记录。
+        _event("tool_completed", trace="TRACE-MANUAL-2", task="TASK-MANUAL-2", type="tool", agent="workorder", tool_name="query_technicians"),
+    ]
+
+    runs = build_run_records(records)
+
+    assert {run["run_type"] for run in runs} == {"fault", "rag", "quality"}
+    assert len(runs) == 3
+    fault = next(run for run in runs if run["run_type"] == "fault")
+    rag = next(run for run in runs if run["run_type"] == "rag")
+    assert fault["run_id"] == "fault:EVT-200"
+    assert fault["event_count"] == 3
+    assert set(fault["trace_ids"]) == {"TRACE-FAULT-2"}
+    assert rag["run_id"] == "rag:TRACE-RAG-2"
+    assert rag["event_count"] == 2
+    assert rag["trace_ids"] == ["TRACE-RAG-2"]

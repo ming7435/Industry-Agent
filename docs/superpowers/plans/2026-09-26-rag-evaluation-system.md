@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-26-rag-evaluation-design.md`
 
-## Global Constraints
+## 全局约束
 
 - 只新增本地评测模块、评测数据和文档；不新增 Agent、Tool、MCP、数据库表或线上 API。
 - 不修改 `/search` 请求/响应字段，不绕过现有检索链路。
@@ -18,7 +18,7 @@
 - 缺少人工标注或答案时使用 `null`，不能静默记为 0；单题网络/HTTP/JSON/降级错误写入该题并继续后续题目。
 - 保留用户当前工作树中的其他修改；每个实现任务单独提交，提交前只暂存本任务文件。
 
-## Review Focus
+## 复核重点
 
 - 目标证据 ID 存在时，`recall_at_k` 必须优先按 ID 计算；没有 ID 时才按 `expected_sources` 回退。
 - 来源提取要兼容现有 hit 的 `metadata.corpus`、`metadata.source`、顶层 `source` 等实际形态。
@@ -29,7 +29,7 @@
 
 ---
 
-## Task 1: 建立评测数据模型与首批人工复核题集
+### 第 1 任务：建立评测数据模型与首批人工复核题集
 
 **Files:**
 - Create: `services/rag-service/evaluation/__init__.py`
@@ -37,58 +37,58 @@
 - Create: `services/rag-service/evaluation/dataset.jsonl`
 - Create: `services/rag-service/tests/test_evaluation_dataset.py`
 
-### Step 1: Write the failing tests
+### 步骤 1：编写失败测试
 
-Add tests that verify:
+增加测试，验证：
 
-- valid JSONL rows load into `EvaluationCase` with `id`, `question`, `filters`, `expected_evidence_ids`, `expected_sources`, `relevant_terms`, and `should_answer`;
-- blank IDs/questions, malformed JSON, duplicate IDs, and non-object rows raise a clear `ValueError` containing the row number;
-- the checked-in dataset has unique IDs and at least one case for each first-batch type, including an explicit `should_answer=false` case;
-- optional list fields default to empty lists and filters default to `{}` without sharing mutable state.
+- 有效 JSONL 行会加载为包含 `id`、`question`、`filters`、`expected_evidence_ids`、`expected_sources`、`relevant_terms` 和 `should_answer` 的 `EvaluationCase`；
+- 空 ID/问题、格式错误的 JSON、重复 ID 和非对象行会抛出包含行号的清晰 `ValueError`；
+- 已提交的数据集具有唯一 ID，且首批每种题型至少有一个案例，其中包括明确的 `should_answer=false` 案例；
+- 可选列表字段默认为空列表，filters 默认是 `{}`，并且不会共享可变状态。
 
-Run: `& 'L:\\anaconda\\python.exe' -m pytest services/rag-service/tests/test_evaluation_dataset.py -q --override-ini pythonpath=services/rag-service` (expected to fail because modules do not exist).
+运行：`& 'L:\\anaconda\\python.exe' -m pytest services/rag-service/tests/test_evaluation_dataset.py -q --override-ini pythonpath=services/rag-service`（预期会失败，因为模块尚不存在）。
 
-### Step 2: Implement the smallest model/loader
+### 步骤 2：实现最小模型/加载器
 
-- Define typed dataclasses `EvaluationCase`, `CaseEvaluation`, `EvaluationReport` with JSON-safe `to_dict()` methods.
-- Implement `load_dataset(path)` in `models.py` or a small loader helper used by `runner.py`; preserve source line numbers in validation errors.
-- Seed `dataset.jsonl` with a compact, manually reviewable set derived from repository corpus: alarm explanation, no-alarm maintenance, spindle/cooling, SOP/manual, historical case, device-scoped query, and no-evidence query. Keep expected IDs/sources conservative rather than inventing unsupported evidence.
-- Export public model names from `evaluation/__init__.py`.
+- 定义带类型的 dataclass：`EvaluationCase`、`CaseEvaluation`、`EvaluationReport`，并提供 JSON 安全的 `to_dict()` 方法。
+- 在 `models.py` 或 `runner.py` 使用的小型加载器中实现 `load_dataset(path)`；在校验错误中保留源文件行号。
+- 使用来源于仓库语料的紧凑、便于人工复核的题集初始化 `dataset.jsonl`：报警解释、无报警维修、主轴/冷却、SOP/手册、历史案例、设备范围查询和无证据查询。预期 ID/来源应保持保守，不要编造没有依据的证据。
+- 从 `evaluation/__init__.py` 导出公共模型名称。
 
-### Step 3: Run tests and commit
+### 步骤 3：运行测试并提交
 
-Run the focused test command again; all dataset/model tests must pass. Commit only these files:
+再次运行聚焦测试命令；所有数据集/模型测试必须通过。只提交以下文件：
 
 `git add services/rag-service/evaluation services/rag-service/tests/test_evaluation_dataset.py && git commit -m "feat: add rag evaluation dataset models"`
 
-## Task 2: Implement deterministic per-case metrics
+## 第 2 任务：实现确定性的逐题指标
 
-**Files:**
+**文件：**
 - Create: `services/rag-service/evaluation/runner.py`
 - Create: `services/rag-service/tests/test_evaluation_runner.py`
 
-### Step 1: Write failing metric tests
+### 步骤 1：编写失败的指标测试
 
-Use fixed in-memory responses to cover:
+使用固定的内存响应覆盖：
 
-- expected evidence IDs take precedence over source fallback for `recall_at_k`;
-- source fallback computes `source_coverage` and treats equivalent source labels case-insensitively;
-- `evidence_precision` uses `relevant_terms`, returns `null` when no terms are labeled, and does not count empty evidence;
-- degraded responses preserve `degraded` and `degrade_reason` without pretending they passed;
-- valid citations such as `[1]`/`[2]` pass while `[0]`, `[3]`, and non-citation numbers do not;
-- completeness is the fraction of labeled terms present in the answer and is `null` when answer/terms are unavailable;
-- affirmative cases do not require abstention, while negative cases require a refusal signal;
-- aggregation averages only non-null metric values and retains per-case errors.
+- 目标证据 ID 优先于来源回退计算 `recall_at_k`；
+- 来源回退计算 `source_coverage`，并且不区分等价来源标签的大小写；
+- `evidence_precision` 使用 `relevant_terms`，没有标注关键词时返回 `null`，且不计入空证据；
+- 降级响应保留 `degraded` 和 `degrade_reason`，不把它们伪装成通过；
+- `[1]`/`[2]` 等有效引用通过，而 `[0]`、`[3]` 和非引用数字不通过；
+- completeness 是答案中出现的已标注术语比例；答案或术语不可用时返回 `null`；
+- 肯定题不要求拒答，否定题必须包含拒答信号；
+- 聚合只平均非 `null` 指标，并保留逐题错误。
 
 Run: `& 'L:\\anaconda\\python.exe' -m pytest services/rag-service/tests/test_evaluation_runner.py -q --override-ini pythonpath=services/rag-service` (expected to fail initially).
 
-### Step 2: Implement metric and case evaluation logic
+### 步骤 2：实现指标和逐题评估逻辑
 
-- Implement `evaluate_case(case, response, top_k) -> CaseEvaluation` exactly as specified.
-- Normalize hits without assuming one schema: derive evidence ID and source from metadata/top-level fallbacks; truncate to `top_k` before calculating recall/coverage/precision.
-- Keep metric values as `float | None`; store evidence IDs/sources and a short error/degrade reason only.
-- Use a narrowly scoped citation regex and a documented refusal-signal list in Chinese/English.
-- Implement report aggregation over case evaluations, including counts, averages, suggested thresholds, and run metadata without changing the public API contract.
+- 按规格准确实现 `evaluate_case(case, response, top_k) -> CaseEvaluation`。
+- 不假设单一 hit 模式，兼容规范化 hit：从 metadata/顶层后备字段推导证据 ID 和来源；计算召回/覆盖/精度前先截断到 `top_k`。
+- 保持指标值为 `float | None`；只保存证据 ID/来源以及简短错误/降级原因。
+- 使用范围严格的引用正则，并记录中英文拒答信号列表。
+- 在不改变公共 API 契约的前提下，实现基于逐题评估的报告聚合，包括计数、平均值、建议阈值和运行元数据。
 
 ### Step 3: Run tests and commit
 

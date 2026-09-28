@@ -1,4 +1,4 @@
-"""Persistent local cache for parsed, cleaned, and chunked documents."""
+"""解析、清洗和分块文档的持久化本地缓存。"""
 
 from __future__ import annotations
 
@@ -102,8 +102,7 @@ class IngestionCache:
                 "chunk_count": len(chunks),
             },
         )
-        # Readers only follow current.json, so the fully written generation
-        # becomes visible with one atomic file replacement.
+        # 读取方只跟随 current.json，因此完整写入的一代内容通过一次原子文件替换即可对外可见。
         document_root.mkdir(parents=True, exist_ok=True)
         _write_json_atomic(
             document_root / "current.json",

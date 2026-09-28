@@ -87,9 +87,8 @@ class KnowledgeAgent(BaseAgent):
             return "alarm"
         if any(token in text for token in ("manual", "手册", "维修手册")):
             return "manual"
-        # "怎么检查" describes the requested operation, not the knowledge
-        # source. Without an explicit SOP/procedure marker, keep the query
-        # hybrid so cases and manuals can contribute complementary checks.
+        # “怎么检查”描述的是请求的操作，不是知识来源。没有明确的 SOP/流程
+        # 标记时保留混合检索，让案例和手册共同提供互补检查步骤。
         if any(token in text for token in ("sop", "标准作业", "规程", "作业指导")):
             return "sop"
         if any(token in text for token in ("案例", "历史", "经验", "case")):
@@ -156,9 +155,11 @@ class KnowledgeAgent(BaseAgent):
     ) -> str:
         """Normalize the model answer and guarantee a concise final summary."""
 
-        text = str(answer or "").strip()
+        text = KnowledgeAgent._remove_internal_disclaimers(str(answer or "").strip())
         if not text:
-            return ""
+            text = KnowledgeAgent._fallback_answer(query, documents)
+        if not text:
+            return "暂未检索到直接相关知识。请补充设备编号、报警码或故障现象后重试。"
         blocks = []
         seen: set[str] = set()
         for block in re.split(r"\n\s*\n", text):
@@ -172,11 +173,99 @@ class KnowledgeAgent(BaseAgent):
             return text
         scope_text = "当前报警机器" if retrieval_scope == "device" else "全库"
         evidence_text = "已返回 %d 条可追踪证据" % len(documents) if documents else "暂无足够可追踪证据"
-        return "%s\n\n**最后总结：** 本次按%s优先级检索，%s；请以现场报警状态和证据编号对应的原文为准，参数不一致时先停止操作并补充现场数据。" % (
+        return "%s\n\n**最后总结：** 本次按%s优先级检索，%s；优先执行回答中的第一项检查，发现异常时停止相关动作并补充现场数据。" % (
             text,
             scope_text,
             evidence_text,
         )
+
+    @staticmethod
+    def _fallback_answer(query: str, documents: list[Mapping[str, Any]]) -> str:
+        """模型降级时依据已命中的证据生成可读的中文答案。"""
+        entries: list[str] = []
+        seen: set[str] = set()
+        for item in documents[:3]:
+            title = re.sub(r"\s+", " ", str(item.get("title") or "相关知识")).strip()
+            content = re.sub(r"\s+", " ", str(item.get("content") or "")).strip()
+            content = KnowledgeAgent._clean_evidence_text(content)
+            if not content:
+                continue
+            if len(content) > 260:
+                content = content[:260].rstrip("，。；; ") + "…"
+            key = "%s|%s" % (title, content)
+            if key in seen:
+                continue
+            seen.add(key)
+            entries.append("**%s：** %s" % (title, content))
+        if not entries:
+            return ""
+        return "针对“%s”，已整理出以下可执行知识：\n\n%s" % (str(query or "设备问题").strip(), "\n".join(entries))
+
+    @staticmethod
+    def _remove_internal_disclaimers(text: str) -> str:
+        """移除面向内部审计的手册/原文提示，保留实际诊断和操作内容。"""
+        if not text:
+            return ""
+        cleaned = re.sub(
+            r"(?:具体操作)?\s*(?:请|建议)?以[^。！？\n]{0,100}(?:手册|原文|官方资料)[^。！？\n]{0,30}(?:为准|参考)[。！？]?",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    @staticmethod
+    def _clean_evidence_text(text: str) -> str:
+        """清理检索元数据，只向用户呈现证据中的业务句子。"""
+        structured_metadata = bool(re.search(r"文档\s*[:：]|内容类型\s*[:：]|\[(?:table|cad_drawing)\b|表格行\d+", text, re.IGNORECASE))
+        cleaned = KnowledgeAgent._remove_internal_disclaimers(text)
+        cleaned = re.sub(r"本地OCR识别结果(?:（[^）]*）|\([^)]*\))?\s*[:：]?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            r"文档\s*[:：]\s*\S+\s+页码\s*[:：]\s*\d+\s+内容类型\s*[:：]\s*\S+\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"\[(?:table|cad_drawing)[^\]]*\]\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"表格行\d+\s*[:：]\s*", "", cleaned)
+        cleaned = re.sub(r"(?:故障名称|部件/系统|安全等级)\s+[^·。；:：]+[·:：]\s*", "", cleaned)
+        cleaned = re.sub(
+            r"(?:报警码|英文原名|可能原因|复位与验证|前置条件|作业步骤|安全要求)\s+"
+            r"(?:[A-Za-z_./-]+\s*)?(?:[；;:：])\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\b(?:alarm_code|alarm_message_en|fault_name_zh|possible_causes_zh|verification_zh|"
+            r"preconditions|steps|safetywarnings|component|safetylevel|severity|severity_zh|"
+            r"subsystem_zh|cnc_system|acceptance_criteria)\b\s*[/_ ]*\s*[:：;；]?\s*",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"\b(?:Tool\s+probe\s+up/down\s+error|barfeeder/critical|Toolsetter\s+location\s+switch\s+error)\b", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"安全要求\s*[_-]?\s*", "", cleaned)
+        if structured_metadata:
+            clauses = []
+            seen: set[str] = set()
+            for clause in re.split(r"\s*[。！？；;:：]\s*", cleaned):
+                normalized = re.sub(r"\s+", " ", clause).strip(" ，,·")
+                if not normalized or not re.search(r"[\u4e00-\u9fff]", normalized):
+                    continue
+                key = re.sub(r"[\d\W_]+", "", normalized)
+                if key and key not in seen:
+                    seen.add(key)
+                    clauses.append(normalized)
+            return "；".join(clauses).strip()
+        clauses = []
+        seen: set[str] = set()
+        for clause in re.split(r"\s*[；;]\s*", cleaned):
+            normalized = re.sub(r"\s+", " ", clause).strip(" ，,。:：")
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                clauses.append(normalized)
+        return "；".join(clauses).strip()
 
     @staticmethod
     def _possible_causes(documents: list[KnowledgeDocument]) -> list[str]:
@@ -200,9 +289,8 @@ class KnowledgeAgent(BaseAgent):
                 if text and text not in checks:
                     checks.append(text)
         if not checks:
-            for doc in documents[:3]:
-                if doc.content and doc.content not in checks:
-                    checks.append(doc.content)
+            # 文档正文属于证据，不是可直接执行的检查项；正文由证据区单独展示。
+            return []
         return checks[:6]
 
     @staticmethod

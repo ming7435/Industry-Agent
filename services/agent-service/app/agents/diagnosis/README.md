@@ -1,4 +1,4 @@
-# Diagnosis Agent
+# 诊断 Agent
 
 Diagnosis Agent 只负责一次异常事件的诊断编排，不直接绑定具体大模型实现。
 

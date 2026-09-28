@@ -60,7 +60,7 @@ def _string_list(value: Any, name: str) -> list[str]:
 
 
 def load_dataset(path: str | Path) -> list[EvaluationCase]:
-    """Load a JSONL gold set, including line-numbered validation errors."""
+    """加载 JSONL 金标准题集，并在错误中保留行号。"""
     cases: list[EvaluationCase] = []
     seen: set[str] = set()
     for line_number, raw_line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), start=1):

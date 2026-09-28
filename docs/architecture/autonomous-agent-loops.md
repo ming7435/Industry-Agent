@@ -1,71 +1,48 @@
-# Autonomous Agent Loops
+# 自主 Agent 循环
 
-The runtime is moving from one-shot Agent execution to bounded, evidence-driven
-loops. Each loop has an explicit state, a stop condition, and a durable
-side-effect rule. The shared implementation is Runtime infrastructure; domain
-Nodes only provide observation and action adapters.
+Runtime 正从一次性 Agent 执行转向有界、证据驱动的循环。每个循环都有明确的状态、停止条件和持久副作用规则。共享实现属于 Runtime 基础设施；领域 Node 只提供观察和动作适配器。
 
-## Tool Loop
+## 工具循环
 
-Diagnosis and Knowledge already use bounded LangGraph tool loops:
+Diagnosis 和 Knowledge 已经使用有界的 LangGraph 工具循环：
 
-- Tool Guard validates every call against the active Skill.
-- Observation records are hashed to stop repeated results.
-- `max_steps` stops runaway tool calls.
-- Tool traces carry `task_id` and `trace_id`.
+- Tool Guard 根据当前 Skill 校验每次调用。
+- Observation 记录会计算哈希，以阻止重复结果。
+- `max_steps` 用于停止失控的工具调用。
+- 工具 Trace 携带 `task_id` 和 `trace_id`。
 
-The loop must stop on a validator-approved result, repeated observation, or a
-budget error. Side-effecting tools remain non-retryable unless their boundary is
-idempotent.
+循环必须在验证器认可结果、观察结果重复或预算错误时停止。带副作用的工具仍不可重试，除非其边界具备幂等性。
 
-## Agent Loop
+## Agent 循环
 
-The Graph is now only the Runtime execution layer. It carries state into one
-Runtime lifecycle node; Planner and LoopEngine choose the next Action:
+Graph 现在只作为 Runtime 执行层。它将状态传入一个 Runtime 生命周期节点；Planner 和 LoopEngine 负责选择下一个 Action：
 
 ```text
-Goal/Event -> JEV -> Planner -> CapabilityRegistry -> LoopEngine
+Goal/Event -> RuntimeInputParser -> Planner -> CapabilityRegistry -> LoopEngine
   -> ActionModel -> ExecutionManager -> Agent/Tool/MCP
   -> Evidence -> Evaluator -> Continue/Replan/Final
 ```
 
-The default abnormal-event plan still resolves to
-`Diagnosis -> Knowledge -> CAD -> Maintenance -> WorkOrder -> waiting_repair`,
-but that order is a Planner result rather than a Graph edge. Maintenance can
-return `blocked_insufficient_evidence`; Runtime then stops without creating a
-WorkOrder.
+默认异常事件计划仍然解析为
+`Diagnosis -> Knowledge -> CAD -> Maintenance -> WorkOrder -> waiting_repair`，
+但该顺序是 Planner 的结果，而不是 Graph 边。Maintenance 可以返回
+`blocked_insufficient_evidence`；此时 Runtime 会停止，且不会创建 WorkOrder。
 
-## Unified Loop Engine
+## 统一循环引擎
 
-`app.runtime.loop_engine.LoopEngine` is the shared finite-state runtime for
-Evidence, Diagnosis Review, Maintenance Replan and future bounded learning
-operations. Its Runtime-native API is:
+`app.runtime.loop_engine.LoopEngine` 是共享的有限状态 Runtime，用于证据循环、诊断复核、Maintenance 重新规划以及未来的有界学习操作。它的原生 Runtime API 为：
 
 ```text
 Observe -> RuntimeEvaluator -> Select Action -> Execute -> Update State
 ```
 
-The engine enforces `max_iterations`, `min_evidence_score`, a wall-clock
-timeout, a cost budget, duplicate-action detection, no-new-evidence detection
-and confidence-progress detection. There is no free-running Agent loop: every
-loop has a finite policy and an explicit stop reason.
+引擎强制执行 `max_iterations`、`min_evidence_score`、墙钟超时、成本预算、重复动作检测、无新增证据检测和置信度进展检测。不存在自由运行的 Agent 循环：每个循环都有有限策略和明确停止原因。
 
-Every step emits an `ActionModel` with one of five kinds: `AGENT`, `TOOL`,
-`REPLAN`, `FINAL` or `WAIT`. `LoopGuard` is the single guard implementation
-used by the engine. `RuntimeEvaluator` is the single policy point for
-`continue`, `replan`, `final` and `blocked`; business Nodes must not duplicate
-that decision logic. `ExecutionManager` owns action execution status and
-reconciliation boundaries. Runtime tracing records
-`planner_start`, `planner_end`, `capability_selected`, `action_selected`,
-`execution_start`, `execution_end`, `evidence_added`, `evaluation_result`,
-`loop_continue`, `review_result`, `replan` and `loop_stop`
-with the active `task_id` and `trace_id`.
+每一步都会生成一个 `ActionModel`，其类型为 `AGENT`、`TOOL`、`REPLAN`、`FINAL` 或 `WAIT` 五者之一。`LoopGuard` 是引擎使用的唯一守卫实现。`RuntimeEvaluator` 是处理 `continue`、`replan`、`final` 和 `blocked` 的唯一策略入口；业务 Node 不得重复实现这套决策逻辑。`ExecutionManager` 负责动作执行状态和对账边界。Runtime Trace 会携带当前 `task_id` 和 `trace_id`，记录 `planner_start`、`planner_end`、`capability_selected`、`action_selected`、`execution_start`、`execution_end`、`evidence_added`、`evaluation_result`、`loop_continue`、`review_result`、`replan` 和 `loop_stop`。
 
-## Evidence Loop
+## 证据循环
 
-Trigger Knowledge retrieval gets one deterministic refinement attempt through
-the shared Runtime Engine when the first result has no usable documents or
-evidence. The result exposes:
+当第一次结果没有可用文档或证据时，Trigger Knowledge 检索会通过共享 Runtime Engine 进行一次确定性的细化尝试。结果会暴露：
 
 ```json
 {
@@ -79,39 +56,25 @@ evidence. The result exposes:
 }
 ```
 
-## Diagnosis Review Loop
+## 诊断复核循环
 
-When a diagnosis explicitly reports low confidence, missing evidence or
-validation findings, Runtime performs at most one review pass. The review
-receives the same event plus a deterministic review reason and only completes
-when the diagnosis evidence score reaches the policy threshold. Legacy
-diagnosis payloads without quality fields remain compatible and do not incur a
-second call.
+当诊断明确报告低置信度、缺少证据或存在校验发现时，Runtime 最多执行一次复核。复核会接收同一事件以及确定性的复核原因，只有当诊断证据分数达到策略阈值时才完成。没有质量字段的旧版诊断载荷保持兼容，不会因此产生第二次调用。
 
-## Maintenance Replan Loop
+## 维修重新规划循环
 
-Maintenance plans with validation findings or `workorder_ready=false` receive
-at most one replan pass. The second pass is marked with
-`context.replan_required=true`; if the bounded loop still cannot produce an
-evidence-backed plan, strict trigger mode ends before WorkOrder creation.
+带有校验发现或 `workorder_ready=false` 的 Maintenance 计划最多执行一次重新规划。第二次尝试会标记 `context.replan_required=true`；如果有界循环仍然无法生成有证据支持的计划，严格触发模式会在创建 WorkOrder 前结束。
 
-Production (`APP_ENV=production`) or an explicit
-`context.enforce_evidence_gate=true` requires usable Knowledge and CAD evidence
-before maintenance can create a WorkOrder. Development keeps the existing
-degraded compatibility behavior while the evidence metadata remains visible.
+生产环境（`APP_ENV=production`）或显式设置 `context.enforce_evidence_gate=true` 时，Maintenance 必须先获得可用的 Knowledge 和 CAD 证据，才能创建 WorkOrder。开发环境保留现有的降级兼容行为，同时继续暴露证据元数据。
 
-## Learning Loop
+## 学习循环
 
-Learning is only entered by a valid closed WorkOrder with repair feedback and
-an explicit passed repair verification:
+只有已合法关闭、包含维修反馈且明确通过维修验证的 WorkOrder 才能进入学习流程：
 
 ```text
 Memory Learn -> RAG Upsert -> Full Case Report
 ```
 
-`RuntimeOperations` persists each stage under `workorder:<workorder_id>` and
-returns `learning_loop` metadata. A failed Memory/RAG stage is retriable; a
-failed Report stage retries Report only and never relearns the same WorkOrder.
+`RuntimeOperations` 使用 `workorder:<workorder_id>` 持久化每个阶段，并返回 `learning_loop` 元数据。Memory/RAG 阶段失败时可以重试；Report 阶段失败时只重试 Report，绝不会让同一个 WorkOrder 重复学习。
 
 ```json
 {
@@ -123,12 +86,11 @@ failed Report stage retries Report only and never relearns the same WorkOrder.
 }
 ```
 
-All loops are bounded. A loop that cannot satisfy its evidence or side-effect
-contract returns an explicit stop reason instead of silently continuing.
+所有循环都有边界。如果循环无法满足证据或副作用契约，会返回明确的停止原因，而不是静默继续。
 
-## Runtime control plane
+## Runtime 控制平面
 
-The Runtime-native path is now:
+当前原生 Runtime 路径为：
 
 ```text
 Goal
@@ -148,12 +110,4 @@ Agent / Tool / A2A / MCP
 State update + Evidence
 ```
 
-`ExecutionManager` exposes explicit `PENDING`, `RUNNING`, `SUCCESS`,
-`FAILED`, `TIMEOUT`, `CANCELLED` and `UNKNOWN` states. A timeout never claims
-that a worker thread was killed; side-effecting actions require an
-`idempotency_key` and remain subject to existing state checks and
-reconciliation. `CapabilityRegistry` describes the capabilities of the nine
-existing Agents and is the only lookup source used by the basic Planner; it
-does not create another Agent. The machine-readable versions of these boundaries live in
-`shared/contracts/`; the field-level mapping is documented in
-`docs/contracts/runtime-contracts.md`.
+`ExecutionManager` 暴露明确的 `PENDING`、`RUNNING`、`SUCCESS`、`FAILED`、`TIMEOUT`、`CANCELLED` 和 `UNKNOWN` 状态。超时绝不声称工作线程已经被杀死；带副作用的动作必须提供 `idempotency_key`，并继续受既有状态检查和对账机制约束。`CapabilityRegistry` 描述现有九个 Agent 的能力，是基础 Planner 使用的唯一查找来源；它不会创建另一个 Agent。这些边界的机器可读版本位于 `shared/contracts/`，字段级映射记录在 `docs/contracts/runtime-contracts.md`。

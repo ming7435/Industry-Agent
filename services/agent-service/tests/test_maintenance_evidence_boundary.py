@@ -26,3 +26,23 @@ def test_maintenance_evidence_ignores_malformed_provider_records():
         "cad",
         "historical_experience",
     ]
+
+
+def test_repair_steps_exclude_raw_ocr_and_alarm_dictionary_text():
+    raw_document_text = (
+        "本地OCR识别结果（第43页，ql80s2_sop_reference.pdf）："
+        "触发条件 编码器丢失原点 报警12；设备移动或断电后需要重新建立位置基准；"
+        "POSITIONINGERROR ENCODERLOST reference point steps.action safety"
+    )
+
+    steps = MaintenanceAgent._repair_steps(
+        {"kind": "thermal"},
+        {},
+        {"recommended_checks": [raw_document_text, "检查冷却液液位"]},
+        [],
+    )
+
+    assert "检查冷却液液位" in steps
+    assert all("本地OCR识别结果" not in step for step in steps)
+    assert all("POSITIONINGERROR" not in step for step in steps)
+    assert all(len(step) <= 120 for step in steps)

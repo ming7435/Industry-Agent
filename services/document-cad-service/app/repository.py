@@ -39,8 +39,7 @@ class DemoCADRepository:
                 exact.append(dict(item))
             elif any(token and any(token in value for value in values) for token in text.replace("/", " ").replace("-", " ").split()):
                 fuzzy.append(dict(item))
-        # A structured component/part identifier must never degrade to a
-        # partial-token match: LUBRICATION-PUMP is not COOLING-PUMP.
+            # 结构化部件/零件标识绝不能降级为部分词元匹配：LUBRICATION-PUMP 不是 COOLING-PUMP。
         if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+", text):
             return exact[:limit]
         return (exact or fuzzy)[:limit]
@@ -87,10 +86,8 @@ class MySQLCADRepository:
         with self.connection.cursor() as cursor:
             for statement in statements:
                 cursor.execute(statement)
-            # CI uses a deterministic engineering fixture so the full
-            # cross-service closure can exercise a real MySQL-backed CAD
-            # lookup without enabling the demo repository. Production never
-            # opts into this fixture (the flag defaults to false).
+            # CI 使用确定性的工程夹具，让跨服务闭环可以执行真实的 MySQL CAD 查询，而无需启用演示仓库。
+            # 生产环境不会启用该夹具（开关默认关闭）。
             if os.getenv("CAD_CI_FIXTURE", "").lower() in {"1", "true", "yes"}:
                 cursor.execute(
                     "INSERT IGNORE INTO cad_drawings (drawing_id, drawing_name) VALUES (%s, %s)",
@@ -177,9 +174,7 @@ class MySQLCADRepository:
                 cursor.execute(sql, tuple(ids) + tuple(ids))
                 rows = cursor.fetchall()
         except Exception as error:
-            # Older engineering databases may not have relation rows yet. The
-            # component query remains usable; only the relation sub-resource is
-            # empty until the offline parser populates it.
+            # 较旧的工程数据库可能还没有关系记录。部件查询仍可使用；在离线解析器填充前，只有关系子资源为空。
             if "doesn't exist" in str(error).lower() or "unknown table" in str(error).lower():
                 return {}
             raise CADRepositoryError("CAD relation query failed: %s" % error) from error

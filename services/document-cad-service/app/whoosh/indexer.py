@@ -4,10 +4,8 @@ The lexical leg of the online chain cannot work without an index, so this module
 is the missing offline counterpart of :mod:`app.whoosh.retriever`. It accepts two
 kinds of input:
 
-* :class:`~app.embedding.models.VectorRecord` -- reuse them during ingestion,
-  when the chunks are already embedded and about to be written to Milvus;
-* plain mappings with the same keys -- reuse the rows already stored in Milvus
-  when the BM25 index has to be rebuilt without re-parsing the manuals.
+* :class:`~app.embedding.models.VectorRecord` ——入库时直接复用已经向量化、即将写入 Milvus 的分块；
+* 具有相同字段的普通映射 ——BM25 索引需要重建而无需重新解析手册时，复用 Milvus 中已有的记录。
 
 Both paths end in the same document layout, so a rebuild is indistinguishable
 from a fresh build.

@@ -1,4 +1,4 @@
-"""Provider selection and deterministic test mode for Model Service."""
+"""模型服务的提供方选择和确定性测试模式。"""
 
 from __future__ import annotations
 
@@ -100,10 +100,9 @@ class _OpenAICompatibleProvider:
 
     def chat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         requested_model = str(payload.get("model") or "").strip()
-        # Agent/RAG clients use ``deepseek-chat`` as their generic contract
-        # default.  When the configured chat provider is SiliconFlow that
-        # model name is not valid there, so resolve it to the provider's
-        # configured model instead of forwarding a foreign provider name.
+        # Agent/RAG 客户端使用 ``deepseek-chat`` 作为通用契约默认值。
+        # 当对话提供方是 SiliconFlow 时，该名称可能不是有效的模型名，
+        # 因此改写为提供方配置的模型，不把其他提供方的名称直接转发。
         if not requested_model or (self.name == "siliconflow" and requested_model == "deepseek-chat"):
             requested_model = self.model
         return self._post("/chat/completions", {**dict(payload), "model": requested_model})
@@ -136,7 +135,7 @@ class ModelGateway:
             )
             deepseek = _OpenAICompatibleProvider(
                 "deepseek",
-                os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
+                os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
                 os.getenv("DEEPSEEK_API_KEY", ""),
                 os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
                 "",

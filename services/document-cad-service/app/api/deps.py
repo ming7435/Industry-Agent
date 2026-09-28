@@ -2,20 +2,10 @@
 
 Design rules:
 
-* **Lazy.** Nothing is imported or constructed at module import time, so a
-  missing or broken offline component cannot prevent the process from starting.
-* **Failure-tolerant.** A construction failure is logged and cached as ``None``;
-  request handlers translate that into the matching degradation, and only a
-  fully unavailable retrieval layer becomes an HTTP 503.
-* **Thread-safe.** Double-checked locking around a module-level cache. The lock
-  is re-entrant because the pipeline singleton resolves the component singletons
-  from inside its own factory; the accessors are called from the event loop, from
-  startup warm-up tasks and potentially from worker threads.
-* **Adapter-friendly.** The offline retrievers are built with a no-argument call
-  when their constructor supports it; if they require parameters, the values are
-  taken from :mod:`config.settings` by *name* (see
-  :func:`_matching_kwargs`). That absorbs the constructor-shape difference
-  without hard-coding a guess.
+* **延迟初始化。** 模块导入时不导入或构造组件，因此离线组件缺失或损坏不会阻止进程启动。
+* **容错。** 构造失败会记录日志并缓存为 ``None``；请求处理器将其转换为相应的降级结果，只有整个检索层不可用时才返回 HTTP 503。
+* **线程安全。** 模块级缓存使用双重检查锁。锁可重入，因为管道单例在自身工厂中还要解析组件单例；访问器可能来自事件循环、启动预热任务或工作线程。
+* **适配友好。** 构造器支持无参调用时直接使用；需要参数时按名称从 :mod:`config.settings` 读取（见 :func:`_matching_kwargs`），吸收构造器形状差异而不硬编码猜测。
 """
 
 from __future__ import annotations
@@ -34,8 +24,7 @@ from .pipeline import SearchPipeline
 _MISSING = object()
 
 _instances: dict[str, Any] = {}
-# Re-entrant: the pipeline factory resolves the component singletons while it
-# already holds the lock, so a plain Lock would deadlock on the first /search.
+# 这里必须可重入：管道工厂在已持有锁时还要解析组件单例，普通 Lock 会在第一次 /search 时死锁。
 _lock = RLock()
 
 

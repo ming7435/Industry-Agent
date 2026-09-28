@@ -22,9 +22,9 @@ SERVICE_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = SERVICE_ROOT.parent.parent
 FRONTEND_ROOT = PROJECT_ROOT / "frontend" / "monitor"
 AGENT_SERVICE_BASE_URL = os.getenv("AGENT_SERVICE_BASE_URL", "http://127.0.0.1:8010")
-# Runtime actions can legitimately include more than one remote model call.
-# Keep this boundary configurable, but do not let the monitor declare a real
-# model-backed run failed before the Agent Runtime has a chance to finish.
+# Runtime Action 合法地可能包含多次远程模型调用。
+# 保持这个边界可配置，但不要让监控服务在 Agent Runtime 完成前
+# 提前把真实的模型运行标记为失败。
 AGENT_EVENT_TIMEOUT_SECONDS = float(
     os.getenv("AGENT_EVENT_TIMEOUT_SECONDS", os.getenv("AGENT_TIMEOUT_SECONDS", "180"))
 )
@@ -34,9 +34,8 @@ MONITOR_PROXY_TIMEOUT_SECONDS = float(
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-# Backward-compatible symbol export for integrations that imported the old
-# module-level registry type.  Monitor never instantiates it; all execution
-# remains behind the Agent Service HTTP boundary.
+# 为导入旧版模块级 Registry 类型的集成保留向后兼容的符号导出。
+# Monitor 不会实例化它；所有执行仍位于 Agent Service HTTP 边界之后。
 from app.tools.registry import ToolRegistry  # noqa: E402,F401
 
 
@@ -56,7 +55,7 @@ _PUBLIC_TRACE_FIELDS = (
 
 
 def _compact_trace(trace: Any) -> List[Dict[str, Any]]:
-    """Keep the monitor flow trace useful without exposing runtime state payloads."""
+    """保留监控流程 Trace 的可用信息，同时不暴露 Runtime 状态负载。"""
 
     if not isinstance(trace, list):
         return []
@@ -75,13 +74,11 @@ def _compact_stage(value: Any, fields: tuple[str, ...]) -> Dict[str, Any]:
 
 
 def compact_public_pipeline(pipeline: Mapping[str, Any] | None) -> Dict[str, Any]:
-    """Return the bounded pipeline contract consumed by the monitor UI.
+    """返回监控界面使用的有界 Pipeline 契约。
 
-    The runtime keeps full evidence, action outputs and state transitions for the
-    trace API.  Embedding those payloads in a one-second monitor snapshot made a
-    single response grow to hundreds of megabytes and prevented every workspace
-    from loading.  The monitor only needs stage summaries, the maintenance plan,
-    report and a compact flow trace.
+    Runtime 为 Trace API 保留完整证据、动作输出和状态迁移。将这些负载嵌入每秒
+    监控快照会使单个响应增长到数百 MB，并阻止工作台加载。监控界面只需要阶段
+    摘要、维修计划、报告和精简后的流程 Trace。
     """
 
     if not isinstance(pipeline, Mapping):
@@ -129,7 +126,7 @@ def compact_public_pipeline(pipeline: Mapping[str, Any] | None) -> Dict[str, Any
 
 
 def _compact_monitor_result(result: Any) -> Dict[str, Any] | None:
-    """Trim nested history from the latest monitor result for the UI payload."""
+    """裁剪最新监控结果中的嵌套历史，生成界面负载。"""
 
     if result is None:
         return None
@@ -204,7 +201,6 @@ from app.monitor import (  # noqa: E402，路径注入后再导入本地应用�
     FactorySnapshotProvider,
     MonitorRunner,
 )
-from app.monitor.control_policy import result_requires_emergency_stop
 
 
 class MonitorWebState:
@@ -356,46 +352,8 @@ class MonitorWebState:
             if result.trigger:
                 self.diagnosis_task_count += 1
                 self.trigger_history.appendleft(result.trigger.to_dict())
-        self._apply_machine_safety_control(result)
-
-    def _apply_machine_safety_control(self, result) -> None:
-        """Stop a device once when monitoring confirms a severe fault."""
-
-        device_id = str(result.device_id or "").strip()
-        if not device_id or not result_requires_emergency_stop(result):
-            return
-        with self.lock:
-            previous = self.machine_controls.get(device_id) or {}
-            current_sample = result.current_sample
-            current_status = str(getattr(current_sample, "status", "") or "").lower()
-            current_cycle = str(getattr(current_sample, "cycle_state", "") or "").lower()
-            if (
-                previous.get("action") == "emergency_stop"
-                and previous.get("accepted") is True
-                and current_status in {"emergency_stop", "e_stop"}
-                and current_cycle in {"emergency_stop", "e_stop"}
-            ):
-                return
-        reason = "监控确认高级故障"
-        try:
-            response = self.client.control_device(device_id, "emergency_stop", reason=reason)
-            control = {
-                "device_id": device_id,
-                "action": "emergency_stop",
-                "accepted": True,
-                "reason": reason,
-                "response": response,
-            }
-        except Exception as error:  # 保留监控结果，明确展示控制失败而不伪造停机。
-            control = {
-                "device_id": device_id,
-                "action": "emergency_stop",
-                "accepted": False,
-                "reason": reason,
-                "error": "%s: %s" % (type(error).__name__, error),
-            }
-        with self.lock:
-            self.machine_controls[device_id] = control
+        # 监控逻辑刻意保持只读。严重结果只暴露给诊断/工单流程，
+        # 绝不会直接启动或停止设备。
 
     def _on_trigger(self, trigger) -> None:
         """把确认后的异常事件异步交给 Diagnosis Agent。"""
@@ -664,6 +622,8 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
                 self.send_response(response.status)
                 self.send_header("Content-Type", response.headers.get("Content-Type", "application/json; charset=utf-8"))
                 self.send_header("Cache-Control", "no-store")
+                if response.headers.get("Content-Disposition"):
+                    self.send_header("Content-Disposition", response.headers["Content-Disposition"])
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
@@ -696,9 +656,8 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         body = file_path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_types.get(file_path.suffix, "application/octet-stream"))
-        # The entry document contains the current hashed bundle name.  Never let
-        # a browser keep an older index after a frontend rebuild, otherwise the
-        # page can silently run the pre-persistence bundle on refresh.
+        # 入口文档包含当前带哈希的 bundle 名称。前端重建后不能让浏览器继续缓存旧的
+        # index，否则刷新时可能静默运行持久化改动之前的 bundle。
         if file_path.suffix == ".html":
             self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("Content-Length", str(len(body)))

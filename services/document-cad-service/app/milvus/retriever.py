@@ -13,11 +13,9 @@ produces -- no schema change, no re-ingestion, no extra field:
 (:mod:`app.fusion`, :mod:`app.evidence`, :mod:`app.reranker`,
 :mod:`app.api.pipeline`) so the whole online chain agrees on one hit shape:
 
-* ``source`` is the *route label* (``"dense"`` here, ``"bm25"`` for Whoosh,
-  ``"fusion"`` after RRF) -- that is what the API contract promises;
-* ``metadata["corpus"]`` is the *corpus label*, derived at read time by
-  :func:`app.corpus.infer_corpus` from the offline ``source_name`` /
-  ``source_path`` / ``metadata_json``. The evidence layer groups citations by it.
+* ``source`` 是*路径标签*（此处为 ``"dense"``，Whoosh 使用 ``"bm25"``，RRF 后使用 ``"fusion"``），这也是 API 契约承诺的值；
+* ``metadata["corpus"]`` 是*语料标签*，由 :func:`app.corpus.infer_corpus` 在读取时根据离线的 ``source_name``、``source_path`` 和 ``metadata_json`` 推导。
+  证据层按该标签对引用分组。
 
 Both travel together through fusion and reranking because those stages copy the
 metadata of the hit they rewrite.
@@ -362,7 +360,7 @@ class DenseRetriever:
         if remaining:
             hits = [hit for hit in hits if matches_metadata(hit, remaining)]
 
-        # Merge by relevance across every queried collection, then keep the top_k.
+        # 合并所有查询集合中的相关性结果，然后保留 top_k 条。
         hits.sort(key=lambda hit: hit.score, reverse=True)
         hits = hits[:limit]
 

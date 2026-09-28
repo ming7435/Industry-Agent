@@ -1,4 +1,4 @@
-"""RAG-side HTTP client for the Model Service contract."""
+"""RAG 侧的模型服务契约 HTTP 客户端。"""
 
 from __future__ import annotations
 

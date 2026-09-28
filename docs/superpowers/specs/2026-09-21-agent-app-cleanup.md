@@ -1,38 +1,38 @@
-# Agent App Cleanup Design
+# Agent 应用清理设计
 
-## Goal
+## 目标
 
-Clean `services/agent-service/app` without removing required business capabilities, and make active Skill configuration fail fast when it references an unavailable tool.
+在不移除必要业务能力的前提下清理 `services/agent-service/app`，并让活动 Skill 配置在引用不可用工具时快速失败。
 
-## Functional retention
+## 功能保留
 
-- Alarm parsing remains in `app/common/alarm.py`; the removed `app/alarm` source was migrated there without losing behavior.
-- Experience extraction, admission, deduplication, storage, and RAG writing remain in `app/memory/`; the current implementation reflects the work order repair feedback closure model.
-- Trace recording remains in `app/harness/trace.py`; the removed `app/trace` source was migrated there without behavior loss.
-- Shared Pydantic contracts remain in `app/contracts.py`, with agent specific validation in each agent package; the current contracts add work order lifecycle and repair fields.
-- All tools from the seven root level legacy Skill YAML files remain covered by the 32 active files under `app/skills/{agent}/*.yaml`.
+- 报警解析继续位于 `app/common/alarm.py`；已移除的 `app/alarm` 源码已迁移到该处，行为保持不变。
+- 经验提取、准入、去重、存储和 RAG 写入继续位于 `app/memory/`；当前实现体现工单维修反馈闭环模型。
+- Trace 记录继续位于 `app/harness/trace.py`；已移除的 `app/trace` 源码已迁移到该处，行为没有损失。
+- 共享 Pydantic 契约继续位于 `app/contracts.py`，各 Agent 包负责 Agent 专属校验；当前契约增加了工单生命周期和维修字段。
+- 七个根目录旧版 Skill YAML 文件中的所有工具，仍由 `app/skills/{agent}/*.yaml` 下的 32 个活动文件覆盖。
 
-## Cleanup scope
+## 清理范围
 
-- Remove the ignored cache only directories `app/alarm`, `app/experience`, `app/trace`, and `app/validator`.
-- Remove all ignored `__pycache__` directories under `app`.
-- Remove the seven tracked legacy root Skill files: `cad_skill.yaml`, `diagnosis_skill.yaml`, `knowledge_skill.yaml`, `maintenance_skill.yaml`, `quality_skill.yaml`, `report_skill.yaml`, and `router_skill.yaml`.
-- Keep `app/runtime/ARCHITECTURE_AUDIT.md` because it remains useful architecture documentation.
-- Keep all current source directories because they participate in the application, monitor, tool, memory, closure, or work order execution paths.
+- 删除仅用于缓存且被忽略的目录 `app/alarm`、`app/experience`、`app/trace` 和 `app/validator`。
+- 删除 `app` 下所有被忽略的 `__pycache__` 目录。
+- 删除七个已跟踪的根目录旧版 Skill 文件：`cad_skill.yaml`、`diagnosis_skill.yaml`、`knowledge_skill.yaml`、`maintenance_skill.yaml`、`quality_skill.yaml`、`report_skill.yaml` 和 `router_skill.yaml`。
+- 保留 `app/runtime/ARCHITECTURE_AUDIT.md`，因为它仍是有用的架构文档。
+- 保留所有当前源码目录，因为它们参与应用、监控、工具、记忆、闭环或工单执行路径。
 
-## Skill validation
+## Skill 校验
 
-`SkillRegistry` will expose validation for the active per agent catalog. Validation will inspect only directories matching the existing `app/skills/{agent}/*.yaml` contract and will reject:
+`SkillRegistry` 将为每个 Agent 的活动目录提供校验。校验只检查符合现有 `app/skills/{agent}/*.yaml` 契约的目录，并拒绝：
 
-- duplicate Skill names within one agent;
-- Skill tool names missing from the supplied Tool Registry tool set.
+- 同一 Agent 内重复的 Skill 名称；
+- 在传入的 Tool Registry 工具集合中不存在的 Skill 工具名称。
 
-`AgentContainer` will run this validation after constructing `ToolRegistry`, before constructing agents. Errors must include the agent, Skill, source YAML, and missing tool so configuration failures can be repaired directly.
+`AgentContainer` 在构造 `ToolRegistry` 后、构造 Agent 前执行此校验。错误必须包含 Agent、Skill、源 YAML 和缺失工具，以便直接修复配置问题。
 
-## Verification
+## 验证
 
-- A focused test will first demonstrate that missing tools and duplicate names are currently not rejected.
-- The same test will pass after validation is implemented.
-- The real catalog will validate against all registered MCP handler names.
-- The complete agent service pytest suite will pass.
-- `git status` will show the seven intended tracked deletions and code/test/plan changes only; the user's existing root `README.md` change remains untouched.
+- 先由聚焦测试证明当前不会拒绝缺失工具和重复名称。
+- 完成校验后，同一测试应当通过。
+- 使用所有已注册 MCP handler 名称校验真实目录。
+- 完整 Agent Service pytest 套件应当通过。
+- `git status` 应只显示七个预期的已跟踪删除项以及代码/测试/计划变更；用户已有的根目录 `README.md` 修改保持不变。

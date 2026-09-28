@@ -1,4 +1,4 @@
-"""Run service test suites in isolated Python import paths."""
+"""在隔离的 Python 导入路径中运行各服务测试套件。"""
 
 from __future__ import annotations
 

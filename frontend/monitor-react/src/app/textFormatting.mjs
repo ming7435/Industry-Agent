@@ -20,7 +20,7 @@ export function parseEmbeddedJson(value) {
       const parsed = JSON.parse(match[1].trim());
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
     } catch {
-      // Ignore malformed model output and keep the readable narrative.
+      // 忽略格式错误的模型输出，保留可读的叙述文本。
     }
   }
   return null;

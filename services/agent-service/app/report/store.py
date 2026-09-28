@@ -1,4 +1,4 @@
-"""Restart-safe report storage with a development memory fallback."""
+"""支持安全重启的报告存储，并提供开发环境内存回退。"""
 
 from __future__ import annotations
 

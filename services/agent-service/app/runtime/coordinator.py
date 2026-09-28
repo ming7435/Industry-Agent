@@ -1,27 +1,134 @@
-"""Top-level Runtime coordinator used by the Graph execution layer."""
+"""Graph 执行层使用的顶层 Runtime 协调器。"""
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from .action import ActionModel
-from .jev import GoalEvent, JEVParser
 from .loop_engine import LoopEngine, LoopPolicy, LoopResult
 from .evaluator import RuntimeEvaluator
 from .capability import build_capability_registry
 from app.skills import get_skill_registry
 
 
+@dataclass(frozen=True)
+class GoalEvent:
+    """供 Runtime Planner 和 Trace 边界共用的标准化输入。"""
+
+    goal: str
+    entities: dict[str, Any] = field(default_factory=dict)
+    constraints: dict[str, Any] = field(default_factory=dict)
+    required_capabilities: tuple[str, ...] = ()
+    source: str = "unknown"
+    raw: dict[str, Any] = field(default_factory=dict)
+    validation_findings: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "goal": self.goal,
+            "entities": dict(self.entities),
+            "constraints": dict(self.constraints),
+            "required_capabilities": list(self.required_capabilities),
+            "source": self.source,
+            "raw": dict(self.raw),
+            "validation_findings": list(self.validation_findings),
+        }
+
+
+class RuntimeInputParser:
+    """在规划前标准化用户请求和监控事件。
+
+    这里刻意保持为小型确定性边界：不调用 AI 模型、不选择 Agent、不执行工具，
+    也不控制 Runtime 循环。
+    """
+
+    EVENT_CAPABILITIES = (
+        "fault_analysis",
+        "document_search",
+        "drawing_search",
+        "repair_planning",
+        "workorder_create",
+    )
+
+    def parse(self, payload: Any) -> GoalEvent:
+        if isinstance(payload, str):
+            text = payload.strip()
+            return GoalEvent(
+                goal=text or "处理工业运维请求",
+                required_capabilities=self._user_capabilities(text),
+                source="user",
+                raw={"user_text": payload},
+                validation_findings=("goal is blank",) if not text else (),
+            )
+        findings: list[str] = []
+        if not isinstance(payload, Mapping):
+            findings.append("payload must be a mapping or string")
+        raw = dict(payload or {}) if isinstance(payload, Mapping) else {}
+        user_text = str(raw.get("user_text") or raw.get("goal") or "").strip()
+        event_type = str(raw.get("event_type") or raw.get("alarm_code") or "设备异常").strip()
+        is_event = bool(raw.get("event_id") or raw.get("abnormal_metrics") or raw.get("realtime_snapshot"))
+        source = "event" if is_event else "user"
+        goal = user_text or "处理%s" % event_type
+        entities = {
+            key: value
+            for key, value in raw.items()
+            if key not in {"user_text", "goal", "constraints", "required_capabilities"}
+            and value not in (None, "", [], {})
+        }
+        constraints = dict(raw.get("constraints") or {}) if isinstance(raw.get("constraints"), Mapping) else {}
+        capabilities = raw.get("required_capabilities")
+        if isinstance(capabilities, (list, tuple)):
+            required = tuple(str(item) for item in capabilities if str(item).strip())
+        elif is_event:
+            required = self.EVENT_CAPABILITIES
+        else:
+            required = self._user_capabilities(user_text)
+        if capabilities is not None and not isinstance(capabilities, (list, tuple)):
+            findings.append("required_capabilities must be a list")
+        if not user_text and not is_event:
+            findings.append("goal is blank")
+        return GoalEvent(
+            goal=goal,
+            entities=entities,
+            constraints=constraints,
+            required_capabilities=required,
+            source=source,
+            raw=raw,
+            validation_findings=tuple(findings),
+        )
+
+    @staticmethod
+    def _user_capabilities(text: str) -> tuple[str, ...]:
+        value = str(text or "").lower()
+        # “有哪些故障/常见故障”是知识目录查询，不是针对当前设备的故障诊断。
+        if re.search(r"(?:有哪些|哪些|什么).{0,12}(?:故障|报警|问题)", value):
+            return ("document_search",)
+        if any(token in value for token in ("质检", "质量", "零件检测", "inspection")):
+            return ("quality_inspection",)
+        if any(token in value for token in ("工单", "派工", "维修完成", "重开")):
+            return ("workorder_update",)
+        if any(token in value for token in ("图纸", "bom", "部件", "装配", "cad")):
+            return ("drawing_search",)
+        if any(token in value for token in ("报告", "report")):
+            return ("case_reporting",)
+        if any(token in value for token in ("经验", "手册", "sop", "案例", "知识", "维修")):
+            return ("document_search",)
+        if any(token in value for token in ("故障", "报警", "诊断", "异常", "fault")):
+            return ("fault_analysis",)
+        return ("document_search",)
+
+
 class RuntimeCoordinator:
-    """Run a bounded Planner → Action → Agent loop for one Goal/Event."""
+    """为一个 Goal/Event 执行有界的 Planner → Action → Agent 循环。"""
 
     def __init__(self, container: Any) -> None:
         self.container = container
-        self.jev = JEVParser()
-        # Small compatibility containers used by direct Runtime tests may
-        # provide only planner/dispatcher/trace. Keep the metadata boundary
-        # available without requiring the full application container.
+        self.input_parser = RuntimeInputParser()
+        # 直接 Runtime 测试使用的小型兼容容器可能只提供 planner/dispatcher/trace。
+        # 在不要求完整应用容器的前提下保留元数据边界。
         self.capabilities = (
             getattr(container, "capabilities", None)
             or getattr(getattr(container, "dispatcher", None), "capabilities", None)
@@ -34,7 +141,7 @@ class RuntimeCoordinator:
             "user_text": initial.get("user_text", ""),
             **dict(initial.get("context") or {}),
         }
-        goal_event: GoalEvent = self.jev.parse(source_payload)
+        goal_event: GoalEvent = self.input_parser.parse(source_payload)
         planner_context = {
             **goal_event.entities,
             "constraints": dict(goal_event.constraints),
@@ -299,21 +406,17 @@ class RuntimeCoordinator:
                         keys=["reason", "missing_evidence", "actions"], tool_name="", latency=0.0, error="",
                     )
                 else:
-                    # A repeated replan request is a terminal safety condition.
-                    # Do not continue into side effects (for example, creating a
-                    # work order) while the preceding evidence remains invalid.
+                    # 重复请求重新规划属于终止性安全条件。
+                    # 在前置证据仍无效时，不要继续执行副作用（例如创建工单）。
                     result.output = {
                         **dict(result.output or {}),
                         "status": "blocked",
                         "reason": "replan_limit_exceeded",
                     }
             elif result.next_actions:
-                # Agents may observe evidence that changes the next useful
-                # capability.  Keep the decision inside the Runtime contract:
-                # extract capability requirements, ask Planner for a new
-                # Action plan, then let the normal dispatcher select the
-                # registered Agent.  Never execute an Agent suggestion
-                # directly from the outer loop.
+                # Agent 可能观察到会改变下一项有效能力的证据。决策必须留在 Runtime 契约内：
+                # 提取能力要求，请 Planner 生成新的 Action 计划，再由普通 dispatcher 选择已注册 Agent。
+                # 绝不要直接在外层循环执行 Agent 的建议。
                 requested = self._next_action_capabilities(
                     result.next_actions,
                     plan.actions[index + 1:],
@@ -350,16 +453,14 @@ class RuntimeCoordinator:
             return {
                 "state": next_state,
                 "action": action,
-                # Domain evaluators decide whether an action needs replanning;
-                # only a replan is propagated to LoopEngine. A domain FINAL is
-                # not the end of the overall plan.
+                # 领域评估器决定动作是否需要重新规划；只有 replan 会传给 LoopEngine。
+                # 领域 FINAL 不代表整个计划结束。
                 "domain": domain if evaluation.status.value == "replan" else "",
                 "result": dict(result.output or {}) if evaluation.status.value == "replan" else {},
                 "evidence_ids": self._evidence_ids(result.evidence) or ["action:%s" % capability],
                 "evidence_score": result.confidence if result.confidence else (1.0 if result.evidence else 0.0),
-                # The plan loop is a bounded action sequence, not a confidence
-                # review loop; domain confidence is retained in the AgentResult
-                # output and must not prematurely stop the remaining Actions.
+                # 计划循环是有边界的动作序列，而不是置信度复核循环；领域置信度保留在 AgentResult 输出中，
+                # 不得提前停止剩余 Action。
                 "confidence": None,
                 "done": False,
             }
@@ -402,7 +503,7 @@ class RuntimeCoordinator:
         return final_state
 
     def _enrich_action(self, action: ActionModel, state: Mapping[str, Any]) -> ActionModel:
-        """Attach Skill-derived execution metadata to a canonical Action."""
+        """把 Skill 派生的执行元数据附加到标准 Action 上。"""
 
         payload = dict(action.payload)
         capability = action.required_capability or action.target
@@ -428,14 +529,13 @@ class RuntimeCoordinator:
         if steps:
             payload.setdefault("skill", skill_names[0] if skill_names else "")
             payload.setdefault("step", steps[0].id)
-            # Existing Agent graphs may execute several Skill steps inside one
-            # Runtime action.  The guard receives the union of that Agent's
-            # declared tools unless the Action explicitly narrows it.
+            # 现有 Agent Graph 可能在一个 Runtime action 内执行多个 Skill 步骤。
+            # 除非 Action 明确收窄范围，否则守卫接收该 Agent 声明工具的并集。
             payload.setdefault("allowed_tools", registry.merge_tools(registry.list(agent)))
         return action.model_copy(update={"payload": payload})
 
     def resume_pending(self, record: Mapping[str, Any]) -> dict[str, Any]:
-        """Resume the persisted Action without invoking Planner again."""
+        """恢复已持久化的 Action，且不再次调用 Planner。"""
 
         state = dict(record.get("state") or {})
         action = dict(record.get("action") or {})
@@ -476,11 +576,10 @@ class RuntimeCoordinator:
 
     @staticmethod
     def _next_action_capabilities(next_actions: list[Any], remaining: list[ActionModel]) -> list[str]:
-        """Extract planner inputs from an AgentResult.next_actions envelope.
+        """从 AgentResult.next_actions 封装中提取 Planner 输入。
 
-        Only explicit capability requirements are accepted.  This preserves
-        the Action → Registry → Agent boundary and keeps free-form Agent
-        output from becoming an implicit dispatcher command.
+        这里只接受明确的能力要求，以保持 Action → Registry → Agent 边界，
+        避免自由格式的 Agent 输出变成隐式 Dispatcher 命令。
         """
         requested: list[str] = []
         for item in next_actions:
@@ -501,8 +600,7 @@ class RuntimeCoordinator:
             if capability and capability not in requested:
                 requested.append(capability)
 
-        # Preserve unfinished planned work after Agent-requested capabilities
-        # unless the Agent explicitly requested the same capability sequence.
+        # Agent 请求能力后保留尚未完成的计划工作，除非 Agent 明确请求了同一能力序列。
         for action in remaining:
             capability = action.required_capability
             if capability and capability not in requested:

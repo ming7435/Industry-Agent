@@ -156,3 +156,17 @@ test("marks an incomplete Agent invocation as running and an errored one as abno
   assert.equal(invocations[1].status, "异常");
   assert.equal(invocations[1].error, "模型不可用");
 });
+
+test("matches lifecycle events through event id when task ids differ", () => {
+  const run = {
+    run_type: "fault",
+    event_id: "EVT-1",
+    event_ids: ["EVT-1"],
+    trace_ids: ["TRACE-1"],
+    task_ids: ["TASK-1", "TASK-2"],
+  };
+
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-1", task_id: "TASK-2", event: "tool_completed" }), true);
+  assert.equal(runEventMatches(run, { event_id: "EVT-1", event: "agent_completed" }), true);
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-OTHER", task_id: "TASK-OTHER", event: "tool_completed" }), false);
+});

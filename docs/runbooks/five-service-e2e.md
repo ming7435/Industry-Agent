@@ -1,10 +1,10 @@
-# Five-service Compose E2E
+# 五服务 Compose E2E
 
-The CI workflow starts the `apps` and `gateway` profiles with
-`MODEL_PROVIDER=fake`, waits for Backend, Model, Agent, RAG, CAD, and Monitor
-health, seeds one deterministic knowledge document, and runs `tests/e2e`.
+CI 工作流使用 `MODEL_PROVIDER=fake` 启动 `apps` 和 `gateway` profile，等待 Backend、
+Model、Agent、RAG、CAD 和 Monitor 健康检查通过，写入一份确定性的知识文档，然后运行
+`tests/e2e`。
 
-For a local run:
+本地运行方式：
 
 ```powershell
 $env:MODEL_PROVIDER = "fake"
@@ -18,5 +18,4 @@ RUN_DOCKER_E2E=1 python -m pytest tests/e2e -q
 docker compose -f infra/docker/docker-compose.yml --profile apps --profile gateway down -v
 ```
 
-If a required dependency is unavailable, the run must fail. Do not turn on a
-local/demo fallback to make a production check green.
+如果必需依赖不可用，运行必须失败。不要打开本地或 Demo fallback 来让生产检查变绿。

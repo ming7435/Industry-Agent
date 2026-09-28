@@ -1,30 +1,30 @@
-# Runtime Convergence Implementation Plan
+# Runtime 收敛实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **面向 Agent 工作���：**必须使用 `superpowers:executing-plans` 子技能，按任务逐项实施本计划。
 
-**Goal:** Make the existing Runtime the control center for Industrial-Agent while preserving all existing business Agents, Graphs, RAG, CAD, WorkOrder lifecycle, Memory Learning, and shared contracts.
+**目标：**让现有 Runtime 成为 Industrial-Agent 的控制中心，同时保留所有现有业务 Agent、Graph、RAG、CAD、WorkOrder 生命周期、Memory Learning 和共享契约。
 
-**Architecture:** Add a small unified Agent contract and JEV boundary, register concrete Agent instances and capabilities in the existing Capability Registry, and introduce a Runtime dispatcher that resolves Planner Actions through capabilities and ExecutionManager. Keep LangGraph as a state/execution layer; the top-level Graph invokes Runtime actions instead of encoding the fixed business sequence.
+**架构：**增加统一的 Agent 契约和 JEV 边界，在现有 Capability Registry 中注册具体 Agent 实例及其能力，并引入通过 capability 和 ExecutionManager 解析 Planner Action 的 Runtime dispatcher。保留 LangGraph 作为状态/执行层；顶层 Graph 调用 Runtime Action，而不是编码固定业务顺序。
 
-**Tech Stack:** Python 3, Pydantic, LangGraph, FastAPI, pytest, existing TraceRecorder and Runtime components.
+**技术栈：**Python 3、Pydantic、LangGraph、FastAPI、pytest，以及现有 TraceRecorder 和 Runtime 组件。
 
-**Spec:** User-provided Runtime-driven Autonomous Industrial Agent System requirements in the conversation.
+**规格：**对话中用户提供的 Runtime 驱动自主工业 Agent 系统要求。
 
-## Global Constraints
+## 全局约束
 
-- Do not add a business Agent or microservice.
-- Do not delete existing Graphs, Runtime components, Agent capabilities, RAG, CAD, WorkOrder, or shared contracts.
-- Preserve Event Idempotency, WorkOrder Lifecycle, RAG Contract, Trace Contract, and existing API behavior.
-- Do not add productionization beyond the Runtime architecture convergence.
-- Keep the implementation split into focused modules; do not create a new monolithic orchestrator.
+- 不新增业务 Agent 或微服务。
+- 不删除现有 Graph、Runtime 组件、Agent 能力、RAG、CAD、WorkOrder 或共享契约。
+- 保持事件幂等性、WorkOrder 生命周期、RAG 契约、Trace 契约和现有 API 行为。
+- 除 Runtime 架构收敛外，不增加生产化范围。
+- 保持实现拆分在聚焦模块中；不要创建新的单体编排器。
 
-## Review Focus
+## 复核重点
 
-- A Planner Action with an unknown capability must be blocked with a traceable reason rather than silently calling a hard-coded Agent.
-- Repeated side-effect Actions must preserve idempotency and must not create duplicate WorkOrders.
-- A Runtime loop must stop on final evidence, evaluator block, duplicate action, timeout, or max iterations.
-- A JEV parse failure must preserve the existing event/user entry behavior and return a structured validation finding.
-- Legacy Graph and A2A callers must continue to receive their existing result payloads.
+- 带未知 capability 的 Planner Action 必须以可追踪原因阻断，而不是静默调用硬编码 Agent。
+- 重复的副作用 Action 必须保持幂等性，不得创建重复 WorkOrder。
+- Runtime 循环必须在最终证据、评估器阻断、重复动作、超时或最大迭代次数时停止。
+- JEV 解析失败必须保留现有事件/用户入口行为，并返回结构化校验发现。
+- 旧 Graph 和 A2A 调用方必须继续接收原有结果载荷。
 
 ### Task 1: Unified Runtime contracts and JEV boundary
 

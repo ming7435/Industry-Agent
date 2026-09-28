@@ -1,4 +1,4 @@
-"""Durable approval and pending Runtime task lifecycle."""
+"""可持久化的审批和 Runtime 待处理任务生命周期。"""
 
 from __future__ import annotations
 

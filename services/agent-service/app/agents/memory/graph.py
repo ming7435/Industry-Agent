@@ -84,9 +84,8 @@ def dedup_experience(state: MemoryGraphState) -> Dict[str, Any]:
             ),
             None,
         )
-        # A memory row may already exist while its remote RAG upsert failed.
-        # Keep the duplicate out of long memory, but send it through the writer
-        # again so the stable experience id can be retried safely.
+        # 记忆记录可能已经存在，但远程 RAG upsert 失败。
+        # 不把重复记录再次加入长期记忆，但仍通过写入器重试，使稳定的经验 ID 可以安全恢复。
         if existing_item is not None and not bool(existing_item.get("rag_saved")):
             return {"route": "validate_experience"}
         return {"validation_findings": ["相同工单经验已存在"], "route": "final"}
@@ -111,10 +110,9 @@ def final(state: MemoryGraphState) -> Dict[str, Any]:
     if action in {"search", "recent"}:
         success = bool(items)
     else:
-        # Preserve the historical Memory Agent meaning of ``success`` (the
-        # experience was admitted to long memory).  ``rag_saved`` remains an
-        # explicit stage result and the close runtime uses it to gate reports.
-        # A duplicate with a successful RAG retry is also a completed learn.
+        # 保留 Memory Agent 对 ``success`` 的历史语义（经验已进入长期记忆）。
+        # ``rag_saved`` 仍是明确的阶段结果，关闭运行时用它控制报告生成。
+        # RAG 重试成功的重复记录也视为学习完成。
         success = bool(experience.get("memory_saved") or (experience.get("duplicate") and experience.get("rag_saved")))
     result = MemoryResult(action=action, success=success, items=items, experience=experience, count=len(items), backend=getattr(state["agent"].experience_module.long_memory, "backend", ""), validation_findings=list(state.get("validation_findings") or []), stop_reason="completed")
     return {"result": result, "stop_reason": "completed"}

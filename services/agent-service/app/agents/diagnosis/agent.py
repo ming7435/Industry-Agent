@@ -188,7 +188,7 @@ class DiagnosisAgent(BaseAgent):
         return dict(result or {})
 
     # ==========================================================
-    # Event
+    # 事件
     # ==========================================================
 
     @staticmethod
@@ -225,7 +225,7 @@ class DiagnosisAgent(BaseAgent):
         return validator.validate_candidate(state, event, parsed, raw_text)
 
     # ==========================================================
-    # Result
+    # 结果
     # ==========================================================
 
     def _result_from_model(
@@ -369,7 +369,7 @@ class DiagnosisAgent(BaseAgent):
         )
 
     # ==========================================================
-    # Fallback
+    # 降级处理
     # ==========================================================
 
     def _build_fallback_result(
@@ -562,7 +562,7 @@ class DiagnosisAgent(BaseAgent):
         )
 
     # ==========================================================
-    # LLM Metadata
+    # LLM 元数据
     # ==========================================================
 
     def _model_name(self) -> str:
@@ -572,7 +572,7 @@ class DiagnosisAgent(BaseAgent):
         return str(getattr(self.client, "provider", "llm"))
 
     # ==========================================================
-    # Alarm Definition
+    # 报警定义
     # ==========================================================
 
     @staticmethod
@@ -589,7 +589,7 @@ class DiagnosisAgent(BaseAgent):
         return evidence.definition_found(definition)
 
     # ==========================================================
-    # Abnormal Metrics
+    # 异常指标
     # ==========================================================
 
     @staticmethod
@@ -604,7 +604,7 @@ class DiagnosisAgent(BaseAgent):
         return evidence.result_evidence(state, event)
 
     # ==========================================================
-    # Event Revision
+    # 事件版本
     # ==========================================================
 
     @staticmethod
@@ -614,7 +614,7 @@ class DiagnosisAgent(BaseAgent):
         return parsing.event_revision(event)
 
     # ==========================================================
-    # Confidence
+    # 置信度
     # ==========================================================
 
     @staticmethod

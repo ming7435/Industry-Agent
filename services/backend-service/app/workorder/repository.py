@@ -1,4 +1,4 @@
-"""Backend-owned WorkOrder persistence."""
+"""由后端负责的工单持久化。"""
 
 from __future__ import annotations
 

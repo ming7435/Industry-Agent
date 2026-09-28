@@ -1,4 +1,4 @@
-"""Deterministic metrics and local orchestration primitives for RAG evaluation."""
+"""用于 RAG 评测的确定性指标和本地编排基础设施。"""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def _abstention_accuracy(answer: str | None, should_answer: bool) -> float | Non
 
 
 def evaluate_case(case: EvaluationCase, response: dict[str, Any], top_k: int = 5) -> CaseEvaluation:
-    """Calculate one case without making assumptions about hit metadata shape."""
+    """计算单个题目，不假设命中结果的元数据结构。"""
     hits = _normalise_hits(response, top_k)
     evidence_ids = [_evidence_id(hit) for hit in hits]
     evidence_sources = [_source(hit) for hit in hits]
@@ -160,7 +160,7 @@ def aggregate_evaluations(
     mode: str,
     run_at_utc: str | None = None,
 ) -> EvaluationReport:
-    """Build a report while excluding null metrics from averages."""
+    """生成报告，并在平均值中排除空指标。"""
     failed = sum(1 for item in cases if item.error or item.degraded)
     metric_names = (
         "recall_at_k",
@@ -221,7 +221,7 @@ def run_evaluation(
     top_k: int = 5,
     request_fn: Any = None,
 ) -> EvaluationReport:
-    """Run the local evaluator and persist ``latest.json`` plus a timestamped report."""
+    """运行本地评测，并持久化 ``latest.json`` 与带时间戳的报告。"""
     from .models import load_dataset
 
     cases = load_dataset(dataset_path)

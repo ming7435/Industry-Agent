@@ -22,7 +22,7 @@ class _Factory:
         return {"ok": True, "action": action, "device": {"status": "running"}}
 
 
-def test_verified_completion_requests_real_machine_start():
+def test_verified_completion_does_not_automatically_start_machine():
     factory = _Factory()
     operations = RuntimeOperations(_Requests(), closure_service=None, factory_client=factory)
 
@@ -36,6 +36,5 @@ def test_verified_completion_requests_real_machine_start():
         },
     )
 
-    assert factory.calls == [("MACHINE-1", "start", "维修验证通过，申请恢复运行")]
-    assert result["machine_control"]["accepted"] is True
-
+    assert factory.calls == []
+    assert "machine_control" not in result

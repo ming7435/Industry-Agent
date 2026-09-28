@@ -1,4 +1,4 @@
-"""Canonical action contract for every Runtime-selected operation."""
+"""每个 Runtime 选定操作的规范动作契约。"""
 
 from __future__ import annotations
 
