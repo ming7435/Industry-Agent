@@ -52,7 +52,7 @@ LOGGER = logging.getLogger("rag_offline_ingest")
 COLLECTION_BY_DATA_TYPE = {
     "alarms": "industry_rag_alarm_codes",
     "cases": "industry_rag_alarm_solutions",
-    "manuals": "industry_rag_manuals",
+    "manuals": "industry_rag_bom",
     "sop": "industry_rag_sop",
     "cad": "industry_rag_drawings",
 }
@@ -60,7 +60,7 @@ COLLECTION_BY_DATA_TYPE = {
 
 @contextmanager
 def _stage_progress(source_name: str, stage: str, *, heartbeat_seconds: float = 10.0):
-    """记录阻塞式解析/OCR 或向量化阶段的心跳日志。""""
+    """记录阻塞式解析/OCR 或向量化阶段的心跳日志。"""
 
     started = time.monotonic()
     stopped = threading.Event()

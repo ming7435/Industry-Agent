@@ -12,7 +12,7 @@ from typing import Any
 
 from app.config.settings import allow_degraded_storage
 class DurableReportStore(MutableMapping[str, dict[str, Any]]):
-    """Mapping-compatible report store backed by the shared JSON SQLite store."""
+    """基于共享 JSON SQLite 存储的报告存储，支持映射接口。"""
 
     namespace = "reports"
 

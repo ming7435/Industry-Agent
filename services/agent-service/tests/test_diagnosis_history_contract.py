@@ -46,6 +46,45 @@ def test_tool_registry_normalizes_diagnostic_aliases_before_dispatch() -> None:
     }
 
 
+def test_repair_plan_stays_local_when_backend_is_configured(monkeypatch) -> None:
+    registry_module = importlib.import_module("app.tools.registry")
+    monkeypatch.setenv("BACKEND_SERVICE_BASE_URL", "http://backend.example")
+    registry = registry_module.ToolRegistry()
+    calls = []
+
+    def call(server, operation, arguments):
+        calls.append((server, operation, dict(arguments)))
+        return {"success": True, "plan_id": "PLAN-TEST"}
+
+    monkeypatch.setattr(registry.mcp, "call", call)
+    result = registry.execute(
+        "generate_repair_plan",
+        {"diagnosis": {"device_id": "D-1", "fault": "主轴温度异常"}},
+        context={"allowed_tools": ["generate_repair_plan"]},
+    )
+
+    assert result["plan_id"] == "PLAN-TEST"
+    assert calls == [("local", "generate_repair_plan", {"diagnosis": {"device_id": "D-1", "fault": "主轴温度异常"}})]
+
+
+def test_diagnosis_tool_schemas_describe_supported_arguments() -> None:
+    registry = importlib.import_module("app.tools.registry").ToolRegistry()
+    schemas = {
+        item["function"]["name"]: item["function"]["parameters"]
+        for item in registry.tool_schemas()
+    }
+
+    alarm = schemas["get_alarm_definition"]
+    history = schemas["get_device_history"]
+    assert alarm["required"] == ["alarm_code"]
+    assert alarm["additionalProperties"] is False
+    assert "device_id" not in alarm["properties"]
+    assert history["required"] == ["device_id"]
+    assert history["additionalProperties"] is False
+    assert "metric_keys" in history["properties"]
+    assert "metrics" not in history["properties"]
+
+
 def test_device_history_accepts_model_metric_alias(monkeypatch):
     history_module = importlib.import_module("app.tools.diagnosis.get_device_history")
 

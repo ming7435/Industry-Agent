@@ -11,7 +11,7 @@ def test_compose_wires_agent_to_rag_and_cad_services():
     agent = compose["services"]["agent-service"]
 
     assert agent["environment"]["RAG_SERVICE_BASE_URL"] == "http://rag-service:8020"
-    assert agent["environment"]["MCP_CAD_URL"] == "http://cad-service:8011"
+    assert agent["environment"]["MCP_CAD_URL"] == "http://cad-service:8050"
     assert agent["depends_on"]["rag-service"]["condition"] == "service_healthy"
     assert agent["depends_on"]["cad-service"]["condition"] == "service_healthy"
     assert agent["depends_on"]["backend-service"]["condition"] == "service_healthy"

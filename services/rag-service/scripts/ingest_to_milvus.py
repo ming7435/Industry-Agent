@@ -52,7 +52,7 @@ LOGGER = logging.getLogger("rag_offline_ingest")
 COLLECTION_BY_DATA_TYPE = {
     "alarms": "industry_rag_alarm_codes",
     "cases": "industry_rag_alarm_solutions",
-    "manuals": "industry_rag_manuals",
+    "manuals": "industry_rag_bom",
     "sop": "industry_rag_sop",
 }
 

@@ -1,7 +1,7 @@
-"""WorkOrder System 业务服务，不作为核心 Agent。
+"""工单系统业务服务，不作为核心 Agent。
 
-The exports are lazy so low-level repository/MCP modules can be imported while
-the Tool Registry is still being assembled without creating a circular import.
+导出项采用延迟加载，供底层仓储和 MCP 模块在工具注册表尚未组装完成时导入，
+避免产生循环导入。
 """
 
 __all__ = ["WorkOrderService", "WorkOrderValidator"]

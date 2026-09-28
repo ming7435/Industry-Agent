@@ -87,7 +87,7 @@ tests/                          根目录测试
 | 模拟工厂 | http://127.0.0.1:4529 | 外部模拟工厂服务 | 提供设备、状态、历史和日志 |
 | 监控工作台 | http://127.0.0.1:8001 | services/agent-service/monitor_web_server.py | 采集设备并提供页面/API |
 | RAG Service | http://127.0.0.1:8020 | services/rag-service/app/main.py | 当前根目录 .env 配置的 RAG 地址 |
-| CAD Service | http://127.0.0.1:8011 | services/document-cad-service/app/main.py | 图纸、BOM、部件和关系查询 |
+| CAD Service | http://127.0.0.1:8050 | services/document-cad-service/app/main.py | 图纸、BOM、部件和关系查询 |
 | Agent Service | http://127.0.0.1:8010 | app.api.server:app | 用户入口、异常入口和业务 API |
 | Vite 开发服务 | http://127.0.0.1:5173 | npm run dev:monitor | 前端开发调试，/api 代理到 8001 |
 
@@ -103,13 +103,13 @@ RAG Service 和一键启动脚本统一使用 8020；所有服务配置都在仓
 | RAG 向量化 | `BAAI/bge-m3` | RAG Service → `POST http://127.0.0.1:8040/v1/embeddings` |
 | RAG 重排 | `BAAI/bge-reranker-v2-m3` | RAG Service → `POST http://127.0.0.1:8040/v1/rerank` |
 | RAG 检索 | Whoosh + Milvus | Agent Service → `POST http://127.0.0.1:8020/search` |
-| CAD 图纸和部件关系 | CAD 工程数据服务 | Agent Service → `GET/POST http://127.0.0.1:8011/...` |
+| CAD 图纸和部件关系 | CAD 工程数据服务 | Agent Service → `GET/POST http://127.0.0.1:8050/...` |
 | 工单、报告、质检持久化 | Backend Service | Agent Service → `POST http://127.0.0.1:8030/tools/call` |
 | 设备实时数据 | 模拟工厂服务 | Monitor → `GET http://127.0.0.1:4529/...` |
 
 浏览器只访问监控工作台 `8001`；工作台再将 `/api/...` 请求转发到 Agent Service `8010`。Agent 和 RAG 不直接读取模型供应商密钥，只通过 Model Service 调用统一接口。
 
-Model Service 再把请求转发到 SiliconFlow 的 OpenAI 兼容地址 `https://api.siliconflow.cn/v1`，对应路径为 `/chat/completions`、`/embeddings` 和 `/rerank`。供应商密钥只在 Model Service 进程环境中读取，不写入日志或前端。
+Model Service 的聊天请求只转发到 DeepSeek 官方 OpenAI 兼容地址 `https://api.deepseek.com/chat/completions`；RAG 的向量化和重排请求才转发到 SiliconFlow 的 `https://api.siliconflow.cn/v1`（`/embeddings`、`/rerank`）。两条路径相互独立，不会把 DeepSeek 聊天回退到 SiliconFlow。供应商密钥只在 Model Service 进程环境中读取，不写入日志或前端。
 
 项目中没有接入 TypeSafe AI 的真实 Jev 模型。当前运行时的输入解析是本地 `RuntimeInputParser`；如果以后接入 Jev，需要单独配置 TypeSafe API Key，不能把本地解析器名称当作模型调用。
 
@@ -149,7 +149,7 @@ DEEPSEEK_MODEL=deepseek-chat
 RAG_SERVICE_BASE_URL=http://127.0.0.1:8020
 RAG_SERVICE_TIMEOUT_SECONDS=30
 RAG_ALLOW_LOCAL_FALLBACK=false
-MCP_CAD_URL=http://127.0.0.1:8011
+MCP_CAD_URL=http://127.0.0.1:8050
 
 MYSQL_HOST=
 MYSQL_PORT=3306
@@ -213,7 +213,7 @@ npm run start:all
 | 服务 | 地址 |
 | --- | --- |
 | RAG Service | http://127.0.0.1:8020 |
-| CAD Service | http://127.0.0.1:8011 |
+| CAD Service | http://127.0.0.1:8050 |
 | Backend Service | http://127.0.0.1:8030 |
 | Model Service | http://127.0.0.1:8040 |
 | Agent Service API | http://127.0.0.1:8010 |
@@ -247,13 +247,13 @@ Invoke-RestMethod http://127.0.0.1:8020/health
 ### 2. 启动 CAD Service
 
 ~~~powershell
-L:/anaconda/python.exe -m uvicorn app.main:app --app-dir services/document-cad-service --host 127.0.0.1 --port 8011
+L:/anaconda/python.exe -m uvicorn app.main:app --app-dir services/document-cad-service --host 127.0.0.1 --port 8050
 ~~~
 
 检查：
 
 ~~~powershell
-Invoke-RestMethod http://127.0.0.1:8011/health
+Invoke-RestMethod http://127.0.0.1:8050/health
 ~~~
 
 ### 3. 启动 Agent Service API

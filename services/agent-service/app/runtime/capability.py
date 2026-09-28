@@ -1,9 +1,8 @@
-"""Canonical capability metadata and Agent resolution for the Runtime.
+"""Runtime 的规范能力元数据和 Agent 解析入口。
 
-The registry is the single Runtime source for capability ownership and the
-metadata needed by planning, dispatch, evaluation, and policy boundaries.
-The small :class:`Capability` value object remains for callers that used the
-original ``agent/name/description`` registration API.
+注册表统一提供能力归属，以及规划、派发、评估和策略边界所需的元数据。
+保留轻量的 :class:`Capability` 值对象，以兼容原有的
+``agent/name/description`` 注册 API。
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any, Iterable, Mapping
 
 @dataclass(frozen=True)
 class CapabilityDefinition:
-    """Immutable Runtime metadata for one canonical capability."""
+    """单项规范能力的不可变 Runtime 元数据。"""
 
     name: str
     agent: str
@@ -42,7 +41,7 @@ class CapabilityDefinition:
 
 @dataclass(frozen=True)
 class Capability:
-    """Legacy registration shape retained for existing callers."""
+    """为现有调用方保留的旧版注册结构。"""
 
     agent: str
     name: str
@@ -78,7 +77,7 @@ DEFAULT_PLAN_CAPABILITIES: tuple[str, ...] = (
 
 
 class CapabilityRegistry:
-    """Resolve canonical capability metadata and concrete Agent instances."""
+    """解析规范能力元数据及具体 Agent 实例。"""
 
     def __init__(self, entries: Iterable[Capability | CapabilityDefinition] | None = None) -> None:
         self._definitions: dict[str, CapabilityDefinition] = {}
@@ -108,7 +107,7 @@ class CapabilityRegistry:
         default_reason: str = "",
         aliases: Iterable[str] = (),
     ) -> CapabilityDefinition:
-        """Register a definition, or accept the legacy ``agent, capability`` form."""
+        """注册定义，或接受旧版 ``agent, capability`` 参数形式。"""
 
         if isinstance(agent, CapabilityDefinition):
             definition = agent
@@ -150,7 +149,7 @@ class CapabilityRegistry:
         return definition
 
     def register_agent(self, agent: Any) -> None:
-        """Register a concrete Agent and its declared capabilities."""
+        """注册具体 Agent 及其声明的能力。"""
 
         name = str(getattr(agent, "name", "") or type(agent).__name__).strip()
         if not name:
@@ -173,7 +172,7 @@ class CapabilityRegistry:
         return self._definitions.get(canonical)
 
     def metadata_for(self, capability: str) -> CapabilityDefinition | None:
-        """Return registered metadata, or catalog metadata for defaults."""
+        """返回已注册元数据，默认能力则使用目录元数据。"""
 
         name = str(capability or "").strip()
         canonical = self._aliases.get(name, self._catalog_aliases.get(name, name))
@@ -237,7 +236,7 @@ class CapabilityRegistry:
 
 
 def build_capability_registry() -> CapabilityRegistry:
-    """Build the canonical registry and bind the concrete nine Agents."""
+    """构建规范注册表并绑定九个具体 Agent。"""
 
     from app.agents.registry import CORE_AGENT_REGISTRY
 

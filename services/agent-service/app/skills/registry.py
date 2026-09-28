@@ -1,4 +1,4 @@
-"""Agent Skill Registry。
+"""智能体技能注册表。
 
 目录约定::
 
@@ -65,7 +65,7 @@ class SkillDefinition:
         )
 
     def normalized_steps(self) -> list["StepDefinition"]:
-        """Return old string and new mapping steps as one executable shape."""
+        """将旧版字符串步骤和新版映射步骤归一为可执行的统一结构。"""
 
         # 延迟导入：app.runtime.__init__ 负责组装 Agent 容器，而 Agent Graph 模块在包导入期间也会加载此 Registry。
         from app.runtime.action import StepDefinition

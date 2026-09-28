@@ -78,7 +78,7 @@
 - [x] **Step 1: Add dependency/import tests.** Assert the selected dependency file includes `PyMySQL>=1.1,<2` and the container import smoke test imports `pymysql` and `pydantic_settings`.
 - [x] **Step 2: Use the complete dependency file.** Make `Dockerfile.cad` install the dependency file that contains all imports used by the merged CAD/RAG application, including PyMySQL.
 - [x] **Step 3: Enforce no silent demo in RC.** Set Compose CAD `CAD_ALLOW_DEMO_FALLBACK=false` by default and retain Demo only for explicit development tests.
-- [x] **Step 4: Correct the port documentation.** Use CAD port `8011` consistently in README and container smoke commands.
+- [x] **Step 4: Correct the port documentation.** Use CAD port `8050` consistently in README and container smoke commands.
 
 ### Task 4: Complete Compose model credentials and durable runtime configuration
 

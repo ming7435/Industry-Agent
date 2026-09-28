@@ -37,7 +37,16 @@ gateway = ModelGateway()
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "service": "model-service", "provider": gateway.name, "ready": True}
+    return {
+        "status": "ok",
+        "service": "model-service",
+        # provider 专指聊天模型，当前为 DeepSeek 官方接口。
+        "provider": gateway.name,
+        "chat_provider": gateway.name,
+        # 向量/重排仍可使用独立的 SiliconFlow，不会参与聊天请求。
+        "aux_provider": gateway.aux_name,
+        "ready": True,
+    }
 
 
 def _call(function: Any, payload: BaseModel) -> dict[str, Any]:

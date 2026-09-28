@@ -18,7 +18,7 @@ def _now() -> str:
 
 
 class PendingTaskStore:
-    """Persist the complete state needed to resume one blocked Action."""
+    """持久化恢复被阻止的 Action 所需的完整状态。"""
 
     def __init__(self, path: str) -> None:
         if not str(path or "").strip():
@@ -62,6 +62,25 @@ class PendingTaskStore:
         self._store.set(PENDING_NAMESPACE, str(pending_id), current)
         return dict(current)
 
+    def claim_status(
+        self,
+        pending_id: str,
+        expected_status: str,
+        replacement_status: str,
+        values: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """以 SQLite CAS 抢占待处理任务状态，防止并发恢复。"""
+
+        updates = {"status": replacement_status, "updated_at": _now(), **dict(values or {})}
+        claimed = self._store.compare_and_set(
+            PENDING_NAMESPACE,
+            str(pending_id),
+            "status",
+            expected_status,
+            updates,
+        )
+        return dict(claimed) if claimed is not None else None
+
     def list(self, status: str = "") -> list[dict[str, Any]]:
         records = [self.get(key) for key in self._store.keys(PENDING_NAMESPACE)]
         values = [dict(item) for item in records if item is not None]
@@ -69,7 +88,7 @@ class PendingTaskStore:
 
 
 class ApprovalManager:
-    """Approve or reject persisted Runtime policy waits exactly once."""
+    """确保对已持久化的 Runtime 策略待审批任务只批准或拒绝一次。"""
 
     def __init__(
         self,
@@ -93,15 +112,14 @@ class ApprovalManager:
         return self.store.list(status)
 
     def approve(self, pending_id: str, *, approved_by: str = "", note: str = "") -> dict[str, Any]:
-        record = self._required(pending_id)
-        if record.get("status") != PENDING_STATUS:
-            return record
-        approved = self.store.update(pending_id, {
-            "status": "approved",
+        self._required(pending_id)
+        approved = self.store.claim_status(pending_id, PENDING_STATUS, "resuming", {
             "approved_by": str(approved_by),
             "approval_note": str(note),
             "approved_at": _now(),
         })
+        if approved is None:
+            return self._required(pending_id)
         self._emit("approval_approved", approved, approved_by=str(approved_by))
         if self.resume_callback is None:
             failed = self.store.update(pending_id, {
@@ -133,17 +151,16 @@ class ApprovalManager:
         return completed
 
     def reject(self, pending_id: str, *, rejected_by: str = "", reason: str = "") -> dict[str, Any]:
-        record = self._required(pending_id)
-        if record.get("status") != PENDING_STATUS:
-            return record
-        rejected = self.store.update(pending_id, {
-            "status": "rejected",
+        self._required(pending_id)
+        rejected = self.store.claim_status(pending_id, PENDING_STATUS, "rejected", {
             "final_status": "blocked",
             "rejected_by": str(rejected_by),
             "rejection_reason": str(reason),
             "rejected_at": _now(),
             "result": {"runtime_result": {"status": "blocked", "stop_reason": "approval_rejected"}},
         })
+        if rejected is None:
+            return self._required(pending_id)
         self._emit("approval_rejected", rejected, rejected_by=str(rejected_by))
         return rejected
 

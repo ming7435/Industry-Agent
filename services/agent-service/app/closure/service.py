@@ -44,6 +44,12 @@ class ClosureService:
         result = str(values.get("result") or "pending").lower()
         if result not in {"pending", "passed", "failed", "minor_issue", "major_issue", "high_risk"}:
             result = "pending"
+        if result == "passed":
+            workflow_status = "passed"
+        elif result in {"failed", "minor_issue", "major_issue", "high_risk"}:
+            workflow_status = "failed"
+        else:
+            workflow_status = "open"
         record = {
             "quality_check_id": check_id,
             "target_type": "production_part",
@@ -60,7 +66,8 @@ class ClosureService:
             "items": list(values.get("items") or []),
             "reviewer": str(values.get("reviewer") or operator or ""),
             "risk_level": str(values.get("risk_level") or "R1"),
-            "status": "open",
+            "status": workflow_status,
+            "reinspection": {},
             "appeal_ids": [],
             "created_at": self._now(),
             "updated_at": self._now(),
@@ -129,11 +136,17 @@ class ClosureService:
 
     def create_closure_task(self, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         values = dict(payload)
+        quality_check_id = str(values.get("quality_check_id") or "")
+        quality_check = self.get_quality_check(quality_check_id) if quality_check_id else None
+        if quality_check_id and quality_check is None:
+            raise KeyError("质检记录不存在：%s" % quality_check_id)
+        if quality_check and quality_check.get("status") not in {"failed", "rectification", "appealed", "passed", "open"}:
+            raise ValueError("当前质检状态不能创建整改任务：%s" % quality_check.get("status"))
         task_id = self._id("CLOSE")
         record = {
             "closure_task_id": task_id,
             "workorder_id": str(values.get("workorder_id") or ""),
-            "quality_check_id": str(values.get("quality_check_id") or ""),
+            "quality_check_id": quality_check_id,
             "title": str(values.get("title") or ""),
             "owner": str(values.get("owner") or ""),
             "actions": list(values.get("actions") or []),
@@ -147,6 +160,8 @@ class ClosureService:
             self._closure_tasks[task_id] = record
         if self.store:
             self.store.create_closure_task(record)
+        if quality_check and quality_check.get("status") in {"failed", "rectification"}:
+            self._set_quality_status(quality_check_id, "rectification", operator, {"closure_task_id": task_id})
         self._audit("closure_task_created", task_id, operator, {"workorder_id": record["workorder_id"]})
         return dict(record)
 
@@ -171,8 +186,76 @@ class ClosureService:
             self._closure_tasks[task_id] = dict(task)
         if self.store:
             self.store.update_closure_task(task_id, {"status": task["status"], "completion_note": task["completion_note"], "completed_by": task["completed_by"], "completed_at": task["completed_at"], "updated_at": task["updated_at"]})
+        quality_check_id = str(task.get("quality_check_id") or "")
+        check = self.get_quality_check(quality_check_id) if quality_check_id else None
+        if check and check.get("status") == "rectification":
+            self._set_quality_status(quality_check_id, "reinspection", operator, {"closure_task_id": task_id})
         self._audit("closure_task_completed", task_id, operator, {"note": note})
         return result
+
+    def record_reinspection(self, check_id: str, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
+        """记录整改后的复检，复检本身不直接放行。"""
+
+        check = self.get_quality_check(check_id)
+        if check is None:
+            raise KeyError("质检记录不存在：%s" % check_id)
+        if check.get("status") != "reinspection":
+            raise ValueError("只有完成整改的质检记录才能复检")
+        values = dict(payload)
+        passed = values.get("passed") is True
+        reinspection = {
+            "passed": passed,
+            "findings": list(values.get("findings") or []),
+            "evidence": list(values.get("evidence") or []),
+            "operator": str(values.get("operator") or operator or ""),
+            "checked_at": self._now(),
+        }
+        status = "reinspection" if passed else "failed"
+        result = self._set_quality_status(check_id, status, operator, {"reinspection": reinspection})
+        self._audit("quality_reinspection_recorded", check_id, operator, {"passed": passed, "findings": reinspection["findings"]})
+        return result
+
+    def release_quality_check(self, check_id: str, operator: str = "") -> dict[str, Any]:
+        check = self.get_quality_check(check_id)
+        if check is None:
+            raise KeyError("质检记录不存在：%s" % check_id)
+        if check.get("status") != "reinspection" or (check.get("reinspection") or {}).get("passed") is not True:
+            raise ValueError("复检未通过，不能 Release")
+        result = self._set_quality_status(check_id, "released", operator, {})
+        self._audit("quality_released", check_id, operator, {})
+        return result
+
+    def close_quality_check(self, check_id: str, operator: str = "", note: str = "") -> dict[str, Any]:
+        check = self.get_quality_check(check_id)
+        if check is None:
+            raise KeyError("质检记录不存在：%s" % check_id)
+        if check.get("status") != "released":
+            raise ValueError("只有 Release 后的质检记录才能 Close")
+        result = self._set_quality_status(check_id, "closed", operator, {"note": note})
+        self._audit("quality_closed", check_id, operator, {"note": note})
+        return result
+
+    def _set_quality_status(self, check_id: str, status: str, operator: str, changes: Mapping[str, Any]) -> dict[str, Any]:
+        now = self._now()
+        with self._lock:
+            check = self._quality_checks.get(check_id)
+            if check is None and self.store:
+                check = self.store.get_quality_check(check_id)
+            if check is None:
+                raise KeyError("质检记录不存在：%s" % check_id)
+            check = dict(check)
+            check["status"] = status
+            check["updated_at"] = now
+            if "reinspection" in changes:
+                check["reinspection"] = dict(changes["reinspection"] or {})
+            self._quality_checks[check_id] = dict(check)
+        if self.store:
+            updates = {"status": status, "updated_at": now}
+            if "reinspection" in changes:
+                updates["reinspection"] = check.get("reinspection") or {}
+            self.store.update_quality_check(check_id, updates)
+        self._audit("quality_status_changed", check_id, operator, {"status": status, **dict(changes)})
+        return dict(check)
 
     def audit_logs(self, object_id: str = "", action: str = "") -> list[dict[str, Any]]:
         if self.store:

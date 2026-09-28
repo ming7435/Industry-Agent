@@ -12,6 +12,15 @@ from ..quality import PartInspectionService
 
 class BackendBusinessService:
     VALID_STATUSES = {"open", "in_progress", "completed", "closed", "rejected", "timeout"}
+    STATUS_TRANSITIONS = {
+        "open": {"open", "in_progress", "rejected", "timeout"},
+        "in_progress": {"in_progress", "completed", "rejected", "timeout"},
+        "completed": {"completed", "closed", "in_progress"},
+        "closed": {"closed", "open"},
+        "rejected": {"rejected", "open"},
+        "timeout": {"timeout", "open"},
+    }
+    REQUIRED_RECOVERY_CHECKS = ("device_identity", "operational", "alarms_clear", "metrics_available")
 
     def __init__(self, repository: Any | None = None) -> None:
         self.repository = repository or build_repository()
@@ -91,13 +100,16 @@ class BackendBusinessService:
         if status not in self.VALID_STATUSES:
             raise ValueError("无效工单状态：%s" % status)
         previous = str(order.get("status") or "")
+        allowed = self.STATUS_TRANSITIONS.get(previous, set())
+        if status not in allowed:
+            raise ValueError("不允许的工单状态迁移：%s -> %s" % (previous, status))
         if status == "closed" and previous != "closed":
-            if previous != "completed" or (order.get("repair_verification") or {}).get("passed") is not True:
-                raise ValueError("工单关闭前必须完成维修并通过验证")
+            if previous != "completed" or not self._verification_is_valid(order.get("repair_verification"), order):
+                raise ValueError("工单关闭前必须完成维修并通过基于设备恢复数据的验证")
         if status == "completed" and previous != "completed":
             verification = fields.get("repair_verification") or order.get("repair_verification") or {}
-            if not isinstance(verification, Mapping) or verification.get("passed") is not True:
-                raise ValueError("维修完成必须提供明确且通过的 repair_verification")
+            if not self._verification_is_valid(verification, order):
+                raise ValueError("维修完成必须提供基于设备恢复数据且通过的 repair_verification")
         order.update({key: value for key, value in fields.items() if key not in {"action", "workorder_id"}})
         order["status"] = status
         order["updated_at"] = self._now()
@@ -124,14 +136,18 @@ class BackendBusinessService:
         return self._order_result(value)
 
     def mark_repair_completed(self, workorder_id: str, repair_feedback: Any = None, feedback: Any = None, repair_verification: Mapping[str, Any] | None = None, **_: Any) -> dict[str, Any]:
-        verification = dict(repair_verification or {})
-        if verification.get("passed") is not True:
-            raise ValueError("维修完成必须提供明确且通过的 repair_verification")
+        supplied = dict(repair_verification or {})
+        recovery = supplied.get("device_recovery") or supplied.get("recovery_snapshot")
+        if not isinstance(recovery, Mapping):
+            raise ValueError("维修完成必须提供设备恢复数据，不能只提交 passed=true")
         feedback_value = repair_feedback if repair_feedback is not None else feedback
         result = self.submit_repair_feedback(workorder_id, feedback_value or {})
         order = result["workorder"]
-        verification.setdefault("status", "verified")
-        verification.setdefault("verified_at", self._now())
+        verification = self._build_repair_verification(order, recovery, order.get("repair_feedback") or {})
+        if not verification["passed"]:
+            raise ValueError("设备恢复数据未通过维修验证：%s" % "、".join(verification.get("validation_findings") or []))
+        if str(order.get("status") or "") == "open":
+            order = self.update_workorder(workorder_id, status="in_progress")
         order["repair_verification"] = verification
         return self.update_workorder(workorder_id, status="completed", repair_feedback=order.get("repair_feedback") or {}, repair_verification=verification)
 
@@ -141,8 +157,8 @@ class BackendBusinessService:
             return self._order_result(order, already_closed=True)
         if order.get("status") != "completed":
             raise ValueError("工单必须先完成维修（completed）后才能关闭")
-        if (order.get("repair_verification") or {}).get("passed") is not True:
-            raise ValueError("工单关闭前必须通过维修验证（repair_verification.passed=true）")
+        if not self._verification_is_valid(order.get("repair_verification"), order):
+            raise ValueError("工单关闭前必须通过基于设备恢复数据的维修验证")
         return self.update_workorder(workorder_id, status="closed", closure_reason=reason)
 
     def reopen_workorder(self, workorder_id: str, **_: Any) -> dict[str, Any]:
@@ -227,6 +243,10 @@ class BackendBusinessService:
 
     def create_quality_check(self, operator: str = "", **values: Any) -> dict[str, Any]:
         check_id = "QC-" + uuid4().hex[:12].upper()
+        result = str(values.get("result") or "pending").lower()
+        if result not in {"pending", "passed", "failed", "minor_issue", "major_issue", "high_risk"}:
+            result = "pending"
+        workflow_status = "passed" if result == "passed" else "failed" if result in {"failed", "minor_issue", "major_issue", "high_risk"} else "open"
         record = {
             "quality_check_id": check_id,
             "target_type": "production_part",
@@ -238,12 +258,13 @@ class BackendBusinessService:
             "production_order_id": str(values.get("production_order_id") or ""),
             "inspection_type": str(values.get("inspection_type") or "part_quality"),
             "score": values.get("score"),
-            "result": str(values.get("result") or "pending"),
+            "result": result,
             "findings": list(values.get("findings") or []),
             "items": list(values.get("items") or []),
             "reviewer": str(values.get("reviewer") or operator),
             "risk_level": str(values.get("risk_level") or "R1"),
-            "status": "open",
+            "status": workflow_status,
+            "reinspection": {},
             "created_at": self._now(),
             "updated_at": self._now(),
         }
@@ -271,9 +292,19 @@ class BackendBusinessService:
         return {"success": True, "appeal": appeal, "backend": "backend-service"}
 
     def create_closure_task(self, operator: str = "", **values: Any) -> dict[str, Any]:
+        quality_check_id = str(values.get("quality_check_id") or "")
+        quality_check = self._quality.get(quality_check_id) if quality_check_id else None
+        if quality_check_id and quality_check is None:
+            raise KeyError("质检记录不存在：%s" % quality_check_id)
+        if quality_check and quality_check.get("status") not in {"failed", "rectification", "appealed", "passed", "open"}:
+            raise ValueError("当前质检状态不能创建整改任务：%s" % quality_check.get("status"))
         task_id = "CLOSE-" + uuid4().hex[:12].upper()
-        task = {"closure_task_id": task_id, "workorder_id": str(values.get("workorder_id") or ""), "quality_check_id": str(values.get("quality_check_id") or ""), "title": str(values.get("title") or ""), "owner": str(values.get("owner") or ""), "actions": list(values.get("actions") or []), "due_at": str(values.get("due_at") or ""), "status": "open", "created_by": operator, "created_at": self._now(), "updated_at": self._now()}
+        task = {"closure_task_id": task_id, "workorder_id": str(values.get("workorder_id") or ""), "quality_check_id": quality_check_id, "title": str(values.get("title") or ""), "owner": str(values.get("owner") or ""), "actions": list(values.get("actions") or []), "due_at": str(values.get("due_at") or ""), "status": "open", "created_by": operator, "created_at": self._now(), "updated_at": self._now()}
         self._closure_tasks[task_id] = self._save_record("closure", task_id, task)
+        if quality_check and quality_check.get("status") in {"failed", "rectification"}:
+            quality_check["status"] = "rectification"
+            quality_check["updated_at"] = self._now()
+            self._quality[quality_check_id] = self._save_record("quality", quality_check_id, quality_check)
         self._append_audit({"audit_id": "AUDIT-" + uuid4().hex[:10].upper(), "action": "closure_task_created", "object_id": task_id, "operator": operator, "created_at": self._now()})
         return {"success": True, "closure_task_id": task_id, "closure_task": dict(task), "backend": "backend-service"}
 
@@ -287,8 +318,53 @@ class BackendBusinessService:
             raise KeyError("闭环整改任务不存在：%s" % task_id)
         task.update({"status": "completed", "completion_note": note, "completed_by": operator, "completed_at": self._now(), "updated_at": self._now()})
         self._closure_tasks[task_id] = self._save_record("closure", task_id, task)
+        quality_check_id = str(task.get("quality_check_id") or "")
+        quality_check = self._quality.get(quality_check_id) if quality_check_id else None
+        if quality_check and quality_check.get("status") == "rectification":
+            quality_check["status"] = "reinspection"
+            quality_check["updated_at"] = self._now()
+            self._quality[quality_check_id] = self._save_record("quality", quality_check_id, quality_check)
         self._append_audit({"audit_id": "AUDIT-" + uuid4().hex[:10].upper(), "action": "closure_task_completed", "object_id": task_id, "operator": operator, "created_at": self._now()})
         return {"success": True, "closure_task": dict(task), "backend": "backend-service"}
+
+    def reinspect_quality_check(self, check_id: str, passed: bool = False, findings: list[Any] | None = None, evidence: list[Any] | None = None, operator: str = "", **_: Any) -> dict[str, Any]:
+        item = self._quality.get(check_id) or self._get_record("quality", check_id)
+        if item is None:
+            raise KeyError("质检记录不存在：%s" % check_id)
+        if item.get("status") != "reinspection":
+            raise ValueError("只有完成整改的质检记录才能复检")
+        reinspection = {"passed": bool(passed), "findings": list(findings or []), "evidence": list(evidence or []), "operator": operator, "checked_at": self._now()}
+        item["reinspection"] = reinspection
+        item["status"] = "reinspection" if passed else "failed"
+        item["updated_at"] = self._now()
+        self._quality[check_id] = self._save_record("quality", check_id, item)
+        self._append_audit({"audit_id": "AUDIT-" + uuid4().hex[:10].upper(), "action": "quality_reinspection_recorded", "object_id": check_id, "operator": operator, "passed": bool(passed), "created_at": self._now()})
+        return {"success": True, "quality_check": dict(item), "quality_check_id": check_id, "backend": "backend-service"}
+
+    def release_quality_check(self, check_id: str, operator: str = "", **_: Any) -> dict[str, Any]:
+        item = self._quality.get(check_id) or self._get_record("quality", check_id)
+        if item is None:
+            raise KeyError("质检记录不存在：%s" % check_id)
+        if item.get("status") != "reinspection" or (item.get("reinspection") or {}).get("passed") is not True:
+            raise ValueError("复检未通过，不能 Release")
+        item["status"] = "released"
+        item["updated_at"] = self._now()
+        self._quality[check_id] = self._save_record("quality", check_id, item)
+        self._append_audit({"audit_id": "AUDIT-" + uuid4().hex[:10].upper(), "action": "quality_released", "object_id": check_id, "operator": operator, "created_at": self._now()})
+        return {"success": True, "quality_check": dict(item), "quality_check_id": check_id, "backend": "backend-service"}
+
+    def close_quality_check(self, check_id: str, operator: str = "", note: str = "", **_: Any) -> dict[str, Any]:
+        item = self._quality.get(check_id) or self._get_record("quality", check_id)
+        if item is None:
+            raise KeyError("质检记录不存在：%s" % check_id)
+        if item.get("status") != "released":
+            raise ValueError("只有 Release 后的质检记录才能 Close")
+        item["status"] = "closed"
+        item["close_note"] = note
+        item["updated_at"] = self._now()
+        self._quality[check_id] = self._save_record("quality", check_id, item)
+        self._append_audit({"audit_id": "AUDIT-" + uuid4().hex[:10].upper(), "action": "quality_closed", "object_id": check_id, "operator": operator, "note": note, "created_at": self._now()})
+        return {"success": True, "quality_check": dict(item), "quality_check_id": check_id, "backend": "backend-service"}
 
     def list_audit_logs(self, object_id: str = "", action: str = "", **_: Any) -> dict[str, Any]:
         items = [dict(item) for item in self._audit if (not object_id or item.get("object_id") == object_id) and (not action or item.get("action") == action)]
@@ -299,6 +375,52 @@ class BackendBusinessService:
         if value is None:
             raise KeyError("工单不存在：%s" % workorder_id)
         return value
+
+    @classmethod
+    def _verification_is_valid(cls, verification: Any, order: Mapping[str, Any]) -> bool:
+        if not isinstance(verification, Mapping) or verification.get("passed") is not True:
+            return False
+        if verification.get("source") != "device_recovery":
+            return False
+        recovery = verification.get("device_recovery")
+        checks = verification.get("checks")
+        return isinstance(recovery, Mapping) and isinstance(checks, Mapping) and all(checks.get(key) is True for key in cls.REQUIRED_RECOVERY_CHECKS)
+
+    @classmethod
+    def _build_repair_verification(cls, order: Mapping[str, Any], recovery: Mapping[str, Any], feedback: Mapping[str, Any]) -> dict[str, Any]:
+        values = dict(recovery)
+        device_id = str(order.get("device_id") or "")
+        recovery_device_id = str(values.get("device_id") or values.get("id") or "")
+        status = str(values.get("status") or values.get("state") or "").lower()
+        fault_evidence = values.get("fault_evidence") if isinstance(values.get("fault_evidence"), Mapping) else {}
+        active_alarms = values.get("active_alarms")
+        alarms_clear = not bool(values.get("alarm_code") or active_alarms or fault_evidence.get("active"))
+        metrics = values.get("metrics") or values.get("metric_details")
+        checks = {
+            "device_identity": bool(device_id and recovery_device_id and device_id == recovery_device_id),
+            "operational": status in {"running", "idle", "ready", "standby", "normal", "completed"},
+            "alarms_clear": alarms_clear,
+            "metrics_available": isinstance(metrics, Mapping) and bool(metrics),
+        }
+        findings: list[str] = []
+        if not checks["device_identity"]:
+            findings.append("设备身份与工单不一致")
+        if not checks["operational"]:
+            findings.append("设备未恢复到可运行状态")
+        if not checks["alarms_clear"]:
+            findings.append("设备仍存在活动报警或故障证据")
+        if not checks["metrics_available"]:
+            findings.append("缺少设备恢复指标")
+        return {
+            "source": "device_recovery",
+            "passed": not findings,
+            "device_recovery": values,
+            "checks": checks,
+            "validation_findings": findings,
+            "feedback": dict(feedback or {}),
+            "status": "verified" if not findings else "failed",
+            "verified_at": cls._now(),
+        }
 
     def _get_record(self, record_type: str, record_id: str) -> dict[str, Any] | None:
         loader = getattr(self.repository, "get_record", None)

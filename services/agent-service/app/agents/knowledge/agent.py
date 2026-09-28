@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import isfinite
 import re
 from typing import Any, Mapping
 
@@ -118,10 +119,23 @@ class KnowledgeAgent(BaseAgent):
         for item in items:
             key = str(item.get("document_id") or "%s|%s" % (item.get("title"), item.get("source")))
             previous = best.get(key)
-            if previous is None or float(item.get("score") or 0) > float(previous.get("score") or 0):
+            if previous is None or KnowledgeAgent._nonnegative_score(item.get("score")) > KnowledgeAgent._nonnegative_score(previous.get("score")):
                 best[key] = item
-        ordered = sorted(best.values(), key=lambda value: float(value.get("score") or 0), reverse=True)
-        return [KnowledgeDocument(**item) for item in ordered]
+        ordered = sorted(best.values(), key=lambda value: KnowledgeAgent._nonnegative_score(value.get("score")), reverse=True)
+        scale = max(1.0, *(KnowledgeAgent._nonnegative_score(item.get("score")) for item in ordered))
+        return [KnowledgeDocument(**{**item, "score": KnowledgeAgent._nonnegative_score(item.get("score")) / scale}) for item in ordered]
+
+    @staticmethod
+    def _nonnegative_score(value: Any) -> float:
+        """清理外部检索分数；本批次的最大值会用于 0~1 归一化。"""
+
+        try:
+            score = float(value or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        if not isfinite(score):
+            return 0.0
+        return max(0.0, score)
 
     @staticmethod
     def _evidence_from_documents(documents: list[KnowledgeDocument]) -> list[dict[str, Any]]:
@@ -153,7 +167,7 @@ class KnowledgeAgent(BaseAgent):
         documents: list[Mapping[str, Any]],
         retrieval_scope: str,
     ) -> str:
-        """Normalize the model answer and guarantee a concise final summary."""
+        """规范化模型回答，并确保末尾有简明总结。"""
 
         text = KnowledgeAgent._remove_internal_disclaimers(str(answer or "").strip())
         if not text:

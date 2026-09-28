@@ -91,6 +91,9 @@ class WorkOrderMcpAdapter:
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
         previous_status = str(order.get("status") or "")
+        from app.workorder.validator import WorkOrderValidator
+        if previous_status != status:
+            WorkOrderValidator.validate_transition(previous_status, status)
         order.update(fields)
         order["status"] = status
         order["updated_at"] = self._now()
@@ -163,14 +166,19 @@ class WorkOrderMcpAdapter:
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
         normalized = self._normalize_feedback(feedback) if feedback else self._normalize_feedback(order.get("repair_feedback"))
-        verification = dict(repair_verification or {})
-        if verification.get("passed") is not True:
-            raise ValueError("维修完成必须提供明确且通过的 repair_verification")
-        verification.setdefault("status", "verified")
-        verification.setdefault("feedback", normalized.get("feedback") or normalized.get("summary") or normalized.get("result") or "")
+        supplied = dict(repair_verification or {})
+        recovery = supplied.get("device_recovery") or supplied.get("recovery_snapshot")
+        if not isinstance(recovery, Mapping):
+            raise ValueError("维修完成必须提供设备恢复数据，不能只提交 passed=true")
+        from app.workorder.validator import WorkOrderValidator
+        verification = WorkOrderValidator.build_repair_verification(order, recovery, normalized)
         verification.setdefault("operator", normalized.get("operator") or "")
         verification.setdefault("duration_seconds", normalized.get("duration_seconds"))
-        verification.setdefault("verified_at", self._now())
+        if not verification["passed"]:
+            raise ValueError("设备恢复数据未通过维修验证：%s" % "、".join(verification.get("validation_findings") or []))
+        if str(order.get("status") or "") == "open":
+            # 允许“完成维修”入口补齐开始处理这一步，但仍按迁移表记录两次状态变化。
+            order = self.update_workorder(workorder_id, status="in_progress")
         return self.update_workorder(
             workorder_id,
             status="completed",
@@ -188,7 +196,7 @@ class WorkOrderMcpAdapter:
             raise ValueError("工单必须先完成维修（completed）后才能关闭")
         from app.workorder.validator import WorkOrderValidator
         if not WorkOrderValidator.can_close(order):
-            raise ValueError("工单关闭前必须通过维修验证（repair_verification.passed=true）")
+            raise ValueError("工单关闭前必须通过基于设备恢复数据的维修验证")
         return self.update_workorder(workorder_id, status="closed", closure_reason=reason)
 
     def reopen_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:

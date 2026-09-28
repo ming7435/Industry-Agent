@@ -20,11 +20,10 @@ class ActionType(str, Enum):
 
 
 class StepDefinition(BaseModel):
-    """Normalized executable unit derived from an Agent Skill.
+    """从 Agent Skill 派生的标准化可执行单元。
 
-    Skills historically stored steps as strings.  The Runtime uses this
-    richer shape internally while keeping every field optional so old
-    catalogs and callers remain valid.
+    以往 Skill 将步骤保存为字符串。Runtime 内部使用更完整的结构，
+    同时保持各字段可选，以兼容旧版目录和调用方。
     """
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
@@ -45,7 +44,7 @@ class StepDefinition(BaseModel):
 
     @property
     def step_id(self) -> str:
-        """Compatibility name used by trace and Graph consumers."""
+        """供 Trace 和 Graph 使用的兼容名称。"""
 
         return self.id
 
@@ -62,7 +61,7 @@ class StepDefinition(BaseModel):
 
 
 class Observation(BaseModel):
-    """A normalized observation collected during one Runtime step."""
+    """在单个 Runtime 步骤中采集的标准化观察结果。"""
 
     model_config = ConfigDict(extra="allow")
 
@@ -101,7 +100,7 @@ class Observation(BaseModel):
 
 
 class Evidence(BaseModel):
-    """A traceable evidence item shared by Agents and Evaluators."""
+    """供 Agent 和评估器共用的可追溯证据项。"""
 
     model_config = ConfigDict(extra="allow")
 
@@ -131,7 +130,7 @@ class Evidence(BaseModel):
 
 
 class ValidationResult(BaseModel):
-    """Granular validation output used by Agent steps and Runtime."""
+    """供 Agent 步骤和 Runtime 使用的细粒度校验结果。"""
 
     model_config = ConfigDict(extra="allow")
 
@@ -147,7 +146,7 @@ class ValidationResult(BaseModel):
 
 
 class StepResult(BaseModel):
-    """Uniform result for one fine-grained execution step."""
+    """单个细粒度执行步骤的统一结果。"""
 
     model_config = ConfigDict(extra="allow")
 
@@ -162,7 +161,7 @@ class StepResult(BaseModel):
 
 
 class ActionModel(BaseModel):
-    """Runtime's only action representation, with legacy input support."""
+    """Runtime 唯一的动作表示，同时兼容旧版输入。"""
 
     model_config = ConfigDict(extra="allow")
 
@@ -211,7 +210,7 @@ class ActionModel(BaseModel):
 
     @property
     def required_capability(self) -> str:
-        """Capability required by this action, if it is an Agent action."""
+        """若为 Agent 动作，返回该动作所需的能力。"""
 
         return str(self.payload.get("required_capability") or "").strip()
 

@@ -25,6 +25,7 @@ from app.common import AlarmCodeParser
 from app.llm import get_default_llm_client
 from app.tools.registry import ToolRegistry
 from app.agents.base import BaseAgent
+from app.workorder.policy import maintenance_decision
 
 
 class DiagnosisAgent(BaseAgent):
@@ -335,6 +336,10 @@ class DiagnosisAgent(BaseAgent):
         recommendation = parsing.chinese_text(
             str(parsed.get("recommendation") or parsed.get("next_action") or state.next_action or "根据诊断结果安排现场检查")
         )
+        maintenance_required, maintenance_reason = maintenance_decision(
+            diagnosis={**dict(parsed), "confidence": confidence, "alarm_definition": definition},
+            event=state.abnormal_event,
+        )
 
         return DiagnosisResult(
             event_id=event_id,
@@ -366,6 +371,8 @@ class DiagnosisAgent(BaseAgent):
             cycle_state_label=str((state.abnormal_event.get("realtime_snapshot") or {}).get("cycle_state_label") or state.abnormal_event.get("cycle_state_label") or ""),
             confidence_details=confidence_details,
             knowledge_warning=knowledge_warning,
+            maintenance_required=maintenance_required,
+            maintenance_reason=maintenance_reason,
         )
 
     # ==========================================================
@@ -499,6 +506,10 @@ class DiagnosisAgent(BaseAgent):
             definition.get("recommended_action")
             or "补充历史趋势、设备日志和维修手册证据后，由维修人员现场确认。"
         )
+        maintenance_required, maintenance_reason = maintenance_decision(
+            diagnosis={**event, "severity": severity, "alarm_definition": definition},
+            event=event,
+        )
 
         # 防止重复记录
         already_called = any(
@@ -559,6 +570,8 @@ class DiagnosisAgent(BaseAgent):
             cycle_state_label=str((event.get("realtime_snapshot") or {}).get("cycle_state_label") or event.get("cycle_state_label") or ""),
             confidence_details=confidence_details,
             knowledge_warning=knowledge_warning,
+            maintenance_required=maintenance_required,
+            maintenance_reason=maintenance_reason,
         )
 
     # ==========================================================

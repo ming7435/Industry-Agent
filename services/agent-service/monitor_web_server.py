@@ -39,6 +39,16 @@ if str(SERVICE_ROOT) not in sys.path:
 from app.tools.registry import ToolRegistry  # noqa: E402,F401
 
 
+def agent_request_headers(content_type: str = "application/json") -> Dict[str, str]:
+    """构造监控服务到 Agent Service 的内部请求头。"""
+
+    headers = {"Content-Type": content_type}
+    token = os.getenv("AGENT_API_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = "Bearer %s" % token
+    return headers
+
+
 _PUBLIC_TRACE_FIELDS = (
     "timestamp",
     "type",
@@ -186,7 +196,7 @@ def dispatch_agent_event(event: Dict[str, Any]) -> Dict[str, Any]:
     request = Request(
         AGENT_SERVICE_BASE_URL.rstrip("/") + "/api/v1/agent/event",
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=agent_request_headers(),
         method="POST",
     )
     with urlopen(request, timeout=AGENT_EVENT_TIMEOUT_SECONDS) as response:
@@ -609,7 +619,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         if method in {"POST", "PUT", "PATCH"}:
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length) if length else b""
-        headers = {"Content-Type": self.headers.get("Content-Type", "application/json")}
+        headers = agent_request_headers(self.headers.get("Content-Type", "application/json"))
         request = Request(
             AGENT_SERVICE_BASE_URL.rstrip("/") + self.path,
             data=body,

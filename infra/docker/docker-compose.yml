@@ -52,8 +52,8 @@ services:
       - etcd-data:/etcd
 
   minio:
-    # 允许在隔离网络或本地镜像仓库中覆盖镜像地址。Quay 是 MinIO 官方镜像仓库，CI 运行器可访问。
-    image: ${MINIO_IMAGE:-quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
+    # 允许在隔离网络或本地镜像仓库中覆盖镜像地址；默认使用 Docker Hub 公共镜像。
+    image: ${MINIO_IMAGE:-docker.io/minio/minio:RELEASE.2024-06-13T22-53-53Z}
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -121,6 +121,7 @@ services:
       MILVUS_URI: http://milvus:19530
       MODEL_SERVICE_BASE_URL: http://model-service:8040
       RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
+      RAG_ALLOWED_INGEST_ROOT: ${RAG_ALLOWED_INGEST_ROOT:-/app/services/rag-service/data}
       RAG_EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-1024}
       OBJECT_STORAGE_ENDPOINT: minio:9000
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
@@ -162,9 +163,9 @@ services:
       model-service:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${CAD_PORT:-8011}:8011"
+      - "127.0.0.1:${CAD_PORT:-8050}:8050"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8011/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8050/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -180,7 +181,7 @@ services:
       SERVICE_HOST: 0.0.0.0
       SERVICE_PORT: 8010
       RAG_SERVICE_BASE_URL: http://rag-service:8020
-      MCP_CAD_URL: http://cad-service:8011
+      MCP_CAD_URL: http://cad-service:8050
       BACKEND_SERVICE_BASE_URL: http://backend-service:8030
       MCP_MES_URL: http://backend-service:8030
       MCP_INVENTORY_URL: http://backend-service:8030
@@ -200,6 +201,7 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
       ALLOW_DEGRADED_STORAGE: ${ALLOW_DEGRADED_STORAGE:-false}
       RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
       backend-service:
@@ -254,6 +256,7 @@ services:
       MONITOR_WEB_PORT: 8001
       AGENT_SERVICE_BASE_URL: http://agent-service:8010
       FACTORY_API_BASE_URL: ${FACTORY_API_BASE_URL:-http://host.docker.internal:4529}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
       agent-service:
@@ -327,6 +330,7 @@ services:
       SILICONFLOW_EMBEDDING_MODEL: ${SILICONFLOW_EMBEDDING_MODEL:-BAAI/bge-m3}
       SILICONFLOW_RERANKER_MODEL: ${SILICONFLOW_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}

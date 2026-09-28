@@ -1,4 +1,4 @@
-"""Small SQLite key/value store used for restart-safe idempotency state."""
+"""用于跨重启保留幂等状态的小型 SQLite 键值存储。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Callable
 
 
 class DurableJsonStore:
-    """Persist JSON values by key without changing the in-memory API shape."""
+    """按键持久化 JSON 值，同时保留进程内 API 的形式。"""
 
     def __init__(self, path: str) -> None:
         self.path = Path(path)
@@ -66,7 +66,7 @@ class DurableJsonStore:
         return [str(row["state_key"]) for row in rows]
 
     def get_or_create(self, namespace: str, key: str, producer: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-        """Return one durable value while serializing producers across processes."""
+        """跨进程序列化生产操作，返回单个持久化值。"""
 
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -82,6 +82,34 @@ class DurableJsonStore:
                 (str(namespace), str(key), json.dumps(value, ensure_ascii=False, default=str)),
             )
             return value
+
+    def compare_and_set(
+        self,
+        namespace: str,
+        key: str,
+        field: str,
+        expected: Any,
+        values: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """在 SQLite 事务中按字段条件更新 JSON 状态，成功时返回新值。"""
+
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT payload FROM runtime_state WHERE namespace = ? AND state_key = ?",
+                (str(namespace), str(key)),
+            ).fetchone()
+            if row is None:
+                return None
+            current = json.loads(row["payload"])
+            if not isinstance(current, dict) or current.get(str(field)) != expected:
+                return None
+            current.update(dict(values))
+            connection.execute(
+                "UPDATE runtime_state SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE namespace = ? AND state_key = ?",
+                (json.dumps(current, ensure_ascii=False, default=str), str(namespace), str(key)),
+            )
+            return dict(current)
 
 
 __all__ = ["DurableJsonStore"]

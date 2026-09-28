@@ -1,8 +1,8 @@
-"""Capability-driven Runtime Action dispatcher."""
+"""由能力元数据驱动的 Runtime Action 派发器。"""
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from app.agents.base import AgentResult
 from app.harness import TraceRecorder
@@ -23,8 +23,22 @@ def action_key(state: Mapping[str, Any], payload: Mapping[str, Any]) -> str:
     )
 
 
+class SideEffectResolverRegistry:
+    """为副作用能力提供权威状态查询回调。"""
+
+    def __init__(self) -> None:
+        self._factories: dict[str, Callable[[ActionModel, Mapping[str, Any]], Callable[[], Any] | None]] = {}
+
+    def register(self, capability: str, factory: Callable[[ActionModel, Mapping[str, Any]], Callable[[], Any] | None]) -> None:
+        self._factories[str(capability).strip()] = factory
+
+    def callback(self, capability: str, action: ActionModel, state: Mapping[str, Any]) -> Callable[[], Any] | None:
+        factory = self._factories.get(str(capability).strip())
+        return factory(action, state) if factory is not None else None
+
+
 class RuntimeDispatcher:
-    """Resolve and execute Actions without hard-coded Agent sequencing."""
+    """解析并执行 Action，不固定 Agent 的执行顺序。"""
 
     def __init__(
         self,
@@ -34,6 +48,7 @@ class RuntimeDispatcher:
         tools: ToolRegistry | None = None,
         harnesses: Mapping[str, Any] | None = None,
         policy: RuntimePolicy | None = None,
+        resolvers: SideEffectResolverRegistry | None = None,
     ) -> None:
         self.capabilities = capabilities
         self.execution_manager = execution_manager
@@ -41,6 +56,7 @@ class RuntimeDispatcher:
         self.tools = tools
         self.harnesses = dict(harnesses or {})
         self.policy = policy or RuntimePolicy()
+        self.resolvers = resolvers or SideEffectResolverRegistry()
 
     def _emit(self, event: str, state: Mapping[str, Any], **payload: Any) -> None:
         record = {
@@ -142,6 +158,7 @@ class RuntimeDispatcher:
             lambda: self.harnesses[agent_name].execute_once(task)
             if agent_name in self.harnesses
             else (agent.execute(task) if callable(getattr(agent, "execute", None)) else agent.run(task)),
+            state_check=self.resolvers.callback(canonical_capability, action, state),
             trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
         if record.status != ExecutionStatus.SUCCESS:
@@ -168,7 +185,7 @@ class RuntimeDispatcher:
 
     @staticmethod
     def _conversation_context(context: Mapping[str, Any], query: str) -> str:
-        """Carry a bounded short conversation into the current knowledge query."""
+        """将有限长度的短期对话带入当前知识查询。"""
 
         history = context.get("conversation_history")
         if not isinstance(history, list):
@@ -187,7 +204,7 @@ class RuntimeDispatcher:
 
     @staticmethod
     def _task_for_agent(capability: str, state: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
-        """Adapt the canonical Runtime state to an existing Agent's request shape."""
+        """将规范 Runtime 状态适配为现有 Agent 的请求结构。"""
 
         current = {**dict(state), **dict(payload)}
         if capability in {"fault_analysis", "diagnosis_review"}:
@@ -365,6 +382,7 @@ class RuntimeDispatcher:
         record = self.execution_manager.execute(
             action,
             lambda: self.tools.execute(action.target, dict(action.payload), context=runtime_context),
+            state_check=self.resolvers.callback(self.capabilities.canonical_name(action.target), action, state),
             trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
         if record.status != ExecutionStatus.SUCCESS:
@@ -394,4 +412,4 @@ class RuntimeDispatcher:
         }
 
 
-__all__ = ["RuntimeDispatcher"]
+__all__ = ["RuntimeDispatcher", "SideEffectResolverRegistry"]

@@ -10,7 +10,9 @@ from urllib.request import Request, urlopen
 
 
 class BackendServiceError(RuntimeError):
-    pass
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class BackendServiceClient:
@@ -29,7 +31,7 @@ class BackendServiceClient:
                 result = json.loads(response.read().decode("utf-8"))
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")[:500]
-            raise BackendServiceError("backend-service HTTP %s: %s" % (error.code, detail)) from error
+            raise BackendServiceError("backend-service HTTP %s: %s" % (error.code, detail), status_code=error.code) from error
         except (URLError, TimeoutError, OSError, ValueError) as error:
             raise BackendServiceError("backend-service request failed: %s" % error) from error
         if not isinstance(result, dict):
@@ -58,6 +60,15 @@ class BackendServiceClient:
 
     def complete_closure_task(self, task_id: str, operator: str = "", note: str = "") -> dict[str, Any]:
         return self.call("complete_closure_task", {"task_id": task_id, "operator": operator, "note": note})
+
+    def record_reinspection(self, check_id: str, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
+        return self.call("reinspect_quality_check", {"check_id": check_id, **dict(payload), "operator": operator or payload.get("operator", "")})
+
+    def release_quality_check(self, check_id: str, operator: str = "") -> dict[str, Any]:
+        return self.call("release_quality_check", {"check_id": check_id, "operator": operator})
+
+    def close_quality_check(self, check_id: str, operator: str = "", note: str = "") -> dict[str, Any]:
+        return self.call("close_quality_check", {"check_id": check_id, "operator": operator, "note": note})
 
     def audit_logs(self, object_id: str = "", action: str = "") -> list[dict[str, Any]]:
         return list(self.call("list_audit_logs", {"object_id": object_id, "action": action}).get("items") or [])

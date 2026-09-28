@@ -4,9 +4,19 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from .policy import maintenance_decision
+
 
 class WorkOrderValidator:
     VALID_STATUSES = {"open", "in_progress", "completed", "closed", "rejected", "timeout"}
+    STATUS_TRANSITIONS = {
+        "open": {"open", "in_progress", "rejected", "timeout"},
+        "in_progress": {"in_progress", "completed", "rejected", "timeout"},
+        "completed": {"completed", "closed", "in_progress"},
+        "closed": {"closed", "open"},
+        "rejected": {"rejected", "open"},
+        "timeout": {"timeout", "open"},
+    }
 
     @classmethod
     def validate_status(cls, status: str) -> str:
@@ -14,6 +24,23 @@ class WorkOrderValidator:
         if value not in cls.VALID_STATUSES:
             raise ValueError("无效工单状态：%s" % value)
         return value
+
+    @classmethod
+    def validate_transition(cls, previous: str, target: str) -> tuple[str, str]:
+        previous_value = cls.validate_status(previous)
+        target_value = cls.validate_status(target)
+        if target_value not in cls.STATUS_TRANSITIONS.get(previous_value, set()):
+            raise ValueError("非法工单状态迁移：%s -> %s" % (previous_value, target_value))
+        return previous_value, target_value
+
+    @staticmethod
+    def maintenance_required(plan: Mapping[str, Any]) -> bool:
+        required, _ = maintenance_decision(
+            diagnosis=plan.get("diagnosis") if isinstance(plan.get("diagnosis"), Mapping) else {},
+            event=plan.get("event") if isinstance(plan.get("event"), Mapping) else {},
+            plan=plan,
+        )
+        return required
 
     @staticmethod
     def validate_plan(plan: Mapping[str, Any]) -> None:
@@ -24,31 +51,74 @@ class WorkOrderValidator:
 
     @staticmethod
     def verification_passed(order: Mapping[str, Any], repair_feedback: Any = None) -> bool:
-        """Return whether an explicit post-repair verification passed.
+        """判断维修后的明确验证是否通过。
 
-        Verification is deliberately separate from repair feedback.  Feedback
-        describes what the technician did; only a positive verification record
-        is allowed to move a completed order through the close and learning
-        gates.
+        维修反馈与维修验证分别记录：反馈描述技术人员完成的工作；
+        只有验证结果明确为通过，已完成的工单才能进入关闭和学习环节。
         """
         value = order.get("repair_verification")
         if not isinstance(value, Mapping) or not value:
             feedback = repair_feedback if isinstance(repair_feedback, Mapping) else order.get("repair_feedback")
             nested = feedback.get("verification") if isinstance(feedback, Mapping) else None
             value = nested if isinstance(nested, Mapping) else {}
-        if value.get("passed") is not True:
+        if value.get("passed") is not True or value.get("source") != "device_recovery":
+            return False
+        recovery = value.get("device_recovery")
+        checks = value.get("checks")
+        if not isinstance(recovery, Mapping) or not isinstance(checks, Mapping):
+            return False
+        required_checks = ("device_identity", "operational", "alarms_clear", "metrics_available")
+        if any(checks.get(key) is not True for key in required_checks):
             return False
         status = str(value.get("status") or "verified").strip().lower()
         return status not in {"failed", "rejected", "invalid"}
 
     @classmethod
+    def build_repair_verification(
+        cls,
+        order: Mapping[str, Any],
+        device_recovery: Mapping[str, Any] | None,
+        feedback: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """根据设备实时恢复快照生成维修验证，不接受客户端 passed=true 作为证据。"""
+
+        recovery = dict(device_recovery or {})
+        expected_device = str(order.get("device_id") or "")
+        actual_device = str(recovery.get("device_id") or "")
+        status = str(recovery.get("status") or recovery.get("control_state") or "").strip().lower()
+        active_alarms = recovery.get("active_alarms") or recovery.get("alarms") or []
+        alarm_code = str(recovery.get("alarm_code") or "").strip()
+        metrics = recovery.get("metrics") or recovery.get("metric_details") or {}
+        fault_evidence = recovery.get("fault_evidence") if isinstance(recovery.get("fault_evidence"), Mapping) else {}
+        health_score = recovery.get("health_score")
+        checks = {
+            "device_identity": bool(expected_device and actual_device == expected_device),
+            "operational": status in {"running", "idle", "ready", "standby", "normal", "completed"},
+            "alarms_clear": not alarm_code and not active_alarms and not bool(fault_evidence.get("active")),
+            "metrics_available": isinstance(metrics, Mapping) and bool(metrics),
+            "health_score_normal": health_score is None or _number_at_least(health_score, 80.0),
+            "checked_at_present": bool(recovery.get("checked_at") or recovery.get("timestamp") or recovery.get("updated_at")),
+        }
+        passed = all(checks.values())
+        return {
+            "passed": passed,
+            "status": "verified" if passed else "failed",
+            "source": "device_recovery",
+            "device_recovery": recovery,
+            "checks": checks,
+            "feedback": str((feedback or {}).get("feedback") or (feedback or {}).get("result") or ""),
+            "verified_at": recovery.get("checked_at") or recovery.get("timestamp") or recovery.get("updated_at") or "",
+            "validation_findings": [] if passed else [key for key, value in checks.items() if not value],
+        }
+
+    @classmethod
     def can_close(cls, order: Mapping[str, Any]) -> bool:
-        """A completed order may close only after explicit verification."""
+        """已完成的工单必须通过明确验证后才能关闭。"""
         return str(order.get("status") or "") == "completed" and cls.verification_passed(order)
 
     @staticmethod
     def can_learn(order: Mapping[str, Any], repair_feedback: Any) -> bool:
-        """Memory/RAG admission requires close, feedback, and verification."""
+        """写入 Memory/RAG 前须确认工单已关闭、反馈有效且验证通过。"""
         feedback = repair_feedback or order.get("repair_feedback")
         if isinstance(feedback, Mapping):
             valid = any(
@@ -58,3 +128,10 @@ class WorkOrderValidator:
         else:
             valid = bool(str(feedback or "").strip())
         return order.get("status") == "closed" and valid and WorkOrderValidator.verification_passed(order, feedback)
+
+
+def _number_at_least(value: Any, minimum: float) -> bool:
+    try:
+        return float(value) >= minimum
+    except (TypeError, ValueError):
+        return False

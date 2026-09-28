@@ -1,17 +1,20 @@
 services:
   mysql:
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD}
-      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?set MYSQL_APP_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD for production}
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?set MYSQL_APP_PASSWORD for production}
 
   minio:
     environment:
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER for production}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD for production}
 
   agent-service:
     environment:
       APP_ENV: production
       ALLOW_DEGRADED_STORAGE: "false"
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:?set AGENT_API_TOKEN for production}
+      RAG_ALLOWED_INGEST_ROOT: /app/services/rag-service/data
       RAG_ALLOW_LOCAL_FALLBACK: "false"
       WORKORDER_BACKEND: mysql
       BACKEND_SERVICE_BASE_URL: http://backend-service:8030
@@ -44,10 +47,12 @@ services:
       MODEL_PROVIDER: remote
       MODEL_CHAT_PROVIDER: siliconflow
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:?set SILICONFLOW_API_KEY}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
 
   monitor-web:
     environment:
       APP_ENV: production
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:?set AGENT_API_TOKEN for production}
       FACTORY_API_BASE_URL: ${FACTORY_API_BASE_URL:?set a reachable private factory URL}
 
   gateway:

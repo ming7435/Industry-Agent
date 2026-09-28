@@ -37,7 +37,7 @@ def _get(url: str) -> str:
 def test_rc_stack_health_and_monitor_frontend():
     assert '"status":"ok"' in _get(os.getenv("AGENT_HEALTH_URL", "http://127.0.0.1:8010/health")).replace(" ", "")
     assert '"status":"ok"' in _get(os.getenv("RAG_HEALTH_URL", "http://127.0.0.1:8020/health")).replace(" ", "")
-    assert "document-cad-service" in _get(os.getenv("CAD_HEALTH_URL", "http://127.0.0.1:8011/health"))
+    assert "document-cad-service" in _get(os.getenv("CAD_HEALTH_URL", "http://127.0.0.1:8050/health"))
     assert "<!doctype html" in _get(os.getenv("MONITOR_URL", "http://127.0.0.1:8001/")).lower()
 
 
@@ -46,7 +46,7 @@ def test_five_service_runtime_business_closure():
     agent = os.getenv("AGENT_BASE_URL", "http://127.0.0.1:8010")
     backend = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8030")
     rag = os.getenv("RAG_BASE_URL", "http://127.0.0.1:8020")
-    cad = os.getenv("CAD_BASE_URL", "http://127.0.0.1:8011")
+    cad = os.getenv("CAD_BASE_URL", "http://127.0.0.1:8050")
     model = os.getenv("MODEL_BASE_URL", "http://127.0.0.1:8040")
 
     model_health = _request("GET", model + "/health")

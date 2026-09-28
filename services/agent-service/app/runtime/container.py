@@ -1,4 +1,4 @@
-"""Construct shared Agent, tool, service, harness, and A2A dependencies."""
+"""装配共用的 Agent、工具、服务、Harness 和 A2A 依赖。"""
 
 from __future__ import annotations
 
@@ -24,14 +24,14 @@ from .tracing import NodeTrace
 from .capability import build_capability_registry
 from .execution import ExecutionManager
 from .planner import Planner
-from .dispatcher import RuntimeDispatcher
+from .dispatcher import RuntimeDispatcher, SideEffectResolverRegistry
 from .coordinator import RuntimeCoordinator
 from .policy import RuntimePolicy
 from .approval import ApprovalManager, PendingTaskStore
 
 
 class AgentContainer:
-    """Own one orchestrator's shared resources and Agent bindings."""
+    """管理单个编排器的共用资源及 Agent 绑定。"""
 
     def __init__(
         self,
@@ -111,6 +111,47 @@ class AgentContainer:
         }
         self.endpoints = A2AEndpoints(self.harnesses)
         self.endpoints.register(self.a2a)
+        resolvers = SideEffectResolverRegistry()
+
+        def workorder_state_resolver(action, state):
+            key = str(action.idempotency_key or "").strip()
+            workorder = state.get("workorder") if isinstance(state.get("workorder"), dict) else {}
+            workorder_id = str(
+                action.payload.get("workorder_id")
+                or workorder.get("workorder_id")
+                or state.get("workorder_id")
+                or ""
+            ).strip()
+
+            def check():
+                try:
+                    if workorder_id:
+                        value = self.registry.execute("get_workorder", {"workorder_id": workorder_id})
+                        return value if value and value.get("found", True) else None
+                    if not key:
+                        return None
+                    value = self.registry.execute("list_workorders", {})
+                    for item in value.get("items") or []:
+                        if str(item.get("idempotency_key") or "") == key:
+                            return item
+                except Exception:
+                    return None
+                return None
+
+            return check
+
+        resolvers.register("workorder_create", workorder_state_resolver)
+        resolvers.register("workorder_update", workorder_state_resolver)
+        for capability in (
+            "create_workorder",
+            "update_workorder",
+            "assign_workorder",
+            "submit_repair_feedback",
+            "mark_repair_completed",
+            "close_workorder",
+            "reopen_workorder",
+        ):
+            resolvers.register(capability, workorder_state_resolver)
         self.dispatcher = RuntimeDispatcher(
             self.capabilities,
             self.execution_manager,
@@ -118,6 +159,7 @@ class AgentContainer:
             tools=self.registry,
             harnesses=self.harnesses,
             policy=self.policy,
+            resolvers=resolvers,
         )
         self.coordinator = RuntimeCoordinator(self)
         self.approvals.resume_callback = self.coordinator.resume_pending

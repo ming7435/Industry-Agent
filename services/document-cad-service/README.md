@@ -5,7 +5,7 @@ CAD Agent 通过 MCP 风格接口访问本服务，不直接解析原始 DWG/DXF
 启动：
 
 ```powershell
-L:\anaconda\python.exe -m uvicorn app.main:app --app-dir services\document-cad-service --host 127.0.0.1 --port 8011
+L:\anaconda\python.exe -m uvicorn app.main:app --app-dir services\document-cad-service --host 127.0.0.1 --port 8050
 ```
 
-Agent Service 配置 `MCP_CAD_URL=http://127.0.0.1:8011` 后，CAD 工具会走远程服务。RC/生产模式设置 `CAD_ALLOW_DEMO_FALLBACK=false`，MySQL 不可用时直接报告服务不可用，不静默使用 Demo Catalog。
+Agent Service 配置 `MCP_CAD_URL=http://127.0.0.1:8050` 后，CAD 工具会走远程服务。RC/生产模式设置 `CAD_ALLOW_DEMO_FALLBACK=false`，MySQL 不可用时直接报告服务不可用，不静默使用 Demo Catalog。

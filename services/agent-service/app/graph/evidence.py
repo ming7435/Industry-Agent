@@ -1,4 +1,4 @@
-"""Backward-compatible import for runtime evidence policies."""
+"""Runtime 证据策略的兼容导入入口。"""
 
 from app.runtime.evidence import loop_payload, ready, refined_query
 

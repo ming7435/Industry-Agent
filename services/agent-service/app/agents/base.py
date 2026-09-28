@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentResult(BaseModel):
-    """Canonical result exchanged between Runtime and any Agent."""
+    """Runtime 与各 Agent 之间交换的标准结果。"""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -67,7 +67,7 @@ class AgentResult(BaseModel):
 
 
 class BaseAgent:
-    """Small common interface implemented by all existing business Agents."""
+    """现有业务 Agent 共同实现的简洁接口。"""
 
     name = "agent"
     capabilities: tuple[str, ...] = ()
@@ -75,16 +75,16 @@ class BaseAgent:
     def execute(self, task: Any) -> AgentResult:
         return AgentResult.from_value(self.run(task))
 
-    def run(self, task: Any) -> Any:  # pragma: no cover - concrete Agents override
+    def run(self, task: Any) -> Any:  # pragma: no cover - 由具体 Agent 重写
         raise NotImplementedError
 
     def validate(self, task: Any) -> list[str]:
-        """Return boundary validation findings without running business logic."""
+        """返回边界校验结果，不执行业务逻辑。"""
 
         return []
 
     def trace(self, event: str, payload: Mapping[str, Any] | None = None) -> None:
-        """Optional hook for concrete Agents; Runtime owns canonical tracing."""
+        """供具体 Agent 按需实现的钩子；标准追踪由 Runtime 负责。"""
 
         return None
 
@@ -96,10 +96,9 @@ def trace_skill_node(
     *,
     skill_step: str | None = None,
 ) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
-    """Attach real Graph-node execution to an existing Skill step.
+    """将现有 Skill 步骤与实际的 Graph 节点执行关联起来。
 
-    This is deliberately a small wrapper, not a Skill interpreter: the
-    existing Graph node still owns its domain behavior and routing.
+    此处仅做轻量封装，不负责解释 Skill；领域行为和路由仍由原有 Graph 节点负责。
     """
 
     @wraps(node)

@@ -34,7 +34,7 @@ class ShortMemoryStore:
 
 
 class LongMemoryStore:
-    """默认以内存实现，生产环境可替换为 MySQL repository。"""
+    """默认以内存实现，生产环境可替换为 MySQL 仓储。"""
 
     backend = "mysql-compatible-memory"
 
@@ -148,7 +148,7 @@ class MySQLLongMemoryStore:
 
 
 class BackendLongMemoryStore:
-    """Structured experience facade; persistence belongs to Backend Service."""
+    """结构化经验的访问接口；持久化由 Backend Service 负责。"""
 
     backend = "backend-service"
 

@@ -1,8 +1,7 @@
-"""Pre-execution policy for controlled Runtime autonomy.
+"""控制 Runtime 自主执行的前置策略。
 
-This boundary authorizes canonical Actions, not business Agent internals.
-An Agent recommendation cannot grant approval: approval is read only from
-the trusted invocation state supplied to Runtime.
+该边界授权规范 Action，而非业务 Agent 的内部操作。
+Agent 的建议不能授予审批权限：审批信息仅从传给 Runtime 的可信调用状态中读取。
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ class PolicyDecision:
 
 
 class RuntimePolicy:
-    """Apply deterministic action-level authorization before dispatch."""
+    """派发前对动作执行确定性的授权检查。"""
 
     _MUTATING_TOOLS = frozenset({
         "create_workorder", "update_workorder", "assign_workorder",

@@ -1,4 +1,4 @@
-"""Runtime evidence policies shared by Knowledge, Diagnosis and Maintenance loops."""
+"""知识、诊断和维修循环共用的 Runtime 证据策略。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def _items(payload: Mapping[str, Any] | None, *keys: str) -> list[Any]:
 
 
 def ready(payload: Mapping[str, Any] | None, stage: str) -> bool:
-    """Return whether a stage has actionable, non-degraded evidence."""
+    """判断阶段是否具备可用于行动且未降级的证据。"""
 
     value = dict(payload or {})
     status = str(value.get("status") or "").strip().lower()
@@ -31,7 +31,7 @@ def ready(payload: Mapping[str, Any] | None, stage: str) -> bool:
 
 
 def refined_query(query: str, diagnosis: Mapping[str, Any] | None = None) -> str:
-    """Add deterministic evidence hints for one bounded retrieval retry."""
+    """为一次有界检索重试加入确定性的证据提示。"""
 
     base = str(query or "设备维修").strip()
     fault = str((diagnosis or {}).get("fault") or (diagnosis or {}).get("diagnosis") or "").strip()

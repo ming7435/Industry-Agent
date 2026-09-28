@@ -126,4 +126,3 @@ def calculate_confidence(
         "agreement": round(agreement, 4),
         "degraded_penalty": round(degraded_penalty, 4),
     }
-

@@ -25,7 +25,7 @@ _KNOWN_CONTROLLER_TRANSLATIONS = (
 
 
 def _operator_text(value: Any) -> str:
-    """Translate known low-level controller messages at the read boundary."""
+    """在读取边界翻译已知的控制器底层消息。"""
 
     text = str(value or "")
     for source, target in _KNOWN_CONTROLLER_TRANSLATIONS:
@@ -146,7 +146,7 @@ class RAGServiceClient:
 
     @staticmethod
     def _humanize_result(result: Dict[str, Any]) -> Dict[str, Any]:
-        """Keep legacy/local indexed documents readable without re-ingestion."""
+        """在不重新入库的情况下保持旧版/本地索引文档可读。"""
 
         payload = dict(result or {})
         documents = []
@@ -161,11 +161,10 @@ class RAGServiceClient:
 
     @staticmethod
     def _build_remote_query(query: str, filters: Mapping[str, Any]) -> str:
-        """Put structured identifiers into the remote natural-language query.
+        """将结构化标识加入远程自然语言查询。
 
-        The standalone RAG API filters by corpus, while alarm/component fields
-        are carried in chunk metadata. Including them in the query preserves
-        exact-code recall without changing the RAG service contract.
+        独立 RAG API 按语料库过滤，报警和部件字段则保存在片段元数据中。
+        将这些标识加入查询可保留精确编码检索能力，无需更改 RAG 服务契约。
         """
         text = str(query or "").strip()
         additions = []
@@ -177,7 +176,7 @@ class RAGServiceClient:
 
     @staticmethod
     def _normalize_remote_filters(filters: Mapping[str, Any]) -> Dict[str, Any]:
-        """Map Agent knowledge filters to fields indexed by the RAG service."""
+        """将 Agent 知识过滤条件映射为 RAG 服务索引的字段。"""
 
         corpus_by_type = {
             "alarm": "alarms",
@@ -203,11 +202,10 @@ class RAGServiceClient:
         return result
 
     def _fallback_filters(self, filters: Mapping[str, Any]) -> Dict[str, Any]:
-        """Keep machine scope when the local fallback index has that metadata.
+        """在本地回退索引包含该元数据时保留机器范围。
 
-        The bundled demo index predates device metadata. In that degraded mode
-        the device ID remains in the query text, while remote RAG still applies
-        the hard metadata boundary.
+        内置演示索引早于设备元数据。在降级模式下，设备 ID 会保留在查询文本中，
+        而远程 RAG 仍应用严格的元数据边界。
         """
 
         selected = {
@@ -229,11 +227,10 @@ class RAGServiceClient:
         query: str,
         filters: Mapping[str, Any] | None,
     ) -> Dict[str, Any]:
-        """Adapt the standalone RAG ``hits`` contract to Agent ``documents``.
+        """将独立 RAG 的 ``hits`` 契约适配为 Agent 的 ``documents``。
 
-        The retrieval service intentionally exposes chunk-oriented fields while
-        the Agent tools expose document-oriented fields. Keeping this adapter at
-        the HTTP boundary lets both services retain their native contracts.
+        检索服务有意暴露面向片段的字段，而 Agent 工具暴露面向文档的字段。
+        将适配器保留在 HTTP 边界，可让两个服务继续使用各自的原生契约。
         """
 
         payload = dict(result)

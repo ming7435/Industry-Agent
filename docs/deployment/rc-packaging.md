@@ -1,6 +1,6 @@
 # Release Candidate Docker 封装
 
-RC 包含五个业务应用容器：Agent `8010`、CAD `8011`、RAG `8020`、Backend `8030`、Model `8040`，以及 Monitor `8001`、Gateway `8080` 和基础设施 MySQL、Redis、Milvus、MinIO、OTLP Collector。
+RC 包含五个业务应用容器：Agent `8010`、CAD `8050`、RAG `8020`、Backend `8030`、Model `8040`，以及 Monitor `8001`、Gateway `8080` 和基础设施 MySQL、Redis、Milvus、MinIO、OTLP Collector。
 
 ## 启动
 
@@ -32,7 +32,7 @@ Agent 的运行时 SQLite 文件统一位于 `/app/.runtime`，由命名卷 `age
 Invoke-WebRequest http://127.0.0.1:8010/health
 Invoke-WebRequest http://127.0.0.1:8030/health
 Invoke-WebRequest http://127.0.0.1:8040/health
-Invoke-WebRequest http://127.0.0.1:8011/health
+Invoke-WebRequest http://127.0.0.1:8050/health
 Invoke-WebRequest http://127.0.0.1:8020/health
 Invoke-WebRequest http://127.0.0.1:8001/
 ```

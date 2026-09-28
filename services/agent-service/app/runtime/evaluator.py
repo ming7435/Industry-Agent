@@ -1,4 +1,4 @@
-"""Evidence-driven evaluation shared by every Runtime loop."""
+"""所有 Runtime 循环共用的证据驱动评估逻辑。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class EvaluationResult(BaseModel):
 
 
 class RuntimeEvaluator:
-    """Central policy for completion, continuation and bounded replanning."""
+    """统一决定完成、继续执行及有界重规划。"""
 
     def __init__(self, min_evidence_score: float = 0.8, min_confidence: float = 0.8, min_experience_quality_score: float = 0.8) -> None:
         self.min_evidence_score = max(0.0, min(1.0, float(min_evidence_score)))

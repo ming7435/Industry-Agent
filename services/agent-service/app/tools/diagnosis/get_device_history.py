@@ -30,10 +30,9 @@ def get_device_history(
 ) -> Dict[str, Any]:
     """读取设备过去一段时间的指标采样，并返回适合 Agent 分析的序列。
 
-    ``alarm_code`` is accepted as diagnostic context for model generated tool
-    calls.  The factory history endpoint is already scoped by ``device_id``;
-    keeping the optional argument here makes that boundary explicit without
-    leaking an unsupported query parameter to the factory API.
+    ``alarm_code`` 可作为模型生成工具调用时的诊断上下文传入。工厂历史接口已通过
+    ``device_id`` 限定查询范围；保留这一可选参数可以明确工具边界，同时避免向
+    工厂 API 传递不支持的查询参数。
     """
 
     device_id = str(device_id or "").strip()

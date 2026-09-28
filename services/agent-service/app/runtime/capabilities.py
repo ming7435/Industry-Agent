@@ -1,4 +1,4 @@
-"""Compatibility exports for the canonical Runtime capability registry."""
+"""规范 Runtime 能力注册表的兼容导出入口。"""
 
 from __future__ import annotations
 

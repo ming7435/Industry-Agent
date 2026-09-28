@@ -29,6 +29,7 @@ BUSINESS_TOOLS = {
     "query_part_availability", "persist_report", "get_report", "list_reports", "delete_report", "save_experience",
     "search_experience", "create_quality_check", "list_quality_checks", "get_quality_check",
     "submit_quality_appeal", "create_closure_task", "list_closure_tasks", "complete_closure_task",
+    "reinspect_quality_check", "release_quality_check", "close_quality_check",
     "list_audit_logs",
 }
 QMS_TOOLS = {

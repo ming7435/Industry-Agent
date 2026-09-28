@@ -1,4 +1,4 @@
-"""MES MCP：生成维修计划草案。"""
+"""维修方案工具：根据诊断生成维修计划草案。"""
 
 from __future__ import annotations
 

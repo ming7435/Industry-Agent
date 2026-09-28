@@ -12,7 +12,7 @@ from app.runtime.action import ActionModel
 
 
 class _IncompleteLearningStage(RuntimeError):
-    """Carry a failed stage result without committing it as completed."""
+    """保留失败阶段的结果，同时避免将其记录为已完成。"""
 
     def __init__(self, result: Mapping[str, Any], message: str) -> None:
         super().__init__(message)
@@ -64,7 +64,7 @@ class RuntimeOperations:
         key: str,
         producer: Any,
     ) -> Dict[str, Any]:
-        """Run one close stage once, including across concurrent processes."""
+        """确保关闭阶段只执行一次，跨并发进程也适用。"""
 
         if self._learning_store is not None:
             return self._learning_store.get_or_create(namespace, key, producer)

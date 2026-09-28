@@ -90,3 +90,36 @@ def test_dispatcher_task_adapter_canonicalizes_capability_aliases():
     assert result.success is True
     assert agent.task["query"] == "主轴温度异常"
 
+
+def test_dispatcher_uses_registered_side_effect_resolver_before_handler():
+    from app.runtime.capability import CapabilityDefinition
+    from app.runtime.dispatcher import RuntimeDispatcher, SideEffectResolverRegistry
+
+    class _WorkOrderAgent(BaseAgent):
+        name = "workorder"
+        capabilities = ("workorder_create",)
+
+        def run(self, task):
+            raise AssertionError("handler must not run after reconciliation")
+
+    registry = CapabilityRegistry([CapabilityDefinition("workorder_create", "workorder", "workorder", "workorder", side_effect=True)])
+    registry.register_agent(_WorkOrderAgent())
+    resolvers = SideEffectResolverRegistry()
+    resolvers.register("workorder_create", lambda _action, _state: lambda: {"workorder_id": "WO-RECONCILED"})
+    dispatcher = RuntimeDispatcher(registry, ExecutionManager(), resolvers=resolvers)
+
+    result = dispatcher.dispatch(
+        ActionModel.agent("workorder", {"required_capability": "workorder_create"}, side_effect=True, idempotency_key="workorder:create:EVT-1"),
+        {
+            "task_id": "TASK-RECONCILE",
+            "trace_id": "TRACE-RECONCILE",
+            "diagnosis": {"fault": "主轴异常"},
+            "knowledge": {"documents": [{"id": "DOC-1"}]},
+            "cad": {"parts": [{"part_no": "P-1"}]},
+            "maintenance_plan": {"workorder_ready": True},
+        },
+    )
+
+    assert result.success is True
+    assert result.output["workorder_id"] == "WO-RECONCILED"
+

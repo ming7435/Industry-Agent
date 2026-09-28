@@ -1,4 +1,4 @@
-"""CAD Agent。"""
+"""CAD 智能体模块。"""
 
 from .agent import CADAgent
 from .schemas import CADQuery

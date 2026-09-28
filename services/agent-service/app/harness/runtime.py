@@ -45,7 +45,7 @@ class AgentHarness:
         return self.trace.list()
 
     def _tool_context(self, task: Any, task_id: str, trace_id: str) -> dict[str, Any]:
-        """Build the optional shared Tool Guard context from Runtime state."""
+        """从 Runtime 状态构建可选的共用 Tool Guard 上下文。"""
 
         raw = task.get("runtime_context") if isinstance(task, dict) else None
         context = dict(raw) if isinstance(raw, dict) else {}
@@ -56,7 +56,7 @@ class AgentHarness:
 
     @staticmethod
     def _trace_payload(value: Any) -> Any:
-        """Keep Agent input/output explicit and JSON-safe in the trace store."""
+        """在轨迹存储中明确记录 Agent 输入和输出，并确保可序列化为 JSON。"""
 
         if hasattr(value, "model_dump"):
             value = value.model_dump(mode="json")
@@ -73,7 +73,7 @@ class AgentHarness:
         return context
 
     def execute_once(self, abnormal_event: Any):
-        """Run one attempt; RuntimeDispatcher owns timeout/retry policy."""
+        """执行一次尝试；超时和重试策略由 RuntimeDispatcher 管理。"""
 
         task_id = abnormal_event.get("task_id", "") if isinstance(abnormal_event, dict) else ""
         trace_id = abnormal_event.get("trace_id", "") if isinstance(abnormal_event, dict) else ""
