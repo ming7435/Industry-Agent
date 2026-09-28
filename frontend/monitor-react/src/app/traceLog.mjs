@@ -22,14 +22,25 @@ function qualityEvent(record) {
   return /quality|inspect_quality|quality_check|part_quality|质检/.test(text);
 }
 
+function ragEvent(record) {
+  const text = [
+    record?.type, record?.event, record?.name, record?.node, record?.agent,
+    record?.tool, record?.tool_name, record?.step,
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+  return /rag|knowledge|search_knowledge|knowledge_search|vector_search|document_search|retrieval|检索|知识问答/.test(text);
+}
+
 export function runEventMatches(run, record) {
   if (!run || !record) return false;
   const traceIds = Array.isArray(run.trace_ids) ? run.trace_ids : [run.trace_id];
   const taskIds = Array.isArray(run.task_ids) ? run.task_ids : [run.task_id];
+  const eventIds = Array.isArray(run.event_ids) ? run.event_ids : [run.event_id];
   const sameIdentity = traceIds.filter(Boolean).includes(record.trace_id)
     || taskIds.filter(Boolean).includes(record.task_id);
-  if (!sameIdentity && (traceIds.some(Boolean) || taskIds.some(Boolean))) return false;
+  const sameEvent = eventIds.filter(Boolean).includes(record.event_id);
+  if (!sameIdentity && !sameEvent && (traceIds.some(Boolean) || taskIds.some(Boolean) || eventIds.some(Boolean))) return false;
   if (run.run_type === "quality") return qualityEvent(record);
+  if (run.run_type === "rag") return ragEvent(record);
   if (run.run_type === "fault") return !qualityEvent(record);
   return true;
 }
@@ -235,9 +246,8 @@ function buildToolCalls(records) {
 }
 
 /**
- * Turn raw trace events into explicit Agent call records.  This is deliberately
- * kept separate from rendering so the UI can show input/output even when a
- * backend returns a slightly different event ordering.
+ * 将原始 Trace 事件转换成明确的 Agent 调用记录。
+ * 该逻辑与渲染刻意分离，这样即使后端返回的事件顺序略有不同，界面仍能展示输入和输出。
  */
 export function buildAgentInvocations(records = []) {
   const source = Array.isArray(records) ? records.filter((record) => record && typeof record === "object") : [];

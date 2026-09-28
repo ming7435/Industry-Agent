@@ -1,4 +1,4 @@
-"""Direct API operations backed by the same Agent A2A requests as the Graph."""
+"""直接 API 操作，使用与 Graph 相同的 Agent A2A 请求。"""
 from __future__ import annotations
 from typing import Any, Dict, Mapping
 from uuid import uuid4
@@ -147,43 +147,6 @@ class RuntimeOperations:
             "repair_verification": dict(values.get("verification") or values.get("repair_verification") or {}),
         }
         result = self.requests.execute_workorder(state, action=action, workorder=values.get("workorder"), from_agent=from_agent)
-        if action == "mark_repair_completed":
-            order = dict(result.get("workorder") or result.get("order") or {})
-            verification = dict(
-                order.get("repair_verification")
-                or values.get("repair_verification")
-                or values.get("verification")
-                or {}
-            )
-            device_id = str(order.get("device_id") or values.get("device_id") or "").strip()
-            if order.get("status") == "completed" and verification.get("passed") is True and device_id:
-                if self.factory_client is None:
-                    result["machine_control"] = {
-                        "device_id": device_id,
-                        "action": "start",
-                        "accepted": False,
-                        "error": "factory_control_unconfigured",
-                    }
-                else:
-                    try:
-                        control_response = self.factory_client.control_device(
-                            device_id,
-                            "start",
-                            reason="维修验证通过，申请恢复运行",
-                        )
-                        result["machine_control"] = {
-                            "device_id": device_id,
-                            "action": "start",
-                            "accepted": True,
-                            "response": control_response,
-                        }
-                    except Exception as error:  # 返回明确失败，不把工单完成伪装成机器已启动。
-                        result["machine_control"] = {
-                            "device_id": device_id,
-                            "action": "start",
-                            "accepted": False,
-                            "error": "%s: %s" % (type(error).__name__, error),
-                        }
         if action == "close":
             order = dict(result.get("workorder") or {})
             feedback = order.get("repair_feedback") or values.get("repair_feedback") or {}

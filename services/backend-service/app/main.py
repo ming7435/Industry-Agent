@@ -1,4 +1,4 @@
-"""Backend business service and MCP tool endpoint."""
+"""后端业务服务和 MCP 工具端点。"""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def get_service() -> BackendBusinessService:
     if _service is None:
         try:
             _service = BackendBusinessService()
-        except Exception as error:  # readiness reports this without hiding liveness
+        except Exception as error:  # 就绪检查报告该错误，但不影响存活检查
             _startup_error = str(error)
             raise
     return _service

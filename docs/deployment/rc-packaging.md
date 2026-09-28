@@ -14,7 +14,7 @@ $env:MYSQL_APP_PASSWORD = "..."
 docker compose -f infra/docker/docker-compose.yml --profile apps --profile gateway up -d --build
 ```
 
-Agent 的运行时 SQLite 文件统一位于 `/app/.runtime`，由 named volume `agent-runtime-data` 持久化，包含：
+Agent 的运行时 SQLite 文件统一位于 `/app/.runtime`，由命名卷 `agent-runtime-data` 持久化，包含：
 
 - `pending.sqlite3`：Approval wait/resume 任务；
 - `events.sqlite3`：Event Idempotency；

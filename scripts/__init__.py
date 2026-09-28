@@ -1,1 +1,1 @@
-"""Project helper scripts exposed for testable utility functions."""
+"""提供可测试工具函数的项目辅助脚本包。"""

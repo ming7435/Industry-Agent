@@ -1,6 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet } from "./workorderSheet.mjs";
+import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getWorkorderDisplayTitle } from "./workorderSheet.mjs";
+
+test("workorder titles identify the actual machine and current fault", () => {
+  const title = getWorkorderDisplayTitle(
+    {
+      device_id: "ELITE-CS612-ROBOT-001",
+      title: "主轴电机组件维修",
+      alarm_code: "CTRL-001",
+      diagnosis_context: { fault: "控制器通讯异常" },
+    },
+    { part_name: "主轴电机组件" },
+  );
+
+  assert.equal(title, "ELITE ROBOTS CS612 六轴协作机器人 · 控制器通讯异常");
+});
 
 test("frontend separates maintenance plan fields from the WorkOrder sheet", () => {
   const order = {
@@ -54,6 +68,15 @@ test("frontend removes embedded model JSON and retrieval table fragments", () =>
   assert.equal(plan.diagnosis.cause, "优先检查冷却系统");
   assert.deepEqual(plan.steps, ["检查冷却泵"]);
   assert.equal(sheet.title, "冷却泵维修");
+});
+
+test("frontend hides raw OCR evidence from the repair step list", () => {
+  const rawOcr = "本地OCR识别结果（第43页）：触发条件 编码器丢失原点 POSITIONINGERROR ENCODERLOST steps.action";
+  const plan = buildMaintenancePlanView({
+    plan: { repair_steps: [rawOcr, "检查冷却液液位"] },
+  });
+
+  assert.deepEqual(plan.steps, ["检查冷却液液位"]);
 });
 
 test("repair completion sends a verified lifecycle action instead of a generic update", () => {

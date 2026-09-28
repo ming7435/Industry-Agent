@@ -52,8 +52,7 @@ services:
       - etcd-data:/etcd
 
   minio:
-    # Keep the image overridable for air-gapped/local registries. Quay is the
-    # official MinIO registry and is reachable from the CI runner.
+    # 允许在隔离网络或本地镜像仓库中覆盖镜像地址。Quay 是 MinIO 官方镜像仓库，CI 运行器可访问。
     image: ${MINIO_IMAGE:-quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e}
     restart: unless-stopped
     environment:
@@ -322,7 +321,7 @@ services:
       MODEL_PROVIDER: ${MODEL_PROVIDER:-fake}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
-      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8040/health', timeout=3)"]

@@ -4,6 +4,53 @@ function text(value) {
   return String(value ?? "").trim();
 }
 
+const DEVICE_DISPLAY_NAMES = {
+  "TRAK-TC820LTYSI-001": "TRAK TC820LTYsi 车削中心",
+  "LNS-QL-SERVO-80-S2-001": "LNS QL Servo 80 S2 棒料送料机",
+  "ELITE-CS612-ROBOT-001": "ELITE ROBOTS CS612 六轴协作机器人",
+  "RENISHAW-EQUATOR300-001": "Renishaw Equator 300 比对仪",
+};
+
+function deviceIdOf(order = {}, context = {}) {
+  return text(order.device_id || order.machine_id || context.device_id || context.sample?.device_id);
+}
+
+export function getDeviceDisplayName(deviceId, context = {}) {
+  const id = text(deviceId);
+  const devices = Array.isArray(context?.snapshot?.devices)
+    ? context.snapshot.devices
+    : Array.isArray(context?.devices) ? context.devices : [];
+  const live = devices.find((item) => text(item?.device_id || item?.id) === id);
+  return text(
+    context?.device_name
+      || context?.machine_name
+      || live?.name
+      || live?.display_name
+      || DEVICE_DISPLAY_NAMES[id]
+      || id
+      || "设备",
+  );
+}
+
+function faultText(order = {}, context = {}) {
+  const diagnosis = order.diagnosis_context && typeof order.diagnosis_context === "object"
+    ? order.diagnosis_context
+    : {};
+  const sample = context.sample && typeof context.sample === "object" ? context.sample : {};
+  const raw = [
+    context.fault,
+    context.summary,
+    diagnosis.fault,
+    diagnosis.summary,
+    diagnosis.diagnosis,
+    order.alarm_label,
+    sample.alarm_label,
+    order.alarm_code || sample.alarm_code ? `报警 ${order.alarm_code || sample.alarm_code}` : "",
+  ].map(text).find((value) => value && !/[{}]/.test(value));
+  if (raw) return raw.replace(/^设备维修[:：]\s*/i, "");
+  return "";
+}
+
 function readable(value) {
   const raw = value && typeof value === "object"
     ? value.content ?? value.body ?? value.text ?? value.title ?? value.name ?? value.description ?? ""
@@ -20,9 +67,29 @@ function readable(value) {
   return normalized;
 }
 
-function list(value) {
+function isExecutableStep(value) {
+  const normalized = text(value);
+  const lowered = normalized.toLowerCase();
+  const blockedMarkers = [
+    "本地ocr识别结果",
+    "内容类型:",
+    "evidence.",
+    "steps.action",
+    "steps.safety",
+    "positioningerror",
+    "encoderlost",
+    "报警字典",
+  ];
+  return normalized.length <= 120 && !blockedMarkers.some((marker) => lowered.includes(marker));
+}
+
+function list(value, { executableOnly = false } = {}) {
   const values = Array.isArray(value) ? value : text(value).split(/[；;\n。]+/u);
-  return values.map(readable).filter(Boolean).filter((item, index, items) => items.indexOf(item) === index);
+  return values
+    .map(readable)
+    .filter(Boolean)
+    .filter((item) => !executableOnly || isExecutableStep(item))
+    .filter((item, index, items) => items.indexOf(item) === index);
 }
 
 function evidenceList(value) {
@@ -74,12 +141,12 @@ export function buildMaintenancePlanView({ order = {}, plan = {}, diagnosis = {}
   return {
     planId: text(sourcePlan.plan_id),
     diagnosis: normalizeDiagnosis(sourceDiagnosis),
-    steps: list(sourcePlan.repair_steps || sourcePlan.steps),
+    steps: list(sourcePlan.repair_steps || sourcePlan.steps, { executableOnly: true }),
     tools: list(sourcePlan.tools || sourcePlan.required_tools),
     parts: list(sourcePlan.parts || sourcePlan.required_parts),
     safety: list(sourcePlan.safety || sourcePlan.safety_requirements),
-    preChecks: list(sourcePlan.pre_checks),
-    postChecks: list(sourcePlan.post_checks),
+    preChecks: list(sourcePlan.pre_checks, { executableOnly: true }),
+    postChecks: list(sourcePlan.post_checks, { executableOnly: true }),
     evidence: evidenceList(sourcePlan.evidence || sourcePlan.memory_evidence),
     riskLevel: text(sourcePlan.risk_level || sourcePlan.riskLevel),
     estimatedTime: text(sourcePlan.estimated_time || sourcePlan.estimatedTime || sourcePlan.estimated_duration),
@@ -87,11 +154,29 @@ export function buildMaintenancePlanView({ order = {}, plan = {}, diagnosis = {}
   };
 }
 
-export function getWorkorderDisplayTitle(order = {}, target = {}) {
+export function getWorkorderDisplayTitle(order = {}, target = {}, context = {}) {
   const candidateTitle = cleanDisplayText(order.title);
   const targetName = text(target.part_name) && !["待确认故障部件", "待补充"].includes(text(target.part_name))
     ? text(target.part_name)
     : "设备";
+  const deviceId = deviceIdOf(order, context);
+  const deviceName = getDeviceDisplayName(deviceId, context);
+  const hasMachineName = Boolean(
+    text(context?.device_name || context?.machine_name)
+      || (Array.isArray(context?.snapshot?.devices) && context.snapshot.devices.some((item) => text(item?.device_id || item?.id) === deviceId && text(item?.name || item?.display_name)))
+      || DEVICE_DISPLAY_NAMES[deviceId],
+  );
+  const fault = faultText(order, context);
+  const genericTitle = !candidateTitle
+    || candidateTitle.length > 80
+    || /[\n#{}]/.test(candidateTitle)
+    || /^(?:分析过程|基于|我已|让我|事件分析|诊断分析|设备维修[:：])/i.test(candidateTitle)
+    || candidateTitle === `${targetName}维修`
+    || candidateTitle === "设备维修工单"
+    || candidateTitle === "主轴电机组件维修";
+  if (deviceId && hasMachineName && genericTitle) {
+    return `${deviceName} · ${fault || `${targetName}维修`}`;
+  }
   return candidateTitle
     && candidateTitle.length <= 80
     && !/[\n#{}]/.test(candidateTitle)
@@ -119,11 +204,11 @@ export function buildRepairCompletionPayload({ feedback = "", operator = "", dev
   };
 }
 
-export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagnosis = {} } = {}) {
+export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagnosis = {}, context = {} } = {}) {
   const diagnosisContext = order.diagnosis_context && typeof order.diagnosis_context === "object"
     ? order.diagnosis_context
     : {};
-  const title = getWorkorderDisplayTitle(order, target);
+  const title = getWorkorderDisplayTitle(order, target, { ...context, fault: diagnosis.fault || diagnosis.summary });
   return {
     title: title || "设备维修工单",
     workorderId: text(order.workorder_id),

@@ -56,7 +56,10 @@ class DeviceSample:
     mode: Optional[str] = None
     cycle_state: Optional[str] = None
     cycle_state_label: Optional[str] = None
+    control_state: Optional[str] = None
+    control_reason: Optional[str] = None
     health_score: Optional[float] = None
+    fault_evidence: Dict[str, Any] = field(default_factory=dict)
     metrics: Dict[str, Any] = field(default_factory=dict)
     metric_details: Dict[str, Any] = field(default_factory=dict)
     equipment_states: Dict[str, Any] = field(default_factory=dict)
@@ -80,7 +83,10 @@ class DeviceSample:
             "mode": self.mode,
             "cycle_state": self.cycle_state,
             "cycle_state_label": self.cycle_state_label,
+            "control_state": self.control_state,
+            "control_reason": self.control_reason,
             "health_score": self.health_score,
+            "fault_evidence": dict(self.fault_evidence),
             "metrics": dict(self.metrics),
             "metric_details": dict(self.metric_details),
             "equipment_states": dict(self.equipment_states),

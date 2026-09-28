@@ -1,4 +1,4 @@
-"""Data models produced by the industrial PDF ingestion stage."""
+"""工业 PDF 入库阶段产生的数据模型。"""
 
 from __future__ import annotations
 

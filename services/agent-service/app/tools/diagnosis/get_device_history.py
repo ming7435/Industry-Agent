@@ -63,9 +63,8 @@ def get_device_history(
         key = str(item or "").strip()
         if not key:
             continue
-        # Models sometimes use the generic name instead of a concrete sensor
-        # key.  Keep the full sample so downstream diagnosis can resolve the
-        # relevant pressure metric rather than failing the tool call.
+        # 模型有时会使用通用名称而不是具体传感器键。
+        # 保留完整样本，让下游诊断能够解析相关压力指标，而不是让工具调用失败。
         if key.casefold() in {"pressure", "压力", "液压"}:
             continue
         normalized = METRIC_ALIASES.get(key.lower(), METRIC_ALIASES.get(key, key))

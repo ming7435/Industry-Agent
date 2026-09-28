@@ -1,6 +1,17 @@
 export const RAG_SESSION_STORAGE_KEY = "industry-agent.rag-session.v1";
 export const RAG_SESSION_FALLBACK_KEY = "industry-agent.rag-session.fallback.v1";
 
+export function needsRagAnswerRefresh(message) {
+  if (!message || message.pending || message.agentError) return false;
+  const answer = message.answer && typeof message.answer === "object" ? message.answer : {};
+  const hasAnswer = [answer.knowledge?.answer, answer.diagnosis?.summary, answer.report?.summary]
+    .some((value) => String(value || "").trim());
+  if (hasAnswer) return false;
+  const summary = String(answer.knowledge?.summary || "").trim();
+  return /^检索到\s*\d+\s*条(?:相关)?知识证据\s*[：:]/.test(summary)
+    || /^未检索到与[“"].+[”"]直接相关的可追踪知识证据/.test(summary);
+}
+
 function readStoredMessages(storage, key) {
   try {
     const raw = storage?.getItem(key);
@@ -75,12 +86,12 @@ export function persistRagMessages(storage, messages, fallbackStorage = null) {
     try {
       storage?.removeItem(RAG_SESSION_STORAGE_KEY);
     } catch (_error) {
-      // Session storage can be unavailable in private browsing.
+      // 隐私浏览模式下可能无法使用会话存储。
     }
     try {
       fallbackStorage?.removeItem(RAG_SESSION_FALLBACK_KEY);
     } catch (_error) {
-      // Local storage can also be unavailable; the in-memory UI still works.
+      // 本地存储也可能不可用，但内存中的界面仍然可以工作。
     }
     return;
   }
@@ -88,11 +99,11 @@ export function persistRagMessages(storage, messages, fallbackStorage = null) {
   try {
     storage?.setItem(RAG_SESSION_STORAGE_KEY, serialized);
   } catch (_error) {
-    // Fall back to localStorage below when sessionStorage is blocked.
+    // sessionStorage 被阻止时，下面回退到 localStorage。
   }
   try {
     fallbackStorage?.setItem(RAG_SESSION_FALLBACK_KEY, serialized);
   } catch (_error) {
-    // Storage can be unavailable in private browsing; the in-memory UI still works.
+    // 隐私浏览模式下可能无法使用存储，但内存中的界面仍然可以工作。
   }
 }

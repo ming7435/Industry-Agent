@@ -46,7 +46,7 @@ def _merge_env(
     root: dict[str, str],
     service: dict[str, str],
 ) -> dict[str, str]:
-    """按 process > service .env > root .env 合并配置。"""
+    """按进程环境 > 服务覆盖 > 根配置合并配置。"""
 
     merged = dict(root)
     merged.update(service)
@@ -71,14 +71,11 @@ def _default_env() -> dict[str, str]:
         "MCP_QMS_URL": "http://127.0.0.1:8030",
         "BACKEND_STORAGE": "sqlite",
         "BACKEND_SQLITE_PATH": str(PROJECT_ROOT / ".runtime" / "backend.sqlite3"),
-        # Use the configured remote provider for local runs.  CI/Docker smoke
-        # tests still set MODEL_PROVIDER=fake explicitly in their compose env.
+        # 本地运行使用已配置的远程提供方；CI/Docker 冒烟测试会在 Compose
+        # 环境中显式设置 MODEL_PROVIDER=fake。
         "MODEL_PROVIDER": "remote",
-        # The local DeepSeek key may be present but unavailable when its
-        # account has no balance.  SiliconFlow is configured in the RAG env
-        # and provides the chat, embedding, and rerank endpoints.
-        "MODEL_CHAT_PROVIDER": "siliconflow",
-        "SILICONFLOW_CHAT_MODEL": "deepseek-ai/DeepSeek-V4-Flash",
+        # 对话统一走 DeepSeek 官方接口；SiliconFlow 仅作为可选的向量化/重排提供方。
+        "MODEL_CHAT_PROVIDER": "deepseek",
         "APP_ENV": "development",
         "ALLOW_DEGRADED_STORAGE": "true",
         "RAG_ALLOW_LOCAL_FALLBACK": "true",
@@ -102,19 +99,23 @@ def _default_env() -> dict[str, str]:
 
 
 def _env_for_service(service_root: Path) -> dict[str, str]:
-    """Build one child environment with service-level .env precedence."""
+    """为子进程生成环境；所有服务统一读取仓库根目录 ``.env``。
+
+    ``service_root`` 保留在函数签名中，是为了兼容已有启动调用方；服务目录
+    下的旧 ``.env`` 不再参与合并，避免同一个变量在不同服务中出现两套值。
+    """
 
     env = _merge_env(
         dict(os.environ),
         _read_env_file(PROJECT_ROOT / ".env"),
-        _read_env_file(service_root / ".env"),
+        {},
     )
     env.update({key: value for key, value in _default_env().items() if key not in env})
     return env
 
 
 def service_port(name: str, command: list[str], monitor_port: int = 8001) -> int | None:
-    """Return the TCP port owned by a managed service, when it has one."""
+    """返回受管理服务占用的 TCP 端口（如果命令声明了端口）。"""
 
     if name == "monitor-web":
         return int(monitor_port)
@@ -126,7 +127,7 @@ def service_port(name: str, command: list[str], monitor_port: int = 8001) -> int
 
 
 def _port_in_use(host: str, port: int) -> bool:
-    """Detect an already-running local service before spawning a duplicate."""
+    """生成子进程前检测本地服务是否已经运行。"""
 
     try:
         with socket.create_connection((host, port), timeout=0.25):
@@ -179,8 +180,8 @@ def main() -> int:
                 "8040",
             ],
             PROJECT_ROOT,
-            # Model credentials are maintained with the RAG integration env;
-            # load that file into the shared model gateway as well.
+            # 模型凭据统一维护在 RAG 集成环境文件中；同时将该文件加载到
+            # 共享模型网关的子进程环境中。
             PROJECT_ROOT / "services" / "rag-service",
         ),
         (

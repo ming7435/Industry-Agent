@@ -1,4 +1,4 @@
-"""HTTP model gateway. Business prompts and decisions stay outside this service."""
+"""HTTP 模型网关；业务提示词和决策逻辑保留在本服务之外。"""
 
 from __future__ import annotations
 

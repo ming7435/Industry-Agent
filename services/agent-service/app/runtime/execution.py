@@ -157,8 +157,7 @@ class ExecutionManager:
             if record.status in {ExecutionStatus.SUCCESS, ExecutionStatus.CANCELLED}:
                 break
             if action.side_effect:
-                # A failed response may hide a committed external write. Check
-                # authoritative state before considering another handler call.
+                # 失败响应可能掩盖已经提交的外部写入；再次调用处理器前先检查权威状态。
                 if state_check is not None:
                     try:
                         existing = state_check()
@@ -175,8 +174,7 @@ class ExecutionManager:
                         self._emit("execution_end", record, trace_context)
                 if record.status == ExecutionStatus.SUCCESS:
                     break
-                # Without a successful state check, do not issue a duplicate
-                # side effect. Reconciliation may be requested by the caller.
+                # 如果状态检查没有成功，不要发起重复副作用；调用方可以请求对账。
                 break
             if record.status == ExecutionStatus.TIMEOUT:
                 break

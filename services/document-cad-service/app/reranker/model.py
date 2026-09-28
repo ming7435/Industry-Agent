@@ -1,4 +1,4 @@
-"""Reranking through SiliconFlow's BGE reranker API."""
+"""通过 SiliconFlow 的 BGE 重排 API 执行重排。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from app.retrieval import Hit
 from config.settings import settings
 
 STAGE_RERANK = "rerank"
-"""Value written to ``Hit.metadata["stage"]`` for reranked hits."""
+"""重排命中项写入 ``Hit.metadata["stage"]`` 的值。"""
 
 
 def _copy_reranked_hits(hits: list[Hit], scores: list[float], top_n: int) -> list[Hit]:

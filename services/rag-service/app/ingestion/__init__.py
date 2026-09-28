@@ -1,4 +1,4 @@
-"""Data ingestion helpers for industrial documents."""
+"""工业文档数据入库辅助工具。"""
 
 from .file_reader import (
     DEFAULT_CHUNK_SIZE,

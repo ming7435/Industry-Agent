@@ -4,7 +4,7 @@
 设计；字段和状态均以 `services/agent-service/app/`、`services/rag-service/app/`
 的实现为准。机器可读版本位于 [`shared/contracts`](../../shared/contracts)。
 
-## 1. Runtime Action
+## 1. Runtime 动作
 
 `ActionModel` 是 Loop Engine 选择和执行动作的唯一表示，支持五种类型：
 
@@ -92,7 +92,7 @@ Graph 只提供 Runtime 生命周期入口；自动异常的默认计划为：
 
 ```text
 Goal/Event
-  -> JEVParser
+  -> RuntimeInputParser
   -> Planner
   -> LoopEngine
   -> CapabilityRegistry
@@ -109,7 +109,7 @@ Goal/Event
 - `workorder.status = open`（或后续合法 WorkOrder 状态）：表示真实工单状态；
 - 不在此处执行 Memory Learn、RAG Upsert 或 Full Case Report。
 
-## 4. Close-gated Learning 与独立 RAG
+## 4. 关闭门禁学习与独立 RAG
 
 只有工单先以显式 `repair_verification.passed=true` 完成维修并关闭，且
 `workorder.status=closed`、`repair_feedback` 有效时，才允许：

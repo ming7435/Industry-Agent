@@ -60,8 +60,7 @@ class UnifiedExperienceIndexer:
         enable_whoosh: bool | None = None,
         enable_milvus: bool | None = None,
     ) -> None:
-        # Injected factories make the contract testable without weakening the
-        # production path, which uses the same writers as offline ingestion.
+        # 注入的工厂让契约可测试，同时不削弱生产路径；生产路径使用与离线入库相同的写入器。
         self.whoosh_writer = whoosh_writer or self._write_whoosh
         self.embedder_factory = embedder_factory or get_embedder
         self.milvus_writer_factory = milvus_writer_factory or self._build_milvus_writer
@@ -75,7 +74,7 @@ class UnifiedExperienceIndexer:
             if enable_milvus is None
             else bool(enable_milvus)
         )
-        # An injected backend is an explicit request to exercise that leg.
+        # 注入后端表示调用方明确要求执行这一条入库路径。
         if whoosh_writer is not None and enable_whoosh is None:
             self.enable_whoosh = True
         if milvus_writer_factory is not None and enable_milvus is None:

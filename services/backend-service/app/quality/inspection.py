@@ -1,4 +1,4 @@
-"""Deterministic QMS part inspection at the Backend business boundary."""
+"""后端业务边界内的确定性 QMS 零件质检。"""
 
 from __future__ import annotations
 

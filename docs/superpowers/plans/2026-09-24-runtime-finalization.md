@@ -1,30 +1,30 @@
-# Runtime Finalization Implementation Plan
+# Runtime 收尾实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **面向 Agent 工作者：**必须使用 `superpowers:executing-plans` 子技能，按任务逐项实施本计划。
 
-**Goal:** Close the remaining Runtime convergence gaps so the existing Industry-Agent system is controlled by one bounded Runtime while preserving all existing business Agents and contracts.
+**目标：**关闭剩余 Runtime 收敛缺口，让现有 Industry-Agent 系统由一个有界 Runtime 控制，同时保留所有现有业务 Agent 和契约。
 
-**Architecture:** Keep LangGraph as the state/lifecycle container. RuntimeCoordinator owns planning and bounded replanning, CapabilityRegistry resolves declared Agent capabilities, ExecutionManager owns Runtime timeout/retry, and AgentHarness remains a compatibility boundary for direct A2A callers. Existing QualityAgent remains the only production-part quality Agent.
+**架构：**保留 LangGraph 作为状态/生命周期容器。RuntimeCoordinator 负责规划和有界重规划，CapabilityRegistry 解析声明的 Agent 能力，ExecutionManager 负责 Runtime 超时/重试，AgentHarness 继续作为直接 A2A 调用的兼容边界。现有 QualityAgent 仍是生产零件质量领域唯一的生产 Agent。
 
-**Tech Stack:** Python 3, FastAPI, LangGraph, Pydantic, pytest, JSON Schema, existing RAG/CAD/MCP adapters.
+**技术栈：**Python 3、FastAPI、LangGraph、Pydantic、pytest、JSON Schema，以及现有 RAG/CAD/MCP 适配器。
 
-**Spec:** `docs/superpowers/plans/2026-09-23-runtime-convergence.md` and the Runtime requirements in the current user request.
+**规格：**`docs/superpowers/plans/2026-09-23-runtime-convergence.md` 和当前用户请求中的 Runtime 要求。
 
-## Global Constraints
+## 全局约束
 
-- Do not add a business Agent, microservice, or productionization layer.
-- Preserve Event Idempotency, WorkOrder Lifecycle, RAG Contract, Trace Contract, and Shared Contract compatibility.
-- Quality scope is only `production_part` / `part_quality` through the existing QualityAgent.
-- Graph remains present as state and Runtime lifecycle execution layer; it does not choose business edges.
-- All Runtime loops remain bounded by iteration, timeout, evidence, and idempotency guards.
+- 不新增业务 Agent、微服务或生产化层。
+- 保持事件幂等性、WorkOrder 生命周期、RAG 契约、Trace 契约和共享契约兼容。
+- 质量范围仅限通过现有 QualityAgent 处理的 `production_part` / `part_quality`。
+- Graph 继续作为状态和 Runtime 生命周期执行层存在；不负责选择业务边。
+- 所有 Runtime 循环继续受迭代次数、超时、证据和幂等守卫约束。
 
-## Review Focus
+## 复核重点
 
-- A timed-out Runtime Agent must not be retried by both Harness and ExecutionManager.
-- A Planner replan must not repeat completed side effects or loop indefinitely.
-- Diagnosis-provided Knowledge evidence must be reused without bypassing traceability.
-- Unknown capabilities must block explicitly and remain visible in the trace.
-- Real E2E tests must distinguish deterministic local fixtures from unavailable external RAG/LLM dependencies.
+- Runtime Agent 超时后，不得同时被 Harness 和 ExecutionManager 重试。
+- Planner 重规划不得重复已完成的副作用，也不得无限循环。
+- 必须复用 Diagnosis 提供的 Knowledge 证据，同时不能绕过 Trace 记录。
+- 未知 capability 必须显式阻断，并在 Trace 中可见。
+- 真实 E2E 测试必须区分确定性的本地 fixture 与不可用的外部 RAG/LLM 依赖。
 
 ### Task 1: Single Runtime execution policy
 
@@ -102,8 +102,7 @@
 - [x] Return those requirements to Planner and continue through ActionModel and CapabilityRegistry.
 - [x] Trace the dynamic handoff as a Runtime `replan` while retaining bounded loop limits.
 
-This completes the first Runtime-convergence phase. Safety / Policy Control remains a
-separate second phase and is intentionally not introduced here.
+本计划完成第一阶段 Runtime 收敛。安全/策略控制保留为独立的第二阶段，本计划不会提前引入。
 
 ### Task 8: Safety / Policy Control (Phase 2)
 
@@ -121,4 +120,4 @@ separate second phase and is intentionally not introduced here.
 - [x] Stop Runtime immediately on policy denial or approval wait and preserve the reason.
 - [x] Trace policy decisions and verify controlled-autonomy replay behavior.
 
-This completes the second phase while preserving the first-phase Runtime control center.
+第二阶段在保留第一阶段 Runtime 控制中心的同时完成。

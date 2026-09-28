@@ -32,12 +32,9 @@ escalated to the client as HTTP 503, by :mod:`app.api.routes`.
 
 Concurrency rules enforced here:
 
-* the two retrieval legs run concurrently through :func:`asyncio.gather` with
-  ``return_exceptions=True``, so one failing leg cannot cancel the other;
-* every blocking call (Whoosh, Milvus, reranker) runs in a worker thread via
-  :func:`asyncio.to_thread` and is bounded by :func:`asyncio.wait_for`;
-* the DeepSeek call is already asynchronous and is therefore awaited directly,
-  never wrapped in another thread.
+* 两条检索路径通过 :func:`asyncio.gather` 并发运行并设置 ``return_exceptions=True``，一条路径失败不会取消另一条；
+* 所有阻塞调用（Whoosh、Milvus、重排器）通过 :func:`asyncio.to_thread` 在线程中运行，并受 :func:`asyncio.wait_for` 限制；
+* DeepSeek 调用本身是异步的，因此直接等待，不再包裹到另一个线程中。
 
 Note on timeouts: a worker thread cannot be interrupted, so when a leg exceeds
 its budget the request continues without it while the thread finishes in the
@@ -62,7 +59,7 @@ from config.settings import settings
 from .models import HitModel, LatencyBreakdown, SearchRequest, SearchResponse
 
 # ---------------------------------------------------------------------------
-# Degrade reasons -- the single source of truth for logs and API payloads.
+# 降级原因——日志和 API 负载共用的唯一事实来源。
 # ---------------------------------------------------------------------------
 REASON_DENSE_TIMEOUT: str = "dense_timeout"
 REASON_BM25_TIMEOUT: str = "bm25_timeout"
@@ -348,11 +345,10 @@ class SearchPipeline:
                 settings.request_timeout_ms,
             )
         except asyncio.CancelledError:
-            # Client disconnected or the server is shutting down: propagate.
+            # 客户端已断开或服务正在关闭：继续向上抛出异常。
             raise
         except Exception as exc:  # noqa: BLE001 - orchestrator must never 500
-            # A bug in the orchestration itself. Log the traceback and answer
-            # with whatever was produced so the caller still gets the evidences.
+            # 编排逻辑自身发生错误。记录完整堆栈，并用已产生的内容回答，确保调用方仍能拿到证据。
             logger.exception(
                 "request_id={} stage=orchestration error_type={} error={}",
                 request_id,
@@ -391,7 +387,7 @@ class SearchPipeline:
         await self._retrieve(request, progress)
 
         if not progress.bm25_hits and not progress.dense_hits and not progress.supplemental_hits:
-            # Both legs failed: nothing to fuse, rerank or generate from.
+            # 两条路径都失败：没有可融合、重排或生成回答的内容。
             progress.clear_degraded()
             progress.mark_degraded(REASON_ALL_RETRIEVERS_FAILED)
             logger.warning(

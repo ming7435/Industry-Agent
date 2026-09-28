@@ -1,4 +1,4 @@
-"""Unified, validated access to source documents."""
+"""统一且经过校验的源文档访问入口。"""
 
 from __future__ import annotations
 

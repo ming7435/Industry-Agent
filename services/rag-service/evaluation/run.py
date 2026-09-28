@@ -1,4 +1,4 @@
-"""Command-line entry point for the local RAG evaluation runner."""
+"""本地 RAG 评测运行器的命令行入口。"""
 
 from __future__ import annotations
 

@@ -443,9 +443,8 @@ def _split_text(text: str, max_characters: int, overlap_characters: int) -> list
             if len(overlapped) <= max_characters:
                 current = overlapped
             else:
-                # Do not let overlap turn a nominally bounded chunk into an
-                # oversized one.  This is especially important for tables and
-                # long industrial parameter paragraphs.
+                # 不要让重叠内容把原本有长度上限的分块变成超大分块。
+                # 这对表格和较长的工业参数段落尤其重要。
                 chunks.extend(
                     _split_long_text(paragraph, max_characters, overlap_characters)
                 )
@@ -508,9 +507,8 @@ def _chunk_id(
         or document.source_path
         or document.source_name
     )
-    # Content and pipeline revisions must use new primary keys.  This keeps the
-    # previous complete version queryable until every backend accepts the new
-    # version, and makes failed-write compensation safe.
+    # 内容版本和管道版本必须使用新的主键。
+    # 在所有后端都接受新版本前保留上一份完整版本可查询，并使写入失败后的补偿操作安全。
     document_key = "|".join(
         (
             document_key,

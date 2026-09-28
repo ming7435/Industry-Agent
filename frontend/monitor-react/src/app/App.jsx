@@ -4,13 +4,14 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { createEquator300 } from "./equator300.js";
 import "../styles.css";
 import machineImage from "../assets/trak-tc820-machine-transparent.png";
-import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
+import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getDeviceDisplayName, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
 import { buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLatestPipeline } from "./diagnosisView.mjs";
 import { buildReportDisplaySections } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
-import { getRagStorage, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
+import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { cleanDisplayText, cleanEvidenceText, documentBodyOnly, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
+import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import "../workbench.css";
 
@@ -322,9 +323,8 @@ function resolveRepairTarget(order, sample) {
   const stored = order?.repair_target;
   const storedLooksPlaceholder = !stored || typeof stored !== "object"
     || ["待确认故障部件", "UNMAPPED-COMPONENT", "待补充"].includes(String(stored.part_name || stored.component || stored.part_no || ""));
-  // A persisted workorder target is the authoritative operator/diagnosis result.
-  // Do not replace it with the current monitor alarm's static catalog entry;
-  // doing so can point an older workorder at the wrong CAD component.
+  // 已持久化的工单目标是操作员/诊断结果的权威来源。
+  // 不要用当前监控报警的静态目录项替换它，否则旧工单可能会指向错误的 CAD 部件。
   if (!storedLooksPlaceholder) return { ...stored, alarm_code: stored.alarm_code || alarmCode };
   if (catalogTarget) {
     return { ...catalogTarget, alarm_code: alarmCode };
@@ -345,10 +345,18 @@ function resolveRepairTarget(order, sample) {
 }
 
 function buildWorkorderTitle(latest, target, sample, snapshot) {
-  const partName = target?.part_name && target.part_name !== "待确认故障部件" ? target.part_name : "设备";
   const alarmText = sample?.alarm_label || latest?.alarm_definition?.label || latest?.fault || latest?.summary;
-  if (alarmText && !String(alarmText).includes("{")) return `${partName}${String(alarmText).includes("维修") ? "" : "维修"}`;
-  return `${sample?.device_id || snapshot?.device_id || "设备"}${partName}维修`;
+  const partName = target?.part_name && target.part_name !== "待确认故障部件" ? target.part_name : "设备";
+  return getWorkorderDisplayTitle(
+    {
+      device_id: sample?.device_id || snapshot?.device_id || "",
+      alarm_code: sample?.alarm_code || latest?.alarm_code || "",
+      title: `${partName}维修`,
+      diagnosis_context: latest,
+    },
+    target,
+    { snapshot, sample, fault: alarmText },
+  );
 }
 
 function buildRepairSteps(latest, target) {
@@ -865,14 +873,7 @@ function machineStatusLabel(status) {
   return "正常";
 }
 
-function formatHealthValue(value) {
-  if (value === null || value === undefined) return "--";
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) ? `${numericValue.toFixed(0)}/100` : String(value);
-}
-
-
-// World-space stations. All three robot handoff targets stay inside its 2.22-unit reach.
+// 世界坐标中的工位；三个机器人交接目标都保持在其 2.22 单位的工作范围内。
 const workshopLayout = Object.freeze({
   robot: [5.8, -.15],
   pickup: [4.7, 1.12],
@@ -1052,7 +1053,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -.36;
-    // Opaque wall/ceiling shadow projections produced a large triangular patch on the epoxy floor.
+    // 不透明墙面/顶棚的阴影投射会在环氧地面上形成很大的三角形斑块。
     floor.receiveShadow = false;
     scene.add(floor);
 
@@ -1073,7 +1074,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     addSceneBox([.12, .08, 12], [-11.5, 2.16, -.8], roofMat);
     addSceneBox([.12, .08, 12], [11.5, 2.16, -.8], roofMat);
 
-    // Slightly raised, edge-trimmed industrial floor markings instead of coplanar decals.
+    // 使用略微抬高并带边缘收口的工业地面标线，避免与地面共面产生闪烁。
     const lineEdgeMat = new THREE.MeshStandardMaterial({ color: 0x707875, roughness: .78 });
     const addFloorLine = (size, position, paint) => {
       addSceneBox([size[0] + .035, .017, size[2] + .035], [position[0], -.332, position[2]], lineEdgeMat);
@@ -1159,7 +1160,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       addSceneBox([1.54, .04, .06], [x, .89, -2.25], fenceFrameMat);
       addSceneBox([1.54, .04, .06], [x, -.25, -2.25], fenceFrameMat);
     }
-    // Framed acrylic access gate, with hinges, handle and an overhead rail.
+    // 带边框的亚克力安全门，包含铰链、把手和顶部导轨。
     addSceneBox([1.49, 1.06, .018], [2.35, .32, -2.25], fenceGlassMat);
     addSceneBox([1.52, .045, .07], [2.35, .89, -2.25], fenceFrameMat);
     addSceneBox([1.52, .045, .07], [2.35, -.25, -2.25], fenceFrameMat);
@@ -1858,7 +1859,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
         feederCell.pusher.position.x = -1.72 + ((time * .32) % 1) * 3.18;
       }
       if (robotCell) {
-        // Two robot handoffs in one cycle: conveyor → gauge, gauge → one illustrative output bin.
+        // 一个周期包含两次机器人交接：输送线 → 检测台，检测台 → 一个示意性出料箱。
         const outputToRework = Math.floor(time / 12) % 2 === 1;
         const binHover = outputToRework ? toolReworkHoverPosition : toolQualifiedHoverPosition;
         const binDrop = outputToRework ? toolReworkDropPosition : toolQualifiedDropPosition;
@@ -1922,7 +1923,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
           handoffScrew.visible = false;
         }
       }
-      // The alternating path is a process illustration, not a measured pass/fail verdict.
+      // 交替路径仅用于展示流程，不代表实际测量的合格/不合格结论。
       inspection.workpiece.visible = robotCycle >= .56 && robotCycle < .83;
 
       finishedParts.slice(1).forEach((part) => {
@@ -2149,7 +2150,7 @@ function MachineDetailDrawer({ machine, result, sample, dataSource, history, onC
         </div>
         <div className="drawer-status">
           <div><span>状态</span><strong className={status}>{machineStatusLabel(status)}</strong></div>
-          <div><span>健康度</span><strong>{machine.live ? formatHealthValue(sample?.health_score) : "--"}</strong></div>
+          <div><span>健康度</span><strong>{machine.live ? formatMonitorHealth(sample) : "--"}</strong></div>
           <div><span>当前报警</span><strong>{machine.live ? displayAlarm(sample) : "--"}</strong></div>
         </div>
         <div className="drawer-section">
@@ -2376,6 +2377,8 @@ function machineAlertReason(machine) {
   const result = machine?.result;
   const sample = result?.current_sample || machine?.sample;
   const observations = Array.isArray(result?.observations) ? result.observations : [];
+  const evidenceReason = monitorEvidenceReason(sample);
+  if (evidenceReason) return evidenceReason;
   if (observations.length) {
     return observations
       .slice(0, 3)
@@ -2398,8 +2401,7 @@ function preferredWorkorderId(items, sample, snapshot) {
   ).trim();
   const exact = items.find((item) => String(item.device_id || "") === deviceId && alarmCode && String(item.alarm_code || "") === alarmCode);
   const sameDevice = items.find((item) => String(item.device_id || "") === deviceId);
-  // When an alarm is present, never silently fall back to another alarm's
-  // workorder. That makes a historical order look like the current incident.
+  // 存在报警时，绝不能静默回退到其他报警的工单，否则历史工单会被误显示为当前事件。
   if (alarmCode) return exact?.workorder_id || "";
   return sameDevice?.workorder_id || items[0]?.workorder_id || "";
 }
@@ -2495,7 +2497,7 @@ function LogsWorkspace({ snapshot }) {
       {error && <div className="workspace-notice logs-notice" role="status">日志接口暂不可用，当前显示快照中的最近记录：{error}</div>}
       <div className="module-grid logs-stat-grid">
         <ModuleStat label="事件总数" value={records.length} text="Trace Recorder 保留记录" />
-        <ModuleStat label="运行记录" value={traceCount} text="故障闭环与普通任务" />
+        <ModuleStat label="运行记录" value={traceCount} text="故障闭环、RAG 问答与质检" />
         <ModuleStat label="独立质检" value={qualityRunCount} text="不会并入故障闭环" />
         <ModuleStat label="工具调用" value={toolCount} text="含输入参数与返回体" />
         <ModuleStat label="异常事件" value={errorCount} text={errorCount ? "需要进一步检查" : "当前没有错误记录"} />
@@ -2504,7 +2506,7 @@ function LogsWorkspace({ snapshot }) {
         <div className="panel-heading logs-panel-heading"><div><span className="eyebrow">Lifecycle Runs</span><h2>运行记录</h2></div><span className="logs-run-hint">故障从监控开始，到报告与经验总结结束</span></div>
         {runRecords.length ? <div className="logs-runs-list">{runRecords.map((run) => <button key={run.run_id} type="button" className={`logs-run-card ${selectedRunId === run.run_id ? "is-selected" : ""}`} onClick={() => setSelectedRunId(run.run_id)}>
           <div className="logs-run-card-head"><strong>{run.label || (run.run_type === "quality" ? "质检运行" : "运行记录")}</strong><span className={`logs-run-status logs-run-${run.status}`}>{statusText(run.status)}</span></div>
-          <div className="logs-run-card-title">{run.device_id || "未绑定设备"}{run.alarm_code ? ` · 报警 ${run.alarm_code}` : ""}</div>
+          <div className="logs-run-card-title">{run.device_id ? getDeviceDisplayName(run.device_id, { snapshot }) : "未绑定设备"}{run.alarm_code ? ` · 报警 ${run.alarm_code}` : ""}</div>
           <div className="logs-run-card-meta"><span>{run.started_at ? formatTime(run.started_at) : "--"}</span><span>{run.event_count || 0} 个事件</span><span>{run.error_count || 0} 个异常</span></div>
           <div className="logs-run-phases">{(run.phases || []).map((phase) => <span key={phase.id} className={`logs-phase logs-phase-${phase.status}`}><i />{phase.label} · {statusText(phase.status)}</span>)}</div>
           <div className="logs-run-id">{run.run_id}</div>
@@ -2560,6 +2562,8 @@ function ReportWorkspace({ snapshot }) {
   const [selectedReportId, setSelectedReportId] = useState("");
   const [reportError, setReportError] = useState("");
   const [loadingReports, setLoadingReports] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [pdfReady, setPdfReady] = useState(false);
 
   async function loadReports() {
     setLoadingReports(true);
@@ -2583,12 +2587,29 @@ function ReportWorkspace({ snapshot }) {
     }, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
+  useEffect(() => {
+    setPdfReady(false);
+  }, [selectedReportId]);
   const reportItems = reports.map((item) => item?.report && typeof item.report === "object" ? item.report : item).filter(Boolean);
   const persistedReport = reportItems.find((item) => item.report_id === selectedReportId) || reportItems[0];
   const report = persistedReport || pipeline.report || {};
   const sections = report.sections || {};
   const displaySections = buildReportDisplaySections(sections);
   const hasReport = Boolean(report.report_id || report.title || report.summary || Object.keys(sections).length);
+  const pdfUrl = report.report_id ? `/api/reports/${encodeURIComponent(report.report_id)}/pdf` : "";
+  async function generatePdf() {
+    if (!report.report_id) return;
+    setGeneratingPdf(true);
+    try {
+      await request(`/api/reports/${encodeURIComponent(report.report_id)}/pdf`, { method: "POST", body: JSON.stringify({}) });
+      setPdfReady(true);
+      setReportError("");
+    } catch (error) {
+      setReportError(`PDF 生成失败：${error.message}`);
+    } finally {
+      setGeneratingPdf(false);
+    }
+  }
   async function deleteReport(reportId) {
     if (!reportId || !window.confirm(`确定删除报告 ${reportId} 吗？删除后不可恢复。`)) return;
     try {
@@ -2596,6 +2617,7 @@ function ReportWorkspace({ snapshot }) {
       const remaining = reportItems.filter((item) => item.report_id !== reportId);
       setReports(remaining);
       setSelectedReportId(remaining[0]?.report_id || "");
+      setPdfReady(false);
       setReportError("");
     } catch (error) {
       setReportError(error.message);
@@ -2615,7 +2637,7 @@ function ReportWorkspace({ snapshot }) {
       {hasReport ? (
         <>
           <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text={report.report_type || "运维报告"} /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质量状态" value={sections.quality?.passed == null ? "待确认" : sections.quality.passed ? "通过" : "未通过"} text="质量协同结果" /></div>
-          <section className="panel module-panel report-panel"><div className="panel-heading"><div><span className="eyebrow">报告摘要</span><h2>{report.title || "运维报告"}</h2></div></div><FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</section>
+          <section className="panel module-panel report-panel"><div className="panel-heading"><div><span className="eyebrow">报告摘要</span><h2>{report.title || "运维报告"}</h2></div><div className="report-file-actions"><button className="button" type="button" onClick={generatePdf} disabled={!report.report_id || generatingPdf}>{generatingPdf ? "生成中…" : "生成 PDF"}</button>{pdfReady && <><a className="button" href={pdfUrl} target="_blank" rel="noreferrer">打开 PDF</a><a className="button" href={`${pdfUrl}?download=1`} download={`report-${report.report_id}.pdf`}>下载 PDF</a></>}</div></div><FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</section>
         </>
       ) : <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="完成异常诊断、维修与质检闭环后，报告会自动汇总在这里。" />}
     </section>
@@ -2676,7 +2698,7 @@ function MaintenancePlanWorkspace({ snapshot, sample }) {
       {error && <div className="inline-error" role="status">维修方案服务暂不可用：{error}</div>}
       <section className="workorder-queue maintenance-plan-queue" aria-label="方案关联工单">
         <div className="workorder-queue-heading"><div><span className="eyebrow">方案关联</span><h2>选择工单查看维修方案</h2></div><span>{orders.length} 条记录</span></div>
-        {orders.length ? <div className="workorder-queue-list">{orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}><span><strong>{getWorkorderDisplayTitle(order, order.repair_target)}</strong><small>{order.workorder_id} · {order.device_id}</small></span><em>{labelFor(workorderStatusLabels, order.status)}</em></button>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title="暂无关联工单" text="完成诊断并生成工单后，维修方案会在这里显示。" />}
+        {orders.length ? <div className="workorder-queue-list">{orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}><span><strong>{getWorkorderDisplayTitle(order, order.repair_target, { snapshot })}</strong><small>{order.workorder_id} · {order.device_id}</small></span><em>{labelFor(workorderStatusLabels, order.status)}</em></button>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title="暂无关联工单" text="完成诊断并生成工单后，维修方案会在这里显示。" />}
       </section>
       {hasCurrentIncident && !selectedOrder && <div className="workspace-notice" role="status">{currentFaultActive ? `当前报警 ${currentAlarm}` : `最新诊断报警 ${currentAlarm}`} 尚未关联工单；下方显示的是诊断阶段生成的维修方案，请先完成工单派发。</div>}
       {(selectedOrder || showCurrentPipeline) && <MaintenancePlanPanel plan={plan} hasCurrentDiagnosis={hasCurrentDiagnosis || showCurrentPipeline} />}
@@ -2719,8 +2741,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   }
 
   useEffect(() => {
-    // Runtime owns alarm-triggered creation; viewing the queue must not create
-    // or recreate a workorder that the operator has explicitly deleted.
+    // 报警触发的创建由运行时负责；查看队列不能创建或重新创建操作员明确删除的工单。
     loadOrders();
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, []);
@@ -2810,7 +2831,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
         {orders.length ? (
           <div className="workorder-queue-list">
             {orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}>
-              <span><strong>{getWorkorderDisplayTitle(order, order.repair_target)}</strong><small>{order.workorder_id} · {order.device_id}</small></span>
+              <span><strong>{getWorkorderDisplayTitle(order, order.repair_target, { snapshot })}</strong><small>{order.workorder_id} · {order.device_id}</small></span>
               <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{labelFor(workorderStatusLabels, order.status)}</em>
             </button>)}
           </div>
@@ -2820,6 +2841,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
       <WorkorderDetail
         order={selectedOrder || null}
         sample={sample}
+        snapshot={snapshot}
         diagnosis={latestDiagnosis}
         busy={busy}
         error={error}
@@ -2830,7 +2852,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
   );
 }
 
-function WorkorderDetail({ order, sample, diagnosis = {}, busy, error, onUpdate, onDelete }) {
+function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error, onUpdate, onDelete }) {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [order?.workorder_id]);
@@ -2854,14 +2876,14 @@ function WorkorderDetail({ order, sample, diagnosis = {}, busy, error, onUpdate,
   const matchedDiagnosis = hasCurrentDiagnosis ? diagnosis : orderDiagnosis;
   const matchedSample = String(sample?.device_id || "") === String(order.device_id || "") && String(sample?.alarm_code || "") === String(order.alarm_code || "") ? sample : {};
   const target = resolveRepairTarget(order, matchedSample);
-  const sheet = buildWorkorderSheet({ order, target, diagnosis: matchedDiagnosis });
+  const sheet = buildWorkorderSheet({ order, target, diagnosis: matchedDiagnosis, context: { snapshot, sample: matchedSample } });
   const statusLabel = labelFor(workorderStatusLabels, order.status);
   return (
     <section className="workorder-detail-page">
       <header className="workorder-titlebar">
         <div>
           <span className="eyebrow">维修工单详情</span>
-          <h1>{getWorkorderDisplayTitle(order, target)}</h1>
+          <h1>{getWorkorderDisplayTitle(order, target, { snapshot, sample: matchedSample, fault: matchedDiagnosis.fault || matchedDiagnosis.summary })}</h1>
           <p>{order.workorder_id} · {order.device_id} · {order.assignee || "未分配"} · {formatTime(order.updated_at)}</p>
         </div>
         <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy} onClick={() => onDelete?.(order)}>删除工单</button></div>
@@ -3040,6 +3062,7 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
   const [statusError, setStatusError] = useState("");
   const [busy, setBusy] = useState(false);
   const messageListRef = useRef(null);
+  const refreshedLegacyIds = useRef(new Set());
 
   async function loadStatus() {
     try {
@@ -3073,11 +3096,13 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
       .slice(-12);
   }
 
-  async function askKnowledge(nextQuery = query) {
+  async function askKnowledge(nextQuery = query, replaceId = "") {
     const question = nextQuery.trim();
     if (!question || busy) return;
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setMessages((current) => [...current, { id, question, pending: true }]);
+    const id = replaceId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setMessages((current) => replaceId
+      ? current.map((message) => message.id === replaceId ? { ...message, question, pending: true, answer: null, agentError: "" } : message)
+      : [...current, { id, question, pending: true }]);
     setQuery("");
     setBusy(true);
     let answer = null;
@@ -3105,6 +3130,14 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
     setBusy(false);
   }
 
+  useEffect(() => {
+    if (busy) return;
+    const legacy = messages.find((message) => needsRagAnswerRefresh(message) && !refreshedLegacyIds.current.has(message.id));
+    if (!legacy) return;
+    refreshedLegacyIds.current.add(legacy.id);
+    askKnowledge(legacy.question, legacy.id);
+  }, [messages, busy]);
+
   function handleComposerKeyDown(event) {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
@@ -3129,7 +3162,7 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
             const knowledge = message.answer?.knowledge || {};
             const summary = selectAgentAnswer(message.answer) || cleanDisplayText(report.summary);
             const routedToReport = message.answer?.route === "report" || message.answer?.route_result?.intent === "report";
-            const legacyAnswerMissing = !summary && !message.agentError && /^检索到\s*\d+\s*条(?:相关)?知识证据\s*[：:]/.test(String(message.answer?.knowledge?.summary || "").trim());
+            const legacyAnswerMissing = needsRagAnswerRefresh(message);
             const retrievalScope = knowledge.retrieval_scope === "device" ? "当前报警机器优先" : knowledge.retrieval_scope === "all" ? "全库检索" : "检索范围待确认";
             return <div className="rag-chat-turn" key={message.id}>
               <div className="rag-chat-row is-user"><span className="rag-chat-avatar">你</span><div className="rag-chat-bubble">{message.question}</div></div>
@@ -3138,7 +3171,7 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
                   {routedToReport && <span className="rag-chat-result-tag">路由至报告流程 · 非知识回答</span>}
                   {!message.agentError && knowledge.retrieval_scope && <span className={`rag-chat-scope-tag ${knowledge.retrieval_scope}`}>{retrievalScope}{knowledge.retrieval_fallback ? " · 已扩大到全库" : ""}</span>}
                   {report.title && <h3>{report.title}</h3>}
-                  <FormattedText value={summary || (message.agentError ? "问答服务暂不可用，本次未生成回答。" : legacyAnswerMissing ? "这条历史记录来自旧版本，当时没有保存模型正文。请重新提问，新的回答会在刷新后保留。" : "本次没有可展示的回答，请尝试补充设备或报警信息。")} />
+                  <FormattedText value={summary || (message.agentError ? "问答服务暂不可用，本次未生成回答。" : legacyAnswerMissing ? "正在重新整理这条历史问题的中文答案…" : "暂未找到直接相关知识，请补充设备编号、报警码或故障现象。")} />
                   {message.agentError && <FormattedText value={`问答服务异常：${message.agentError}`} className="rag-chat-error" />}
                 </>}
               </div></div>

@@ -10,10 +10,11 @@ import base64
 import json
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from config.settings import load_service_env
 
 
 class VisionError(RuntimeError):
@@ -26,14 +27,9 @@ class UrlOpener(Protocol):
 
 
 def _load_local_env() -> None:
-    """Load the service-local .env file when python-dotenv is available."""
+    """Load the repository's shared runtime configuration."""
 
-    try:
-        from dotenv import load_dotenv
-    except ImportError:
-        return
-    env_path = Path(__file__).resolve().parents[2] / ".env"
-    load_dotenv(env_path)
+    load_service_env()
 
 
 @dataclass(frozen=True)
@@ -65,7 +61,7 @@ class SiliconFlowVisionConfig:
 
     @classmethod
     def from_env(cls) -> "SiliconFlowVisionConfig":
-        """Load configuration from the service .env and SiliconFlow variables."""
+        """Load configuration from the shared project .env."""
 
         _load_local_env()
         api_key = os.getenv("SILICONFLOW_API_KEY")
@@ -210,7 +206,7 @@ def _content_to_text(content: Any) -> str:
     return ""
 
 
-# Backward-compatible names for callers that imported the former Qwen client.
+# 为仍导入旧 Qwen 客户端的调用方保留向后兼容名称。
 QwenVLConfig = SiliconFlowVisionConfig
 QwenVLClient = SiliconFlowVisionClient
 

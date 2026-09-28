@@ -88,8 +88,8 @@ def iter_collection_rows(
                 offset=offset,
             )
         except TypeError:
-            # Older MilvusClient builds have no ``offset``: fall back to a single
-            # page and warn when the collection is larger than one page.
+            # 较旧的 MilvusClient 版本不支持 ``offset``：退回为单页读取，
+            # 并在集合超过单页容量时发出警告。
             if paged:
                 logger.warning(
                     "this pymilvus build has no query offset; reading at most {} rows",

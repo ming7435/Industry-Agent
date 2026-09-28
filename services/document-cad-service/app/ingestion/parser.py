@@ -1,4 +1,4 @@
-"""Unified document parsers for offline RAG ingestion."""
+"""离线 RAG 入库使用的统一文档解析器。"""
 
 from __future__ import annotations
 

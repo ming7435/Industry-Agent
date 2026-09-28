@@ -19,8 +19,8 @@ class AgentOrchestrator:
         self.container = container or AgentContainer(diagnosis_agent=diagnosis_agent, tools=tools)
         self.nodes = OrchestratorNodes(self.container)
         graph = StateGraph(AgentState)
-        # Graph is intentionally a state/execution layer. RuntimeCoordinator
-        # owns planning, capability selection, looping, and Agent execution.
+        # Graph 只负责状态和执行层；规划、能力选择、循环以及 Agent 执行
+        # 统一由 RuntimeCoordinator 管理。
         graph.add_node("runtime", self.nodes.runtime)
         graph.add_edge(START, "runtime")
         graph.add_edge("runtime", END)

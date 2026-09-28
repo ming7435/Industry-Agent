@@ -1,4 +1,4 @@
-"""Shared bounded runtime loop for evidence-driven Agent orchestration."""
+"""由证据驱动的 Agent 编排共用有界 Runtime 循环。"""
 
 from __future__ import annotations
 

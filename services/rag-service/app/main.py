@@ -1,15 +1,13 @@
-"""Service entry point: logging, warm-up, FastAPI application and dev runner.
+"""服务入口：日志、预热、FastAPI 应用和开发运行器。
 
-Run it with either of::
+可使用以下任一命令运行：
 
     uvicorn app.main:app --host 0.0.0.0 --port 8001
     python -m app.main
 
-Start-up is intentionally non-blocking. The heavy components (bge-m3 embedder,
-bge-reranker-v2-m3) load in a background worker thread, so the HTTP port opens
-immediately and ``GET /health`` can be polled while the models come up. A
-component that fails to load is reported by ``/health`` and degraded per request
-instead of blocking or crashing the process.
+启动过程刻意保持非阻塞。较重组件（bge-m3 向量化器、bge-reranker-v2-m3）
+在后台线程加载，因此 HTTP 端口会立即打开，模型加载期间可以轮询 ``GET /health``。
+加载失败的组件会由 ``/health`` 报告，并在请求级别降级，不会阻塞或终止进程。
 """
 
 from __future__ import annotations
@@ -59,7 +57,7 @@ def _warm_up_sync() -> dict[str, bool]:
         Availability flags per component, for the warm-up log line.
     """
     components = resolve_components()
-    # Building the pipeline caches it, so the first request does not pay for it.
+    # 构建管道后会缓存，因此第一次请求无需承担构建开销。
     get_pipeline()
     return {name: component is not None for name, component in components.items()}
 

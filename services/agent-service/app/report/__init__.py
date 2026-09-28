@@ -1,4 +1,4 @@
-"""Report persistence boundaries."""
+"""报告持久化边界。"""
 
 from .store import DurableReportStore, build_report_store
 

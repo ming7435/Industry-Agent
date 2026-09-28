@@ -1220,8 +1220,7 @@ h2 {
   margin-top: 16px;
 }
 
-/* Long diagnosis and plan text should flow vertically instead of being
-   forced into equal-width columns with mismatched heights. */
+/* 较长的诊断和方案文本应纵向流动，不能被强制放入高度不一致的等宽列。 */
 .diagnosis-content-grid,
 .maintenance-plan-diagnosis {
   grid-template-columns: 1fr;
@@ -1231,7 +1230,7 @@ h2 {
   padding: 18px;
 }
 
-/* The regular workbench has its own layout; the big-screen scene keeps its original styling. */
+/* 普通工作台使用独立布局；大屏场景保留原有样式。 */
 .platform-shell:not(.big-screen) {
   grid-template-columns: 232px minmax(0, 1fr);
   background: #f2f5f6;
@@ -1299,7 +1298,7 @@ h2 {
 .platform-shell:not(.big-screen) .module-card strong { overflow-wrap: anywhere; }
 .quality-experience-grid { grid-template-columns: minmax(0, 1fr); }
 
-/* Shared visual language for the standard workspace only. */
+/* 仅用于标准工作区的共用视觉语言。 */
 .platform-shell:not(.big-screen) {
   --ink: #172a32;
   --muted: #5f737b;
@@ -1404,7 +1403,7 @@ h2 {
 .platform-shell:not(.big-screen) .workorder-admin-card,
 .platform-shell:not(.big-screen) .workorder-empty-shell { border-color: #d9e4e5; box-shadow: 0 4px 20px rgba(26, 49, 57, .04); }
 
-/* Page-specific hierarchy: one primary task or result per screen. */
+/* 页面层级：每个页面突出一个主要任务或结果。 */
 .platform-shell:not(.big-screen) .module-hero {
   display: flex;
   align-items: center;
@@ -2178,6 +2177,8 @@ h2 {
 .report-list-select { flex: 1; display: grid; gap: 4px; text-align: left; border: 0; background: transparent; cursor: pointer; color: inherit; }
 .report-list-select span { color: #71868d; font-size: 12px; }
 .danger-button { border-color: rgba(182,55,50,.35); color: #ad3a35; background: #fff8f7; }
+.report-file-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.report-file-actions a { text-decoration: none; }
 .workorder-titlebar-actions { display: flex; align-items: center; gap: 10px; }
 
 .workorder-checklist .formatted-text {

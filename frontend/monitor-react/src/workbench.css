@@ -1,4 +1,4 @@
-/* The standard workbench is intentionally isolated from the 3D big-screen mode. */
+/* 标准工作台与 3D 大屏模式刻意隔离。 */
 .platform-shell.workbench {
   --ink: #172e36;
   --muted: #5a7079;
@@ -92,7 +92,7 @@
 .platform-shell.workbench .empty-state { border-radius: 7px; }
 .platform-shell.workbench .workshop-panel { border-color: #dce5e4; border-radius: 10px; box-shadow: none; }
 
-/* A compact content header replaces the removed global page banner. */
+/* 紧凑的内容页头替代已移除的全局页面横幅。 */
 .platform-shell.workbench .content-shell .module-hero { display: grid; gap: 7px; min-height: 0; margin: 0 0 24px; padding: 0 0 20px; border: 0; border-bottom: 1px solid var(--line); background: transparent; }
 .platform-shell.workbench .content-shell .module-hero .eyebrow { font-size: 11px; font-weight: 800; letter-spacing: .11em; }
 .platform-shell.workbench .content-shell .module-hero h1 { margin: 0; color: #142b31; font-size: clamp(26px, 2.3vw, 34px); font-weight: 800; letter-spacing: -.035em; line-height: 1.2; }
@@ -270,7 +270,7 @@
 .logs-empty { margin-top: 4px; }
 .logs-notice { margin: 0 0 14px; }
 
-/* Shared workbench palette: calm surfaces, stronger text, restrained semantic accents. */
+/* 工作台共用配色：平静的背景、清晰的文字和克制的语义强调色。 */
 .platform-shell.workbench .content-shell .module-hero h1,
 .platform-shell.workbench .content-shell .panel-heading h2,
 .platform-shell.workbench .content-shell .section-heading h2 { color: var(--ink); }
@@ -302,7 +302,7 @@
 .platform-shell.workbench .content-shell .workspace-empty,
 .platform-shell.workbench .content-shell .workorder-empty-shell { background-image: radial-gradient(circle at 50% 38%, #eaf7f2 0%, transparent 52%); }
 
-/* Monitor is a single viewport-filling 3D canvas; device data lives in the side sheet. */
+/* 监控页面是铺满视口的单一 3D 画布，设备数据显示在侧边面板。 */
 .platform-shell.workbench .app-shell.monitor-canvas-shell { height: 100dvh; min-height: 0; overflow: hidden; padding: 0; }
 .platform-shell.workbench .monitor-map-only { height: 100%; margin-top: 0; }
 .platform-shell.workbench .monitor-map-only .workshop-panel { height: 100%; margin: 0; overflow: hidden; border: 0; border-radius: 0; }

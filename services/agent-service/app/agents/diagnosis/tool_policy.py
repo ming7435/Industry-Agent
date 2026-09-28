@@ -69,12 +69,18 @@ def normalize_tool_arguments(
     device_id = graph_state.get("device_id") or event.get("device_id")
     alarm_code = graph_state.get("alarm_code") or event.get("alarm_code")
 
-    if name == "get_alarm_definition" and not result.get("alarm_code"):
-        result["alarm_code"] = alarm_code
+    if name == "get_alarm_definition":
+        # 报警字典只按报警码查询，设备编号是事件上下文，不能传给工具函数。
+        result.pop("device_id", None)
+        if not result.get("alarm_code"):
+            result["alarm_code"] = alarm_code
     if name in {"get_device_history", "get_device_logs", "get_device_status"} and not result.get("device_id"):
         result["device_id"] = device_id
-    if name == "get_device_history" and not result.get("metric_keys"):
-        result["metric_keys"] = metric_keys_from_event(event)
+    if name == "get_device_history":
+        # 模型有时使用 metrics；统一成工具实现使用的 metric_keys，避免 Python 关键字异常。
+        model_metrics = result.pop("metrics", None)
+        if not result.get("metric_keys"):
+            result["metric_keys"] = model_metrics or metric_keys_from_event(event)
     if name == "search_knowledge" and not result.get("query"):
         result["query"] = knowledge_query(event)
     return result

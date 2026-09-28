@@ -108,9 +108,7 @@ class RuntimeDispatcher:
         agent_name = str(getattr(agent, "name", type(agent).__name__))
         self._emit("capability_selected", state, required_capability=capability, agent=agent_name)
         self._emit("agent_selected", state, required_capability=capability, agent=agent_name)
-        # Registry aliases are accepted at the boundary, but task adapters
-        # must receive the canonical capability so every Agent gets its
-        # domain-specific request shape.
+        # 边界接受 Registry 别名，但任务适配器必须收到规范能力名称，确保每个 Agent 获得其领域请求结构。
         task = self._task_for_agent(canonical_capability, state, action.payload)
         task.setdefault("task_id", str(state.get("task_id") or ""))
         task.setdefault("trace_id", str(state.get("trace_id") or ""))
@@ -125,10 +123,8 @@ class RuntimeDispatcher:
             required_capability=capability,
         )
 
-        # Diagnosis may already have retrieved the exact knowledge evidence
-        # required by this Action. Reuse only a successful, non-degraded record
-        # with the same normalized query; all other searches still execute via
-        # the registered Knowledge Agent.
+        # 诊断可能已经检索了该 Action 所需的准确知识证据。
+        # 只有查询已成功、未降级且规范化查询相同的记录才复用；其他搜索仍通过已注册的 Knowledge Agent 执行。
         if canonical_capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
             cached = self._cached_knowledge_result(state, task)
             if cached is not None:
@@ -218,8 +214,7 @@ class RuntimeDispatcher:
             query = RuntimeDispatcher._conversation_context(context, query)
             event = state.get("event")
             event = event if isinstance(event, Mapping) else {}
-            # Scope knowledge retrieval only to an active alarm. Runtime event
-            # execution carries the current machine/alarm as its scope.
+            # 知识检索只限定在活动报警；Runtime 事件执行会携带当前机器/报警作为范围。
             alarm_active = bool(context.get("alarm_active"))
             event_device_id = str(event.get("device_id") or "").strip()
             event_alarm_code = str(event.get("alarm_code") or event.get("error_code") or "").strip()

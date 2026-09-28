@@ -129,10 +129,9 @@ class ToolRegistry:
         # 裸注册表对 Agent 测试和库调用方保持确定且本地化。运行中的编排器会显式注入配置的远程 RAG URL。
         self.rag = rag_client or RAGServiceClient(base_url=rag_base_url or "", fallback=rag_index)
         self.trace = trace
-        # Backend owns business persistence in the deployed topology. Keep the
-        # local adapter only for library/test callers that do not configure the
-        # Backend URL; no Agent process opens a business MySQL connection when
-        # the HTTP boundary is present.
+        # 部署拓扑中由 Backend 负责业务持久化。只有未配置 Backend 地址的
+        # 库调用和测试调用才保留本地适配器；存在 HTTP 边界时，Agent 进程
+        # 不直接打开业务 MySQL 连接。
         self.workorder_mcp = None if self.backend_base_url else WorkOrderMcpAdapter()
         self.quality_mcp = None if self.backend_base_url else QualityMcpAdapter()
         self.report_store = {} if self.backend_base_url else build_report_store()
@@ -235,6 +234,21 @@ class ToolRegistry:
         """读取设备历史趋势，并把当前工厂地址注入工具调用。"""
 
         return get_device_history(base_url=self.base_url, **arguments)
+
+    @staticmethod
+    def normalize_tool_arguments(name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
+        """在 MCP 分派前统一诊断工具的历史参数别名。"""
+
+        normalized = dict(arguments or {})
+        if name == "get_alarm_definition":
+            # 报警定义只接受 alarm_code，设备编号只属于调用上下文。
+            normalized.pop("device_id", None)
+        elif name == "get_device_history":
+            # 兼容模型常见的 metrics 命名，实际工具参数统一为 metric_keys。
+            model_metrics = normalized.pop("metrics", None)
+            if not normalized.get("metric_keys") and model_metrics is not None:
+                normalized["metric_keys"] = model_metrics
+        return normalized
 
     def get_device_status(self, device_id: str, **_: Any) -> Dict[str, Any]:
         return get_device_status(device_id=device_id, base_url=self.base_url)
@@ -493,9 +507,8 @@ class ToolRegistry:
             "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
             "fetch_document": "knowledge", "fetch_chunk": "knowledge", "document_parser": "knowledge", "ingest_knowledge": "knowledge",
             "generate_report": "mes", "generate_repair_plan": "mes",
-            # Report source readers transform records already present in the
-            # Runtime state.  They do not query Backend persistence, so keep
-            # them local even when the Backend HTTP boundary is configured.
+        # 报告来源读取器只转换 Runtime 状态中已有的记录，不查询 Backend
+        # 持久化；即使配置了 Backend HTTP 边界，也继续在本地执行。
             "get_diagnosis_record": "local", "get_maintenance_record": "local", "get_quality_record": "local",
             "get_trace_summary": "local", "persist_report": "mes", "delete_report": "mes", "generate_report_file": "local",
         }.get(name, "knowledge")
@@ -507,7 +520,7 @@ class ToolRegistry:
             "get_component_location": "query_relation",
         }.get(name, name)
         started = perf_counter()
-        input_payload = dict(arguments)
+        input_payload = self.normalize_tool_arguments(name, arguments)
         task_id, trace_id = _TOOL_TRACE_CONTEXT.get()
         supplied_context = context.as_dict() if isinstance(context, ToolExecutionContext) else dict(context or {})
         execution_context = {**_TOOL_EXECUTION_CONTEXT.get(), **supplied_context}
@@ -515,9 +528,8 @@ class ToolRegistry:
             task_id = str(execution_context["task_id"])
         if execution_context.get("trace_id"):
             trace_id = str(execution_context["trace_id"])
-        # Keep the effective runtime context beside every tool event so the
-        # log viewer can explain not only what was called, but why and under
-        # which device/agent/step scope it was called.
+        # 将生效的 Runtime 上下文写入每条工具事件，使日志页面不仅能展示
+        # 调用了什么，还能展示调用原因以及设备、Agent、步骤范围。
         trace_context = dict(execution_context)
         allowed_tools = execution_context.get("allowed_tools")
         allowed = {str(item) for item in allowed_tools or [] if str(item).strip()}
@@ -560,7 +572,7 @@ class ToolRegistry:
         try:
             if server == "cad" and not self.cad_base_url and not self._cad_fallback_allowed():
                 raise RuntimeError("生产模式要求配置 MCP_CAD_URL 或 CAD_SERVICE_BASE_URL")
-            result = self.mcp.call(server, operation, arguments)
+            result = self.mcp.call(server, operation, input_payload)
         except Exception as error:
             if server == "cad" and operation in {"query_drawing", "query_bom", "query_part", "query_relation", "fetch_engineering_record"} and self._cad_fallback_allowed():
                 fallback = self.mcp.handlers.get(operation)
@@ -659,7 +671,8 @@ class ToolRegistry:
         execution_context = {**_TOOL_EXECUTION_CONTEXT.get(), **supplied}
         values = execution_context.get("allowed_tools") or []
         allowed = {str(item) for item in values if str(item).strip()}
-        error = self._guard_error(name, arguments, execution_context, allowed)
+        normalized_arguments = self.normalize_tool_arguments(name, arguments)
+        error = self._guard_error(name, normalized_arguments, execution_context, allowed)
         decision = {"allow": not bool(error), "reason": error or "allowed"}
         if self.trace:
             self.trace.record(

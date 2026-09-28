@@ -1,4 +1,4 @@
-"""Agent-side client for the Model Service contract."""
+"""Agent 侧的模型服务契约客户端。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 
 class ModelServiceError(RuntimeError):
-    """Normalized model gateway transport error."""
+    """统一表示模型网关传输错误。"""
 
 
 class ModelServiceClient:

@@ -109,7 +109,7 @@
 - Create: `pytest-agent.ini`
 - Create: `pytest-rag.ini`
 - Modify: `.env.example`
-- Modify: `services/rag-service/.env.example`
+- Modify: root `.env.example`
 - Test: `services/agent-service/tests/test_config_contract.py`
 
 - [ ] Add platform-neutral Python launch commands and documented config precedence.
@@ -122,4 +122,3 @@
 - [ ] Run Agent, RAG, configured root suites, and smoke-test event → workorder → close → learn → report.
 - [ ] Record CAD real-data, frontend decomposition, Alembic/infra, and OpenTelemetry items that require external systems rather than silently claiming completion.
 - [ ] Push all commits after verification.
-

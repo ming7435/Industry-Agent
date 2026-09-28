@@ -250,7 +250,7 @@ def build_capability_registry() -> CapabilityRegistry:
             definition = registry.get(str(capability))
             if definition is not None:
                 declared.append(definition.name)
-        # Keep the compatibility snapshot in the Agent declaration order.
+        # 按 Agent 声明顺序保留兼容性快照。
         registry._by_agent[name] = declared
     return registry
 

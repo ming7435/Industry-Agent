@@ -21,9 +21,8 @@ class KnowledgeQuery(BaseModel):
     chunk_id: str = ""
     required_sources: List[str] = Field(default_factory=list)
     filters: Dict[str, Any] = Field(default_factory=dict)
-    # A single user question can require complementary alarm, SOP, manual and
-    # historical-case chunks. Eight per retrieval leg gives the evidence
-    # validator enough material without exposing the whole index to the model.
+    # 一个用户问题可能同时需要报警、SOP、手册和历史案例分块。每条检索
+    # 路径取八条结果，既给证据校验器足够材料，也不把整个索引暴露给模型。
     limit: int = Field(default=8, ge=1, le=50)
     max_steps: int = Field(default=4, ge=1, le=8)
 

@@ -1,4 +1,4 @@
-# MySQL schema ownership
+# MySQL 模式归属
 
 Agent Service 的 Alembic 是运行时 MySQL schema 的唯一迁移来源：
 

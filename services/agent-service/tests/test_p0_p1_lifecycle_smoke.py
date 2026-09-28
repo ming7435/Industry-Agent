@@ -104,9 +104,8 @@ def test_event_to_closed_case_smoke(tmp_path):
     from app.graph.nodes import OrchestratorNodes
     from app.runtime.operations import RuntimeOperations
 
-    # Import the standalone RAG store without putting both services' ``app``
-    # packages on one interpreter path.  The smoke uses its public durable
-    # semantics while the RAG suite covers the HTTP/indexing pipeline itself.
+    # 使用 importlib 独立加载 RAG store，避免两个服务的 ``app`` 包共用同一解释器路径。
+    # 烟雾测试验证公开的持久化语义；完整 HTTP/索引流程由 RAG 测试覆盖。
     import importlib.util
     from pathlib import Path
 

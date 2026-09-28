@@ -1,7 +1,7 @@
 import * as THREE from "three";
 
-// Geometry and proportions adapted from the user-provided Equator300.html viewer.
-// The viewer uses millimetres; the workshop uses compact scene units.
+// 几何结构和比例改编自用户提供的 Equator300.html 查看器。
+// 查看器使用毫米，车间场景使用紧凑的场景单位。
 export function createEquator300() {
   const root = new THREE.Group();
   root.name = "Equator300";
@@ -38,7 +38,7 @@ export function createEquator300() {
     mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
   };
 
-  // Six-sided base, raised table and six adjustable feet.
+  // 六边形底座、抬高的工作台和六个可调支脚。
   add(root, cylinder(329, 350, 78, 6), frame, 0, 57, 0).rotation.y = -Math.PI / 6;
   add(root, cylinder(225, 250, 44, 6), frameLight, 0, 118, 0).rotation.y = -Math.PI / 6;
   add(root, cylinder(150, 150, 19, 40), tableMat, 0, 149.5, 0);
@@ -48,7 +48,7 @@ export function createEquator300() {
     add(root, cylinder(24, 24, 6), dark, x, 3, z);
   }
 
-  // Three rail pairs, three upper wheels and their triangular support rods.
+  // 三组导轨、三个上部滚轮及其三角支撑杆。
   for (const angle of [60, 180, 300]) {
     const [cx, cz] = polar(angle, 320);
     const tangentialX = Math.cos(angle * Math.PI / 180);
@@ -66,7 +66,7 @@ export function createEquator300() {
     add(root, cylinder(34, 34, 66), frameLight, wx, 772, wz);
   }
 
-  // Three-lobed head cover, upper enclosure and recognisable orange fascia.
+  // 三瓣式头部护罩、上部外壳和醒目的橙色面板。
   add(root, cylinder(205, 205, 74, 48), frame, 0, 777, 0);
   for (const angle of [60, 180, 300]) {
     const [x, z] = polar(angle, 294);
@@ -77,13 +77,13 @@ export function createEquator300() {
   add(root, new THREE.BoxGeometry(250, 145, 175), frame, 0, 886, 0);
   add(root, new THREE.BoxGeometry(120, 56, 27), orange, 0, 845, 101);
 
-  // Central spindle, SP25-style probe and ruby stylus ball.
+  // 中央主轴、SP25 风格探针和红宝石测针球。
   add(root, cylinder(28, 28, 215), steel, 0, 570, 0);
   add(root, cylinder(32, 20, 48), frameLight, 0, 396, 0);
   add(root, cylinder(4, 4, 118, 12), steel, 0, 310, 0);
   add(root, new THREE.SphereGeometry(6, 18, 12), ruby, 0, 246, 0);
 
-  // The inspection workpiece is controlled by the workshop animation, not the viewer's demo cup.
+  // 检测工件由车间动画控制，而不是由查看器中的示例杯控制。
   const workpiece = add(root, cylinder(37, 37, 30, 24), partMat, 0, 176, 0);
   workpiece.visible = false;
   return { root, workpiece };

@@ -91,7 +91,27 @@ tests/                          根目录测试
 | Agent Service | http://127.0.0.1:8010 | app.api.server:app | 用户入口、异常入口和业务 API |
 | Vite 开发服务 | http://127.0.0.1:5173 | npm run dev:monitor | 前端开发调试，/api 代理到 8001 |
 
-RAG Service 和一键启动脚本统一使用 8020；如果单独启动服务，请在 services/rag-service/.env 中设置 SERVICE_PORT=8020，并保持根目录 .env 的 RAG_SERVICE_BASE_URL=http://127.0.0.1:8020。
+RAG Service 和一键启动脚本统一使用 8020；所有服务配置都在仓库根目录 `.env` 中，保持 `RAG_SERVICE_BASE_URL=http://127.0.0.1:8020`。
+
+### 当前模型与接口调用
+
+当前一键启动配置使用 `Model Service` 统一代理模型请求，运行状态可通过 `GET http://127.0.0.1:8040/health` 查看。对话请求使用 DeepSeek 官方接口 `https://api.deepseek.com`，模型由根目录 `.env` 的 `DEEPSEEK_MODEL` 控制。
+
+| 用途 | 实际模型/组件 | 调用路径 |
+| --- | --- | --- |
+| Agent 诊断、维修方案、工单文本生成 | DeepSeek 官方接口上的 `DEEPSEEK_MODEL` | Agent Service → Model Service → `POST https://api.deepseek.com/chat/completions` |
+| RAG 向量化 | `BAAI/bge-m3` | RAG Service → `POST http://127.0.0.1:8040/v1/embeddings` |
+| RAG 重排 | `BAAI/bge-reranker-v2-m3` | RAG Service → `POST http://127.0.0.1:8040/v1/rerank` |
+| RAG 检索 | Whoosh + Milvus | Agent Service → `POST http://127.0.0.1:8020/search` |
+| CAD 图纸和部件关系 | CAD 工程数据服务 | Agent Service → `GET/POST http://127.0.0.1:8011/...` |
+| 工单、报告、质检持久化 | Backend Service | Agent Service → `POST http://127.0.0.1:8030/tools/call` |
+| 设备实时数据 | 模拟工厂服务 | Monitor → `GET http://127.0.0.1:4529/...` |
+
+浏览器只访问监控工作台 `8001`；工作台再将 `/api/...` 请求转发到 Agent Service `8010`。Agent 和 RAG 不直接读取模型供应商密钥，只通过 Model Service 调用统一接口。
+
+Model Service 再把请求转发到 SiliconFlow 的 OpenAI 兼容地址 `https://api.siliconflow.cn/v1`，对应路径为 `/chat/completions`、`/embeddings` 和 `/rerank`。供应商密钥只在 Model Service 进程环境中读取，不写入日志或前端。
+
+项目中没有接入 TypeSafe AI 的真实 Jev 模型。当前运行时的输入解析是本地 `RuntimeInputParser`；如果以后接入 Jev，需要单独配置 TypeSafe API Key，不能把本地解析器名称当作模型调用。
 
 ### P2 本地基础设施
 
@@ -105,7 +125,9 @@ docker compose -f infra/docker/docker-compose.yml up -d
 
 复制 .env.example 为根目录 .env。密钥只放在本地 .env，不要提交到 Git。
 
-配置优先级为：进程环境变量 > 服务 `.env` > 根目录 `.env` > 代码默认值。`APP_ENV=production` 时默认禁止本地 RAG、Memory、CAD、Closure 和 Report 回退；只有显式设置降级开关才会启用降级。`LEARNING_RESULT_STORE_PATH` 保存关闭工单后的 Memory/RAG/Report 结果，`REPORT_STORE_PATH` 保存结构化报告，避免服务重启后重复学习或丢失报告。
+配置优先级为：进程环境变量 > 根目录 `.env` > 代码默认值。所有本地服务共用根目录这一份配置，不再读取服务目录下的重复 `.env`。`APP_ENV=production` 时默认禁止本地 RAG、Memory、CAD、Closure 和 Report 回退；只有显式设置降级开关才会启用降级。`LEARNING_RESULT_STORE_PATH` 保存关闭工单后的 Memory/RAG/Report 结果，`REPORT_STORE_PATH` 保存结构化报告，避免服务重启后重复学习或丢失报告。
+
+报告中心提供 PDF 文件接口：先调用 `POST /api/reports/{report_id}/pdf` 生成文件，再用 `GET /api/reports/{report_id}/pdf` 在线打开；追加 `?download=1` 可强制下载。文件默认保存在 `.runtime/report-files`，可用 `REPORT_FILE_DIR` 指定目录；默认使用 PDF 内置中文字体，若需要可搜索的嵌入字体，可设置 `REPORT_PDF_FONT_PATH`。
 
 TraceRecorder 默认只保留本地记录；设置 `OTEL_ENABLED=true` 或配置 `OTEL_EXPORTER_OTLP_ENDPOINT` 后，会将 Agent、A2A、Tool、Node 记录以 OTLP span 发送到观测系统。未安装 OTEL 依赖或导出端点不可用时，本地 Trace API 仍保持可用。
 
@@ -125,7 +147,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
 
 RAG_SERVICE_BASE_URL=http://127.0.0.1:8020
-RAG_SERVICE_TIMEOUT_SECONDS=15
+RAG_SERVICE_TIMEOUT_SECONDS=30
 RAG_ALLOW_LOCAL_FALLBACK=false
 MCP_CAD_URL=http://127.0.0.1:8011
 
@@ -140,7 +162,7 @@ FACTORY_DEVICE_IDS 为空时，监控服务会从模拟工厂的设备接口发�
 
 ### RAG 配置
 
-RAG 配置文件是 services/rag-service/.env，模板是 services/rag-service/.env.example。重要配置如下：
+RAG 配置统一放在仓库根目录 `.env`，模板是 `.env.example`。重要配置如下：
 
 ~~~dotenv
 SERVICE_HOST=0.0.0.0
@@ -164,7 +186,7 @@ MYSQL_PASSWORD=
 MYSQL_DATABASE=industry_rag
 
 DEEPSEEK_API_KEY=
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
 ~~~
 
@@ -278,7 +300,7 @@ PDF/DOCX/XLSX/CSV/TXT/MD/图片/CAD
   -> MySQL 文档/分块元数据
 ~~~
 
-默认扫描 services/rag-service/.env 的 RAG_DATA_DIR。当前仓库中的可用语料位于 services/rag-service/data，包含报警码、案例、手册、SOP 和 CAD 数据。
+默认扫描根目录 `.env` 的 `RAG_DATA_DIR`。当前仓库中的可用语料位于 services/rag-service/data，包含报警码、案例、手册、SOP 和 CAD 数据。
 
 ### 使用仓库语料入库
 
@@ -444,7 +466,7 @@ Diagnosis、Knowledge、CAD、Maintenance 或 WorkOrder 的业务顺序。统一
 
 ```text
 Goal/Event
-  -> JEVParser
+  -> RuntimeInputParser
   -> Planner
   -> ActionModel(required_capability)
   -> CapabilityRegistry
@@ -510,6 +532,6 @@ Runtime 和跨服务契约说明见：
 
 ## 安全和提交约定
 
-- .env、服务本地 .env 和 API 密钥不得提交。
+- `.env` 和 API 密钥不得提交；所有服务共用根目录 `.env`，不再维护服务级配置文件。
 - 只提交 .env.example、源码、测试、文档和必要的示例数据。
 - Milvus、MySQL、Whoosh 的运行时数据不要作为源码提交。

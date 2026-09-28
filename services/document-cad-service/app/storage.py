@@ -1,4 +1,4 @@
-"""Object storage support for original source files."""
+"""原始源文件的对象存储支持。"""
 
 from __future__ import annotations
 

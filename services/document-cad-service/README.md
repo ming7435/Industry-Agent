@@ -1,4 +1,4 @@
-# document-cad-service
+# CAD 工程数据服务
 
 CAD Agent 通过 MCP 风格接口访问本服务，不直接解析原始 DWG/DXF。
 

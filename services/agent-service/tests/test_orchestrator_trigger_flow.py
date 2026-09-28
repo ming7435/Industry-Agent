@@ -49,8 +49,7 @@ def test_same_event_has_one_task_and_one_workorder(monkeypatch):
     from fastapi.testclient import TestClient
     from app.api.server import create_app
 
-    # This E2E exercises Runtime contracts and must not depend on an external
-    # RAG service being available in the test process.
+    # 该 E2E 验证 Runtime 契约，不依赖测试进程中可用的外部 RAG 服务。
     monkeypatch.setenv("RAG_ALLOW_LOCAL_FALLBACK", "true")
     monkeypatch.setenv("RAG_SERVICE_TIMEOUT_SECONDS", "1")
     client = TestClient(create_app())

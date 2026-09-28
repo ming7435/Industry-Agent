@@ -1,4 +1,4 @@
-"""Embedding data models and SiliconFlow query client."""
+"""向量化数据模型和 SiliconFlow 查询客户端。"""
 
 from __future__ import annotations
 

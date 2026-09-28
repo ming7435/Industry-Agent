@@ -1,6 +1,6 @@
 from app.agents.base import AgentResult, BaseAgent
 from app.agents.registry import CORE_AGENT_REGISTRY
-from app.runtime.jev import GoalEvent, JEVParser
+from app.runtime.coordinator import GoalEvent, RuntimeInputParser
 
 
 def test_trace_skill_node_accepts_explicit_graph_binding_without_global_aliases():
@@ -51,9 +51,9 @@ def test_agent_result_normalizes_existing_model_output():
     assert result.confidence == 0.9
 
 
-def test_jev_parser_returns_structured_goal_without_selecting_agents():
-    event = JEVParser().parse({
-        "event_id": "EVT-JEV-1",
+def test_runtime_input_parser_returns_structured_goal_without_selecting_agents():
+    event = RuntimeInputParser().parse({
+        "event_id": "EVT-PARSER-1",
         "device_id": "D-1",
         "event_type": "temperature_alarm",
         "severity": "critical",
@@ -61,13 +61,19 @@ def test_jev_parser_returns_structured_goal_without_selecting_agents():
 
     assert isinstance(event, GoalEvent)
     assert event.goal
-    assert event.entities["event_id"] == "EVT-JEV-1"
+    assert event.entities["event_id"] == "EVT-PARSER-1"
     assert "fault_analysis" in event.required_capabilities
     assert "agent" not in event.entities
 
 
-def test_jev_parser_limits_user_goal_to_relevant_capability():
-    event = JEVParser().parse("查询主轴维修手册")
+def test_runtime_input_parser_limits_user_goal_to_relevant_capability():
+    event = RuntimeInputParser().parse("查询主轴维修手册")
 
     assert event.source == "user"
+    assert event.required_capabilities == ("document_search",)
+
+
+def test_runtime_input_parser_routes_fault_catalog_questions_to_knowledge():
+    event = RuntimeInputParser().parse("对比仪有哪些故障")
+
     assert event.required_capabilities == ("document_search",)

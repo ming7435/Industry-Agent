@@ -4,12 +4,9 @@ The prompt has one job: force the model to answer *from the retrieved evidence*
 and to mark which evidence supports which claim.  Three details matter for the
 industrial setting:
 
-* the answer is written for a shop-floor technician, so it is structured as
-  ``故障判断 / 可能原因 / 排查步骤 / 维修建议 / 安全提示`` instead of prose;
-* every conclusion must carry a ``[n]`` citation, which makes the answer
-  auditable against the maintenance manual;
-* safety-critical actions (de-energising, depressurising, hot surfaces) must be
-  surfaced explicitly rather than buried in the steps.
+* 面向现场维修人员书写回答，使用 ``故障判断 / 可能原因 / 排查步骤 / 维修建议 / 安全提示`` 分节，而不是散文；
+* 每个结论都必须带 ``[n]`` 引用，便于对照维修手册审计；
+* 安全关键动作（断电、泄压、高温表面）必须显式展示，不能埋在步骤中。
 """
 
 from __future__ import annotations

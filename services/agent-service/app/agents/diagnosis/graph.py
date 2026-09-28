@@ -76,9 +76,7 @@ def load_diagnosis_skill(state: DiagnosisGraphState) -> Dict[str, Any]:
         if tool not in runtime.allowed_tools:
             runtime.allowed_tools.append(tool)
     if bool((state.get("event") or {}).get("runtime_managed")):
-        # Knowledge retrieval is a separate Runtime Action. Keeping the
-        # tool out of the diagnosis boundary prevents the model from creating
-        # a second Knowledge call inside the Agent graph.
+        # 知识检索是独立的 Runtime Action。将工具移出诊断边界，避免模型在 Agent Graph 内再次调用 Knowledge。
         knowledge_tools = {
             "search_knowledge", "search_alarm_knowledge", "search_sop",
             "search_manual", "search_fault_cases", "search_semantic_memory",

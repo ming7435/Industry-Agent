@@ -42,8 +42,7 @@ def _otel_tracer() -> Any | None:
             trace.set_tracer_provider(provider)
             _OTEL_TRACER = trace.get_tracer("industry-agent.runtime")
         except Exception:
-            # TraceRecorder remains fully functional when OTEL is not installed
-            # or the exporter cannot be initialized.
+            # 未安装 OTEL 或导出器初始化失败时，TraceRecorder 仍保持完整功能。
             _OTEL_TRACER = None
         return _OTEL_TRACER
 

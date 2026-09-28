@@ -1,4 +1,4 @@
-"""Node execution tracing, separate from Graph state transformations."""
+"""节点执行 Trace，与 Graph 状态转换分离。"""
 from __future__ import annotations
 from time import perf_counter
 from typing import Any, Dict, Mapping

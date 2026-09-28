@@ -44,3 +44,10 @@ def test_validate_tools_allows_empty_agent_directory(tmp_path: Path) -> None:
 def test_real_skill_catalog_matches_registered_tools() -> None:
     tools = ToolRegistry()
     get_skill_registry().validate_tools(tools.mcp.handlers)
+
+
+def test_repair_plan_skill_allows_plan_generation_tool() -> None:
+    skill = get_skill_registry().get("maintenance", "repair_plan_skill")
+
+    assert skill is not None
+    assert "generate_repair_plan" in skill.tools

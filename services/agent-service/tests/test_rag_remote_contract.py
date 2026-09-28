@@ -88,3 +88,25 @@ def test_agent_rag_client_marks_local_fallback_as_all_scope_without_device_metad
 
     assert result["retrieval_scope"] == "all"
     assert result["retrieval_fallback"] is True
+
+
+def test_agent_rag_client_falls_back_when_remote_is_degraded_without_hits(monkeypatch):
+    from app.rag.client import RAGServiceClient
+
+    monkeypatch.setenv("RAG_ALLOW_LOCAL_FALLBACK", "true")
+    client = RAGServiceClient(base_url="http://rag", fallback=None)
+    monkeypatch.setattr(client, "_post", lambda path, payload: {"hits": [], "answer": "", "degraded": True, "degrade_reason": "all_retrievers_failed"})
+    monkeypatch.setattr(
+        client.fallback,
+        "search",
+        lambda query, limit, filters: {
+            "documents": [{"document_id": "SOP-1", "title": "主轴温升检查", "content": "检查冷却泵并复测温度。"}],
+            "source": "local-rag-index",
+        },
+    )
+
+    result = client.search("主轴温度过高怎么检查")
+
+    assert result["documents"][0]["document_id"] == "SOP-1"
+    assert result["connection_status"] == "remote_degraded_local_fallback"
+    assert result["degraded"] is True

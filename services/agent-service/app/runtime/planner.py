@@ -1,4 +1,4 @@
-"""Deterministic, non-executing Planner for existing Agent capabilities."""
+"""面向现有 Agent 能力的确定性、只规划不执行的 Planner。"""
 
 from __future__ import annotations
 

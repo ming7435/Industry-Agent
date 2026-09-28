@@ -28,3 +28,60 @@ def test_knowledge_answer_adds_grounded_final_summary_and_removes_duplicate_bloc
     assert formatted.count("排查报警映射") == 1
     assert "**最后总结：**" in formatted
     assert "当前报警机器" in formatted
+
+
+def test_knowledge_answer_builds_chinese_fallback_when_model_returns_empty():
+    formatted = KnowledgeAgent._format_grounded_answer(
+        "",
+        query="主轴温度过高怎么检查",
+        documents=[
+            {
+                "title": "主轴温升检查SOP",
+                "content": "检查冷却液流量、冷却泵、散热器和主轴负载；温度恢复后空载运行确认。",
+                "document_id": "SOP-1",
+            }
+        ],
+        retrieval_scope="all",
+    )
+
+    assert "主轴温升检查SOP" in formatted
+    assert "检查冷却液流量" in formatted
+    assert "没有可展示的回答" not in formatted
+    assert "以原文为准" not in formatted
+    assert "以手册为准" not in formatted
+
+
+def test_knowledge_answer_removes_internal_manual_disclaimer():
+    formatted = KnowledgeAgent._format_grounded_answer(
+        "检查冷却系统并复测。具体操作请以设备官方维修手册为准。",
+        query="主轴温度异常怎么检查",
+        documents=[{"title": "温升检查", "document_id": "DOC-1"}],
+        retrieval_scope="device",
+    )
+
+    assert "检查冷却系统并复测" in formatted
+    assert "官方维修手册为准" not in formatted
+
+
+def test_knowledge_fallback_hides_retrieval_table_metadata():
+    formatted = KnowledgeAgent._format_grounded_answer(
+        "",
+        query="对比仪有哪些故障",
+        documents=[
+            {
+                "title": "报警码卡片",
+                "content": "文档: alarms.pdf 页码: 98 内容类型: table [table | 第98页 | p98-table1-part1] 表格行1: 故障名称 fault_name_zh/TC-700007 · 700007 对刀仪升降错误：检查反馈信号。: 报警码 alarm_code；对刀仪升降错误：检查反馈信号。: 英文原名 alarm_message_en；Tool probe up/down error",
+                "document_id": "DOC-1",
+            }
+        ],
+        retrieval_scope="all",
+    )
+
+    assert "对刀仪升降错误" in formatted
+    assert "内容类型" not in formatted
+    assert "表格行1" not in formatted
+    assert "[table" not in formatted
+    assert "alarm_code" not in formatted
+    assert "fault_name_zh" not in formatted
+    assert "alarm_message_en" not in formatted
+    assert "Tool probe" not in formatted

@@ -163,6 +163,33 @@ class FactorySnapshotProvider:
         alarm_level = self._map_scenario_severity(scenario)
 
         cycle_state = monitor.get("cycle_state") or device.get("cycle_state")
+        status = monitor.get("status") or device.get("status")
+        control_state = monitor.get("control_state") or device.get("control_state")
+        control_reason = monitor.get("control_reason") or device.get("control_reason")
+        fault_evidence = dict(
+            monitor.get("fault_evidence") or device.get("fault_evidence") or {}
+        )
+        # 安全停机不等于健康度测量。旧版工厂在跳过评估时会返回
+        # health_score=100；在边界处将这个矛盾的结果标准化。
+        stop_states = {"emergency_stop", "e_stop", "stopped"}
+        source_health = (
+            monitor.get("health_score")
+            if monitor.get("health_score") is not None
+            else device.get("health_score")
+        )
+        if (
+            str(status or "").lower() in stop_states
+            and not alarm_code
+            and not (device.get("alarm_codes") or monitor.get("alarm_codes"))
+            and not fault_evidence
+        ):
+            fault_evidence = {
+                "evidence_status": "unavailable",
+                "active": False,
+                "control_reason": str(control_reason or ""),
+                "source": "control_boundary",
+            }
+            source_health = None
         return DeviceSample(
             device_id=actual_device_id,
             timestamp=self._extract_sample_timestamp(payload, monitor, device),
@@ -175,15 +202,14 @@ class FactorySnapshotProvider:
             temperature_point="spindle_bearing_housing",
             vibration_point="spindle_velocity_rms",
             alarm_level=alarm_level,
-            status=monitor.get("status") or device.get("status"),
+            status=status,
             mode=monitor.get("mode") or device.get("mode"),
             cycle_state=cycle_state,
             cycle_state_label=cycle_state_label(cycle_state),
-            health_score=self._to_optional_number(
-                monitor.get("health_score")
-                if monitor.get("health_score") is not None
-                else device.get("health_score")
-            ),
+            control_state=control_state,
+            control_reason=control_reason,
+            health_score=self._to_optional_number(source_health),
+            fault_evidence=fault_evidence,
             metrics=metrics,
             metric_details=metric_details,
             equipment_states=equipment_states,

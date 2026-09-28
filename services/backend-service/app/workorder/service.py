@@ -1,4 +1,4 @@
-"""Deterministic WorkOrder, inventory, technician and QMS business operations."""
+"""确定性的工单、库存、技师和 QMS 业务操作。"""
 
 from __future__ import annotations
 
@@ -177,10 +177,9 @@ class BackendBusinessService:
 
     def query_spare_part(self, query: str = "", **_: Any) -> dict[str, Any]:
         item = {"part_no": query or "SP-ASSY-TC820-001", "available": True, "quantity": 4, "stock": 4, "part_id": query or "SP-ASSY-TC820-001", "name": "维修备件"}
-        # Keep the generic backend contract compatible with the existing
-        # Maintenance Agent, whose local MCP adapter exposes the same record
-        # under ``parts``/``stock``.  The aliases are observational only and
-        # do not change inventory semantics.
+        # 保持通用后端契约与现有维修 Agent 兼容；本地 MCP 适配器会在
+        # ``parts``/``stock`` 下暴露同一条记录。这些别名只用于观察，
+        # 不改变库存语义。
         return {"success": True, "items": [item], "parts": [item], "stock": [item], "backend": "backend-service"}
 
     query_inventory = query_stock = query_part_availability = query_spare_part
@@ -189,8 +188,8 @@ class BackendBusinessService:
         return self.inspection.call(operation, **arguments)
 
     def persist_report(self, **values: Any) -> dict[str, Any]:
-        # Agent Report tools submit {"report": ReportResult}; persist the
-        # report itself so list/get and the frontend share one flat contract.
+        # Agent 报告工具提交 {"report": ReportResult}；直接持久化报告本身，
+        # 使列表、详情接口和前端共用同一个扁平契约。
         submitted = values.get("report")
         report = dict(submitted) if isinstance(submitted, Mapping) else dict(values)
         report_id = str(report.get("report_id") or values.get("report_id") or "REPORT-" + uuid4().hex[:10].upper())

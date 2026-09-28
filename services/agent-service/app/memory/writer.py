@@ -16,8 +16,8 @@ class ExperienceWriter:
         self.long_memory = long_memory
         self.rag = rag
         self.deduplicator = deduplicator or ExperienceDeduplicator()
-        # Keep retry state local to this writer.  The RAG document id is stable,
-        # so a process restart can safely retry an incomplete remote write.
+        # 重试状态只保存在当前写入器中。RAG 文档 ID 稳定，因此进程重启后
+        # 可以安全地重试未完成的远程写入。
         self._rag_synced: set[str] = set()
         self._lock = Lock()
 

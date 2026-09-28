@@ -12,7 +12,7 @@
 代码不会硬编码任何密钥：API 密钥默认是空字符串，必须通过环境变量提供，
 并且不会写入日志（参见 :mod:`app.llm.client`）。
 
-``.env`` 文件的查找路径固定在服务根目录，因此无论从
+``.env`` 文件统一放在仓库根目录，因此无论从
 ``services/rag-service``、仓库根目录启动服务，还是由改变了工作目录的容器入口启动，
 服务行为都保持一致。
 """
@@ -28,14 +28,14 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 """``services/rag-service`` 的绝对路径，用于定位 ``.env`` 和数据目录。"""
 
 PROJECT_ROOT = SERVICE_ROOT.parents[1]
-"""Repository root used for the lower-priority shared ``.env`` file."""
+"""仓库根目录，用于读取共享 ``.env`` 文件。"""
 
-ENV_FILE = SERVICE_ROOT / ".env"
-"""服务本地的 ``.env`` 文件；此外还会读取当前工作目录中的 ``.env``。"""
+ENV_FILE = PROJECT_ROOT / ".env"
+"""所有本地服务共享的仓库根目录 ``.env`` 文件。"""
 
 
 def load_service_env() -> None:
-    """加载服务本地的 ``.env``，且不覆盖进程环境变量。
+    """加载仓库根目录的共享 ``.env``，且不覆盖进程环境变量。
 
     ``pydantic-settings`` 在实例化 :class:`Settings` 时已经会读取 :data:`ENV_FILE`。
     这个辅助函数用于那些直接读取 ``os.getenv`` 的代码路径（例如离线 MySQL 和
@@ -86,11 +86,8 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        # 先读取服务本地文件，再读取当前工作目录的 ``.env``；
-        # 实际的进程环境变量优先级高于这两个文件。
-        # pydantic-settings applies later files last.  The service file must
-        # therefore follow the repository file while process ENV remains first.
-        env_file=(str(PROJECT_ROOT / ".env"), str(ENV_FILE)),
+        # 所有服务只读取仓库根目录的共享配置；实际进程环境变量优先级最高。
+        env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -150,10 +147,10 @@ class Settings(BaseSettings):
     # 模型
     # ------------------------------------------------------------------
     siliconflow_api_key: str = ""
-    """Deprecated compatibility field; runtime uses MODEL_SERVICE_BASE_URL."""
+    """已废弃的兼容字段；运行时使用 MODEL_SERVICE_BASE_URL。"""
 
     siliconflow_base_url: str = "https://api.siliconflow.cn/v1"
-    """Deprecated compatibility field; provider routing belongs to Model Service."""
+    """已废弃的兼容字段；提供方路由由 Model Service 负责。"""
 
     siliconflow_embedding_model: str = "BAAI/bge-m3"
     """SiliconFlow 向量模型标识。"""
@@ -213,26 +210,26 @@ class Settings(BaseSettings):
 
     @staticmethod
     def resolve_service_path(value: str | Path) -> Path:
-        """Resolve relative RAG paths against the service root, not process CWD."""
+        """相对于服务根目录解析 RAG 路径，而不是相对于进程当前目录解析。"""
 
         path = Path(value).expanduser()
         return path.resolve() if path.is_absolute() else (SERVICE_ROOT / path).resolve()
 
     @property
     def rag_data_path(self) -> Path:
-        """Return the normalized offline corpus directory."""
+        """返回规范化后的离线语料目录。"""
 
         return self.resolve_service_path(self.rag_data_dir)
 
     @property
     def whoosh_index_path(self) -> Path:
-        """Return the normalized Whoosh index directory."""
+        """返回规范化后的 Whoosh 索引目录。"""
 
         return self.resolve_service_path(self.whoosh_index_dir)
 
     @property
     def ingestion_cache_path(self) -> Path:
-        """Return the normalized local ingestion cache directory."""
+        """返回规范化后的本地入库缓存目录。"""
 
         return self.resolve_service_path(self.ingestion_cache_dir)
 
@@ -252,18 +249,17 @@ class Settings(BaseSettings):
     """Milvus 端口。"""
 
     milvus_collections: str = ""
-    """Comma-separated explicit collection names; overrides directory discovery."""
+    """逗号分隔的显式集合名称；会覆盖按目录发现的集合。"""
 
     rag_experience_collection: str = "maint_fault_events"
-    """Collection receiving closed-work-order experiences."""
+    """接收已关闭工单维修经验的集合。"""
 
     @property
     def milvus_search_collections(self) -> list[str]:
-        """Return collections derived from the first-level data directories.
+        """返回由一级数据目录推导出的集合名称。
 
-        The data tree is the only source of collection membership. Empty marker
-        files do not create online collections, so health checks only target
-        collections that the ingestion command can actually build.
+        数据目录树是集合归属的唯一来源。空的占位文件不会创建在线集合，
+        因此健康检查只针对入库命令实际能够构建的集合。
         """
 
         explicit = [item.strip() for item in self.milvus_collections.split(",") if item.strip()]
@@ -346,10 +342,10 @@ class Settings(BaseSettings):
     # 大语言模型（DeepSeek）
     # ------------------------------------------------------------------
     deepseek_api_key: str = ""
-    """Deprecated compatibility field; provider keys belong to Model Service."""
+    """已废弃的兼容字段；提供方密钥由 Model Service 管理。"""
 
-    deepseek_base_url: str = "https://api.deepseek.com/v1"
-    """Deprecated compatibility field; provider routing belongs to Model Service."""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    """已废弃的兼容字段；提供方路由由 Model Service 负责。"""
 
     deepseek_model: str = "deepseek-chat"
     """用于诊断生成的聊天模型。"""

@@ -5,7 +5,7 @@ def test_monitor_web_server_imports_current_tool_registry() -> None:
     assert monitor_web_server.ToolRegistry is ToolRegistry
 
 
-def test_monitor_web_state_requests_one_emergency_stop_for_a_severe_result() -> None:
+def test_monitor_web_state_does_not_control_machine_for_a_severe_result() -> None:
     from datetime import datetime
     from threading import Lock
 
@@ -51,23 +51,6 @@ def test_monitor_web_state_requests_one_emergency_stop_for_a_severe_result() -> 
     )
 
     state._on_result(result)
-    stopped_sample = DeviceSample(
-        device_id="MACHINE-1",
-        timestamp=datetime.now(),
-        temperature=80,
-        vibration=4,
-        rpm=1000,
-        status="emergency_stop",
-        cycle_state="emergency_stop",
-    )
-    stopped_result = MonitorResult(
-        device_id="MACHINE-1",
-        status=MonitorStatus.FAULT,
-        current_sample=stopped_sample,
-        observations=(),
-        trigger=None,
-    )
-    state._on_result(stopped_result)
 
-    assert state.client.calls == [("MACHINE-1", "emergency_stop", "监控确认高级故障")]
-    assert state.machine_controls["MACHINE-1"]["accepted"] is True
+    assert state.client.calls == []
+    assert state.machine_controls == {}

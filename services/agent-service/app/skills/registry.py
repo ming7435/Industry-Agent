@@ -67,15 +67,13 @@ class SkillDefinition:
     def normalized_steps(self) -> list["StepDefinition"]:
         """Return old string and new mapping steps as one executable shape."""
 
-        # Import lazily: app.runtime.__init__ wires the Agent container, while
-        # Agent graph modules also load this registry during package import.
+        # 延迟导入：app.runtime.__init__ 负责组装 Agent 容器，而 Agent Graph 模块在包导入期间也会加载此 Registry。
         from app.runtime.action import StepDefinition
 
         normalized: list[StepDefinition] = []
         for index, raw in enumerate(self.steps):
             step = StepDefinition.coerce(raw)
-            # Skill-level defaults apply only when a structured step does not
-            # override them.  This keeps a compact legacy YAML meaningful.
+            # Skill 级默认值只在结构化步骤未覆盖时生效，确保精简的旧版 YAML 仍有意义。
             if not step.required_inputs and self.required_inputs:
                 step = step.model_copy(update={"required_inputs": list(self.required_inputs)})
             if not step.failure_policy or step.failure_policy == "stop":

@@ -60,7 +60,7 @@ COLLECTION_BY_DATA_TYPE = {
 
 @contextmanager
 def _stage_progress(source_name: str, stage: str, *, heartbeat_seconds: float = 10.0):
-    """Log a heartbeat while a blocking parse/OCR or embedding stage runs."""
+    """记录阻塞式解析/OCR 或向量化阶段的心跳日志。""""
 
     started = time.monotonic()
     stopped = threading.Event()
@@ -100,10 +100,9 @@ def _stage_progress(source_name: str, stage: str, *, heartbeat_seconds: float = 
 
 
 def collection_name_for_document(path: Path, *, prefix: str = "industry_rag", data_root: Path | None = None) -> str:
-    """Return the typed Milvus collection for a source document.
+    """返回源文档对应的类型化 Milvus 集合。
 
-    The first directory under ``data/`` is authoritative. Unknown folders still
-    get a deterministic collection name derived from that folder.
+    ``data/`` 下的第一级目录具有权威性；未知目录也会根据目录名生成确定性的集合名。
     """
 
     root = Path(data_root or DEFAULT_DATA_DIR).resolve()
@@ -116,8 +115,7 @@ def collection_name_for_document(path: Path, *, prefix: str = "industry_rag", da
     folder = relative.parts[0].lower()
     if folder in COLLECTION_BY_DATA_TYPE:
         return COLLECTION_BY_DATA_TYPE[folder]
-    # Unknown folders still get a deterministic collection; the folder, not the
-    # filename, is the routing key.
+    # 未知目录仍然使用确定性的集合；路由键是目录而不是文件名。
     safe_folder = "".join(char if char.isalnum() or char == "_" else "_" for char in folder).strip("_")
     return f"{prefix}_{safe_folder or 'unknown'}"[:255]
 
@@ -128,13 +126,13 @@ def collection_name_for_pdf(
     prefix: str = "industry_rag",
     data_root: Path | None = None,
 ) -> str:
-    """Backward-compatible alias for the former PDF-only API."""
+    """兼容旧版本的别名，替代之前仅支持 PDF 的接口。"""
 
     return collection_name_for_document(pdf_path, prefix=prefix, data_root=data_root)
 
 
 def _normalize_extensions(extensions: Iterable[str] | None) -> set[str] | None:
-    """Normalize a user supplied extension filter into lowercase suffixes."""
+    """将用户提供的扩展名过滤器规范化为小写后缀集合。"""
 
     if extensions is None:
         return None
@@ -171,7 +169,7 @@ def _enforce_deterministic_options(
     build_whoosh: bool,
     mysql_enabled: bool,
 ) -> None:
-    """Reject storage switches that would leave the online chain incomplete."""
+    """拒绝会导致在线链路不完整的存储开关组合。"""
 
     if not mysql_enabled:
         raise ValueError("MySQL metadata is required for a complete offline build.")
@@ -202,7 +200,7 @@ def ingest_directory(
     cache_enabled: bool = settings.ingestion_cache_enabled,
     cache_dir: str | Path = settings.ingestion_cache_path,
 ) -> dict[str, int | str]:
-    """Ingest supported files into Milvus and MySQL metadata tables."""
+    """将支持的文件写入 Milvus 和 MySQL 元数据表。"""
 
     paths = _supported_files(data_dir, extensions)
     if not paths:

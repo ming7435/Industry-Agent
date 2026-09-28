@@ -32,8 +32,7 @@ export function diagnosisMatchesCurrent(snapshot, sample, latest = snapshot?.dia
   const current = resolveCurrentSample(snapshot, sample);
   const currentAlarm = String(current?.alarm_code || "").trim();
   const latestAlarm = String(latest?.alarm_code || "").trim();
-  // No live alarm means there is no newer incident to disambiguate. Keep the
-  // last completed result visible until the monitor reports a new alarm.
+  // 没有实时报警时，表示没有需要区分的新事件；在监控报告新报警前保留最后一次完成的结果。
   if (!currentAlarm) return true;
   if (!latestAlarm || currentAlarm !== latestAlarm) return false;
   const currentDevice = String(current?.device_id || snapshot?.device_id || "").trim();
@@ -54,9 +53,8 @@ export function buildDiagnosisView(snapshot, sample) {
     .find(Boolean) || {};
   const summary = cleanDisplayText(embedded.summary || latest.summary || latest.fault || latest.diagnosis);
   const cause = cleanDisplayText(embedded.diagnosis || latest.cause || latest.diagnosis);
-  // The model sometimes stores a generic lifecycle value (for example
-  // “诊断完成”) in the top-level field while the useful recommendation is
-  // inside the structured JSON block. Prefer the structured action text.
+  // 模型有时会在顶层字段保存通用的生命周期值（例如“诊断完成”），而有用的建议位于结构化 JSON 中。
+  // 优先使用结构化操作文本。
   const recommendation = cleanDisplayText(embedded.recommendation || latest.recommendation);
   const nextAction = cleanDisplayText(latest.next_action || embedded.next_action);
   return {

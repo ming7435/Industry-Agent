@@ -115,8 +115,7 @@ def rrf_fusion(
         for rank, hit in enumerate(result_list, start=1):
             chunk_id = str(getattr(hit, "chunk_id", "") or "").strip()
             if not chunk_id or chunk_id in seen_in_route:
-                # A duplicated chunk inside one route only counts at its best
-                # rank, otherwise padding a list would inflate its weight.
+                # 同一路径内的重复分块只按其最佳排名计数，否则填充列表会虚增其权重。
                 continue
             seen_in_route.add(chunk_id)
 

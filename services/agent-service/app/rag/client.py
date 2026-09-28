@@ -37,10 +37,9 @@ class RAGServiceClient:
     backend = "rag-service"
 
     def __init__(self, base_url: str | None = None, fallback: RAGIndex | None = None) -> None:
-        # Remote access is an explicit application-wiring decision. Keeping a
-        # bare client local prevents a previously loaded project .env from
-        # changing isolated agent/library behavior; the orchestrator injects
-        # RAG_SERVICE_BASE_URL when it builds the running service graph.
+        # 远程访问由应用装配显式决定。保持裸客户端本地化，可以避免先前
+        # 加载的项目 .env 改变独立 Agent/库调用的行为；编排器构建运行图时
+        # 会注入 RAG_SERVICE_BASE_URL。
         configured_base_url = "" if base_url is None else base_url
         self.base_url = str(configured_base_url).strip().rstrip("/")
         self.timeout = float(os.getenv("RAG_SERVICE_TIMEOUT_SECONDS", "15"))
@@ -54,10 +53,9 @@ class RAGServiceClient:
     def search(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None) -> Dict[str, Any]:
         selected_filters = dict(filters or {})
         remote_query = self._build_remote_query(query, selected_filters)
-        # The remote API contract caps natural-language queries at 2000
-        # characters.  Model-generated diagnostic context can be much longer;
-        # bound it at the client boundary so retrieval degrades gracefully
-        # instead of returning HTTP 422.
+        # 远程 API 契约将自然语言查询限制为 2000 个字符。模型生成的诊断
+        # 上下文可能更长，因此在客户端边界截断，让检索平滑降级，而不是
+        # 返回 HTTP 422。
         remote_query = remote_query[:2000]
         payload = {
             "query": remote_query,
@@ -70,10 +68,9 @@ class RAGServiceClient:
                 scoped_device = str(selected_filters.get("device_id") or "").strip()
                 alarm_active = bool(selected_filters.get("alarm_active")) and bool(scoped_device)
                 if alarm_active and not result.get("documents"):
-                    # A machine scope is preferred, but older corpora may not
-                    # carry device metadata. Retry the same alarm query across
-                    # the full corpus so the operator still receives grounded
-                    # evidence instead of a generic empty answer.
+                    # 优先使用机器范围，但旧语料可能没有设备元数据。此时在
+                    # 全库重试同一个报警查询，确保操作员得到有依据的证据，
+                    # 而不是得到泛化的空答案。
                     fallback_filters = dict(selected_filters)
                     fallback_filters.pop("device_id", None)
                     fallback_filters.pop("device_model", None)
@@ -92,6 +89,20 @@ class RAGServiceClient:
                     result["retrieval_scope"] = "all"
                     result["retrieval_fallback"] = True
                     result["retrieval_fallback_reason"] = "当前报警机器无匹配证据，已扩大到全库检索"
+                if self.allow_fallback and result.get("degraded") and not result.get("documents"):
+                    # 远程检索器已降级且没有命中时，切换到本地索引，避免把空答案交给用户。
+                    local = self._humanize_result(
+                        self.fallback.search(query, limit=limit, filters=self._fallback_filters(selected_filters))
+                    )
+                    if local.get("documents"):
+                        local["connection_status"] = "remote_degraded_local_fallback"
+                        local["degraded"] = True
+                        local["remote_base_url"] = self.base_url
+                        local["warning"] = str(result.get("degrade_reason") or "远程检索降级，已使用本地知识索引")
+                        local["retrieval_scope"] = self._fallback_scope(selected_filters)
+                        local["retrieval_fallback"] = True
+                        local["retrieval_fallback_reason"] = "远程检索无命中，已使用本地知识索引"
+                        result = local
                 if "retrieval_scope" not in result:
                     result["retrieval_scope"] = "device" if alarm_active else "all"
                     result["retrieval_fallback"] = False
@@ -183,10 +194,8 @@ class RAGServiceClient:
             value = filters.get(key)
             if value not in (None, "", [], {}):
                 result[key] = value
-        # The active machine is the hard retrieval boundary. Alarm/component
-        # identifiers remain query hints because older repair records may not
-        # have those metadata fields populated; hard-filtering them would hide
-        # valid procedures for the same machine.
+        # 当前机器是检索的硬边界。报警/部件标识仍作为查询提示，因为旧的
+        # 维修记录可能没有填充这些元数据；硬过滤会隐藏同一机器的有效步骤。
         for key in ("device_id", "device_model"):
             value = filters.get(key)
             if value not in (None, "", [], {}):
@@ -329,17 +338,15 @@ class RAGServiceClient:
     def status(self) -> Dict[str, Any]:
         if self.base_url:
             try:
-                # The standalone RAG service exposes readiness as /health.
-                # Keep the agent-facing status shape while using that public
-                # contract instead of relying on a non-existent /status route.
+                # 独立 RAG 服务通过 /health 暴露就绪状态。保持面向 Agent 的
+                # 状态结构，同时使用公开契约，不依赖不存在的 /status 路由。
                 result = self._get("/health")
                 result.setdefault("backend", "remote-rag-service")
                 result["connected"] = True
                 result["connection_status"] = "connected"
                 result["remote_base_url"] = self.base_url
-                # HTTP connectivity and dependency readiness are separate
-                # concerns. A remote service can be reachable while one of its
-                # optional stages (for example the reranker) is unavailable.
+                # HTTP 连通性和依赖就绪是两件事。远程服务可能可访问，但其中
+                # 一个可选阶段（例如重排器）仍然不可用。
                 component_keys = ("milvus", "whoosh", "embedding", "reranker", "llm")
                 result["degraded"] = not all(bool(result.get(key)) for key in component_keys)
                 return result
