@@ -15,6 +15,41 @@ def test_knowledge_query_keeps_active_alarm_scope_for_rag_client():
     assert request.filters["alarm_code"] == "ALM-001"
 
 
+def test_knowledge_documents_bound_external_retrieval_scores() -> None:
+    documents = KnowledgeAgent._deduplicate_documents([
+        {
+            "document_id": "DOC-HIGH",
+            "title": "报警定义",
+            "content": "内容",
+            "source": "bm25",
+            "score": 3.0,
+        },
+        {
+            "document_id": "DOC-MID",
+            "title": "辅助检查",
+            "content": "内容",
+            "source": "bm25",
+            "score": 1.5,
+        },
+        {
+            "document_id": "DOC-LOW",
+            "title": "辅助说明",
+            "content": "内容",
+            "source": "bm25",
+            "score": -1.0,
+        },
+        {
+            "document_id": "DOC-INVALID",
+            "title": "异常分数",
+            "content": "内容",
+            "source": "bm25",
+            "score": float("inf"),
+        },
+    ])
+
+    assert [document.score for document in documents] == [1.0, 0.5, 0.0, 0.0]
+
+
 def test_knowledge_answer_adds_grounded_final_summary_and_removes_duplicate_blocks():
     answer = "**故障判断：** 先核对报警码。[1]\n\n排查报警映射。[2]\n\n排查报警映射。[2]"
 

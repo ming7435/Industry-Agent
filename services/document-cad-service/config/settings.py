@@ -271,7 +271,7 @@ class Settings(BaseSettings):
         folder_collections = {
             "alarms": "industry_rag_alarm_codes",
             "cases": "industry_rag_alarm_solutions",
-            "manuals": "industry_rag_manuals",
+            "manuals": "industry_rag_bom",
             "sop": "industry_rag_sop",
             "cad": "industry_rag_drawings",
         }

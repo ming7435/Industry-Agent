@@ -37,8 +37,8 @@ class _Requests:
     def create_maintenance_plan(self, *_args, **_kwargs):
         self.plan_calls += 1
         if self.plan_calls == 1:
-            return {"workorder_ready": False, "validation_findings": ["missing torque"]}
-        return {"workorder_ready": True, "repair_steps": ["replace bearing"], "validation_findings": []}
+            return {"workorder_ready": False, "maintenance_required": True, "validation_findings": ["missing torque"]}
+        return {"workorder_ready": True, "maintenance_required": True, "repair_steps": ["replace bearing"], "validation_findings": []}
 
     def access_memory(self, state, action="search", query="", from_agent=None):
         if action == "learn":
@@ -97,7 +97,25 @@ def test_full_evidence_driven_runtime_lifecycle(tmp_path):
         requests, object(), report_harness=_Report(),
         learning_store_path=str(tmp_path / "learning.sqlite3"),
     )
-    feedback = {"feedback": "repaired", "result": "repaired", "verification": {"passed": True}}
+    recovery = {
+        "device_id": "D-E2E-1",
+        "status": "running",
+        "alarm_code": "",
+        "active_alarms": [],
+        "metrics": {"spindle_vibration_rms": 0.18},
+        "checked_at": "2026-09-28T12:00:00Z",
+    }
+    feedback = {
+        "feedback": "repaired",
+        "result": "repaired",
+        "verification": {
+            "passed": True,
+            "status": "verified",
+            "source": "device_recovery",
+            "device_recovery": recovery,
+            "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
+        },
+    }
     operations.execute_workorder("mark_repair_completed", {
         "workorder_id": "WO-E2E-1", "repair_feedback": feedback,
         "repair_verification": feedback["verification"],

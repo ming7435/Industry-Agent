@@ -258,7 +258,7 @@ class A2ARequests:
         return response.diagnosis
 
     def request_knowledge_for_diagnosis(self, event: Mapping[str, Any], query: str) -> Dict[str, Any]:
-        """Public Knowledge provider used by Diagnosis Agent."""
+        """供诊断 Agent 使用的公开知识提供接口。"""
 
         task_id = str(event.get("task_id") or "")
         response = self.a2a.request(
@@ -280,6 +280,6 @@ class A2ARequests:
         return response.model_dump(mode="json")
 
     def _diagnosis_knowledge_request(self, event: Dict[str, Any], query: str) -> Dict[str, Any]:
-        """Compatibility alias for the original injected provider name."""
+        """兼容原先注入的提供方名称。"""
 
         return self.request_knowledge_for_diagnosis(event, query)

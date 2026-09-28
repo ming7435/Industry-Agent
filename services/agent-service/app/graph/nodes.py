@@ -1,4 +1,4 @@
-"""LangGraph nodes: map shared State to Agent inputs and result updates."""
+"""LangGraph 节点：将共享状态映射为 Agent 输入和结果更新。"""
 from __future__ import annotations
 from typing import Any, Dict
 import os
@@ -9,6 +9,7 @@ from app.runtime import evidence as evidence_loop
 from app.runtime.action import ActionModel
 from app.runtime.container import AgentContainer
 from app.runtime.loop_engine import LoopEngine, LoopPolicy
+from app.workorder.policy import auto_workorder_decision
 
 class OrchestratorNodes:
     def __init__(self, container: AgentContainer) -> None:
@@ -17,7 +18,7 @@ class OrchestratorNodes:
         self.tracing = container.tracing
 
     def runtime(self, state: AgentState) -> Dict[str, Any]:
-        """Runtime lifecycle entry; Planner/LoopEngine choose every Action."""
+        """Runtime 生命周期入口；由 Planner/LoopEngine 选择每个 Action。"""
 
         self.tracing.start("runtime", state)
         coordinator = getattr(self.container, "coordinator", None)
@@ -318,16 +319,30 @@ class OrchestratorNodes:
         return self.tracing.finish("maintenance", state, payload)
 
     def workorder(self, state: AgentState) -> Dict[str, Any]:
-        """Maintenance 完成后创建并派工；后续维修由外部反馈入口驱动。"""
+        """维修方案完成后创建并派工；后续维修由外部反馈入口驱动。"""
 
         self.tracing.start("workorder", state)
         event = dict(state.get("event") or {})
+        diagnosis = dict(state.get("diagnosis") or {})
+        plan = dict(state.get("maintenance_plan") or {})
+        if state.get("entry") == "trigger":
+            allowed, reason = auto_workorder_decision(diagnosis, plan, event)
+            if not allowed:
+                status = "blocked_diagnosis_confidence" if "置信度" in reason else "maintenance_not_required"
+                return self.tracing.finish("workorder", state, {
+                    "workorder_result": {},
+                    "workorder": {},
+                    "pending_workorder_id": "",
+                    "status": status,
+                    "stop_reason": reason,
+                    "maintenance_required": False if status == "maintenance_not_required" else plan.get("maintenance_required"),
+                })
         context = dict(state.get("context") or {})
         context.update({
             "event_id": str(event.get("event_id") or context.get("event_id") or ""),
             "idempotency_key": "monitor:%s" % str(event.get("event_id")) if event.get("event_id") else context.get("idempotency_key", ""),
-            "diagnosis_snapshot": dict(state.get("diagnosis") or {}),
-            "maintenance_plan_snapshot": dict(state.get("maintenance_plan") or {}),
+            "diagnosis_snapshot": diagnosis,
+            "maintenance_plan_snapshot": plan,
         })
         result = self.requests.execute_workorder({**state, "context": context}, action="create", from_agent="maintenance")
         return self.tracing.finish("workorder", state, {

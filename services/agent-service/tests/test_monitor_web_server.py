@@ -54,3 +54,13 @@ def test_monitor_web_state_does_not_control_machine_for_a_severe_result() -> Non
 
     assert state.client.calls == []
     assert state.machine_controls == {}
+
+
+def test_monitor_proxy_injects_agent_token_when_configured(monkeypatch):
+    import monitor_web_server
+
+    monkeypatch.setenv("AGENT_API_TOKEN", "proxy-secret")
+
+    headers = monitor_web_server.agent_request_headers("application/json")
+
+    assert headers == {"Content-Type": "application/json", "Authorization": "Bearer proxy-secret"}

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.workorder.validator import WorkOrderValidator
+from app.workorder.policy import auto_workorder_decision
 
 
 class WorkOrderAgentValidator:
@@ -27,6 +28,14 @@ class WorkOrderAgentValidator:
                     WorkOrderValidator.validate_plan(plan)
                 except (TypeError, ValueError) as error:
                     findings.append(str(error))
+                if request.get("auto_dispatch") or request.get("source") == "monitor" or request.get("event_id"):
+                    allowed, reason = auto_workorder_decision(
+                        plan.get("diagnosis") if isinstance(plan.get("diagnosis"), Mapping) else request.get("diagnosis_snapshot") or {},
+                        plan,
+                        request.get("event") if isinstance(request.get("event"), Mapping) else {},
+                    )
+                    if not allowed:
+                        findings.append("自动派单门禁：%s" % reason)
         return findings
 
     @staticmethod

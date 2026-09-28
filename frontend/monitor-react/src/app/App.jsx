@@ -10,7 +10,7 @@ import { buildReportDisplaySections } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
-import { cleanDisplayText, cleanEvidenceText, documentBodyOnly, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
+import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import "../workbench.css";

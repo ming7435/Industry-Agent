@@ -15,7 +15,7 @@ _OTEL_INITIALIZED = False
 
 
 def _otel_tracer() -> Any | None:
-    """Create an OTLP tracer only when explicitly configured and installed."""
+    """仅在明确配置且依赖已安装时创建 OTLP 追踪器。"""
 
     global _OTEL_INITIALIZED, _OTEL_TRACER
     if _OTEL_INITIALIZED:

@@ -68,12 +68,10 @@ class FactoryApiClient:
         return [item for item in result if isinstance(item, dict)]
 
     def control_device(self, device_id: str, action: str, reason: str = "") -> Dict[str, Any]:
-        """Send an explicit start/stop command to one factory device.
+        """向指定工厂设备发送明确的启动或停止命令。
 
-        The factory service is the source of truth for whether the command was
-        accepted.  This method never treats a transport response as a
-        successful control action unless the response is a JSON object with
-        ``ok`` set by the factory endpoint.
+        是否接受命令以工厂服务为准。只有工厂接口返回 JSON 对象，
+        且其中的 ``ok`` 为真，才将此次控制操作视为成功。
         """
 
         payload = json.dumps(

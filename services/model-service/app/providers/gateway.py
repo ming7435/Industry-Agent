@@ -149,9 +149,20 @@ class ModelGateway:
 
     @property
     def name(self) -> str:
-        if self.chat_provider is self.aux_provider:
-            return str(self.chat_provider.name)
-        return "%s+%s" % (self.chat_provider.name, self.aux_provider.name)
+        """返回对话模型提供方名称。
+
+        健康检查中的 ``provider`` 只代表聊天模型，避免把向量和重排
+        提供方误报成 DeepSeek 的回退模型。辅助提供方通过
+        :attr:`aux_name` 单独暴露。
+        """
+
+        return str(self.chat_provider.name)
+
+    @property
+    def aux_name(self) -> str:
+        """返回向量、重排和视觉能力使用的辅助提供方名称。"""
+
+        return str(self.aux_provider.name)
 
     def chat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return dict(self.chat_provider.chat(payload))

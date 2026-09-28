@@ -1,4 +1,6 @@
 from app.runtime.approval import ApprovalManager, PendingTaskStore
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 
 def _pending(store):
@@ -67,3 +69,21 @@ def test_reject_finalizes_blocked_without_resume_callback(tmp_path):
     assert rejected["result"]["runtime_result"]["stop_reason"] == "approval_rejected"
     assert replay["status"] == "rejected"
     assert calls == []
+
+
+def test_parallel_approve_resumes_only_once(tmp_path):
+    store = PendingTaskStore(str(tmp_path / "pending.sqlite3"))
+    calls = []
+
+    def resume(record):
+        calls.append(record["pending_id"])
+        time.sleep(0.05)
+        return {"runtime_result": {"status": "completed"}}
+
+    manager = ApprovalManager(store, resume_callback=resume)
+    pending = _pending(store)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda actor: manager.approve(pending["pending_id"], approved_by=actor), ("operator-1", "operator-2")))
+
+    assert calls == [pending["pending_id"]]
+    assert {item["status"] for item in results} == {"completed", "resuming"}

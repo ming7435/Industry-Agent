@@ -1,9 +1,8 @@
-"""Build truthful lifecycle run records from the detailed execution trace.
+"""根据详细执行轨迹构建如实反映生命周期的运行记录。
 
-The trace is intentionally event-oriented.  This module adds the presentation
-boundary needed by the log workspace without inventing a successful phase:
-missing phases remain ``pending`` and an error in an observed phase remains an
-error.  A quality inspection is always grouped separately from a fault run.
+轨迹以事件为中心。本模块为日志工作区提供展示边界：缺失的阶段仍为
+``pending``，已观察到的阶段若发生错误则保留错误状态。
+质检运行始终与故障运行分别归组。
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ def _timestamp(value: Any) -> datetime:
 
 
 def _first(record: Mapping[str, Any], keys: Iterable[str]) -> Any:
-    """Read stable identity fields from the event envelope and its context."""
+    """从事件封装及其上下文读取稳定的身份字段。"""
 
     containers = [record]
     for key in ("context", "runtime_context", "execution_context", "state_change"):
@@ -92,12 +91,11 @@ def _is_quality(record: Mapping[str, Any]) -> bool:
 
 
 def _is_rag(record: Mapping[str, Any]) -> bool:
-    """Identify a standalone knowledge/RAG interaction.
+    """识别独立的知识/RAG 交互。
 
-    Knowledge retrieval that belongs to a triggered fault still stays inside
-    the fault run; callers decide that precedence while grouping.  This
-    predicate only describes the event envelope, never a free-text report
-    field, so a maintenance result cannot accidentally create a RAG card.
+    属于已触发故障处理的知识检索仍保留在故障运行中；归组时由调用方
+    决定此优先级。该判断只检查事件封装，不检查报告自由文本，
+    因此维修结果不会意外生成 RAG 卡片。
     """
 
     text = _record_text(record)
@@ -174,12 +172,11 @@ def _run_status(phases: list[Mapping[str, Any]]) -> str:
 
 
 def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate trace events into user-visible fault, RAG, and quality runs.
+    """将轨迹事件聚合为用户可见的故障、RAG 和质检运行。
 
-    A raw trace also contains implementation-only tool calls (for example a
-    technician lookup opened from the workorder page).  Those events remain
-    available from the trace endpoint but do not become standalone lifecycle
-    records.  This keeps one card equal to one meaningful user operation.
+    原始轨迹还包含仅供实现使用的工具调用（例如从工单页面发起的技术人员查询）。
+    这些事件仍可通过轨迹接口查看，但不会成为独立的生命周期记录，
+    从而确保每张卡片对应一次有意义的用户操作。
     """
 
     source_records = [dict(item) for item in records if isinstance(item, Mapping)]

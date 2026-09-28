@@ -42,7 +42,7 @@ docker compose -f infra/docker/docker-compose.yml down
 - MinIO API `9000`，控制台 `9001`
 - OTLP HTTP `4318`
 - Nginx Gateway `8080`（启用 `gateway` profile）
-- Agent `8010`、CAD `8011`、RAG `8020`、Monitor `8001`（启用 `apps` profile）
+- Agent `8010`、CAD `8050`、RAG `8020`、Monitor `8001`（启用 `apps` profile）
 
 启动应用服务时，将根目录环境变量指向这些地址，并设置：
 

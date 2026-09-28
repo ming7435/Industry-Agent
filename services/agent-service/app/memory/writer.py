@@ -52,7 +52,7 @@ class ExperienceWriter:
         return True, rag_saved, False
 
     def _upsert_rag(self, experience: Mapping[str, Any]) -> bool:
-        """Upsert one stable experience document and expose failure to callers."""
+        """更新或插入一条标识稳定的经验文档，并向调用方反映写入失败。"""
 
         try:
             rag_result = self.rag.upsert(

@@ -106,7 +106,19 @@ class WorkOrderService:
         return self.tools.execute("submit_repair_feedback", {"workorder_id": workorder_id, "feedback": feedback})
 
     def mark_repair_completed(self, workorder_id: str, feedback: Any = "", repair_verification: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        return self.tools.execute("mark_repair_completed", {"workorder_id": workorder_id, "feedback": feedback, "repair_verification": dict(repair_verification or {})})
+        verification = dict(repair_verification or {})
+        if not verification.get("device_recovery"):
+            try:
+                order = self.get(workorder_id)
+                device_id = str(order.get("device_id") or "")
+                if device_id:
+                    snapshot = self.tools.execute("get_device_status", {"device_id": device_id})
+                    if snapshot.get("success") and snapshot.get("found", True) is not False:
+                        verification["device_recovery"] = snapshot
+            except Exception:
+                # 由下层验证器返回明确的“缺少设备恢复数据”，不把查询异常伪装成通过。
+                pass
+        return self.tools.execute("mark_repair_completed", {"workorder_id": workorder_id, "feedback": feedback, "repair_verification": verification})
 
     def close(self, workorder_id: str, reason: str = "") -> dict[str, Any]:
         return self.tools.execute("close_workorder", {"workorder_id": workorder_id, "reason": reason})

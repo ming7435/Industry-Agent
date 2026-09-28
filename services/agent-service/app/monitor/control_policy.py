@@ -1,4 +1,4 @@
-"""Deterministic safety policy for automatic simulator machine controls."""
+"""模拟设备自动控制的确定性安全策略。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from .models import AlertLevel, MonitorStatus
 
 
 def result_requires_emergency_stop(result: Any) -> bool:
-    """Return whether a monitor result is a confirmed severe machine fault."""
+    """判断监控结果是否确认设备出现严重故障。"""
 
     status = getattr(result, "status", None)
     if status == MonitorStatus.FAULT or str(status).lower().rstrip(".") in {"fault", "monitorstatus.fault"}:

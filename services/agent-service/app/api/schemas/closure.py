@@ -10,3 +10,15 @@ class ClosureTaskRequest(BaseModel):
     owner: str = ""
     actions: list[str] = Field(default_factory=list)
     due_at: str = ""
+
+
+class QualityReinspectionRequest(BaseModel):
+    passed: bool
+    findings: list[str] = Field(default_factory=list)
+    evidence: list[dict] = Field(default_factory=list)
+    operator: str = ""
+
+
+class QualityCloseRequest(BaseModel):
+    operator: str = ""
+    note: str = ""

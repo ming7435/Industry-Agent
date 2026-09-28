@@ -46,6 +46,20 @@ def test_execution_manager_deduplicates_side_effect_by_idempotency_key():
     assert calls == ["create"]
 
 
+def test_execution_manager_rejects_same_key_for_different_actions():
+    from app.runtime.action import ActionModel
+    from app.runtime.execution import ExecutionManager, IdempotencyConflict
+
+    manager = ExecutionManager()
+    manager.reserve(ActionModel.agent("workorder.create", {"device_id": "D-1"}, side_effect=True, idempotency_key="event:EVT-1"))
+
+    try:
+        manager.reserve(ActionModel.agent("workorder.update", {"device_id": "D-1"}, side_effect=True, idempotency_key="event:EVT-1"))
+    except IdempotencyConflict:
+        return
+    raise AssertionError("different actions must not reuse one idempotency key")
+
+
 def test_execution_manager_retries_failed_action_with_bounded_attempts():
     from app.runtime.action import ActionModel
     from app.runtime.execution import ExecutionManager, ExecutionStatus

@@ -1,4 +1,4 @@
-"""Safety decisions shared by all bounded runtime loops."""
+"""所有有界 Runtime 循环共用的安全判定。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ class GuardDecision:
 
 
 class LoopGuard:
-    """Evaluate finite-loop stop conditions without executing an action."""
+    """在不执行动作的情况下评估有限循环的停止条件。"""
 
     def __init__(self, policy: Any | None = None) -> None:
         if policy is None:

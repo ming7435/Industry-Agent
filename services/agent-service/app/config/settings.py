@@ -32,7 +32,7 @@ def _csv_env(name: str, default: str) -> list[str]:
 
 
 def allow_degraded_storage() -> bool:
-    """Return whether local/in-memory fallbacks are allowed for this process."""
+    """判断当前进程是否允许本地或进程内存储回退。"""
 
     explicit = os.getenv("ALLOW_DEGRADED_STORAGE")
     if explicit is not None:
@@ -53,6 +53,7 @@ class Settings:
     cad_service_base_url: str = field(default_factory=lambda: (os.getenv("MCP_CAD_URL") or os.getenv("CAD_SERVICE_BASE_URL") or "").rstrip("/"))
     model_service_base_url: str = field(default_factory=lambda: os.getenv("MODEL_SERVICE_BASE_URL", "").rstrip("/"))
     backend_service_base_url: str = field(default_factory=lambda: os.getenv("BACKEND_SERVICE_BASE_URL", "").rstrip("/"))
+    agent_api_token: str = field(default_factory=lambda: os.getenv("AGENT_API_TOKEN", "").strip())
     factory_api_base_url: str = field(default_factory=lambda: os.getenv("FACTORY_API_BASE_URL", "http://127.0.0.1:4529").rstrip("/"))
     agent_service_base_url: str = field(default_factory=lambda: os.getenv("AGENT_SERVICE_BASE_URL", "http://127.0.0.1:8010").rstrip("/"))
     # 一次运行时动作可能包含多轮真实模型/工具往返。旧的 45 秒默认值会在底层 Agent 仍运行时过期，

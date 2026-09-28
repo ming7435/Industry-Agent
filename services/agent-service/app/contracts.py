@@ -135,6 +135,8 @@ class DiagnosisView(BaseModel):
     confidence: Optional[float] = Field(default=None, ge=0, le=1)
     evidence: List[str] = Field(default_factory=list)
     recommendation: str = ""
+    maintenance_required: bool | None = None
+    maintenance_reason: str = ""
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -171,6 +173,8 @@ class MaintenancePlan(BaseModel):
     memory_evidence: List[Dict[str, Any]] = Field(default_factory=list)
     validation_findings: List[str] = Field(default_factory=list)
     risk_level: str = "medium"
+    maintenance_required: bool = False
+    maintenance_reason: str = ""
     workorder_ready: bool = False
     workorder_draft: Dict[str, Any] = Field(default_factory=dict)
 

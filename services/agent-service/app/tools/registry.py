@@ -101,7 +101,7 @@ _TOOL_EXECUTION_CONTEXT: ContextVar[dict[str, Any]] = ContextVar(
 
 @dataclass(frozen=True)
 class ToolExecutionContext:
-    """Optional context shared by Runtime, Agent, and Tool Guard."""
+    """供 Runtime、Agent 和 Tool Guard 共用的可选上下文。"""
 
     agent: str = ""
     skills: tuple[str, ...] = ()
@@ -216,7 +216,7 @@ class ToolRegistry:
         context: Mapping[str, Any] | ToolExecutionContext | None = None,
         **metadata: Any,
     ) -> Iterator[None]:
-        """Bind the current task and trace to direct tool invocations."""
+        """将当前任务和轨迹信息绑定到直接调用的工具。"""
 
         token = _TOOL_TRACE_CONTEXT.set((str(task_id or ""), str(trace_id or "")))
         base_context = context.as_dict() if isinstance(context, ToolExecutionContext) else dict(context or {})
@@ -373,7 +373,7 @@ class ToolRegistry:
         return persist_report_tool(self.report_store, **arguments)
 
     def list_reports(self, workorder_id: str = "", **_: Any) -> Dict[str, Any]:
-        """List persisted reports for the Report workspace."""
+        """列出报告工作区中已持久化的报告。"""
 
         if self.backend_base_url:
             return self.mcp.call("mes", "list_reports", {"workorder_id": workorder_id})
@@ -506,7 +506,10 @@ class ToolRegistry:
             "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory",
             "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
             "fetch_document": "knowledge", "fetch_chunk": "knowledge", "document_parser": "knowledge", "ingest_knowledge": "knowledge",
-            "generate_report": "mes", "generate_repair_plan": "mes",
+            "generate_report": "mes",
+            # 维修方案由 Maintenance Agent 根据诊断、知识和 CAD 证据本地生成，
+            # 不是 MES 持久化操作，不能转发到 Backend 的 /tools/call。
+            "generate_repair_plan": "local",
         # 报告来源读取器只转换 Runtime 状态中已有的记录，不查询 Backend
         # 持久化；即使配置了 Backend HTTP 边界，也继续在本地执行。
             "get_diagnosis_record": "local", "get_maintenance_record": "local", "get_quality_record": "local",
@@ -630,7 +633,7 @@ class ToolRegistry:
         context: Mapping[str, Any],
         allowed: set[str],
     ) -> str:
-        """Return one deterministic Guard finding before a handler is called."""
+        """调用处理程序前返回一条确定的工具调用校验结果。"""
 
         if name not in self.mcp.handlers:
             return "tool_not_registered"
@@ -665,7 +668,7 @@ class ToolRegistry:
         *,
         context: Mapping[str, Any] | ToolExecutionContext | None = None,
     ) -> dict[str, Any]:
-        """Check a dynamic call without executing it (Diagnosis compatibility)."""
+        """检查动态工具调用但不执行，用于兼容诊断流程。"""
 
         supplied = context.as_dict() if isinstance(context, ToolExecutionContext) else dict(context or {})
         execution_context = {**_TOOL_EXECUTION_CONTEXT.get(), **supplied}
@@ -719,7 +722,7 @@ class ToolRegistry:
         return os.getenv("APP_ENV", "development").strip().lower() not in {"prod", "production"}
 
     def tool_schemas(self) -> list[Dict[str, Any]]:
-        return [{"type": "function", "function": {"name": name, "description": description, "parameters": {"type": "object", "additionalProperties": True}}} for name, description in {
+        descriptions = {
             "get_alarm_definition": "查询报警定义",
             "get_device_status": "查询设备状态",
             "get_active_alarms": "查询设备当前活动报警",
@@ -785,4 +788,39 @@ class ToolRegistry:
             "delete_report": "删除结构化报告",
             "generate_report_file": "导出报告文件",
             "ingest_knowledge": "将维修手册 JSONL 入库到 RAG",
-        }.items()]
+        }
+        # 对诊断工具声明真实参数，避免模型把事件上下文误当成工具参数。
+        parameter_overrides = {
+            "get_alarm_definition": {
+                "type": "object",
+                "properties": {"alarm_code": {"type": "string", "description": "报警代码"}},
+                "required": ["alarm_code"],
+                "additionalProperties": False,
+            },
+            "get_device_history": {
+                "type": "object",
+                "properties": {
+                    "device_id": {"type": "string", "description": "设备编号"},
+                    "metric_keys": {"type": "array", "items": {"type": "string"}, "description": "指标键列表"},
+                    "metric": {"type": "string", "description": "单个指标键"},
+                    "limit": {"type": "integer", "minimum": 3, "maximum": 120},
+                    "alarm_code": {"type": "string", "description": "关联报警代码"},
+                },
+                "required": ["device_id"],
+                "additionalProperties": False,
+            },
+        }
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": parameter_overrides.get(
+                        name,
+                        {"type": "object", "additionalProperties": True},
+                    ),
+                },
+            }
+            for name, description in descriptions.items()
+        ]

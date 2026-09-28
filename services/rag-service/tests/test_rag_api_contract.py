@@ -139,6 +139,7 @@ def test_rag_documents_ingest_persists_jsonl_records(tmp_path, monkeypatch):
 
     store = documents.DocumentStore(str(tmp_path / "rag.sqlite3"))
     monkeypatch.setattr(routes, "get_document_store", lambda: store)
+    monkeypatch.setattr(routes.settings, "rag_allowed_ingest_root", str(tmp_path))
     source = tmp_path / "cases.jsonl"
     source.write_text(json.dumps({"id": "INGEST-1", "content": "repair case", "metadata": {"corpus": "cases"}}, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -147,6 +148,60 @@ def test_rag_documents_ingest_persists_jsonl_records(tmp_path, monkeypatch):
     assert response.json()["success"] is True
     assert response.json()["loaded"] == 1
     assert TestClient(app).get("/documents/INGEST-1").status_code == 200
+
+
+def test_rag_ingest_rejects_files_outside_configured_root(tmp_path, monkeypatch):
+    from app.api import routes
+    from app.main import app
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text('{"id":"OUTSIDE-1","content":"secret"}\n', encoding="utf-8")
+    monkeypatch.setattr(routes.settings, "rag_allowed_ingest_root", str(allowed))
+
+    response = TestClient(app).post("/documents/ingest", json={"path": str(outside), "collection": "cases"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "ingest path is outside the allowed root"
+
+
+def test_rag_ingest_rejects_non_jsonl_files(tmp_path, monkeypatch):
+    from app.api import routes
+    from app.main import app
+
+    monkeypatch.setattr(routes.settings, "rag_allowed_ingest_root", str(tmp_path))
+    source = tmp_path / "cases.txt"
+    source.write_text("not jsonl", encoding="utf-8")
+
+    response = TestClient(app).post("/documents/ingest", json={"path": str(source), "collection": "cases"})
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "only .jsonl ingest files are supported"
+
+
+def test_rag_ingest_rejects_traversal_directory_and_oversized_file(tmp_path, monkeypatch):
+    from app.api import routes
+    from app.main import app
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    (allowed / "nested").mkdir()
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text('{"id":"OUTSIDE-2","content":"secret"}\n', encoding="utf-8")
+    monkeypatch.setattr(routes.settings, "rag_allowed_ingest_root", str(allowed))
+    client = TestClient(app)
+
+    traversal = client.post("/documents/ingest", json={"path": str(allowed / ".." / "outside.jsonl"), "collection": "cases"})
+    directory = client.post("/documents/ingest", json={"path": str(allowed / "nested"), "collection": "cases"})
+    source = allowed / "large.jsonl"
+    source.write_text('{"id":"LARGE","content":"0123456789"}\n', encoding="utf-8")
+    monkeypatch.setattr(routes.settings, "rag_ingest_max_bytes", 1)
+    oversized = client.post("/documents/ingest", json={"path": str(source), "collection": "cases"})
+
+    assert traversal.status_code == 403
+    assert directory.status_code == 404
+    assert oversized.status_code == 413
 
 
 def test_experience_upsert_writes_bm25_and_dense_indexes(tmp_path):

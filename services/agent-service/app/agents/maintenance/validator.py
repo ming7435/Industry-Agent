@@ -4,11 +4,22 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from app.workorder.policy import maintenance_decision
+
 
 class MaintenancePlanValidator:
     """检查维修计划是否可以交给工单业务节点。"""
 
     STRUCTURAL_ACTIONS = ("拆", "更换", "安装", "轴承", "传感器", "泵", "主轴")
+
+    @staticmethod
+    def maintenance_required(plan: Mapping[str, Any]) -> bool:
+        required, _ = maintenance_decision(
+            diagnosis=plan.get("diagnosis") if isinstance(plan.get("diagnosis"), Mapping) else {},
+            event=plan.get("event") if isinstance(plan.get("event"), Mapping) else {},
+            plan=plan,
+        )
+        return required
 
     @classmethod
     def validate(cls, plan: Mapping[str, Any], knowledge: Mapping[str, Any], cad: Mapping[str, Any], inventory: Mapping[str, Any] | None = None) -> list[str]:
@@ -48,7 +59,12 @@ class MaintenancePlanValidator:
 
     @staticmethod
     def workorder_ready(findings: list[str], plan: Mapping[str, Any]) -> bool:
-        return not findings and bool(plan.get("repair_steps")) and bool(plan.get("repair_target"))
+        return (
+            not findings
+            and bool(plan.get("repair_steps"))
+            and bool(plan.get("repair_target"))
+            and MaintenancePlanValidator.maintenance_required(plan)
+        )
 
     @classmethod
     def validate_result(cls, plan: Mapping[str, Any], knowledge: Mapping[str, Any], cad: Mapping[str, Any], inventory: Mapping[str, Any] | None = None) -> dict[str, Any]:

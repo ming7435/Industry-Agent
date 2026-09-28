@@ -1,4 +1,4 @@
-"""Small event-result idempotency boundary for Agent Service event requests."""
+"""Agent Service 事件请求的小型结果幂等边界。"""
 
 from __future__ import annotations
 
@@ -12,11 +12,10 @@ from app.config.settings import allow_degraded_storage
 
 
 class EventResultStore:
-    """Cache the first result for each non-empty event id.
+    """缓存每个非空事件 ID 对应的首次处理结果。
 
-    The storage is intentionally in-process for this P0 change.  The interface
-    is isolated so it can later be backed by a durable repository without
-    changing the HTTP handler or orchestrator contract.
+    存储接口独立于 HTTP 处理器和编排器契约，可按配置使用进程内缓存
+    或持久化存储。
     """
 
     def __init__(self, max_items: int = 1000, path: str | None = None) -> None:

@@ -15,7 +15,7 @@ from .guard import LoopGuard
 
 @dataclass(frozen=True)
 class LoopPolicy:
-    """Hard limits shared by Tool, Agent, Evidence and Learning loops."""
+    """工具、Agent、证据和学习循环共用的硬性限制。"""
 
     max_iterations: int = 4
     min_evidence_score: float = 0.8
@@ -55,11 +55,11 @@ class LoopResult:
 
 
 class LoopEngine:
-    """Run a finite sequence of state transitions with common safety guards.
+    """通过共用安全守卫执行有限次状态转换。
 
-    A step receives the current state and :class:`LoopContext`, then returns a
-    mapping containing ``state``, ``action``, ``evidence_score`` and ``done``.
-    The engine never invents a next action and never runs beyond its policy.
+    每个步骤接收当前状态和 :class:`LoopContext`，返回包含 ``state``、
+    ``action``、``evidence_score`` 和 ``done`` 的映射。
+    引擎不会自行生成下一步动作，也不会超出策略规定的执行范围。
     """
 
     def __init__(self, policy: LoopPolicy | None = None) -> None:
@@ -321,7 +321,7 @@ class LoopEngine:
         trace: Callable[[str, Dict[str, Any]], None] | None = None,
         trace_context: Mapping[str, Any] | None = None,
     ) -> LoopResult:
-        """Run the Runtime-native Observe → Evaluate → Action → Execute cycle."""
+        """执行 Runtime 原生的 Observe → Evaluate → Action → Execute 循环。"""
 
         state = dict(initial_state or {})
         evaluator = evaluator or RuntimeEvaluator(min_evidence_score=self.policy.min_evidence_score)

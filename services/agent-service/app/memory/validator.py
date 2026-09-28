@@ -36,7 +36,7 @@ class ExperienceValidator:
         repair_feedback: Any,
         existing: list[Mapping[str, Any]] | None = None,
     ) -> ExperienceValidationResult:
-        """Score an extracted experience before it can enter long memory/RAG."""
+        """在提取出的经验进入长期记忆或 RAG 前进行评分。"""
 
         findings: list[str] = []
         score = 0.0

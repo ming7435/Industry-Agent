@@ -20,8 +20,9 @@ def test_workorder_verification_close_and_idempotency(tmp_path, monkeypatch):
     workorder_id = first["workorder_id"]
     denied = client.post("/tools/call", json={"tool": "close_workorder", "arguments": {"workorder_id": workorder_id}})
     assert denied.status_code == 409
-    complete = client.post("/tools/call", json={"tool": "mark_repair_completed", "arguments": {"workorder_id": workorder_id, "feedback": {"feedback": "已更换"}, "repair_verification": {"passed": True}}})
+    complete = client.post("/tools/call", json={"tool": "mark_repair_completed", "arguments": {"workorder_id": workorder_id, "feedback": {"feedback": "已更换"}, "repair_verification": {"device_recovery": {"device_id": "CNC-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"}}}})
     assert complete.status_code == 200
+    assert complete.json()["workorder"]["repair_verification"]["source"] == "device_recovery"
     closed = client.post("/tools/call", json={"tool": "close_workorder", "arguments": {"workorder_id": workorder_id}})
     assert closed.status_code == 200
     assert closed.json()["workorder"]["status"] == "closed"
@@ -124,3 +125,26 @@ def test_backend_supports_explicit_deletion_for_workorders_and_reports(tmp_path,
     assert report_deleted.status_code == 200
     assert report_deleted.json()["deleted"] is True
     assert client.get(f"/api/reports/{report_id}").status_code == 404
+
+
+def test_backend_quality_failure_requires_rectification_reinspection_release_and_close(tmp_path, monkeypatch):
+    monkeypatch.setenv("BACKEND_STORAGE", "sqlite")
+    monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "quality-loop.sqlite3"))
+    import app.main as main
+    main._service = None
+    client = TestClient(app)
+
+    created = client.post("/tools/call", json={"tool": "create_quality_check", "arguments": {"part_id": "PART-FAIL", "result": "failed", "findings": ["尺寸超差"]}})
+    assert created.status_code == 200
+    check_id = created.json()["quality_check_id"]
+    assert created.json()["quality_check"]["status"] == "failed"
+    task = client.post("/tools/call", json={"tool": "create_closure_task", "arguments": {"quality_check_id": check_id, "title": "整改"}})
+    assert task.status_code == 200
+    assert client.post("/tools/call", json={"tool": "complete_closure_task", "arguments": {"task_id": task.json()["closure_task_id"], "note": "已调整"}}).status_code == 200
+    reinspect = client.post("/tools/call", json={"tool": "reinspect_quality_check", "arguments": {"check_id": check_id, "passed": True, "evidence": ["复检记录"]}})
+    assert reinspect.status_code == 200
+    assert reinspect.json()["quality_check"]["status"] == "reinspection"
+    assert client.post("/tools/call", json={"tool": "release_quality_check", "arguments": {"check_id": check_id}}).json()["quality_check"]["status"] == "released"
+    closed = client.post("/tools/call", json={"tool": "close_quality_check", "arguments": {"check_id": check_id, "note": "闭环完成"}})
+    assert closed.status_code == 200
+    assert closed.json()["quality_check"]["status"] == "closed"

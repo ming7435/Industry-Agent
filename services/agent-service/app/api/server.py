@@ -11,12 +11,15 @@ try:
 except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时触发
     _load_dotenv = None
 
-from fastapi import FastAPI, HTTPException
+import hmac
+import os
+
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.schemas.agent import ApprovalRequest, AbnormalEventRequest, RejectionRequest, UserQuestionRequest
-from app.api.schemas.closure import ClosureTaskRequest
+from app.api.schemas.closure import ClosureTaskRequest, QualityCloseRequest, QualityReinspectionRequest
 from app.api.schemas.memory import ExperienceSearchRequest
 from app.api.schemas.quality import PartQualityRequest, QualityAppealRequest, QualityCheckRequest
 from app.api.schemas.rag import RAGIngestRequest
@@ -25,6 +28,7 @@ from app.graph import AgentOrchestrator, build_orchestrator
 from app.harness.runs import build_run_records
 from app.runtime.event_store import EventResultStore
 from app.tools.report.generate_report_file import get_report_file_path
+from app.clients.backend import BackendServiceError
 
 
 def _load_project_env() -> None:
@@ -43,6 +47,20 @@ def _load_project_env() -> None:
 _load_project_env()
 
 
+def require_write_auth(request: Request) -> str:
+    """验证写操作令牌；未配置令牌时保持本地开发兼容。"""
+
+    expected = os.getenv("AGENT_API_TOKEN", "").strip()
+    if not expected:
+        return "local-development"
+    authorization = request.headers.get("Authorization", "")
+    bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    supplied = request.headers.get("X-API-Key", "").strip() or bearer
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="写操作需要有效的 API 令牌")
+    return "api-token"
+
+
 def serialize_api_response(value: Any) -> Dict[str, Any]:
     """将内部模型统一转换为 FastAPI 可返回的字典。"""
 
@@ -54,7 +72,7 @@ def serialize_api_response(value: Any) -> Dict[str, Any]:
 
 
 def compact_question_response(value: Any) -> Dict[str, Any]:
-    """Keep the workbench Q&A response bounded while preserving evidence."""
+    """保留证据，同时限制工作台问答响应的大小。"""
 
     payload = dict(value or {})
     result = {
@@ -129,7 +147,7 @@ _TRACE_SUMMARY_FIELDS = (
 
 
 def compact_trace_summary(records: Any) -> list[Dict[str, Any]]:
-    """Return a cheap trace index; full payloads remain available by trace_id."""
+    """返回精简的轨迹索引；完整数据仍可通过 trace_id 查询。"""
 
     if not isinstance(records, list):
         return []
@@ -152,24 +170,37 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     runtime = orchestrator or build_orchestrator()
     event_results = EventResultStore()
 
+    def closure_call(callable_: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """把质检闭环的业务拒绝转换成可读的 HTTP 状态。"""
+
+        try:
+            return callable_(*args, **kwargs)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (ValueError, BackendServiceError) as error:
+            status_code = getattr(error, "status_code", None) or 409
+            if status_code < 400 or status_code >= 600:
+                status_code = 409
+            raise HTTPException(status_code=status_code, detail=str(error)) from error
+
     @app.get("/health")
     def health() -> Dict[str, Any]:
-        """Operational readiness probe for the Runtime container."""
+        """检查 Runtime 容器是否已就绪。"""
 
         return {"status": "ok", "service": "agent-service", "runtime": "ready"}
 
-    @app.post("/api/agent/question", deprecated=True)
-    @app.post("/api/v1/agent/question")
+    @app.post("/api/agent/question", deprecated=True, dependencies=[Depends(require_write_auth)])
+    @app.post("/api/v1/agent/question", dependencies=[Depends(require_write_auth)])
     def question(request: UserQuestionRequest) -> Dict[str, Any]:
         return runtime.run_user(request.user_text, request.context)
 
-    @app.post("/api/agent/question/summary", deprecated=True)
-    @app.post("/api/v1/agent/question/summary")
+    @app.post("/api/agent/question/summary", deprecated=True, dependencies=[Depends(require_write_auth)])
+    @app.post("/api/v1/agent/question/summary", dependencies=[Depends(require_write_auth)])
     def question_summary(request: UserQuestionRequest) -> Dict[str, Any]:
         return compact_question_response(runtime.run_user(request.user_text, request.context))
 
-    @app.post("/api/agent/event", deprecated=True)
-    @app.post("/api/v1/agent/event")
+    @app.post("/api/agent/event", deprecated=True, dependencies=[Depends(require_write_auth)])
+    @app.post("/api/v1/agent/event", dependencies=[Depends(require_write_auth)])
     def abnormal_event(request: AbnormalEventRequest) -> Dict[str, Any]:
         event = dict(request.event or {})
         event_id = str(event.get("event_id") or "")
@@ -185,8 +216,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def rag_search(query: str, limit: int = 5) -> Dict[str, Any]:
         return runtime.container.registry.search_knowledge(query, limit=limit)
 
-    @app.post("/api/rag/ingest", deprecated=True)
-    @app.post("/api/v1/rag/ingest")
+    @app.post("/api/rag/ingest", deprecated=True, dependencies=[Depends(require_write_auth)])
+    @app.post("/api/v1/rag/ingest", dependencies=[Depends(require_write_auth)])
     def rag_ingest(request: RAGIngestRequest) -> Dict[str, Any]:
         return runtime.container.registry.ingest_knowledge(request.path, request.collection)
 
@@ -199,7 +230,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/runs", deprecated=True)
     @app.get("/api/v1/runs")
     def runs(limit: int = 5000) -> Dict[str, Any]:
-        """Return one record per fault, standalone RAG answer, or quality run."""
+        """每次故障、独立 RAG 问答或质检运行返回一条记录。"""
 
         records = runtime.container.trace.list(limit=max(1, min(limit, 5000)))
         items = build_run_records(records)
@@ -223,23 +254,25 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="pending task not found")
         return record
 
-    @app.post("/api/v1/runtime/approvals/{pending_id}/approve")
-    def approve_runtime_task(pending_id: str, request: ApprovalRequest) -> Dict[str, Any]:
+    @app.post("/api/v1/runtime/approvals/{pending_id}/approve", dependencies=[Depends(require_write_auth)])
+    def approve_runtime_task(pending_id: str, request: ApprovalRequest, actor: str = Depends(require_write_auth)) -> Dict[str, Any]:
         manager = getattr(runtime.container, "approvals", None)
         if manager is None:
             raise HTTPException(status_code=503, detail="approval manager unavailable")
         try:
-            return manager.approve(pending_id, approved_by=request.approved_by, note=request.note)
+            approved_by = actor if actor != "local-development" else request.approved_by
+            return manager.approve(pending_id, approved_by=approved_by, note=request.note)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
-    @app.post("/api/v1/runtime/approvals/{pending_id}/reject")
-    def reject_runtime_task(pending_id: str, request: RejectionRequest) -> Dict[str, Any]:
+    @app.post("/api/v1/runtime/approvals/{pending_id}/reject", dependencies=[Depends(require_write_auth)])
+    def reject_runtime_task(pending_id: str, request: RejectionRequest, actor: str = Depends(require_write_auth)) -> Dict[str, Any]:
         manager = getattr(runtime.container, "approvals", None)
         if manager is None:
             raise HTTPException(status_code=503, detail="approval manager unavailable")
         try:
-            return manager.reject(pending_id, rejected_by=request.rejected_by, reason=request.reason)
+            rejected_by = actor if actor != "local-development" else request.rejected_by
+            return manager.reject(pending_id, rejected_by=rejected_by, reason=request.reason)
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -276,7 +309,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         result = runtime.container.operations.execute_workorder("query", {}, from_agent="router")
         return {"items": result.get("items", []), "count": len(result.get("items", [])), "backend": "workorder-agent"}
 
-    @app.post("/api/workorders")
+    @app.post("/api/workorders", dependencies=[Depends(require_write_auth)])
     def workorder_create(request: WorkOrderCreateRequest) -> Dict[str, Any]:
         return runtime.container.operations.execute_workorder("create", request.model_dump(mode="json"), from_agent="router")
 
@@ -284,7 +317,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def workorder(workorder_id: str) -> Dict[str, Any]:
         return runtime.container.operations.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router")
 
-    @app.delete("/api/workorders/{workorder_id}")
+    @app.delete("/api/workorders/{workorder_id}", dependencies=[Depends(require_write_auth)])
     def delete_workorder(workorder_id: str) -> Dict[str, Any]:
         result = runtime.container.registry.execute("delete_workorder", {"workorder_id": workorder_id}, context={"agent": "router", "step": "delete_workorder"})
         if not result.get("deleted"):
@@ -293,7 +326,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/reports")
     def reports(workorder_id: str = "") -> Dict[str, Any]:
-        """Expose persisted reports to the Report workspace through Runtime."""
+        """通过 Runtime 向报告工作台提供已持久化的报告。"""
 
         return runtime.container.registry.list_reports(workorder_id=workorder_id)
 
@@ -324,7 +357,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         storage_id, report_value = _load_report(report_id)
         return {"success": True, "found": True, "report_id": storage_id, "report": report_value}
 
-    @app.post("/api/reports/{report_id}/pdf")
+    @app.post("/api/reports/{report_id}/pdf", dependencies=[Depends(require_write_auth)])
     def generate_report_pdf(report_id: str) -> Dict[str, Any]:
         """根据已持久化报告生成真实 PDF 文件。"""
 
@@ -355,7 +388,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/cad/resolve")
     def resolve_cad(component: str = "", part_no: str = "", device_id: str = "") -> Dict[str, Any]:
-        """Return the authoritative CAD metadata used by the repair viewer."""
+        """返回维修图纸查看器使用的权威 CAD 元数据。"""
 
         query = part_no or component
         if not query:
@@ -371,7 +404,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="CAD 未找到部件：%s" % query)
         return {"success": True, "source": part.get("source") or "document-cad-service", "part": parts[0], "parts": parts, "relations": relation.get("relations") or relation.get("assembly_relations") or [], "locations": relation.get("locations") or [], "drawings": drawing.get("drawings") or []}
 
-    @app.delete("/api/reports/{report_id}")
+    @app.delete("/api/reports/{report_id}", dependencies=[Depends(require_write_auth)])
     def delete_report(report_id: str) -> Dict[str, Any]:
         storage_id, _ = _load_report(report_id)
         result = runtime.container.registry.delete_report(report_id=storage_id)
@@ -383,19 +416,19 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
                 pdf_path.unlink()
         return result
 
-    @app.post("/api/workorders/{workorder_id}/action")
+    @app.post("/api/workorders/{workorder_id}/action", dependencies=[Depends(require_write_auth)])
     def workorder_action(workorder_id: str, request: WorkOrderActionRequest) -> Dict[str, Any]:
         payload = request.model_dump(mode="json")
         payload["workorder_id"] = workorder_id
         payload["repair_feedback"] = payload.get("repair_feedback") or payload.get("feedback") or ""
         return runtime.container.operations.execute_workorder(request.action, payload, from_agent="router")
 
-    @app.post("/api/v1/workorders/{workorder_id}/feedback")
+    @app.post("/api/v1/workorders/{workorder_id}/feedback", dependencies=[Depends(require_write_auth)])
     def submit_feedback_v1(workorder_id: str, request: RepairFeedbackRequest) -> Dict[str, Any]:
         feedback = request.model_dump(mode="json")
         return runtime.container.operations.execute_workorder("submit_feedback", {"workorder_id": workorder_id, "repair_feedback": feedback}, from_agent="router")
 
-    @app.post("/api/v1/workorders/{workorder_id}/complete")
+    @app.post("/api/v1/workorders/{workorder_id}/complete", dependencies=[Depends(require_write_auth)])
     def complete_workorder_v1(workorder_id: str, request: RepairFeedbackRequest) -> Dict[str, Any]:
         feedback = request.model_dump(mode="json")
         return runtime.container.operations.execute_workorder(
@@ -408,7 +441,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             from_agent="router",
         )
 
-    @app.post("/api/v1/quality/checks")
+    @app.post("/api/v1/quality/checks", dependencies=[Depends(require_write_auth)])
     def create_quality_check(request: QualityCheckRequest) -> Dict[str, Any]:
         return runtime.container.closure_service.create_quality_check(request.model_dump(mode="json"))
 
@@ -422,36 +455,48 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         backend = runtime.container.closure_service.backend
         return {"backend": backend, "persistent": backend == "mysql"}
 
-    @app.post("/api/v1/quality/checks/{check_id}/appeal")
+    @app.post("/api/v1/quality/checks/{check_id}/appeal", dependencies=[Depends(require_write_auth)])
     def appeal_quality_check(check_id: str, request: QualityAppealRequest) -> Dict[str, Any]:
         return runtime.container.closure_service.submit_appeal(check_id, request.model_dump(mode="json"))
 
-    @app.post("/api/v1/closure-tasks")
+    @app.post("/api/v1/closure-tasks", dependencies=[Depends(require_write_auth)])
     def create_closure_task(request: ClosureTaskRequest) -> Dict[str, Any]:
-        return runtime.container.closure_service.create_closure_task(request.model_dump(mode="json"))
+        return closure_call(runtime.container.closure_service.create_closure_task, request.model_dump(mode="json"))
 
     @app.get("/api/v1/closure-tasks")
     def list_closure_tasks(status: str = "") -> Dict[str, Any]:
         items = runtime.container.closure_service.list_closure_tasks(status=status)
         return {"items": items, "count": len(items), "backend": runtime.container.closure_service.backend}
 
-    @app.post("/api/v1/closure-tasks/{task_id}/complete")
+    @app.post("/api/v1/closure-tasks/{task_id}/complete", dependencies=[Depends(require_write_auth)])
     def complete_closure_task(task_id: str, note: str = "") -> Dict[str, Any]:
-        return runtime.container.closure_service.complete_closure_task(task_id, note=note)
+        return closure_call(runtime.container.closure_service.complete_closure_task, task_id, note=note)
+
+    @app.post("/api/v1/quality/checks/{check_id}/reinspect", dependencies=[Depends(require_write_auth)])
+    def reinspect_quality_check(check_id: str, request: QualityReinspectionRequest) -> Dict[str, Any]:
+        return closure_call(runtime.container.closure_service.record_reinspection, check_id, request.model_dump(mode="json"), operator=request.operator)
+
+    @app.post("/api/v1/quality/checks/{check_id}/release", dependencies=[Depends(require_write_auth)])
+    def release_quality_check(check_id: str, operator: str = "") -> Dict[str, Any]:
+        return closure_call(runtime.container.closure_service.release_quality_check, check_id, operator=operator)
+
+    @app.post("/api/v1/quality/checks/{check_id}/close", dependencies=[Depends(require_write_auth)])
+    def close_quality_check(check_id: str, request: QualityCloseRequest) -> Dict[str, Any]:
+        return closure_call(runtime.container.closure_service.close_quality_check, check_id, operator=request.operator, note=request.note)
 
     @app.get("/api/v1/audit-logs")
     def audit_logs(object_id: str = "", action: str = "") -> Dict[str, Any]:
         items = runtime.container.closure_service.audit_logs(object_id=object_id, action=action)
         return {"items": items, "count": len(items), "backend": runtime.container.closure_service.backend}
 
-    @app.post("/api/quality/parts/{part_id}")
+    @app.post("/api/quality/parts/{part_id}", dependencies=[Depends(require_write_auth)])
     def part_quality(part_id: str, request: PartQualityRequest) -> Dict[str, Any]:
         """通过 Orchestrator 的 A2A 入口检测生产零件质量。"""
 
         quality_result = runtime.container.operations.inspect_part(part_id, request.model_dump(mode="json"))
         return serialize_api_response(quality_result)
 
-    @app.post("/api/experience/search")
+    @app.post("/api/experience/search", dependencies=[Depends(require_write_auth)])
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:
         return runtime.container.operations.execute_memory("search", request.model_dump(mode="json"), from_agent="router")
 

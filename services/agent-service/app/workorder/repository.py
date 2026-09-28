@@ -1,4 +1,4 @@
-"""WorkOrder repository boundary with memory and SQLite implementations."""
+"""工单仓储边界，提供内存和 SQLite 实现。"""
 
 from __future__ import annotations
 
@@ -106,7 +106,7 @@ class SQLiteWorkOrderRepository:
 
 
 class MySQLWorkOrderRepository:
-    """Shared-database repository with a unique idempotency key."""
+    """使用唯一幂等键的共享数据库仓储。"""
 
     def __init__(self) -> None:
         try:

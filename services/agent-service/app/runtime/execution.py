@@ -1,4 +1,4 @@
-"""Bounded Action execution with explicit cancellation and reconciliation state."""
+"""执行有界 Action，并明确记录取消及对账状态。"""
 
 from __future__ import annotations
 
@@ -22,6 +22,10 @@ class ExecutionStatus(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class IdempotencyConflict(ValueError):
+    """同一幂等键绑定了不同的副作用动作。"""
+
+
 @dataclass
 class ExecutionRecord:
     execution_id: str
@@ -40,9 +44,15 @@ class ExecutionRecord:
     side_effect_status: str = "not_applied"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def action_fingerprint(self) -> str:
+        """返回创建该执行记录时动作的稳定指纹。"""
+
+        return str(self.metadata.get("action_fingerprint") or self.action.fingerprint)
+
 
 class ExecutionManager:
-    """Execute Actions without pretending a timed-out thread was killed."""
+    """执行 Action，不将超时线程误认为已终止。"""
 
     def __init__(self, timeout_seconds: float = 30.0, max_retries: int = 0, trace: Callable[[str, Dict[str, Any]], Any] | None = None) -> None:
         self.timeout_seconds = float(timeout_seconds)
@@ -65,11 +75,17 @@ class ExecutionManager:
         if action.side_effect and not action.idempotency_key:
             raise ValueError("side-effect actions require idempotency_key")
         if action.idempotency_key and action.idempotency_key in self._idempotency:
-            return self._records[self._idempotency[action.idempotency_key]]
+            record = self._records[self._idempotency[action.idempotency_key]]
+            if record.action_fingerprint != action.fingerprint:
+                raise IdempotencyConflict(
+                    "idempotency key reused by a different action: %s" % action.idempotency_key
+                )
+            return record
         record = ExecutionRecord(
             execution_id="EXEC-" + uuid4().hex[:16].upper(),
             action=action,
             idempotency_key=action.idempotency_key,
+            metadata={"action_fingerprint": action.fingerprint},
         )
         self._records[record.execution_id] = record
         if action.idempotency_key:
@@ -214,4 +230,4 @@ class ExecutionManager:
         return record
 
 
-__all__ = ["ExecutionStatus", "ExecutionRecord", "ExecutionManager"]
+__all__ = ["ExecutionStatus", "ExecutionRecord", "ExecutionManager", "IdempotencyConflict"]

@@ -39,7 +39,7 @@ class NodeTrace:
         return payload
 
     def loop_event(self, loop_name: str, state: Mapping[str, Any], event: str, payload: Mapping[str, Any] | None = None) -> None:
-        """Record runtime loop lifecycle events with the active task/trace scope."""
+        """在当前任务及 Trace 范围内记录 Runtime 循环生命周期事件。"""
 
         self.trace.record(
             type="loop", name=loop_name, node=loop_name, agent="runtime",
@@ -50,7 +50,7 @@ class NodeTrace:
         )
 
     def runtime_event(self, event: str, state: Mapping[str, Any], payload: Mapping[str, Any] | None = None) -> None:
-        """Record a normalized fine-grained Runtime lifecycle event."""
+        """记录标准化的细粒度 Runtime 生命周期事件。"""
 
         values = dict(payload or {})
         agent = str(values.get("agent") or state.get("active_agent") or "runtime")

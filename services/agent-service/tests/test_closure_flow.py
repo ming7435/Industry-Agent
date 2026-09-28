@@ -11,7 +11,7 @@ def test_workorder_completion_keeps_feedback_and_verification():
     completed = adapter.mark_repair_completed(
         created["workorder_id"],
         {"feedback": "更换主轴轴承", "operator": "TECH-001"},
-        {"passed": True, "status": "verified"},
+        {"device_recovery": {"device_id": "D-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"}},
     )
     closed = adapter.close_workorder(created["workorder_id"], "维修完成")
 
@@ -30,7 +30,13 @@ def test_memory_admission_does_not_use_production_quality_result():
 
     order["repair_feedback"] = {"feedback": "现场复测正常"}
     assert not WorkOrderValidator.can_learn(order, order["repair_feedback"])
-    order["repair_verification"] = {"passed": True, "status": "verified"}
+    order["repair_verification"] = {
+        "passed": True,
+        "status": "verified",
+        "source": "device_recovery",
+        "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"spindle_vibration_rms": 0.2}},
+        "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
+    }
     assert WorkOrderValidator.can_learn(order, order["repair_feedback"])
 
 
@@ -111,7 +117,7 @@ def test_api_workorder_and_part_quality_flows_are_connected():
         json={
             "feedback": "replaced and retested",
             "operator": "TECH-001",
-            "verification": {"passed": True, "status": "verified"},
+            "verification": {"device_recovery": {"device_id": "D-API-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"}},
         },
     )
     assert completed.status_code == 200
@@ -122,7 +128,7 @@ def test_api_workorder_and_part_quality_flows_are_connected():
         json={
             "action": "close",
             "repair_feedback": {"feedback": "replaced and retested"},
-            "repair_verification": {"passed": True},
+            "repair_verification": {"device_recovery": {"device_id": "D-API-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"}},
         },
     )
     assert closed.status_code == 200
@@ -146,8 +152,8 @@ def test_api_workorder_and_part_quality_flows_are_connected():
     assert quality.status_code == 200
     assert quality.json()["quality_check_id"]
     checks = client.get("/api/v1/quality/checks").json()
-    assert checks["count"] == 1
-    assert checks["items"][0]["target_type"] == "production_part"
+    assert checks["count"] >= 1
+    assert any(item["quality_check_id"] == quality.json()["quality_check_id"] and item["target_type"] == "production_part" for item in checks["items"])
 
 
 def test_api_allows_operator_to_delete_workorder_and_report():

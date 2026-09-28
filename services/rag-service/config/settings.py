@@ -191,6 +191,12 @@ class Settings(BaseSettings):
     rag_data_dir: str = str(SERVICE_ROOT / "data")
     """``scripts/ingest_to_milvus.py`` 扫描的目录（固定在服务根目录）。"""
 
+    rag_allowed_ingest_root: str = str(SERVICE_ROOT / "data")
+    """HTTP JSONL 入库允许读取的根目录；路径会先解析符号链接再校验。"""
+
+    rag_ingest_max_bytes: int = 25 * 1024 * 1024
+    """单个 HTTP JSONL 入库文件的最大字节数。"""
+
     ingestion_cache_enabled: bool = True
     """是否缓存解析、OCR、清洗和分块后的中间结果。"""
 
@@ -220,6 +226,12 @@ class Settings(BaseSettings):
         """返回规范化后的离线语料目录。"""
 
         return self.resolve_service_path(self.rag_data_dir)
+
+    @property
+    def rag_allowed_ingest_path(self) -> Path:
+        """返回 HTTP 入库允许访问的规范化根目录。"""
+
+        return self.resolve_service_path(self.rag_allowed_ingest_root)
 
     @property
     def whoosh_index_path(self) -> Path:
@@ -271,7 +283,7 @@ class Settings(BaseSettings):
         folder_collections = {
             "alarms": "industry_rag_alarm_codes",
             "cases": "industry_rag_alarm_solutions",
-            "manuals": "industry_rag_manuals",
+            "manuals": "industry_rag_bom",
             "sop": "industry_rag_sop",
         }
         if not explicit and data_root.is_dir():

@@ -111,6 +111,8 @@ class DiagnosisResult:
     cycle_state_label: str = ""
     confidence_details: Dict[str, Any] = field(default_factory=dict)
     knowledge_warning: str = ""
+    maintenance_required: bool = False
+    maintenance_reason: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -145,4 +147,6 @@ class DiagnosisResult:
             "cycle_state_label": self.cycle_state_label,
             "confidence_details": dict(self.confidence_details),
             "knowledge_warning": self.knowledge_warning,
+            "maintenance_required": self.maintenance_required,
+            "maintenance_reason": self.maintenance_reason,
         }

@@ -11,6 +11,7 @@ from app.agents.base import BaseAgent
 
 from .graph import build_maintenance_graph
 from .validator import MaintenancePlanValidator
+from app.workorder.policy import maintenance_decision
 
 
 class MaintenanceAgent(BaseAgent):
@@ -60,11 +61,10 @@ class MaintenanceAgent(BaseAgent):
 
     @staticmethod
     def _mapping_items(value: Any) -> list[Mapping[str, Any]]:
-        """Return only structured evidence records from an external provider.
+        """仅保留外部提供方返回的结构化证据记录。
 
-        Provider payloads are untrusted at this boundary; accepting strings here
-        makes ``dict(item)`` fail and can abort an otherwise valid maintenance
-        plan.  Normalize once so the downstream evidence model stays stable.
+        此边界接收的提供方数据不可信；若允许字符串进入，``dict(item)`` 会失败，
+        进而使原本有效的维修计划中断。统一规范化后，下游证据模型才能保持稳定。
         """
         if not isinstance(value, (list, tuple)):
             return []
@@ -109,6 +109,10 @@ class MaintenanceAgent(BaseAgent):
         spare_parts = dict(inventory or {})
         availability = dict(part_availability or {})
         profile = self._profile(diagnosis, components)
+        maintenance_required, maintenance_reason = maintenance_decision(
+            diagnosis=diagnosis.model_dump(mode="json"),
+            plan=payload,
+        )
 
         pre_checks = self._pre_checks(diagnosis, knowledge, components)
         repair_steps = self._repair_steps(profile, tool_plan, knowledge, components)
@@ -144,6 +148,8 @@ class MaintenanceAgent(BaseAgent):
             "inventory_status": spare_parts,
             "part_availability": availability,
             "risk_level": self._risk_level(diagnosis.severity),
+            "maintenance_required": maintenance_required,
+            "maintenance_reason": maintenance_reason,
             "target_part": target_part,
             "engineering_context": engineering_context,
         }
@@ -393,5 +399,7 @@ class MaintenanceAgent(BaseAgent):
             confidence=payload.get("confidence"),
             evidence=list(payload.get("evidence") or []),
             recommendation=str(payload.get("recommendation") or "按照维修方案执行并复测"),
+            maintenance_required=payload.get("maintenance_required"),
+            maintenance_reason=str(payload.get("maintenance_reason") or ""),
             raw=payload,
         )

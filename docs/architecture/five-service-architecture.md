@@ -7,7 +7,7 @@
 | Agent (`8010`) | Intelligence and controlled autonomy | RuntimeInputParser, Planner, Actions, Capability Registry, Loop Engine, Evaluator, policy/approval/resume, the nine existing Agents, Skills, Tools, A2A/MCP clients, runtime memory decisions, report composition | Business repositories, model-provider credentials, direct WorkOrder/Quality/Closure MySQL |
 | Backend (`8030`) | Deterministic business system | WorkOrder lifecycle, technicians/shift/inventory/QMS boundary, Quality/Appeal, Closure, Audit, report metadata, experience records, MySQL repositories | Agent decisions, prompts, model inference |
 | RAG (`8020`) | Enterprise knowledge and evidence | Ingestion, parsing, chunking, Whoosh/Milvus retrieval, fusion, evidence/citation, document/experience upsert and search | Provider credentials and provider SDK calls |
-| CAD (`8011`) | Engineering data | Drawing, BOM, parts, relations, locations, engineering metadata, CAD repository and parsers | Generic RAG pipeline, generic model providers |
+| CAD (`8050`) | Engineering data | Drawing, BOM, parts, relations, locations, engineering metadata, CAD repository and parsers | Generic RAG pipeline, generic model providers |
 | Model (`8040`) | Inference gateway | LLM, embeddings, reranking, vision, provider routing and credentials | Industrial business decisions and business prompts |
 
 ## Runtime 请求流程

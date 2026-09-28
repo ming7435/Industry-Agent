@@ -18,7 +18,7 @@ class Plan:
 
     @property
     def steps(self) -> list[ActionModel]:
-        """Compatibility alias for callers that call plan items steps."""
+        """兼容将计划项称作步骤的旧调用方。"""
 
         return list(self.actions)
 
@@ -31,7 +31,7 @@ class Plan:
 
 
 class Planner:
-    """Map a goal to bounded Actions without invoking an Agent or Tool."""
+    """将目标映射为有界 Action，不调用 Agent 或工具。"""
 
     def __init__(
         self,
@@ -90,6 +90,8 @@ class Planner:
                     "experience:%s" % event_id
                     if canonical == "experience_learning" and event_id
                     else workorder_key
+                    if canonical == "workorder_create"
+                    else "%s:%s" % (canonical, event_id or workorder_key)
                 )
             actions.append(ActionModel.agent(
                 agent_for(capability, capability.split("_")[0]),

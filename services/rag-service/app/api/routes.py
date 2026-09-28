@@ -50,6 +50,28 @@ _PROBE_METHODS: tuple[str, ...] = ("health", "ping", "is_ready")
 """Optional readiness hooks a component may expose; otherwise assembly is enough."""
 
 
+def _validate_ingest_path(raw_path: str) -> Path:
+    """限制 HTTP 入库只能读取配置根目录下的 JSONL 文件。"""
+
+    root = settings.rag_allowed_ingest_path
+    path = settings.resolve_service_path(raw_path)
+    try:
+        path.relative_to(root)
+    except ValueError as error:
+        raise HTTPException(status_code=403, detail="ingest path is outside the allowed root") from error
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="ingest file not found")
+    if path.suffix.casefold() != ".jsonl":
+        raise HTTPException(status_code=415, detail="only .jsonl ingest files are supported")
+    try:
+        size = path.stat().st_size
+    except OSError as error:
+        raise HTTPException(status_code=404, detail="ingest file not found") from error
+    if size > settings.rag_ingest_max_bytes:
+        raise HTTPException(status_code=413, detail="ingest file exceeds the configured size limit")
+    return path
+
+
 async def _resolve(loader: Callable[[], Any]) -> Any | None:
     """Resolve a component without blocking the event loop.
 
@@ -295,9 +317,7 @@ async def legacy_upsert(payload: dict[str, Any] = Body(default_factory=dict)) ->
 
 @router.post("/documents/ingest")
 async def ingest_document(request: DocumentIngestRequest) -> dict[str, Any]:
-    path = Path(request.path).expanduser()
-    if not path.is_file():
-        return {"success": False, "backends": {"metadata": {"success": False, "error": "file not found"}}, "path": str(path), "collection": request.collection, "loaded": 0}
+    path = _validate_ingest_path(request.path)
     loaded = 0
     errors: list[str] = []
     store = get_document_store()

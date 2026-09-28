@@ -22,6 +22,7 @@ jobs:
           pip install -r services/model-service/requirements.txt
           pip install -r services/rag-service/requirements.txt
           pip install -r services/document-cad-service/requirements-runtime.txt
+          pip install -r services/agent-service/requirements-test.txt
       - name: Run service and contract tests
         run: python scripts/test_all.py
 
@@ -61,7 +62,7 @@ jobs:
           RAG_ALLOW_LOCAL_FALLBACK: "false"
           CAD_ALLOW_DEMO_FALLBACK: "false"
           CAD_CI_FIXTURE: "true"
-          MINIO_IMAGE: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          MINIO_IMAGE: docker.io/minio/minio:RELEASE.2024-06-13T22-53-53Z
           RAG_UPSERT_WHOOSH_ENABLED: "true"
           RAG_UPSERT_MILVUS_ENABLED: "true"
         run: |
@@ -73,7 +74,7 @@ jobs:
             http://127.0.0.1:8030/health \
             http://127.0.0.1:8040/health \
             http://127.0.0.1:8010/health \
-            http://127.0.0.1:8011/health \
+            http://127.0.0.1:8050/health \
             http://127.0.0.1:8020/health \
             http://127.0.0.1:8001/; do
             ready=0
