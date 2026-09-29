@@ -63,6 +63,7 @@ CAPABILITY_DEFINITIONS: tuple[CapabilityDefinition, ...] = (
     CapabilityDefinition("repair_planning", "maintenance", "maintenance", "maintenance_plan", "prepare executable repair plan", default_reason="prepare executable repair plan", replan_capabilities=("maintenance_replan", "workorder_create")),
     CapabilityDefinition("maintenance_replan", "maintenance", "maintenance", "maintenance_plan", "replan an insufficient maintenance plan", default_reason="replan an insufficient maintenance plan", replan_capabilities=("maintenance_replan", "workorder_create")),
     CapabilityDefinition("workorder_create", "workorder", "workorder", "workorder", "create one idempotent work order", side_effect=True, default_reason="create one idempotent work order", aliases=("create_workorder",)),
+    CapabilityDefinition("workorder_query", "workorder", "workorder", "workorder", "query work-order status", default_reason="query work-order status"),
     CapabilityDefinition("workorder_update", "workorder", "workorder", "workorder", "update an existing work order", side_effect=True, requires_approval=True, default_reason="update an existing work order"),
     CapabilityDefinition("quality_inspection", "quality", "quality", "quality", "verify the produced part when requested", default_reason="verify the produced part when requested"),
     CapabilityDefinition("quality_review", "quality", "quality", "quality", "review part quality", default_reason="review part quality"),

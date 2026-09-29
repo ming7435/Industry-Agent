@@ -172,7 +172,7 @@ class _DynamicOuterLoopDispatcher:
         if capability == "fault_analysis":
             return AgentResult(
                 success=True,
-                output={"fault": "bearing wear"},
+                output={"fault": "bearing wear", "summary": "轴承异常", "diagnosis": "轴承磨损", "confidence": 0.95, "evidence_status": "ready", "evidence_validated": True, "evidence": [{"id": "diagnosis-evidence"}]},
                 evidence=[{"id": "diagnosis-1"}],
                 next_actions=[{"required_capability": "document_search"}],
             )

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.providers.gateway import ModelGateway
+from app.providers.base import ProviderError
 
 
 def test_model_contracts_are_deterministic():
@@ -42,3 +43,34 @@ def test_deepseek_chat_provider_is_separate_from_siliconflow_aux_provider(monkey
     assert gateway.chat_provider.base_url == "https://api.deepseek.com"
     assert gateway.aux_provider.name == "siliconflow"
     assert gateway.name == "deepseek"
+
+
+def test_production_rejects_implicit_fake_provider(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("MODEL_PROVIDER", "fake")
+
+    try:
+        ModelGateway()
+    except ProviderError as error:
+        assert "fake" in str(error).lower()
+    else:  # pragma: no cover - documents the production safety gate
+        raise AssertionError("production must not start with fake model provider")
+
+
+def test_remote_health_does_not_claim_unprobed_provider_is_ready(monkeypatch):
+    import app.main as main
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("MODEL_PROVIDER", "remote")
+    monkeypatch.setenv("MODEL_CHAT_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test-key")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "siliconflow-test-key")
+    main.gateway = ModelGateway()
+
+    payload = main.health()
+
+    assert payload["ready"] is False
+    assert payload["capabilities"]["chat"]["configured"] is True
+    assert payload["capabilities"]["chat"]["reachable"] == "not_probed"
+    assert payload["capabilities"]["chat"]["ready"] is False

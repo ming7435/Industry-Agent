@@ -13,7 +13,6 @@ def select_skill(event: Mapping[str, Any]) -> Dict[str, Any]:
 
     severity = str(event.get("severity") or "").lower()
     trigger_reason = str(event.get("trigger_reason") or event.get("trigger_cause") or "").lower()
-    event_type = str(event.get("event_type") or "").lower()
     metrics = event.get("abnormal_metrics") or []
     has_snapshot = bool(event.get("realtime_snapshot"))
 

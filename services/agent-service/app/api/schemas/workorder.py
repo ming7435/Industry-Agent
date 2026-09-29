@@ -24,6 +24,8 @@ class WorkOrderActionRequest(BaseModel):
     action: str = Field(default="update", pattern="^(assign|update|submit_feedback|mark_repair_completed|close|reopen)$")
     status: str = "in_progress"
     assignee: str = ""
+    operator: str = ""
+    maintenance_confirmed_by: str = ""
     feedback: str = ""
     repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
     repair_verification: Dict[str, Any] = Field(default_factory=dict)

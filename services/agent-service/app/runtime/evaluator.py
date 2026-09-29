@@ -50,6 +50,11 @@ class RuntimeEvaluator:
             )
         missing = self._missing(value)
         confidence = self._confidence(value)
+        # 诊断/经验才使用模型置信度门禁；通用 Runtime 观察值以及已通过
+        # 自身领域校验的知识、CAD、维修等结果不应因为没有 confidence 字段
+        # 被误判成低置信度模型输出。
+        if domain not in {"diagnosis", "learning"} and value.get("confidence") is None:
+            confidence = 1.0
         evidence_score = self._evidence_score(value, domain=domain)
         if value.get("replan_required") or value.get("validation_findings") or value.get("validation_errors"):
             findings = [str(item) for item in (value.get("validation_findings") or value.get("validation_errors") or [])]
@@ -86,15 +91,19 @@ class RuntimeEvaluator:
                 value.update({"done": False, "confidence": 0.0, "evidence_score": 0.0, "missing_evidence": ["diagnosis"]})
                 return value
             raw_confidence = payload.get("confidence")
-            confidence = float(raw_confidence) if raw_confidence is not None else 1.0
+            try:
+                confidence = float(raw_confidence) if raw_confidence is not None else 0.0
+            except (TypeError, ValueError):
+                confidence = 0.0
             evidence = (
                 payload.get("evidence")
                 or payload.get("evidence_records")
                 or ([payload.get("alarm_definition")] if isinstance(payload.get("alarm_definition"), Mapping) and payload.get("alarm_definition", {}).get("found", True) else [])
             )
             findings = payload.get("validation_errors") or payload.get("validation_findings") or []
-            explicit_quality = raw_confidence is not None or bool(evidence) or bool(findings)
-            ready = confidence >= self.min_confidence and (bool(evidence) or not explicit_quality) and not findings
+            evidence_status = str(payload.get("evidence_status") or ("ready" if evidence else "insufficient")).strip().lower()
+            evidence_blocked = evidence_status in {"", "insufficient", "pending", "unknown", "blocked"}
+            ready = confidence >= self.min_confidence and bool(evidence) and not evidence_blocked and not findings
             value.update({
                 "done": True, "confidence": confidence, "evidence_score": 1.0 if ready else min(confidence, 0.79),
                 "missing_evidence": [] if ready else ["diagnosis_evidence"],
@@ -113,20 +122,24 @@ class RuntimeEvaluator:
             findings = payload.get("validation_findings") or payload.get("validation_errors") or []
             ready = bool(payload.get("workorder_ready")) and not findings
             value.update({"done": ready, "workorder_ready": bool(payload.get("workorder_ready")),
+                          "confidence": 1.0 if ready else 0.0,
                           "evidence_score": 1.0 if ready else 0.0,
                           "missing_evidence": [] if ready else ["maintenance_plan"]})
         elif domain in {"quality", "quality_inspection"}:
             payload = dict(result or {})
-            passed = payload.get("passed") is True or payload.get("qualified") is True or str(payload.get("status") or "").lower() == "pass"
+            inspection_status = str(payload.get("status") or "").lower()
+            passed = payload.get("passed") is True or payload.get("qualified") is True or inspection_status == "pass"
             evidence = payload.get("evidence") or payload.get("inspection_items") or payload.get("measurements")
             findings = payload.get("failed_checks") or payload.get("findings") or []
+            insufficient = inspection_status in {"not_tested", "insufficient_data", "pending"} or payload.get("sufficient_data") is False
             value.update({
-                "done": bool(payload) and bool(evidence),
-                "confidence": 1.0 if passed else 0.0,
+                "done": bool(payload) and bool(evidence) and not insufficient,
+                "confidence": 1.0 if evidence and not insufficient else 0.0,
                 "evidence_score": 1.0 if evidence else 0.0,
-                "missing_evidence": [] if evidence else ["quality_inspection_evidence"],
-                "blocked": bool(payload) and not passed and bool(findings),
-                "reason": "quality_failed" if findings else "quality_evidence_pending",
+                "missing_evidence": [] if evidence and not insufficient else ["quality_inspection_evidence"],
+                # FAIL 是一次成功执行的质检业务结果，不是 Runtime 执行失败。
+                "business_result_failed": bool(payload) and not passed and bool(findings) and not insufficient,
+                "reason": "quality_failed" if findings else ("quality_not_tested" if insufficient else "quality_evidence_pending"),
             })
         elif domain == "learning":
             nested_experience = value.get("experience") if isinstance(value.get("experience"), Mapping) else {}
@@ -166,12 +179,20 @@ class RuntimeEvaluator:
 
     def _confidence(self, value: Mapping[str, Any]) -> float:
         raw = value.get("confidence")
-        return max(0.0, min(1.0, float(raw))) if raw is not None else 1.0
+        if raw is None:
+            return 0.0
+        try:
+            return max(0.0, min(1.0, float(raw)))
+        except (TypeError, ValueError):
+            return 0.0
 
     def _evidence_score(self, value: Mapping[str, Any], domain: str = "") -> float:
         raw = value.get("evidence_score")
         if raw is not None:
-            return max(0.0, min(1.0, float(raw)))
+            try:
+                return max(0.0, min(1.0, float(raw)))
+            except (TypeError, ValueError):
+                return 0.0
         ids = value.get("evidence_ids") or value.get("evidence") or value.get("documents") or value.get("components") or value.get("parts")
         if ids:
             return 1.0

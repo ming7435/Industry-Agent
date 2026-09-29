@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from time import perf_counter
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Dict, List, Mapping, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -116,6 +116,9 @@ def request_diagnosis_reasoning(state: DiagnosisGraphState) -> Dict[str, Any]:
         tools=agent._tool_schemas_for(runtime.allowed_tools),
         tool_choice=tool_choice,
     )
+    metadata = response.get("model_metadata") if isinstance(response, Mapping) else None
+    if isinstance(metadata, Mapping):
+        runtime.model_metadata = dict(metadata)
     assistant = dict(parsing.assistant_message(response))
     calls = assistant.get("tool_calls") or []
 
@@ -293,7 +296,6 @@ def execute_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
 
 def record_tool_observations(state: DiagnosisGraphState) -> Dict[str, Any]:
     """把工具返回转换为可追踪 Observation，并检测重复证据。"""
-    agent = state["agent"]
     runtime = state["agent_state"]
     runtime.current_agent = "diagnosis.observe"
     observations: List[Dict[str, Any]] = []

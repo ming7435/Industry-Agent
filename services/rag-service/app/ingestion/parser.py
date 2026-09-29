@@ -460,6 +460,76 @@ def _looks_like_numeric_value(text: str) -> bool:
     return bool(re.fullmatch(r"[-+]?\d+(?:[.,]\d+)*(?:\s*[A-Za-z%℃°/]+)?", text.strip()))
 
 
+def _paragraph_from_element(document: Any, element: Any) -> Any:
+    from docx.text.paragraph import Paragraph
+
+    return Paragraph(element, document)
+
+
+def _table_from_element(document: Any, element: Any) -> Any:
+    from docx.table import Table
+
+    return Table(element, document)
+
+
+def _heading_level(style_name: str) -> int | None:
+    value = str(style_name or "")
+    if not value.lower().startswith("heading"):
+        return None
+    suffix = value[len("heading") :].strip()
+    return int(suffix) if suffix.isdigit() and int(suffix) > 0 else None
+
+
+def _image_relationship_ids(element: Any) -> list[str]:
+    embed_attribute = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+    return [
+        relationship_id
+        for node in element.iter()
+        if node.tag.rsplit("}", 1)[-1] == "blip"
+        and (relationship_id := node.get(embed_attribute))
+    ]
+
+
+def _docx_asset(document: Any, relationship_id: str, image_index: int) -> ImageAsset | None:
+    try:
+        part = document.part.rels[relationship_id].target_part
+        return ImageAsset(
+            asset_id=f"i{image_index}",
+            page_number=1,
+            data=part.blob,
+            media_type=getattr(part, "content_type", "image/png"),
+            kind=BlockType.IMAGE,
+            metadata={"relationship_id": relationship_id},
+        )
+    except (AttributeError, KeyError):
+        return None
+
+
+def _resolve_local_image(markdown_path: Path, reference: str) -> Path | None:
+    if re.match(r"^(?:https?:|data:|//)", reference, flags=re.IGNORECASE):
+        return None
+    candidate = (markdown_path.parent / reference.split("#", 1)[0].split("?", 1)[0]).resolve()
+    return candidate if candidate.is_file() else None
+
+
+def _is_table_start(lines: list[str], index: int) -> bool:
+    return (
+        index + 1 < len(lines)
+        and _is_table_row(lines[index])
+        and bool(
+            re.fullmatch(
+                r"\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*",
+                lines[index + 1],
+            )
+        )
+    )
+
+
+def _is_table_row(line: str) -> bool:
+    value = str(line or "").strip()
+    return value.startswith("|") and value.endswith("|")
+
+
 def describe_visual(
     asset: ImageAsset,
     *,

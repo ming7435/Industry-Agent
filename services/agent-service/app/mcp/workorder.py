@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Mapping
 from uuid import uuid4
 import os
+import hashlib
+import json
 
 from app.workorder.repository import build_workorder_repository
 
@@ -17,7 +19,7 @@ from app.workorder.repository import build_workorder_repository
 class WorkOrderMcpAdapter:
     """提供工单工具所需的最小 MES 操作集合。"""
 
-    VALID_STATUSES = {"open", "in_progress", "completed", "closed", "rejected", "timeout"}
+    VALID_STATUSES = {"open", "in_progress", "awaiting_verification", "completed", "closed", "rejected", "timeout"}
 
     def __init__(self, repository: Any | None = None, path: str | None = None) -> None:
         self.repository = repository or build_workorder_repository(path or os.getenv("WORKORDER_STORE_PATH", ""))
@@ -25,6 +27,19 @@ class WorkOrderMcpAdapter:
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _idempotency_fingerprint(values: Mapping[str, Any]) -> str:
+        fields = {
+            key: values.get(key)
+            for key in (
+                "device_id", "title", "plan_id", "steps", "required_parts", "repair_target",
+                "drawing_context", "alarm_code", "diagnosis_context", "priority", "risk_level",
+                "source", "event_id", "diagnosis_snapshot", "maintenance_plan_snapshot",
+            )
+        }
+        payload = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def create_workorder(
         self,
@@ -43,12 +58,26 @@ class WorkOrderMcpAdapter:
         event_id: str = "",
         diagnosis_snapshot: Mapping[str, Any] | None = None,
         maintenance_plan_snapshot: Mapping[str, Any] | None = None,
+        required_parts: list[Any] | None = None,
         **_: Any,
     ) -> Dict[str, Any]:
         key = str(idempotency_key or "").strip()
+        requested_values = {
+            "device_id": device_id, "title": title, "plan_id": plan_id, "steps": steps or [],
+            "required_parts": list(required_parts or []), "repair_target": dict(repair_target or {}),
+            "drawing_context": dict(drawing_context or {}), "alarm_code": alarm_code,
+            "diagnosis_context": dict(diagnosis_context or {}), "priority": priority or "normal",
+            "risk_level": risk_level, "source": source, "event_id": str(event_id or ""),
+            "diagnosis_snapshot": dict(diagnosis_snapshot or {}),
+            "maintenance_plan_snapshot": dict(maintenance_plan_snapshot or {}),
+        }
+        requested_fingerprint = self._idempotency_fingerprint(requested_values)
         if key:
             for existing in self.repository.list():
                 if str(existing.get("idempotency_key") or "") == key:
+                    existing_fingerprint = str(existing.get("idempotency_fingerprint") or self._idempotency_fingerprint(existing))
+                    if existing_fingerprint != requested_fingerprint:
+                        raise ValueError("幂等键已绑定不同的工单参数")
                     return dict(existing)
         now = self._now()
         order = {
@@ -58,6 +87,7 @@ class WorkOrderMcpAdapter:
             "title": title,
             "plan_id": plan_id,
             "steps": steps or [],
+            "required_parts": list(required_parts or []),
             "repair_target": dict(repair_target or {}),
             "drawing_context": dict(drawing_context or {}),
             "alarm_code": alarm_code,
@@ -73,12 +103,16 @@ class WorkOrderMcpAdapter:
             "event_id": str(event_id or ""),
             "diagnosis_snapshot": dict(diagnosis_snapshot or {}),
             "maintenance_plan_snapshot": dict(maintenance_plan_snapshot or {}),
+            "idempotency_fingerprint": requested_fingerprint,
             "created_at": now,
             "updated_at": now,
         }
         candidate_id = order["workorder_id"]
         order = self.repository.create(order)
         if str(order.get("workorder_id") or "") != candidate_id:
+            existing_fingerprint = str(order.get("idempotency_fingerprint") or self._idempotency_fingerprint(order))
+            if existing_fingerprint != requested_fingerprint:
+                raise ValueError("幂等键已绑定不同的工单参数")
             return dict(order)
         self._record_event(order, "created", "", "open", {})
         order = self.repository.update(order)
@@ -94,6 +128,21 @@ class WorkOrderMcpAdapter:
         from app.workorder.validator import WorkOrderValidator
         if previous_status != status:
             WorkOrderValidator.validate_transition(previous_status, status)
+        immutable = {"repair_feedback", "repair_verification", "maintenance_plan_snapshot", "diagnosis_snapshot", "steps", "repair_target"}
+        if previous_status == "closed" and immutable.intersection(fields):
+            raise ValueError("已关闭工单的维修事实已冻结，请先重开工单")
+        if status == "in_progress" and previous_status != "in_progress" and not str(fields.get("assignee") or order.get("assignee") or "").strip():
+            raise ValueError("进入 in_progress 前必须完成派工并提供 assignee")
+        if previous_status == "awaiting_verification" and status == "in_progress":
+            failed_verification = fields.get("repair_verification")
+            if not isinstance(failed_verification, Mapping) or failed_verification.get("passed") is not False:
+                raise ValueError("验证失败回退必须提交 passed=false 的 repair_verification")
+            fields = {**fields, "repair_verification": dict(failed_verification)}
+        candidate = {**order, **fields, "status": status}
+        if status == "completed" and not WorkOrderValidator.verification_passed(candidate):
+            raise ValueError("维修完成必须提供基于设备恢复数据且通过的 repair_verification")
+        if status == "closed" and not WorkOrderValidator.verification_passed(candidate):
+            raise ValueError("工单关闭前必须通过基于设备恢复数据的维修验证")
         order.update(fields)
         order["status"] = status
         order["updated_at"] = self._now()
@@ -105,6 +154,8 @@ class WorkOrderMcpAdapter:
             order["closed_at"] = order["updated_at"]
         if status != previous_status or fields:
             self._record_event(order, "status_changed" if status != previous_status else "updated", previous_status, status, fields)
+            if previous_status == "awaiting_verification" and status == "in_progress":
+                self._record_event(order, "repair_verification_failed", previous_status, status, fields.get("repair_verification") or {})
         return self.repository.update(order)
 
     def get_workorder(self, workorder_id: str, **_: Any) -> Dict[str, Any]:
@@ -122,24 +173,53 @@ class WorkOrderMcpAdapter:
 
     def delete_workorder(self, workorder_id: str = "", **_: Any) -> Dict[str, Any]:
         workorder_id = str(workorder_id or "").strip()
+        order = self.repository.get(workorder_id) if workorder_id else None
+        if order is None:
+            return {"success": False, "deleted": False, "found": False, "workorder_id": workorder_id, "source": "mes-mcp"}
+        if str(order.get("status") or "open") not in {"open", "rejected", "timeout"} or order.get("repair_feedback") or order.get("repair_verification"):
+            raise ValueError("只有未开始且没有维修结果的工单允许删除")
         deleter = getattr(self.repository, "delete", None)
         deleted = bool(deleter(workorder_id)) if callable(deleter) and workorder_id else False
         return {"success": deleted, "deleted": deleted, "found": deleted, "workorder_id": workorder_id, "source": "mes-mcp"}
 
     def assign_workorder(self, workorder_id: str, assignee: str = "", **_: Any) -> Dict[str, Any]:
+        assignee = str(assignee or "").strip()
+        if not assignee:
+            raise ValueError("派工必须提供 assignee")
         order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
+        candidates = self.query_technicians(device_id=str(order.get("device_id") or "")).get("items") or []
+        candidate = next((item for item in candidates if str(item.get("technician_id") or "") == assignee), None)
+        if not candidate:
+            raise ValueError("技师不存在：%s" % assignee)
+        if candidate.get("available") is False:
+            raise ValueError("技师当前不可用：%s" % assignee)
+        self._reserve_required_parts(order)
         previous = str(order.get("assignee") or "")
-        order["assignee"] = assignee
-        order["updated_at"] = self._now()
-        self._record_event(order, "assigned", str(order.get("status") or ""), str(order.get("status") or ""), {"from": previous, "to": assignee})
-        return self.repository.update(order)
+        updated = self.update_workorder(workorder_id, status="in_progress", assignee=assignee)
+        if previous != assignee:
+            self._record_event(updated, "assigned", str(updated.get("status") or ""), str(updated.get("status") or ""), {"from": previous, "to": assignee})
+            updated = self.repository.update(updated)
+        return updated
+
+    def reserve_inventory(self, part_no: str = "", quantity: int = 1, workorder_id: str = "", **_: Any) -> Dict[str, Any]:
+        raise ValueError("本地 MES 未配置真实库存，不能预留备件")
+
+    def _reserve_required_parts(self, order: Mapping[str, Any]) -> None:
+        for raw in order.get("required_parts") or []:
+            item = raw if isinstance(raw, Mapping) else {"part_no": str(raw)}
+            part_no = str(item.get("part_no") or item.get("part_id") or "").strip()
+            if not part_no:
+                raise ValueError("维修方案中的备件缺少 part_no，不能派工")
+            self.reserve_inventory(part_no=part_no, quantity=max(1, int(item.get("quantity") or 1)), workorder_id=str(order.get("workorder_id") or ""))
 
     def submit_repair_feedback(self, workorder_id: str, feedback: Any = "", **_: Any) -> Dict[str, Any]:
         order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
+        if str(order.get("status") or "") not in {"in_progress", "awaiting_verification"}:
+            raise ValueError("只有 in_progress 或 awaiting_verification 工单可以提交维修反馈")
         normalized = self._normalize_feedback(feedback)
         order["repair_feedback"] = normalized
         order["updated_at"] = self._now()
@@ -165,7 +245,13 @@ class WorkOrderMcpAdapter:
         order = self.repository.get(workorder_id)
         if order is None:
             raise KeyError("工单不存在：%s" % workorder_id)
+        if str(order.get("status") or "") != "in_progress":
+            raise ValueError("维修提交前工单必须处于 in_progress，不能跳过派工")
+        if not str(order.get("assignee") or "").strip() or not order.get("started_at"):
+            raise ValueError("维修提交前必须完成派工并记录 started_at")
         normalized = self._normalize_feedback(feedback) if feedback else self._normalize_feedback(order.get("repair_feedback"))
+        if not self._has_feedback(normalized):
+            raise ValueError("维修完成必须提供实际维修反馈")
         supplied = dict(repair_verification or {})
         recovery = supplied.get("device_recovery") or supplied.get("recovery_snapshot")
         if not isinstance(recovery, Mapping):
@@ -176,15 +262,39 @@ class WorkOrderMcpAdapter:
         verification.setdefault("duration_seconds", normalized.get("duration_seconds"))
         if not verification["passed"]:
             raise ValueError("设备恢复数据未通过维修验证：%s" % "、".join(verification.get("validation_findings") or []))
-        if str(order.get("status") or "") == "open":
-            # 允许“完成维修”入口补齐开始处理这一步，但仍按迁移表记录两次状态变化。
-            order = self.update_workorder(workorder_id, status="in_progress")
+        self.update_workorder(
+            workorder_id,
+            status="awaiting_verification",
+            repair_feedback=normalized,
+            repair_verification=verification,
+        )
         return self.update_workorder(
             workorder_id,
             status="completed",
             repair_feedback=normalized,
             repair_verification=verification,
         )
+
+    def record_repair_verification_failed(self, workorder_id: str, repair_verification: Mapping[str, Any] | None = None, reason: str = "", **_: Any) -> Dict[str, Any]:
+        """记录设备恢复验证失败，并明确回退到待维修状态。"""
+        order = self.repository.get(workorder_id)
+        if order is None:
+            raise KeyError("工单不存在：%s" % workorder_id)
+        if str(order.get("status") or "") != "awaiting_verification":
+            raise ValueError("只有 awaiting_verification 工单可以记录验证失败")
+        verification = dict(repair_verification or {})
+        verification["passed"] = False
+        verification["status"] = "failed"
+        verification.setdefault("source", "device_recovery")
+        if reason:
+            verification.setdefault("validation_findings", []).append(str(reason))
+        return self.update_workorder(workorder_id, status="in_progress", repair_verification=verification)
+
+    @staticmethod
+    def _has_feedback(value: Any) -> bool:
+        if isinstance(value, Mapping):
+            return any(str(value.get(key) or "").strip() for key in ("feedback", "summary", "result", "content", "repair_feedback"))
+        return bool(str(value or "").strip())
 
     def close_workorder(self, workorder_id: str, reason: str = "", **_: Any) -> Dict[str, Any]:
         order = self.repository.get(workorder_id)

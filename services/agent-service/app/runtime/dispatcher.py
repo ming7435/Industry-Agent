@@ -293,14 +293,32 @@ class RuntimeDispatcher:
                 "event_id": state.get("event", {}).get("event_id", ""),
                 "context": dict(state.get("context") or {}),
             }
-        if capability in {"workorder_create", "workorder_update"}:
-            return {
-                "action": "create" if capability == "workorder_create" else "update",
-                "maintenance_plan": dict(state.get("maintenance_plan") or {}),
+        if capability in {"workorder_create", "workorder_update", "workorder_query"}:
+            # Router 解析出的动作以前只写在 goal_event.raw 中，到了这里又被
+            # 压成固定的 update，导致查询、派工、完成、关闭和重开全部走错写入口。
+            # 保留 target_input 的完整边界，让 WorkOrderService 决定具体状态门禁。
+            target_input = payload.get("target_input")
+            if not isinstance(target_input, Mapping):
+                target_input = state.get("target_input")
+            if not isinstance(target_input, Mapping):
+                raw_event = state.get("event")
+                target_input = raw_event.get("target_input") if isinstance(raw_event, Mapping) else {}
+            target_input = dict(target_input or {})
+            action = str(target_input.get("action") or payload.get("action") or "").strip().lower()
+            if not action:
+                action = "create" if capability == "workorder_create" else "query" if capability == "workorder_query" else "update"
+            request = {
+                "action": action,
+                "maintenance_plan": dict(state.get("maintenance_plan") or payload.get("maintenance_plan") or {}),
                 "diagnosis": diagnosis,
                 "event_id": state.get("event", {}).get("event_id", ""),
                 "idempotency_key": action_key(state, payload),
             }
+            request.update(target_input)
+            request.setdefault("workorder_id", str(payload.get("workorder_id") or state.get("workorder_id") or ""))
+            request.setdefault("maintenance_plan", dict(state.get("maintenance_plan") or payload.get("maintenance_plan") or {}))
+            request.setdefault("diagnosis", diagnosis)
+            return request
         if capability in {"quality_inspection", "quality_review"}:
             context = dict(state.get("context") or {})
             event = state.get("event")

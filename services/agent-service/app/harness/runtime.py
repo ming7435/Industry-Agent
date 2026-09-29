@@ -145,7 +145,7 @@ class AgentHarness:
                 result = future.result(timeout=self.config.timeout_seconds)
                 self.trace.record(type="agent", name=agent_name, event="agent_completed", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2), output=self._trace_payload(result), context=trace_context)
                 return result
-            except TimeoutError as error:
+            except TimeoutError:
                 last_error = AgentExecutionError(
                     "Agent 执行超时（%.1f 秒，第 %s 次）"
                     % (self.config.timeout_seconds, attempt + 1)

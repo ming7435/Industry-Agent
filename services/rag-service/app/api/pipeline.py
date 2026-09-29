@@ -44,6 +44,7 @@ background.  This is what keeps the tail latency of a request bounded.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Literal
@@ -179,6 +180,12 @@ class _Progress:
     bundle: EvidenceBundle | None = None
     evidence_text: str = ""
     answer: str = ""
+    model_metadata: dict[str, Any] = field(default_factory=dict)
+    evidence_status: str = "insufficient"
+    retrieval_confidence: float = 0.0
+    citation_status: str = "missing"
+    grounded: bool = False
+    citation_errors: list[str] = field(default_factory=list)
     latency: dict[str, int] = field(
         default_factory=lambda: {
             "bm25": 0,
@@ -404,7 +411,6 @@ class SearchPipeline:
 
         top_n = self._effective_top_n(request)
         progress.final_hits = await self._rerank(request, progress.fused_hits, top_n, progress)
-        self._include_supplemental_hits(progress, top_n)
 
         if not self._build_evidence(request, progress):
             return
@@ -412,34 +418,14 @@ class SearchPipeline:
         await self._generate(request, progress)
 
     @staticmethod
-    def _include_supplemental_hits(progress: _Progress, top_n: int) -> None:
-        """Keep stored experiences in the final evidence window.
-
-        A reranker may spend the entire top-N budget on older corpus hits even
-        when the standalone store supplied exact closed-work-order chunks.  The
-        supplemental chunks have already passed RRF and are therefore admitted
-        before evidence/LLM construction; replacing the lowest non-supplemental
-        candidate preserves the requested result size without bypassing stages.
-        """
-
-        if not progress.supplemental_hits:
-            return
-        selected = list(progress.final_hits)
-        selected_ids = {str(hit.chunk_id) for hit in selected}
-        for supplemental in progress.supplemental_hits:
-            if str(supplemental.chunk_id) in selected_ids:
-                continue
-            if len(selected) < top_n:
-                selected.append(supplemental)
-            else:
-                replace_at = next(
-                    (index for index in range(len(selected) - 1, -1, -1)
-                     if selected[index] not in progress.supplemental_hits),
-                    len(selected) - 1,
-                )
-                selected[replace_at] = supplemental
-            selected_ids.add(str(supplemental.chunk_id))
-        progress.final_hits = selected[:top_n]
+    def _hit_relevance(hit: Hit) -> float:
+        metadata = getattr(hit, "metadata", None)
+        metadata = metadata if isinstance(metadata, dict) else {}
+        raw = metadata.get("rerank_score", metadata.get("origin_score", getattr(hit, "score", 0.0)))
+        try:
+            return max(0.0, min(1.0, float(raw or 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
 
     async def _retrieve(self, request: SearchRequest, progress: _Progress) -> None:
         """Run both retrieval legs concurrently.
@@ -702,8 +688,21 @@ class SearchPipeline:
             ``True`` when a non-empty context was produced, i.e. when generation
             is worth attempting.
         """
+        eligible_hits = [
+            hit for hit in progress.final_hits
+            if self._hit_relevance(hit) >= settings.evidence_min_score
+        ]
+        progress.retrieval_confidence = max(
+            (self._hit_relevance(hit) for hit in eligible_hits),
+            default=0.0,
+        )
+        if not eligible_hits:
+            progress.evidence_status = "insufficient"
+            progress.bundle = None
+            progress.evidence_text = ""
+            return False
         try:
-            bundle = build_bundle(request.query, progress.final_hits)
+            bundle = build_bundle(request.query, eligible_hits)
             evidence_text = format_citations(bundle)
         except (AttributeError, TypeError, ValueError) as exc:
             logger.warning(
@@ -718,6 +717,7 @@ class SearchPipeline:
 
         progress.bundle = bundle
         progress.evidence_text = evidence_text
+        progress.evidence_status = "ready" if evidence_text.strip() else "insufficient"
         return bool(evidence_text.strip())
 
     async def _generate(self, request: SearchRequest, progress: _Progress) -> None:
@@ -740,12 +740,24 @@ class SearchPipeline:
             )
             return
 
+        # 记录实际使用的模型身份，供调用链日志和下游 Agent 追踪。
+        progress.model_metadata = {
+            "provider": "deepseek",
+            "requested_model": str(getattr(self._llm, "model", "") or ""),
+            "actual_model": str(getattr(self._llm, "model", "") or ""),
+            "capability": "rag_answer_generation",
+            "synthetic": False,
+        }
+
         started = _now()
         try:
             progress.answer = await asyncio.wait_for(
                 self._llm.generate(request.query, progress.evidence_text),
                 timeout=settings.llm_timeout_ms / 1000,
             )
+            returned_metadata = getattr(self._llm, "last_model_metadata", None)
+            if isinstance(returned_metadata, dict) and returned_metadata:
+                progress.model_metadata = dict(returned_metadata)
         except TimeoutError:
             progress.mark_degraded(REASON_LLM_TIMEOUT)
             logger.warning(
@@ -764,6 +776,7 @@ class SearchPipeline:
                 exc,
             )
         else:
+            self._validate_citations(progress)
             logger.info(
                 "request_id={} stage=llm llm_ms={} answer_chars={}",
                 progress.request_id,
@@ -772,6 +785,38 @@ class SearchPipeline:
             )
         finally:
             progress.latency["llm"] = _elapsed_ms(started)
+
+    @staticmethod
+    def _validate_citations(progress: _Progress) -> None:
+        """校验模型回答中的引用编号是否来自当前证据窗口。
+
+        校验失败时保留原始回答并显式标记状态，避免把没有证据支持的文本
+        当成已经核验的维修结论。
+        """
+
+        answer = str(progress.answer or "")
+        if not answer.strip() or progress.bundle is None:
+            progress.citation_status = "missing"
+            progress.grounded = False
+            progress.citation_errors = ["回答为空或没有可用证据"]
+            return
+
+        markers = [int(value) for value in re.findall(r"\[(\d+)\]", answer)]
+        evidence_count = len(getattr(progress.bundle, "evidences", []) or [])
+        if not markers:
+            progress.citation_status = "missing"
+            progress.grounded = False
+            progress.citation_errors = ["回答未包含证据引用编号"]
+            return
+        invalid = sorted({value for value in markers if value < 1 or value > evidence_count})
+        if invalid:
+            progress.citation_status = "invalid"
+            progress.grounded = False
+            progress.citation_errors = [f"引用编号超出证据范围: {invalid}"]
+            return
+        progress.citation_status = "grounded"
+        progress.grounded = True
+        progress.citation_errors = []
 
     def _partial_hits(self, progress: _Progress, top_n: int) -> list[Hit]:
         """Return the best hit list available when the chain did not finish.
@@ -824,6 +869,12 @@ class SearchPipeline:
             hits=[_to_hit_model(hit) for hit in hits],
             evidence_text=progress.evidence_text,
             answer=progress.answer,
+            model_metadata=progress.model_metadata,
+            evidence_status=progress.evidence_status,
+            retrieval_confidence=progress.retrieval_confidence,
+            citation_status=progress.citation_status,
+            grounded=progress.grounded,
+            citation_errors=progress.citation_errors,
             degraded=progress.degraded,
             degrade_reason=progress.degrade_reason,
             latency_ms=LatencyBreakdown(**progress.latency),

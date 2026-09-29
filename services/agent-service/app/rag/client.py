@@ -291,7 +291,6 @@ class RAGServiceClient:
     def upsert(self, record: Mapping[str, Any], collection: str = "") -> Dict[str, Any]:
         """写入一条经验记录；远程 RAG 不支持时按配置回退到本地索引。"""
 
-        payload = {"record": dict(record), "collection": collection}
         if self.base_url:
             try:
                 normalized = dict(record)

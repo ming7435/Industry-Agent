@@ -73,7 +73,9 @@ def test_runtime_autonomous_lifecycle_closes_with_learning_and_trace():
         },
     })
 
-    assert result["runtime_result"]["status"] == "completed"
+    # Runtime 不会把未关闭、未提供设备恢复验收的工单伪装成可沉淀经验的完整案例。
+    assert result["runtime_result"]["status"] == "blocked"
+    assert result["runtime_result"]["stop_reason"] == "experience_quality_gate"
     assert [item["payload"]["required_capability"] for item in result["runtime_plan"]["actions"]] == [
         "fault_analysis", "document_search", "drawing_search", "repair_planning",
         "workorder_create", "quality_inspection", "experience_learning",

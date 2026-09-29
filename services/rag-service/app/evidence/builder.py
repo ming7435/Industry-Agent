@@ -2,10 +2,8 @@
 
 Three concerns are handled here, in this order:
 
-1. **Grouping** -- hits are grouped by corpus (alarms, cases, manuals, sop) and
-   emitted in a fixed order, so the citation numbering follows the way a
-   technician reads a diagnostic report: what the machine reported first, then
-   what went wrong before, then the reference documentation.
+1. **Ranking preservation** -- the reranker/fusion order is retained so citation
+   numbering reflects the actual retrieval result instead of a fixed corpus order.
 2. **De-duplication** -- a near-duplicate is dropped through a 3-gram Jaccard
    similarity check, because overlapping chunks of the same manual page
    otherwise flood the prompt with the same sentence three times.
@@ -15,16 +13,12 @@ Three concerns are handled here, in this order:
 
 from __future__ import annotations
 
-from collections import defaultdict
 from math import inf
 from typing import Any
 
 from app.retrieval import Hit
 
 from .models import Evidence, EvidenceBundle
-
-_SOURCE_ORDER: tuple[str, ...] = ("alarms", "cases", "manuals", "sop")
-"""Preferred emission order of the corpora; unknown sources come last."""
 
 _DEDUP_THRESHOLD = 0.85
 """Jaccard similarity above which two chunks are considered duplicates."""
@@ -85,8 +79,7 @@ def _source(hit: Hit) -> str:
     ``Hit.source`` carries the *route* label (``bm25`` / ``dense`` / ``fusion``)
     promised by the API contract, while the corpus written by the offline
     pipeline travels in ``metadata["corpus"]``. The corpus wins here because the
-    evidence layer groups citations the way a technician reads a report, not by
-    retrieval route.
+    evidence layer labels the source category without reordering ranked hits.
 
     Args:
         hit: A retrieval hit.
@@ -205,38 +198,27 @@ def build_bundle(query: str, hits: list[Hit]) -> EvidenceBundle:
         hits: Final ranked hits (after fusion and, when available, reranking).
 
     Returns:
-        An :class:`EvidenceBundle` whose evidences are grouped by corpus, sorted
-        by descending score within each corpus, de-duplicated across the whole
-        bundle and numbered from ``[1]``. Never ``None`` -- an empty hit list
+        An :class:`EvidenceBundle` whose evidences keep the input ranking,
+        are de-duplicated across the whole bundle and numbered from ``[1]``.
+        Never ``None`` -- an empty hit list
         yields an empty bundle.
     """
     if not hits:
         return EvidenceBundle(query=query, evidences=[])
 
-    groups: dict[str, list[Hit]] = defaultdict(list)
-    for hit in hits:
-        groups[_source(hit)].append(hit)
-
-    source_order = list(_SOURCE_ORDER)
-    source_order.extend(
-        source for source in sorted(groups) if source not in _SOURCE_ORDER
-    )
-
     evidences: list[Evidence] = []
     retained_texts: list[str] = []
-    for source in source_order:
-        source_hits = sorted(groups.get(source, []), key=_score, reverse=True)
-        for hit in source_hits:
-            text = _text(hit)
-            if _is_duplicate(text, retained_texts):
-                continue
-            retained_texts.append(text)
-            evidences.append(
-                _evidence_from_hit(
-                    hit,
-                    source=source,
-                    citation_id=f"[{len(evidences) + 1}]",
-                )
+    for hit in hits:
+        text = _text(hit)
+        if _is_duplicate(text, retained_texts):
+            continue
+        retained_texts.append(text)
+        evidences.append(
+            _evidence_from_hit(
+                hit,
+                source=_source(hit),
+                citation_id=f"[{len(evidences) + 1}]",
             )
+        )
 
     return EvidenceBundle(query=query, evidences=evidences)

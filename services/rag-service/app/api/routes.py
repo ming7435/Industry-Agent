@@ -43,6 +43,7 @@ from .documents import get_document_store
 from .pipeline import SearchPipeline
 from app.retrieval import Hit
 from .indexing import UnifiedExperienceIndexer
+from app.corpus import normalize_corpus
 
 router = APIRouter()
 
@@ -223,7 +224,8 @@ def _hit_matches_filters(hit: HitModel, filters: dict[str, Any]) -> bool:
         if key in {"collection", "corpus"}:
             actual = metadata.get("collection") if key == "collection" else metadata.get("corpus") or metadata.get("knowledge_type") or metadata.get("collection")
             if key == "corpus":
-                actual = {"alarm": "alarms", "case": "cases", "manual": "manuals", "sop": "sop", "bom": "bom"}.get(str(actual).lower(), actual)
+                actual = normalize_corpus(actual)
+                expected = normalize_corpus(expected) if not isinstance(expected, (list, tuple, set)) else expected
         if isinstance(expected, (list, tuple, set)):
             if str(actual or "").casefold() not in {str(item).casefold() for item in expected}:
                 return False
@@ -274,12 +276,16 @@ async def health() -> HealthResponse:
 @router.post("/documents/upsert")
 async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
     """Persist a document and its chunks in the standalone RAG store."""
+    store = get_document_store()
+    previous = store.get(request.document_id) or {}
+    previous_ids = {str(item.get("chunk_id") or "") for item in previous.get("chunks") or [] if item.get("chunk_id")}
+    current_ids = {str(item.get("chunk_id") or f"{request.document_id}:{index}") for index, item in enumerate(request.chunks or [{"chunk_id": f"{request.document_id}:0"}])}
     index_result = UnifiedExperienceIndexer(
         enable_whoosh=True if os.getenv("RAG_TEST_FAIL_WHOOSH", "").lower() in {"1", "true", "yes"} else None,
-    ).upsert(request)
+    ).upsert(request, stale_chunk_ids=previous_ids - current_ids)
     backends = dict(index_result.get("backends") or {})
     try:
-        document = get_document_store().upsert(
+        document = store.upsert(
             request.document_id,
             request.content,
             request.metadata,
@@ -290,12 +296,20 @@ async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
     except Exception as error:
         backends["metadata"] = {"success": False, "error": str(error)}
         document = {}
-    success = bool(backends.get("metadata", {}).get("success")) and all(
-        item.get("success") for item in backends.values() if item.get("required")
+    metadata_saved = bool(backends.get("metadata", {}).get("success"))
+    # 元数据和 BM25 可用时允许本地检索继续工作；Milvus/向量路径失败只把
+    # pipeline 标为 degraded，不能把已经持久化的经验伪装成未写入。
+    hard_index_failure = any(
+        name != "milvus" and item.get("required") and not item.get("success")
+        for name, item in backends.items()
     )
+    success = metadata_saved and not hard_index_failure
     return {
         "success": success,
-        "pipeline_ready": bool(index_result.get("pipeline_ready")) and bool(backends.get("metadata", {}).get("success")),
+        "pipeline_ready": bool(index_result.get("pipeline_ready")) and metadata_saved,
+        "metadata_saved": metadata_saved,
+        "bm25_indexed": bool(backends.get("whoosh", {}).get("success")),
+        "dense_indexed": bool(backends.get("milvus", {}).get("success")),
         "backends": backends,
         "document": document,
         "loaded": 1 if success else 0,

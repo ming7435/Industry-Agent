@@ -1,6 +1,6 @@
 """将 Agent 执行器绑定到类型化本地 A2A 端点。"""
 from __future__ import annotations
-from typing import Any, Dict
+from typing import Any
 from app.common.serialization import _serialize_agent_result
 from .client import A2AClient
 from .models import (

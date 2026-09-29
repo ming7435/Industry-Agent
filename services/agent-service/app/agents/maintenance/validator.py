@@ -35,11 +35,21 @@ class MaintenancePlanValidator:
         knowledge_evidence = list(knowledge.get("evidence") or []) if isinstance(knowledge, Mapping) else []
         if not documents and not knowledge_evidence:
             findings.append("缺少 SOP 或知识库证据")
+        diagnosis = plan.get("diagnosis") if isinstance(plan.get("diagnosis"), Mapping) else {}
+        evidence_status = str(diagnosis.get("evidence_status") or "").strip().lower()
+        if evidence_status in {"", "insufficient", "pending", "unknown", "blocked"}:
+            findings.append("诊断证据不足，不能生成可派工维修方案")
+        if diagnosis.get("evidence_validated") is False or diagnosis.get("validated") is False:
+            findings.append("诊断证据尚未通过校验")
 
         steps_text = " ".join(str(item) for item in plan.get("repair_steps") or [])
-        needs_cad = any(token in steps_text for token in cls.STRUCTURAL_ACTIONS)
+        # 新契约优先使用流程计算出的明确标记；兼容旧调用方时才根据步骤
+        # 做保守推断，避免把普通文字误判成必须提供 CAD。
+        needs_cad = bool(plan.get("cad_required")) if "cad_required" in plan else any(token in steps_text for token in cls.STRUCTURAL_ACTIONS)
         if needs_cad and not plan.get("cad_components"):
             findings.append("涉及拆装或部件操作但缺少 CAD/BOM 依据")
+        if needs_cad and isinstance(cad, Mapping) and (cad.get("synthetic") is True or cad.get("degraded") is True or str(cad.get("source") or "").endswith("-local")):
+            findings.append("CAD 为演示或降级数据，不能作为正式维修依据")
 
         known_parts = cls._known_part_tokens(cad)
         inventory = inventory or {}
@@ -54,6 +64,8 @@ class MaintenancePlanValidator:
 
         if plan.get("required_parts") and inventory and not any(item.get("available", True) for item in inventory.get("parts") or inventory.get("stock") or []):
             findings.append("所需备件库存不可用")
+        if plan.get("required_parts") and any(item.get("synthetic") is True for item in inventory.get("parts") or inventory.get("stock") or []):
+            findings.append("备件库存为演示数据，不能作为正式派工依据")
 
         return cls._dedupe(findings)
 
@@ -71,7 +83,7 @@ class MaintenancePlanValidator:
         findings = cls.validate(plan, knowledge, cad, inventory)
         return {
             "passed": not findings,
-            "checks": {"input": True, "evidence": not findings, "confidence": True, "consistency": not findings, "safety": not findings, "schema": True},
+            "checks": {"input": True, "evidence": not findings, "confidence": not any("诊断证据" in item for item in findings), "consistency": not findings, "safety": not findings, "schema": True},
             "findings": list(findings),
             "missing": list(findings),
             "recommended_action": {"type": "replan", "target": "maintenance_replan"} if findings else {"type": "agent", "target": "workorder_create"},

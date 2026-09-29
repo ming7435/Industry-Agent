@@ -22,13 +22,13 @@ _service: BackendBusinessService | None = None
 _startup_error: str = ""
 BUSINESS_TOOLS = {
     "create_workorder", "get_workorder", "query_workorder", "list_workorders", "delete_workorder", "update_workorder",
-    "assign_workorder", "submit_repair_feedback", "mark_repair_completed", "close_workorder",
+    "assign_workorder", "submit_repair_feedback", "mark_repair_completed", "record_repair_verification_failed", "close_workorder",
     "reopen_workorder", "get_workorder_template", "submit_workorder_draft", "get_production_status",
     "query_technicians", "query_technician_skills", "query_technician_workload", "query_shift",
-    "query_team_availability", "query_spare_part", "query_inventory", "query_stock",
+    "query_team_availability", "query_spare_part", "query_inventory", "query_stock", "reserve_inventory", "release_inventory", "consume_inventory", "return_inventory",
     "query_part_availability", "persist_report", "get_report", "list_reports", "delete_report", "save_experience",
     "search_experience", "create_quality_check", "list_quality_checks", "get_quality_check",
-    "submit_quality_appeal", "create_closure_task", "list_closure_tasks", "complete_closure_task",
+    "submit_quality_appeal", "resolve_quality_appeal", "create_closure_task", "list_closure_tasks", "complete_closure_task",
     "reinspect_quality_check", "release_quality_check", "close_quality_check",
     "list_audit_logs",
 }

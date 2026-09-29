@@ -50,6 +50,10 @@ def test_knowledge_documents_bound_external_retrieval_scores() -> None:
     assert [document.score for document in documents] == [1.0, 0.5, 0.0, 0.0]
 
 
+def test_empty_knowledge_results_return_an_empty_evidence_list() -> None:
+    assert KnowledgeAgent._deduplicate_documents([]) == []
+
+
 def test_knowledge_answer_adds_grounded_final_summary_and_removes_duplicate_blocks():
     answer = "**故障判断：** 先核对报警码。[1]\n\n排查报警映射。[2]\n\n排查报警映射。[2]"
 

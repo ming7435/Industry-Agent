@@ -24,8 +24,9 @@ python scripts/test_all.py
 
 1. `ActionModel` 的输出只使用 `action_type/target/payload` 等规范字段；旧的
    `kind/name/params` 仅作为输入兼容别名。
-2. `pipeline.status=waiting_repair` 表示自动图已停止等待维修，真实工单仍使用
-   `open/in_progress/completed/closed/...` 等 WorkOrder 状态。
+2. Runtime 展示状态与工单事实状态分离：新建但未派工的工单为
+   `pipeline_status=waiting_dispatch`，派工后才进入 `in_progress`；真实工单仍使用
+   `backend_status/status` 的 `open/in_progress/awaiting_verification/completed/closed/...`。
 3. `monitor:<event_id>` 是自动异常创建工单的稳定幂等键；经验学习使用
    `workorder:<workorder_id>`，事件 ID 作为经验来源元数据。
 4. 共享 Schema 不允许暗示“超时即杀死线程”。底层执行超时必须保留

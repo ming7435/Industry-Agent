@@ -16,7 +16,7 @@ from app.embedding import VectorRecord
 from app.api.deps import get_embedder
 from app.milvus.schema import MilvusConfig
 from app.milvus.writer import MilvusVectorWriter
-from app.whoosh.indexer import build_index, index_dir_for_collection
+from app.whoosh.indexer import build_index, delete_documents, index_dir_for_collection
 from config.settings import settings
 
 from .models import DocumentUpsertRequest
@@ -80,7 +80,7 @@ class UnifiedExperienceIndexer:
         if milvus_writer_factory is not None and enable_milvus is None:
             self.enable_milvus = True
 
-    def upsert(self, request: DocumentUpsertRequest) -> dict[str, Any]:
+    def upsert(self, request: DocumentUpsertRequest, stale_chunk_ids: Iterable[str] | None = None) -> dict[str, Any]:
         chunks = _chunks(request)
         records = [
             {
@@ -99,6 +99,9 @@ class UnifiedExperienceIndexer:
             try:
                 if _enabled("RAG_TEST_FAIL_WHOOSH"):
                     raise RuntimeError("whoosh test failure")
+                stale = [str(item) for item in (stale_chunk_ids or []) if str(item)]
+                if stale and self.whoosh_writer == self._write_whoosh:
+                    delete_documents(stale, index_dir_for_collection(os.getenv("RAG_DOCUMENT_WHOOSH_INDEX_DIR") or settings.whoosh_index_dir, request.collection))
                 written = self.whoosh_writer(records, request.collection)
                 backends["whoosh"] = {"success": written == len(records), "required": True, "written": written}
                 if written != len(records):
@@ -130,6 +133,16 @@ class UnifiedExperienceIndexer:
                     for item, vector in zip(records, vectors)
                 ]
                 writer = self.milvus_writer_factory(request.collection)
+                stale = [str(item) for item in (stale_chunk_ids or []) if str(item)]
+                delete_stale = getattr(writer, "delete_records", None)
+                if stale and callable(delete_stale):
+                    try:
+                        delete_stale(stale)
+                    except Exception as error:
+                        # 新集合没有旧记录时允许继续写；已有集合的删除错误必须暴露，
+                        # 否则旧分块会继续污染检索结果。
+                        if writer.has_collection():
+                            raise error
                 writer.recreate_collection(dimension=len(vector_records[0].vector))
                 written = writer.insert_records(vector_records)
                 backends["milvus"] = {"success": written == len(vector_records), "required": True, "written": written}

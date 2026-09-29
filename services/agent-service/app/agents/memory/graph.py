@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 from langgraph.graph import END, START, StateGraph
 
@@ -93,7 +93,31 @@ def dedup_experience(state: MemoryGraphState) -> Dict[str, Any]:
 
 
 def validate_experience(state: MemoryGraphState) -> Dict[str, Any]:
-    return {"route": "persist" if state.get("experience") and not state.get("validation_findings") else "fallback"}
+    experience = dict(state.get("experience") or {})
+    if not experience or state.get("validation_findings"):
+        return {"route": "fallback"}
+    request = state.get("request") or {}
+    workorder = dict(request.get("workorder") or {})
+    feedback = request.get("repair_feedback") or workorder.get("repair_feedback") or {}
+    existing_raw = state["agent"].experience_module.long_memory.search(
+        device_id=str(workorder.get("device_id") or ""), limit=100
+    )
+    existing = [dict(item) for item in existing_raw if isinstance(item, Mapping)]
+    quality = state["agent"].experience_module.validator.validate_experience(
+        experience, workorder, feedback, existing=existing
+    )
+    experience.update({
+        "experience_quality_score": quality.experience_quality_score,
+        "validation_status": quality.validation_status,
+        "validation_findings": list(quality.findings),
+    })
+    if not quality.accepted:
+        return {
+            "experience": experience,
+            "validation_findings": list(quality.findings),
+            "route": "fallback",
+        }
+    return {"experience": experience, "route": "persist"}
 
 
 def persist(state: MemoryGraphState) -> Dict[str, Any]:

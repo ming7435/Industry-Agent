@@ -258,6 +258,33 @@ def delete_documents(
     return len(ids)
 
 
+def chunk_ids_for_document(document_id: str, index_dir: str | Path | None = None) -> list[str]:
+    """读取 Whoosh 中某文档现存的分块 ID，供更新时清理旧分块。"""
+    document_id = str(document_id or "").strip()
+    if not document_id:
+        return []
+    try:
+        from whoosh import index as whoosh_index
+    except (ImportError, ModuleNotFoundError):
+        return []
+    directory = Path(index_dir or settings.whoosh_index_dir)
+    if not whoosh_index.exists_in(str(directory)):
+        return []
+    ix = whoosh_index.open_dir(str(directory))
+    values: list[str] = []
+    with ix.searcher() as searcher:
+        for item in searcher.all_stored_fields():
+            try:
+                metadata = json.loads(str(item.get(FIELD_METADATA) or "{}"))
+            except (TypeError, ValueError):
+                metadata = {}
+            if isinstance(metadata, dict) and str(metadata.get("document_id") or "") == document_id:
+                chunk_id = str(item.get(FIELD_CHUNK_ID) or "")
+                if chunk_id:
+                    values.append(chunk_id)
+    return values
+
+
 def count_documents(index_dir: str | Path | None = None) -> int:
     """Return the number of documents in the index.
 
@@ -311,6 +338,7 @@ __all__ = [
     "build_index",
     "count_documents",
     "delete_documents",
+    "chunk_ids_for_document",
     "existing_document_ids",
     "index_dir_for_collection",
     "open_index",

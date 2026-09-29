@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .action import ActionModel, ActionType
 from .capability import CAPABILITY_DEFINITIONS, CapabilityRegistry
@@ -39,8 +39,14 @@ class RuntimePolicy:
     })
     _HIGH_RISK = frozenset({"high", "critical", "r3", "r4"})
 
-    def __init__(self, capabilities: CapabilityRegistry | None = None) -> None:
+    def __init__(
+        self,
+        capabilities: CapabilityRegistry | None = None,
+        approval_lookup: Callable[[str], Mapping[str, Any] | None] | None = None,
+    ) -> None:
         self.capabilities = capabilities or CapabilityRegistry(CAPABILITY_DEFINITIONS)
+        # 审批记录必须来自服务端持久化存储。客户端 context/event 中的同名字段不可信。
+        self.approval_lookup = approval_lookup
 
     def evaluate(self, action: ActionModel, state: Mapping[str, Any] | None = None) -> PolicyDecision:
         current = dict(state or {})
@@ -89,14 +95,41 @@ class RuntimePolicy:
             or bool(payload.get("requires_approval"))
             or bool(definition and definition.requires_approval)
         ) and is_mutation
-        approved = context.get("approved_capabilities") or current.get("approved_capabilities") or []
-        if not isinstance(approved, (list, tuple, set)):
-            approved = []
-        approval_granted = bool(context.get("approval_granted") or current.get("approval_granted"))
-        approved_names = {self.capabilities.canonical_name(str(item)) for item in approved}
-        if approval_needed and not approval_granted and canonical_capability not in approved_names:
+        approval_granted = self._server_approval_matches(action, current, canonical_capability)
+        if approval_needed and not approval_granted:
             return PolicyDecision(PolicyStatus.REQUIRE_APPROVAL, "approval_required", risk_level)
         return PolicyDecision(PolicyStatus.ALLOW, "policy_allow", risk_level)
+
+    def _server_approval_matches(
+        self,
+        action: ActionModel,
+        state: Mapping[str, Any],
+        canonical_capability: str,
+    ) -> bool:
+        """只接受审批存储中绑定的同一 Action，不接受请求体自声明授权。"""
+
+        if self.approval_lookup is None:
+            return False
+        resume = state.get("runtime_resume")
+        if not isinstance(resume, Mapping):
+            return False
+        pending_id = str(resume.get("pending_id") or "").strip()
+        if not pending_id:
+            return False
+        try:
+            record = self.approval_lookup(pending_id)
+        except Exception:
+            return False
+        if not isinstance(record, Mapping) or str(record.get("status") or "") != "resuming":
+            return False
+        approved_action = ActionModel.coerce(record.get("action"))
+        if approved_action is None:
+            return False
+        approved_capability = approved_action.required_capability or approved_action.target
+        if self.capabilities.canonical_name(approved_capability) != canonical_capability:
+            return False
+        # 指纹覆盖动作类型、目标、全部业务参数和幂等键；任何参数变化都重新审批。
+        return approved_action.fingerprint == action.fingerprint
 
     @staticmethod
     def _workorder_evidence_ready(name: str, state: Mapping[str, Any]) -> bool:

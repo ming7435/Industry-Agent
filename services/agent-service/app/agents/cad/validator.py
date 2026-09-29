@@ -19,6 +19,7 @@ class CADEngineeringValidator:
         part_relations: Sequence[Mapping[str, Any]],
         assembly_relations: Sequence[Mapping[str, Any]],
         locations: Sequence[Mapping[str, Any]],
+        query_type: str = "component",
     ) -> list[str]:
         findings: list[str] = []
         component_ids = {item.component_id for item in components if item.component_id}
@@ -27,13 +28,19 @@ class CADEngineeringValidator:
 
         if not components:
             findings.append("未解析到工程部件")
-        for component in components:
-            if not component.part_no:
-                findings.append("部件缺少零件号：%s" % component.component_id)
-            if not component.drawing_ref:
-                findings.append("部件缺少图纸引用：%s" % component.component_id)
-            if not component.position:
-                findings.append("部件缺少安装位置：%s" % component.component_id)
+        query_type = str(query_type or "component").lower()
+        if query_type in {"component", "bom"}:
+            for component in components:
+                if not component.part_no:
+                    findings.append("部件缺少零件号：%s" % component.component_id)
+        if query_type == "bom" and components and not bom_items:
+            findings.append("缺少 BOM 物料依据")
+        if query_type == "component" and components and not drawings:
+            findings.append("缺少图纸依据")
+        if query_type == "assembly_relation" and components and not assembly_relations:
+            findings.append("缺少装配关系依据")
+        if query_type == "location" and components and not locations:
+            findings.append("缺少部件位置依据")
 
         for item in bom_items:
             part_no = str(item.get("part_no") or "")
@@ -59,14 +66,6 @@ class CADEngineeringValidator:
             if part_no and part_numbers and part_no not in part_numbers:
                 findings.append("关系/位置中的零件号未匹配 CAD 部件：%s" % part_no)
 
-        if components and not bom_items:
-            findings.append("缺少 BOM 物料依据")
-        if components and not drawings:
-            findings.append("缺少图纸依据")
-        if components and not assembly_relations:
-            findings.append("缺少装配关系依据")
-        if components and not locations:
-            findings.append("缺少部件位置依据")
         return cls._dedupe(findings)
 
     @classmethod

@@ -120,6 +120,9 @@ class ModelGateway:
     def __init__(self) -> None:
         mode = os.getenv("MODEL_PROVIDER", "fake").strip().lower()
         if mode in {"fake", "test", "ci"}:
+            environment = os.getenv("APP_ENV", "development").strip().lower()
+            if environment in {"prod", "production"}:
+                raise ProviderError("fake model provider is forbidden in production")
             self.chat_provider: Any = _FakeProvider()
             self.aux_provider: Any = self.chat_provider
         elif mode in {"remote", "deepseek", "siliconflow"}:
@@ -165,18 +168,37 @@ class ModelGateway:
         return str(self.aux_provider.name)
 
     def chat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return dict(self.chat_provider.chat(payload))
+        return self._with_metadata(self.chat_provider.chat(payload), payload, "chat", self.chat_provider)
 
     def embeddings(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return dict(self.aux_provider.embeddings(payload))
+        return self._with_metadata(self.aux_provider.embeddings(payload), payload, "embedding", self.aux_provider)
 
     def rerank(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return dict(self.aux_provider.rerank(payload))
+        return self._with_metadata(self.aux_provider.rerank(payload), payload, "rerank", self.aux_provider)
 
     def vision(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         if self.chat_provider is self.aux_provider:
-            return dict(self.chat_provider.chat(payload))
-        return dict(self.aux_provider.chat({**dict(payload), "model": os.getenv("SILICONFLOW_VISION_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct")}))
+            response = self.chat_provider.chat(payload)
+            provider = self.chat_provider
+        else:
+            response = self.aux_provider.chat({**dict(payload), "model": os.getenv("SILICONFLOW_VISION_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct")})
+            provider = self.aux_provider
+        return self._with_metadata(response, payload, "vision", provider)
+
+    @staticmethod
+    def _with_metadata(response: Mapping[str, Any], payload: Mapping[str, Any], capability: str, provider: Any) -> dict[str, Any]:
+        value = dict(response or {})
+        requested = str(payload.get("model") or "")
+        actual = str(value.get("model") or requested or getattr(provider, "model", "") or provider.name)
+        provider_name = str(getattr(provider, "name", "unknown"))
+        value["model_metadata"] = {
+            "provider": provider_name,
+            "requested_model": requested or actual,
+            "actual_model": actual,
+            "capability": capability,
+            "synthetic": provider_name == "fake",
+        }
+        return value
 
 
 __all__ = ["ModelGateway"]

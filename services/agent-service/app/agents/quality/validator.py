@@ -30,23 +30,29 @@ class QualityValidator:
         findings: list[str] = []
         defects: list[dict[str, Any]] = []
         inspection_items: list[dict[str, Any]] = []
+        if not specification:
+            failed.append("specification_missing")
+            findings.append("缺少生产零件检验规格，不能判定质量合格")
         for code, label, result in check_definitions:
             payload = dict(result or {})
             passed = bool(payload.get("passed"))
-            inspection_items.append({"name": label, "passed": passed, "source": payload.get("source", "qms-mcp")})
+            sufficient_data = payload.get("sufficient_data") is not False and str(payload.get("status") or "").lower() not in {"not_tested", "pending", "insufficient_data"}
+            trusted = payload.get("synthetic") is not True and payload.get("degraded") is not True
+            item_passed = passed and sufficient_data and trusted
+            inspection_items.append({"name": label, "passed": item_passed, "source": payload.get("source", "qms-mcp"), "status": payload.get("status", ""), "evidence_status": "trusted" if trusted else "untrusted"})
             defects.extend(list(payload.get("defects") or []))
-            if passed:
+            if item_passed:
                 findings.append("%s通过" % label)
             else:
                 failed.append(code)
-                findings.append("%s未通过" % label)
+                findings.append("%s未通过、缺少数据或检测证据不可信" % label)
 
         passed = not failed and bool(part.get("part_id") or part.get("part_no"))
         if not part.get("part_id") and not part.get("part_no"):
             failed.append("part_identity_missing")
             findings.append("缺少生产零件编号，无法形成可追溯质检结果")
         checks = [
-            {"name": item[1], "passed": bool((result or {}).get("passed"))}
+            {"name": item[1], "passed": bool((result or {}).get("passed")) and (result or {}).get("synthetic") is not True and (result or {}).get("degraded") is not True}
             for item in check_definitions
             for result in [item[2]]
         ]
@@ -54,7 +60,7 @@ class QualityValidator:
             "inspection_type": "part_quality",
             "passed": passed,
             "qualified": passed,
-            "status": "pass" if passed else "fail",
+            "status": "pass" if passed else ("not_tested" if any(str((result or {}).get("status") or "").lower() in {"not_tested", "pending", "insufficient_data"} for _, _, result in check_definitions) else "fail"),
             "quality_grade": "合格" if passed else "不合格",
             "failed_checks": cls._dedupe(failed),
             "findings": cls._dedupe(findings),
@@ -65,7 +71,7 @@ class QualityValidator:
                 "passed": passed,
                 "checks": {
                     "input": bool(part.get("part_id") or part.get("part_no")),
-                    "evidence": all(item["passed"] for item in checks),
+                    "evidence": all(item["passed"] for item in checks) and bool(specification),
                     "confidence": True,
                     "consistency": all(item["passed"] for item in checks),
                     "safety": True,

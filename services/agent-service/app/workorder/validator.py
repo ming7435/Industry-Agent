@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from .policy import maintenance_decision
 
 
 class WorkOrderValidator:
-    VALID_STATUSES = {"open", "in_progress", "completed", "closed", "rejected", "timeout"}
+    VALID_STATUSES = {"open", "in_progress", "awaiting_verification", "completed", "closed", "rejected", "timeout"}
     STATUS_TRANSITIONS = {
         "open": {"open", "in_progress", "rejected", "timeout"},
-        "in_progress": {"in_progress", "completed", "rejected", "timeout"},
+        "in_progress": {"in_progress", "awaiting_verification", "rejected", "timeout"},
+        "awaiting_verification": {"awaiting_verification", "completed", "in_progress"},
         "completed": {"completed", "closed", "in_progress"},
         "closed": {"closed", "open"},
         "rejected": {"rejected", "open"},
@@ -70,6 +72,8 @@ class WorkOrderValidator:
         required_checks = ("device_identity", "operational", "alarms_clear", "metrics_available")
         if any(checks.get(key) is not True for key in required_checks):
             return False
+        if not _recovery_is_fresh(recovery):
+            return False
         status = str(value.get("status") or "verified").strip().lower()
         return status not in {"failed", "rejected", "invalid"}
 
@@ -90,14 +94,13 @@ class WorkOrderValidator:
         alarm_code = str(recovery.get("alarm_code") or "").strip()
         metrics = recovery.get("metrics") or recovery.get("metric_details") or {}
         fault_evidence = recovery.get("fault_evidence") if isinstance(recovery.get("fault_evidence"), Mapping) else {}
-        health_score = recovery.get("health_score")
         checks = {
             "device_identity": bool(expected_device and actual_device == expected_device),
-            "operational": status in {"running", "idle", "ready", "standby", "normal", "completed"},
+            "operational": status in {"running", "idle", "ready", "standby", "normal", "completed"}
+            or (status in {"stopped", "paused"} and recovery.get("restart_requested") is True),
             "alarms_clear": not alarm_code and not active_alarms and not bool(fault_evidence.get("active")),
             "metrics_available": isinstance(metrics, Mapping) and bool(metrics),
-            "health_score_normal": health_score is None or _number_at_least(health_score, 80.0),
-            "checked_at_present": bool(recovery.get("checked_at") or recovery.get("timestamp") or recovery.get("updated_at")),
+            "recovery_fresh": _recovery_is_fresh(recovery),
         }
         passed = all(checks.values())
         return {
@@ -130,8 +133,23 @@ class WorkOrderValidator:
         return order.get("status") == "closed" and valid and WorkOrderValidator.verification_passed(order, feedback)
 
 
-def _number_at_least(value: Any, minimum: float) -> bool:
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
     try:
-        return float(value) >= minimum
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _recovery_is_fresh(recovery: Mapping[str, Any]) -> bool:
+    """只依据设备快照的明确时间/过期标记判断新鲜度，不猜测工业阈值。"""
+
+    if any(recovery.get(key) is True for key in ("stale", "expired", "is_stale")):
         return False
+    checked_at = _parse_timestamp(recovery.get("checked_at") or recovery.get("timestamp") or recovery.get("updated_at"))
+    if checked_at is None:
+        return False
+    expires_at = _parse_timestamp(recovery.get("expires_at"))
+    return expires_at is None or expires_at > datetime.now(timezone.utc)

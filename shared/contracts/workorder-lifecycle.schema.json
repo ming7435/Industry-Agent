@@ -9,16 +9,18 @@
     "event_id": {"type": "string"},
     "idempotency_key": {"type": "string"},
     "learning_idempotency_key": {"type": "string"},
-    "status": {"type": "string", "enum": ["open", "in_progress", "completed", "closed", "rejected", "timeout"]},
-    "pipeline_status": {"type": "string", "enum": ["waiting_repair"]},
+    "status": {"type": "string", "enum": ["open", "in_progress", "awaiting_verification", "completed", "closed", "rejected", "timeout"]},
+    "backend_status": {"type": "string"},
+    "pipeline_status": {"type": "string", "enum": ["created", "waiting_dispatch", "dispatched", "in_progress", "awaiting_verification", "completed", "closed", "rejected", "timeout", "workorder_error"]},
     "repair_feedback": {"type": ["object", "string"]},
     "repair_verification": {"type": "object"}
   },
   "x-rules": [
     "Automatic event creation uses idempotency_key=monitor:<event_id>.",
-    "pipeline_status=waiting_repair is not a WorkOrder status.",
-    "A WorkOrder may close only after status=completed and repair_verification.passed=true.",
-    "Memory learning requires status=closed, non-empty repair_feedback, and a passed repair_verification.",
+    "pipeline_status is the orchestration display state; backend_status/status is the WorkOrder fact-source state.",
+    "A newly created open WorkOrder maps to pipeline_status=waiting_dispatch; it must not be reported as waiting_repair.",
+    "A WorkOrder may close only after status=completed and a passed device-recovery verification.",
+    "Memory learning requires status=closed, non-empty repair_feedback, and a passed device-recovery verification.",
     "Learning uses learning_idempotency_key=workorder:<workorder_id>."
   ]
 }

@@ -90,8 +90,9 @@ test("repair completion sends a verified lifecycle action instead of a generic u
   assert.deepEqual(payload.repair_feedback, {
     feedback: "更换冷却泵并复测正常",
     operator: "维修一组",
+    maintenance_confirmed_by: "维修一组",
   });
-  assert.equal(payload.repair_verification.passed, true);
-  assert.equal(payload.repair_verification.device_id, "MACHINE-1");
-  assert.equal(typeof payload.repair_verification.verified_at, "string");
+  assert.equal(payload.repair_verification.source, "device_recovery");
+  assert.equal(payload.repair_verification.device_recovery.device_id, "MACHINE-1");
+  assert.equal(typeof payload.repair_verification.device_recovery.checked_at, "string");
 });

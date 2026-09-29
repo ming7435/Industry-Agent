@@ -140,6 +140,7 @@ def rrf_fusion(
         metadata: dict[str, Any] = dict(getattr(origin_hit, "metadata", None) or {})
         metadata["rrf_detail"] = dict(rrf_detail)
         metadata["fusion_score"] = scores[chunk_id]
+        metadata["origin_score"] = float(getattr(origin_hit, "score", 0.0) or 0.0)
         metadata["stage"] = STAGE_FUSION
 
         fused_hits.append(

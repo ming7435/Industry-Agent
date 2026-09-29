@@ -24,7 +24,7 @@ Goal/Event -> RuntimeInputParser -> Planner -> CapabilityRegistry -> LoopEngine
 ```
 
 默认异常事件计划仍然解析为
-`Diagnosis -> Knowledge -> CAD -> Maintenance -> WorkOrder -> waiting_repair`，
+`Diagnosis -> Knowledge -> CAD -> Maintenance -> WorkOrder -> waiting_dispatch/in_progress`，
 但该顺序是 Planner 的结果，而不是 Graph 边。Maintenance 可以返回
 `blocked_insufficient_evidence`；此时 Runtime 会停止，且不会创建 WorkOrder。
 

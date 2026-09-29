@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Deque, Dict, Iterable, List, Optional
+from typing import Callable, Deque, Dict, Iterable, List, Optional
 
 from .models import (
     _AnomalyState,

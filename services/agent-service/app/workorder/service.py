@@ -30,6 +30,7 @@ class WorkOrderService:
             "title": str(payload.get("title") or "设备维修：%s" % (diagnosis.get("fault") or "设备异常")),
             "plan_id": payload.get("plan_id", ""),
             "steps": payload.get("repair_steps", []),
+            "required_parts": list(payload.get("required_parts") or []),
             "repair_target": dict(payload.get("target_part") or payload.get("repair_target_detail") or {}),
             "drawing_context": self._drawing_context(payload.get("engineering_context") or {}),
             "alarm_code": alarm_code,
@@ -105,7 +106,9 @@ class WorkOrderService:
     def submit_repair_feedback(self, workorder_id: str, feedback: Any) -> dict[str, Any]:
         return self.tools.execute("submit_repair_feedback", {"workorder_id": workorder_id, "feedback": feedback})
 
-    def mark_repair_completed(self, workorder_id: str, feedback: Any = "", repair_verification: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def mark_repair_completed(self, workorder_id: str, feedback: Any = "", repair_verification: Mapping[str, Any] | None = None, maintenance_confirmed_by: str = "") -> dict[str, Any]:
+        if isinstance(feedback, Mapping) and maintenance_confirmed_by and not feedback.get("maintenance_confirmed_by"):
+            feedback = {**dict(feedback), "maintenance_confirmed_by": maintenance_confirmed_by}
         verification = dict(repair_verification or {})
         if not verification.get("device_recovery"):
             try:
@@ -143,7 +146,12 @@ class WorkOrderService:
             return self.submit_repair_feedback(workorder_id, feedback)
         if action == "mark_repair_completed":
             feedback = task.get("repair_feedback")
-            return self.mark_repair_completed(workorder_id, feedback, task.get("repair_verification") or task.get("verification") or {})
+            return self.mark_repair_completed(
+                workorder_id,
+                feedback,
+                task.get("repair_verification") or task.get("verification") or {},
+                str(task.get("maintenance_confirmed_by") or ""),
+            )
         if action == "close":
             return self.close(workorder_id, str(task.get("closure_reason") or ""))
         if action == "reopen":

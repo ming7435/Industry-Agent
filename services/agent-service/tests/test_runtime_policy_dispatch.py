@@ -68,11 +68,12 @@ def test_dispatcher_waits_for_high_risk_approval_without_agent_execution():
     assert agent.calls == 0
 
 
-def test_scoped_approval_allows_high_risk_workorder():
+def test_client_scoped_approval_does_not_allow_high_risk_workorder():
     dispatcher, agent, _trace = _dispatcher()
     state = {**_ready_state(), "context": {"approved_capabilities": ["workorder_create"]}}
 
     result = dispatcher.dispatch(_action("high"), state)
 
-    assert result.success is True
-    assert agent.calls == 1
+    assert result.success is False
+    assert result.output["policy_status"] == "require_approval"
+    assert agent.calls == 0

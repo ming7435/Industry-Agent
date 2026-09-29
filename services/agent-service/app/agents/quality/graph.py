@@ -8,8 +8,6 @@ from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
 from app.agents.base import trace_skill_node
-from app.contracts import QualityResult
-
 from .schemas import QualityQuery, QualityWorkflowState
 from .validator import QualityValidator
 

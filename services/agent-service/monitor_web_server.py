@@ -36,7 +36,9 @@ if str(SERVICE_ROOT) not in sys.path:
 
 # 为导入旧版模块级 Registry 类型的集成保留向后兼容的符号导出。
 # Monitor 不会实例化它；所有执行仍位于 Agent Service HTTP 边界之后。
-from app.tools.registry import ToolRegistry  # noqa: E402,F401
+from app.tools.registry import ToolRegistry as _ToolRegistry  # noqa: E402
+
+ToolRegistry = _ToolRegistry
 
 
 def agent_request_headers(content_type: str = "application/json") -> Dict[str, str]:
@@ -239,6 +241,7 @@ class MonitorWebState:
         self.alarm_event_count = 0
         self.alarm_event_counts: Dict[str, int] = {}
         self.machine_controls: Dict[str, Any] = {}
+        self._paused_event_keys: set[str] = set()
         self.diagnosis_task_count = 0
         self._last_alarm_codes: Dict[str, Optional[str]] = {}
         self.trigger_history = deque(maxlen=30)
@@ -362,9 +365,6 @@ class MonitorWebState:
             if result.trigger:
                 self.diagnosis_task_count += 1
                 self.trigger_history.appendleft(result.trigger.to_dict())
-        # 监控逻辑刻意保持只读。严重结果只暴露给诊断/工单流程，
-        # 绝不会直接启动或停止设备。
-
     def _on_trigger(self, trigger) -> None:
         """把确认后的异常事件异步交给 Diagnosis Agent。"""
 
@@ -528,6 +528,7 @@ class MonitorWebState:
             self.diagnosis_history.clear()
             self.diagnosis_pending = 0
             self.machine_controls.clear()
+            self._paused_event_keys.clear()
         if was_running:
             self.runner.start()
         return self.snapshot()

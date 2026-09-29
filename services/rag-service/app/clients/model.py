@@ -23,6 +23,7 @@ class ModelServiceClient:
         if not self.base_url:
             raise ModelServiceError("MODEL_SERVICE_BASE_URL is not configured")
         self.timeout = float(os.getenv("MODEL_SERVICE_TIMEOUT_SECONDS", "30"))
+        self.last_model_metadata: dict[str, Any] = {}
 
     def _post(self, path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         request = Request(self.base_url + path, data=json.dumps(dict(payload), ensure_ascii=False).encode("utf-8"), method="POST", headers={"Content-Type": "application/json", "Accept": "application/json"})
@@ -62,6 +63,7 @@ class ModelServiceClient:
             {"role": "user", "content": "Query: %s\nEvidence:\n%s" % (query, evidence_text)},
         ]
         response = await asyncio.to_thread(self._post, "/v1/chat/completions", {"model": os.getenv("MODEL_CHAT_MODEL", "deepseek-chat"), "messages": messages, "temperature": 0.1})
+        self.last_model_metadata = dict(response.get("model_metadata") or {})
         try:
             return str(response["choices"][0]["message"].get("content") or "").strip()
         except (KeyError, IndexError, TypeError) as error:
@@ -101,13 +103,18 @@ class RemoteReranker:
 class RemoteLLM:
     def __init__(self) -> None:
         self.client = ModelServiceClient()
+        self.provider = "deepseek"
+        self.model = os.getenv("MODEL_CHAT_MODEL", "deepseek-chat")
+        self.last_model_metadata: dict[str, Any] = {}
 
     @property
     def is_configured(self) -> bool:
         return bool(self.client.base_url)
 
     async def generate(self, query: str, evidence_text: str) -> str:
-        return await self.client.generate(query, evidence_text)
+        answer = await self.client.generate(query, evidence_text)
+        self.last_model_metadata = dict(self.client.last_model_metadata or {})
+        return answer
 
 
 __all__ = ["ModelServiceClient", "ModelServiceError", "RemoteEmbedder", "RemoteReranker", "RemoteLLM"]

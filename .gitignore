@@ -22,6 +22,9 @@ build/
 # Local data / indexes
 services/rag-service/data/index/
 services/rag-service/data/*.sqlite3
+data/index/
+services/document-cad-service/data/.ingestion_cache/
+services/document-cad-service/data/index/
 *.log
 .runtime/
 runtime_pending_tasks.sqlite3

@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时�
 
 import hmac
 import os
+from urllib.error import HTTPError
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -21,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.schemas.agent import ApprovalRequest, AbnormalEventRequest, RejectionRequest, UserQuestionRequest
 from app.api.schemas.closure import ClosureTaskRequest, QualityCloseRequest, QualityReinspectionRequest
 from app.api.schemas.memory import ExperienceSearchRequest
-from app.api.schemas.quality import PartQualityRequest, QualityAppealRequest, QualityCheckRequest
+from app.api.schemas.quality import PartQualityRequest, QualityAppealRequest, QualityAppealResolutionRequest, QualityCheckRequest
 from app.api.schemas.rag import RAGIngestRequest
 from app.api.schemas.workorder import RepairFeedbackRequest, WorkOrderActionRequest, WorkOrderCreateRequest
 from app.graph import AgentOrchestrator, build_orchestrator
@@ -319,7 +320,13 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.delete("/api/workorders/{workorder_id}", dependencies=[Depends(require_write_auth)])
     def delete_workorder(workorder_id: str) -> Dict[str, Any]:
-        result = runtime.container.registry.execute("delete_workorder", {"workorder_id": workorder_id}, context={"agent": "router", "step": "delete_workorder"})
+        try:
+            result = runtime.container.registry.execute("delete_workorder", {"workorder_id": workorder_id}, context={"agent": "router", "step": "delete_workorder"})
+        except HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")[:500]
+            raise HTTPException(status_code=error.code if error.code in {404, 409} else 502, detail=detail or "工单删除请求失败") from error
+        except Exception as error:
+            raise HTTPException(status_code=502, detail="工单删除服务不可用：%s" % error) from error
         if not result.get("deleted"):
             raise HTTPException(status_code=404, detail="工单不存在：%s" % workorder_id)
         return result
@@ -393,9 +400,12 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         query = part_no or component
         if not query:
             raise HTTPException(status_code=400, detail="component 或 part_no 不能为空")
-        part = runtime.container.registry.execute("query_part", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
-        relation = runtime.container.registry.execute("query_relation", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
-        drawing = runtime.container.registry.execute("query_drawing", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
+        try:
+            part = runtime.container.registry.execute("query_part", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
+            relation = runtime.container.registry.execute("query_relation", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
+            drawing = runtime.container.registry.execute("query_drawing", {"query": query, "component": component, "part_no": part_no, "device_id": device_id})
+        except Exception as error:
+            raise HTTPException(status_code=503, detail="CAD 服务不可用，未返回未经验证的演示图纸：%s" % error) from error
         parts = list(part.get("parts") or part.get("components") or [])
         requested_id = str(component or part_no or "").strip().casefold()
         if requested_id and ("-" in requested_id or requested_id.isalnum()):
@@ -437,6 +447,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
                 "workorder_id": workorder_id,
                 "repair_feedback": feedback,
                 "repair_verification": feedback.get("verification") or {},
+                "maintenance_confirmed_by": feedback.get("operator") or "",
             },
             from_agent="router",
         )
@@ -458,6 +469,17 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.post("/api/v1/quality/checks/{check_id}/appeal", dependencies=[Depends(require_write_auth)])
     def appeal_quality_check(check_id: str, request: QualityAppealRequest) -> Dict[str, Any]:
         return runtime.container.closure_service.submit_appeal(check_id, request.model_dump(mode="json"))
+
+    @app.post("/api/v1/quality/checks/{check_id}/appeal/resolve", dependencies=[Depends(require_write_auth)])
+    def resolve_quality_appeal(check_id: str, request: QualityAppealResolutionRequest) -> Dict[str, Any]:
+        return closure_call(
+            runtime.container.closure_service.resolve_appeal,
+            check_id,
+            request.appeal_id,
+            request.decision,
+            request.reason,
+            request.operator,
+        )
 
     @app.post("/api/v1/closure-tasks", dependencies=[Depends(require_write_auth)])
     def create_closure_task(request: ClosureTaskRequest) -> Dict[str, Any]:

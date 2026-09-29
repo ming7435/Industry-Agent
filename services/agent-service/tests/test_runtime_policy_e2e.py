@@ -63,6 +63,7 @@ def test_controlled_autonomy_allows_replay_but_gates_high_risk_action():
     assert first.success is True
     assert replay.success is True
     assert high_risk.output["status"] == "waiting_approval"
-    assert approved.success is True
-    assert agent.calls == 2
+    assert approved.success is False
+    assert approved.output["policy_status"] == "require_approval"
+    assert agent.calls == 1
     assert len([item for item in trace.list(trace_id="TRACE-POLICY-E2E") if item["event"] == "policy_decision"]) == 4

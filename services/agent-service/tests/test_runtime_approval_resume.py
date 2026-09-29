@@ -12,6 +12,7 @@ from app.runtime.coordinator import RuntimeCoordinator
 from app.runtime.dispatcher import RuntimeDispatcher
 from app.runtime.execution import ExecutionManager
 from app.runtime.planner import Plan
+from app.runtime.policy import RuntimePolicy
 
 
 class _ApprovalWorkOrderAgent(BaseAgent):
@@ -51,6 +52,7 @@ def _container(tmp_path):
     dispatcher = RuntimeDispatcher(registry, ExecutionManager(), trace=trace)
     approvals = ApprovalManager(PendingTaskStore(str(tmp_path / "pending.sqlite3")), trace=trace)
     planner = _ApprovalPlanner()
+    dispatcher.policy = RuntimePolicy(approval_lookup=approvals.store.get)
     container = SimpleNamespace(
         planner=planner,
         dispatcher=dispatcher,

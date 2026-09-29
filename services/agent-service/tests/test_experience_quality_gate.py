@@ -7,8 +7,16 @@ def test_experience_quality_gate_accepts_closed_human_confirmed_repair():
             "content": "bearing replaced",
             "source_workorder": "WO-1",
         },
-        {"status": "closed", "device_id": "D-1"},
-        {"feedback": "bearing replaced", "operator": "u-1", "verification": {"passed": True}},
+        {"status": "closed", "device_id": "D-1", "repair_verification": {
+            "passed": True, "status": "verified", "source": "device_recovery",
+            "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2099-09-28T12:00:00Z"},
+            "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
+        }},
+        {"feedback": "bearing replaced", "operator": "u-1", "verification": {
+            "passed": True, "status": "verified", "source": "device_recovery",
+            "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2099-09-28T12:00:00Z"},
+            "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
+        }},
     )
 
     assert result.validation_status == "accepted"

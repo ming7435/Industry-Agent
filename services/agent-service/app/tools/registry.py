@@ -178,6 +178,7 @@ class ToolRegistry:
             "assign_workorder": self.assign_workorder,
             "submit_repair_feedback": self.submit_repair_feedback,
             "mark_repair_completed": self.mark_repair_completed,
+            "record_repair_verification_failed": self.record_repair_verification_failed,
             "close_workorder": self.close_workorder,
             "reopen_workorder": self.reopen_workorder,
             "query_technicians": self.query_technicians,
@@ -423,6 +424,11 @@ class ToolRegistry:
     def mark_repair_completed(self, **arguments: Any) -> Dict[str, Any]:
         return mark_repair_completed_tool(self.workorder_mcp, **arguments)
 
+    def record_repair_verification_failed(self, **arguments: Any) -> Dict[str, Any]:
+        if self.backend_base_url:
+            return self.mcp.call("mes", "record_repair_verification_failed", arguments)
+        return self.workorder_mcp.record_repair_verification_failed(**arguments)
+
     def close_workorder(self, **arguments: Any) -> Dict[str, Any]:
         return close_workorder_tool(self.workorder_mcp, **arguments)
 
@@ -498,7 +504,7 @@ class ToolRegistry:
             "create_workorder": "mes", "update_workorder": "mes", "get_workorder": "mes", "query_workorder": "mes",
             "list_workorders": "mes", "delete_workorder": "mes", "assign_workorder": "mes", "submit_repair_feedback": "mes",
             "get_workorder_template": "mes", "submit_workorder_draft": "mes",
-            "mark_repair_completed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
+            "mark_repair_completed": "mes", "record_repair_verification_failed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
             "query_technicians": "mes", "query_technician_skills": "mes", "query_technician_workload": "mes", "query_shift": "mes", "query_team_availability": "mes",
             "get_production_part": "qms", "get_part_specification": "qms",
             "inspect_part_dimensions": "qms", "inspect_part_appearance": "qms",
@@ -582,6 +588,8 @@ class ToolRegistry:
                 if fallback is not None:
                     result = fallback(**dict(arguments))
                     result["degraded"] = True
+                    result["synthetic"] = True
+                    result["backend_status"] = "local_fallback"
                     result["warning"] = "CAD 远程服务不可用，已使用本地兼容数据：%s" % error
                 else:
                     raise
@@ -719,7 +727,8 @@ class ToolRegistry:
         explicit = os.getenv("CAD_ALLOW_DEMO_FALLBACK")
         if explicit is not None:
             return explicit.strip().lower() in {"1", "true", "yes", "on"}
-        return os.getenv("APP_ENV", "development").strip().lower() not in {"prod", "production"}
+        # 本地开发也默认关闭演示 CAD，避免示例部件被当作真实工程依据。
+        return False
 
     def tool_schemas(self) -> list[Dict[str, Any]]:
         descriptions = {

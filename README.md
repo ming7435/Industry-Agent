@@ -13,7 +13,7 @@
   -> Knowledge / CAD
   -> Maintenance
   -> WorkOrder
-  -> waiting_repair
+  -> waiting_dispatch / in_progress
 
 维修完成事件
   -> WorkOrder

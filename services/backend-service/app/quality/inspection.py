@@ -23,18 +23,21 @@ class PartInspectionService:
                     "runout_mm": {"min": 0.0, "max": 0.03},
                     "material_grade": "45钢", "hardness_hb": {"min": 190, "max": 220},
                 },
+                "source": "backend-local-fixture", "synthetic": True, "degraded": True,
             }
         }
 
     def call(self, operation: str, **arguments: Any) -> dict[str, Any]:
         if operation == "get_production_part":
             supplied = dict(arguments.get("part") or {})
-            if supplied.get("part_id") or supplied.get("part_no"):
-                return {"success": True, "found": True, "part": supplied, "source": "backend-qms"}
+            identifiers = {
+                key: supplied.get(key) or arguments.get(key)
+                for key in ("part_id", "part_no", "batch_id", "production_order_id")
+            }
             for item in self._parts.values():
-                if any(arguments.get(key) and arguments[key] == item.get(key) for key in ("part_id", "part_no", "batch_id", "production_order_id")):
-                    return {"success": True, "found": True, "part": dict(item), "source": "backend-qms"}
-            return {"success": False, "found": False, "part": {}, "source": "backend-qms", "error": "生产零件不存在"}
+                if any(value and value == item.get(key) for key, value in identifiers.items()):
+                    return {"success": True, "found": True, "part": dict(item), "source": "backend-local-fixture", "synthetic": True, "degraded": True, "identity_verified": True}
+            return {"success": False, "found": False, "part": {}, "source": "backend-local-fixture", "synthetic": True, "degraded": True, "error": "生产零件不存在"}
         part = dict(arguments.get("part") or {})
         specifications = dict(arguments.get("specifications") or part.get("specifications") or {})
         if operation == "get_part_specification":
@@ -54,8 +57,11 @@ class PartInspectionService:
             return _inspection(bool(items) and not defects, items, defects)
         if operation == "inspect_part_appearance":
             appearance = dict(part.get("appearance") or {})
-            defects = [{"type": "appearance", "item": key, "message": "发现外观缺陷"} for key in ("scratch", "crack", "burr", "discoloration", "deformation") if appearance.get(key)]
-            return _inspection(not defects, appearance, defects)
+            required = ("scratch", "crack", "burr", "discoloration", "deformation")
+            missing = [key for key in required if key not in appearance]
+            defects = [{"type": "appearance", "item": key, "message": "发现外观缺陷"} for key in required if appearance.get(key)]
+            defects.extend({"type": "appearance", "item": key, "message": "缺少外观检测数据"} for key in missing)
+            return _inspection(not defects and not missing, appearance, defects, sufficient_data=bool(appearance) and not missing)
         if operation == "inspect_part_material":
             material = dict(part.get("material") or {})
             defects = []
@@ -65,7 +71,8 @@ class PartInspectionService:
             hardness_rule = specifications.get("hardness_hb")
             if isinstance(hardness_rule, Mapping) and not _in_range(_number(material.get("hardness_hb")), hardness_rule):
                 defects.append({"type": "material", "item": "hardness_hb", "expected": dict(hardness_rule), "actual": _number(material.get("hardness_hb"))})
-            return _inspection(not defects, material, defects)
+            required_data = bool(expected or hardness_rule) and (not expected or material.get("grade") not in (None, "")) and (not hardness_rule or material.get("hardness_hb") is not None)
+            return _inspection(required_data and not defects, material, defects, sufficient_data=required_data)
         if operation == "inspect_part_function":
             function = dict(part.get("function") or {})
             defects = []
@@ -74,7 +81,8 @@ class PartInspectionService:
                 defects.append({"type": "function", "item": "runout_mm", "expected": dict(rule), "actual": _number(function.get("runout_mm"))})
             if function.get("rotation_test") is False:
                 defects.append({"type": "function", "item": "rotation_test", "message": "旋转功能测试未通过"})
-            return _inspection(not defects, function, defects)
+            required_data = isinstance(rule, Mapping) and bool(rule) and function.get("runout_mm") is not None and "rotation_test" in function
+            return _inspection(required_data and not defects, function, defects, sufficient_data=required_data)
         if operation == "inspect_part_process":
             process = dict(part.get("process") or {})
             defects = [{"type": "process", "item": key, "message": "生产过程记录不完整"} for key in ("cycle_complete", "traceable", "operator_confirmed") if process.get(key) is not True]
@@ -97,5 +105,18 @@ def _in_range(value: float | None, rule: Mapping[str, Any]) -> bool:
     return (minimum is None or value >= minimum) and (maximum is None or value <= maximum)
 
 
-def _inspection(passed: bool, items: Any, defects: list[dict[str, Any]]) -> dict[str, Any]:
-    return {"success": True, "passed": passed, "items": items, "defects": defects, "source": "backend-qms"}
+def _inspection(passed: bool, items: Any, defects: list[dict[str, Any]], *, sufficient_data: bool | None = None) -> dict[str, Any]:
+    # 空输入不是合格：质检必须区分“通过、失败、未检测”，否则缺少测量数据会被误报为通过。
+    if sufficient_data is None:
+        sufficient_data = bool(items)
+    status = "pass" if sufficient_data and passed else ("fail" if sufficient_data else "not_tested")
+    return {
+        "success": True,
+        "passed": status == "pass",
+        "qualified": status == "pass",
+        "status": status,
+        "sufficient_data": sufficient_data,
+        "items": items,
+        "defects": defects,
+        "source": "backend-qms",
+    }

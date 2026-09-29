@@ -179,6 +179,10 @@ class A2ARequests:
         context = state.get("context") or {}
         plan = dict(context.get("maintenance_plan") or state.get("maintenance_plan") or {})
         order = dict(workorder or state.get("workorder") or {})
+        repair_feedback = state.get("repair_feedback") or {}
+        confirmed_by = context.get("maintenance_confirmed_by") or ""
+        if isinstance(repair_feedback, Mapping):
+            confirmed_by = confirmed_by or repair_feedback.get("maintenance_confirmed_by") or ""
         response = self.a2a.request(
             WorkOrderRequest(
                 request_id=self.a2a.new_request_id(),
@@ -191,8 +195,9 @@ class A2ARequests:
                 device_id=str(order.get("device_id") or context.get("device_id") or ""),
                 maintenance_plan=plan,
                 workorder=order,
-                repair_feedback=state.get("repair_feedback") or {},
+                repair_feedback=repair_feedback,
                 repair_verification=state.get("repair_verification") or order.get("repair_verification") or {},
+                maintenance_confirmed_by=str(confirmed_by),
                 status=str(order.get("status") or ""),
                 assignee=str(context.get("assignee") or ""),
                 fault_level=str((state.get("diagnosis") or {}).get("severity") or plan.get("risk_level") or ""),

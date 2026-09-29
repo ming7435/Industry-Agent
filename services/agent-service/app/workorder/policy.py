@@ -74,8 +74,17 @@ def auto_workorder_decision(
     except (TypeError, ValueError):
         confidence = 0.0
     threshold = auto_workorder_min_confidence()
+    if any(source.get("synthetic") is True for source in (diagnosis, plan) if isinstance(source, Mapping)):
+        return False, "诊断或维修方案标记为 synthetic，禁止自动派单"
+    if diagnosis.get("requires_human_review") is True:
+        return False, "诊断要求人工复核，禁止自动派单"
     if confidence < threshold:
         return False, "诊断置信度 %.2f 低于自动派单门槛 %.2f" % (confidence, threshold)
+    evidence_status = str(diagnosis.get("evidence_status") or "").strip().lower()
+    if evidence_status in {"", "insufficient", "pending", "unknown", "blocked"}:
+        return False, "诊断证据不足，禁止自动派单"
+    if diagnosis.get("evidence_validated") is False or diagnosis.get("validated") is False:
+        return False, "诊断证据尚未通过校验，禁止自动派单"
     required, reason = maintenance_decision(diagnosis, event, plan)
     if not required:
         return False, reason
@@ -84,4 +93,37 @@ def auto_workorder_decision(
     return True, "诊断置信度和维修必要性均满足自动派单条件"
 
 
-__all__ = ["auto_workorder_decision", "auto_workorder_min_confidence", "maintenance_decision"]
+def disposition_decision(
+    diagnosis: Mapping[str, Any] | None = None,
+    event: Mapping[str, Any] | None = None,
+    plan: Mapping[str, Any] | None = None,
+) -> tuple[str, str]:
+    """给异常分配后续处置类型，但不直接控制设备。"""
+
+    diagnosis = diagnosis or {}
+    event = event or {}
+    plan = plan or {}
+    allowed = {"no_action", "monitor_only", "operator_check", "maintenance_required", "emergency_stop"}
+    for source in (plan, diagnosis, event):
+        value = str(source.get("disposition") or "").strip().lower() if isinstance(source, Mapping) else ""
+        if value in allowed:
+            return value, "业务输入明确指定处置类型"
+    required, reason = maintenance_decision(diagnosis, event, plan)
+    confidence = diagnosis.get("confidence")
+    try:
+        low_confidence = confidence is not None and float(confidence) < auto_workorder_min_confidence()
+    except (TypeError, ValueError):
+        low_confidence = True
+    severity = " ".join(str(source.get("severity") or source.get("risk_level") or "") for source in (event, diagnosis, plan)).lower()
+    if any(token in severity for token in ("critical", "fatal", "紧急", "危急")):
+        return "emergency_stop", "异常等级达到紧急处置门槛，等待人工确认设备控制"
+    if required and low_confidence:
+        return "operator_check", "需要维修但诊断置信度不足，必须人工确认"
+    if required:
+        return "maintenance_required", reason
+    if low_confidence:
+        return "operator_check", "证据不足，先由操作员核查"
+    return "no_action" if not diagnosis and not event and not plan else "monitor_only", reason
+
+
+__all__ = ["auto_workorder_decision", "auto_workorder_min_confidence", "maintenance_decision", "disposition_decision"]

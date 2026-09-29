@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from app.config.settings import allow_degraded_storage
-from typing import Any, Dict, Mapping
+from typing import Any, Mapping
 
 
 class ClosureBackendError(RuntimeError):
@@ -246,6 +246,19 @@ class MySQLClosureStore:
             cursor.close()
             connection.close()
         return dict(record)
+
+    def list_appeals(self, check_id: str = "") -> list[dict[str, Any]]:
+        connection = self._connect()
+        cursor = connection.cursor(dictionary=True)
+        try:
+            if check_id:
+                cursor.execute("SELECT * FROM quality_appeals WHERE quality_check_id = %s ORDER BY created_at DESC", (check_id,))
+            else:
+                cursor.execute("SELECT * FROM quality_appeals ORDER BY created_at DESC")
+            return [self._appeal_row(row) for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+            connection.close()
 
     def create_closure_task(self, record: Mapping[str, Any]) -> dict[str, Any]:
         connection = self._connect()

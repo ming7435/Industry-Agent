@@ -20,3 +20,9 @@ def result_requires_emergency_stop(result: Any) -> bool:
     sample = getattr(result, "current_sample", None)
     sample_status = str(getattr(sample, "status", "") or "").lower()
     return sample_status in {"fault", "failed", "emergency_stop", "e_stop", "offline"}
+
+
+def result_requires_production_pause(result: Any) -> bool:
+    """判断监控结果是否已达到自动暂停生产设备的门槛。"""
+
+    return result_requires_emergency_stop(result)

@@ -119,7 +119,7 @@ class LatencyBreakdown(BaseModel):
 class SearchResponse(BaseModel):
     """Response of ``POST /search``."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", protected_namespaces=())
 
     request_id: str = Field(..., description="UUID4 of the request, echoed in every log line.")
     hits: list[HitModel] = Field(
@@ -136,6 +136,32 @@ class SearchResponse(BaseModel):
             "Generated diagnostic answer. Empty when the LLM stage degraded, in "
             "which case ``hits`` is still populated."
         ),
+    )
+    model_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="本次回答实际使用的模型、提供方和能力信息。",
+    )
+    evidence_status: str = Field(
+        default="insufficient",
+        description="证据状态：ready、insufficient 或 unavailable。",
+    )
+    retrieval_confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="最终证据的最高相关性分数。",
+    )
+    citation_status: str = Field(
+        default="missing",
+        description="回答引用校验状态：grounded、missing 或 invalid。",
+    )
+    grounded: bool = Field(
+        default=False,
+        description="回答是否只引用了当前证据窗口中的有效编号。",
+    )
+    citation_errors: list[str] = Field(
+        default_factory=list,
+        description="引用校验错误；不会因校验失败而伪造或改写回答。",
     )
     degraded: bool = Field(
         default=False,

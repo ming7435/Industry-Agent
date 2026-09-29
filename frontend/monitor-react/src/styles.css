@@ -2204,6 +2204,21 @@ h2 {
   font-size: 12px;
 }
 
+.feedback-card .maintenance-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #425b63;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.feedback-card .maintenance-confirmation input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  accent-color: var(--teal);
+}
+
 .sheet-actions {
   display: flex;
   justify-content: flex-end;

@@ -185,21 +185,38 @@ export function getWorkorderDisplayTitle(order = {}, target = {}, context = {}) 
     : `${targetName}维修`;
 }
 
-export function buildRepairCompletionPayload({ feedback = "", operator = "", deviceId = "" } = {}) {
+export function buildRepairCompletionPayload({ feedback = "", operator = "", deviceId = "", recoverySample = {}, maintenanceConfirmedBy = "" } = {}) {
   const normalizedFeedback = text(feedback);
   const normalizedOperator = text(operator);
+  const normalizedConfirmation = text(maintenanceConfirmedBy || normalizedOperator);
+  const sample = recoverySample && typeof recoverySample === "object" ? recoverySample : {};
+  const deviceRecovery = {
+    device_id: text(sample.device_id || deviceId),
+    status: text(sample.status || sample.control_state),
+    control_state: text(sample.control_state),
+    alarm_code: text(sample.alarm_code),
+    active_alarms: Array.isArray(sample.active_alarms)
+      ? sample.active_alarms
+      : (Array.isArray(sample.alarm_codes) ? sample.alarm_codes : []),
+    metrics: sample.metrics && typeof sample.metrics === "object" ? sample.metrics : {},
+    metric_details: sample.metric_details && typeof sample.metric_details === "object" ? sample.metric_details : {},
+    fault_evidence: sample.fault_evidence && typeof sample.fault_evidence === "object" ? sample.fault_evidence : {},
+    checked_at: text(sample.timestamp || sample.checked_at || sample.updated_at || new Date().toISOString()),
+    restart_requested: true,
+  };
   return {
     action: "mark_repair_completed",
+    maintenance_confirmed_by: normalizedConfirmation,
     repair_feedback: {
       feedback: normalizedFeedback,
       operator: normalizedOperator,
+      maintenance_confirmed_by: normalizedConfirmation,
     },
     repair_verification: {
-      passed: true,
-      status: "verified",
-      device_id: text(deviceId),
+      source: "device_recovery",
+      status: "submitted",
       operator: normalizedOperator,
-      verified_at: new Date().toISOString(),
+      device_recovery: deviceRecovery,
     },
   };
 }
@@ -216,6 +233,7 @@ export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagno
     assignee: text(order.assignee) || "维修一组",
     status: text(order.status) || "open",
     machineControl: order.machine_control && typeof order.machine_control === "object" ? order.machine_control : null,
+    recoverySample: context.recoverySample && typeof context.recoverySample === "object" ? context.recoverySample : {},
     partName: text(target.part_name) || "待确认故障部件",
     partNo: text(target.part_no) || "待补充",
     system: text(target.system) || "待确认",

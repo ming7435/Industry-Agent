@@ -44,6 +44,20 @@ CORPUS_BY_KEYWORD: dict[str, str] = {
     "manual": "manuals",
     "bom": "manuals",
 }
+
+CORPUS_ALIASES = {
+    "alarm": "alarms", "alarms": "alarms",
+    "case": "cases", "cases": "cases", "experience": "cases",
+    "manual": "manuals", "manuals": "manuals", "engineering": "manuals", "bom": "manuals",
+    "sop": "sop",
+}
+
+
+def normalize_corpus(value: Any) -> str:
+    """把历史别名统一成检索层的正式语料分类。"""
+
+    normalized = str(value or "").strip().lower()
+    return CORPUS_ALIASES.get(normalized, normalized)
 """Filename keywords mapped to a corpus, longest/first match wins."""
 
 DEVICE_MODEL_PATTERN = re.compile(r"[A-Za-z]{1,5}\d{2,6}[A-Za-z0-9]*")
@@ -62,7 +76,7 @@ def _from_metadata(metadata: dict[str, Any] | None) -> str:
     if not isinstance(metadata, dict):
         return ""
     value = metadata.get("corpus")
-    return str(value).strip().lower() if value else ""
+    return normalize_corpus(value) if value else ""
 
 
 def _from_path(source_path: str | None) -> str:
@@ -78,7 +92,7 @@ def _from_path(source_path: str | None) -> str:
         return ""
     for part in reversed(str(source_path).replace("\\", "/").split("/")[:-1]):
         if part.lower() in CONTROLLED_CORPORA:
-            return part.lower()
+            return normalize_corpus(part)
     return ""
 
 
@@ -125,7 +139,7 @@ def infer_corpus(
     ):
         if candidate:
             return candidate
-    return default or settings.default_corpus
+    return normalize_corpus(default or settings.default_corpus)
 
 
 def infer_device_model(source_name: str | None, source_path: str | None = None) -> str:
@@ -151,5 +165,6 @@ __all__ = [
     "CONTROLLED_CORPORA",
     "CORPUS_BY_KEYWORD",
     "infer_corpus",
+    "normalize_corpus",
     "infer_device_model",
 ]

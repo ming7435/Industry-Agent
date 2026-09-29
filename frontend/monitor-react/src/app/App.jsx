@@ -2875,8 +2875,14 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
   const orderDiagnosis = order.diagnosis_context && typeof order.diagnosis_context === "object" ? order.diagnosis_context : {};
   const matchedDiagnosis = hasCurrentDiagnosis ? diagnosis : orderDiagnosis;
   const matchedSample = String(sample?.device_id || "") === String(order.device_id || "") && String(sample?.alarm_code || "") === String(order.alarm_code || "") ? sample : {};
+  const liveDevice = Array.isArray(snapshot?.devices)
+    ? snapshot.devices.find((device) => String(device?.device_id || "") === String(order.device_id || ""))
+    : null;
+  const recoverySample = snapshot?.latest_results?.[order.device_id]?.current_sample
+    || liveDevice?.current_sample
+    || (String(sample?.device_id || "") === String(order.device_id || "") ? sample : {});
   const target = resolveRepairTarget(order, matchedSample);
-  const sheet = buildWorkorderSheet({ order, target, diagnosis: matchedDiagnosis, context: { snapshot, sample: matchedSample } });
+  const sheet = buildWorkorderSheet({ order, target, diagnosis: matchedDiagnosis, context: { snapshot, sample: matchedSample, recoverySample } });
   const statusLabel = labelFor(workorderStatusLabels, order.status);
   return (
     <section className="workorder-detail-page">
@@ -2952,6 +2958,10 @@ function resolveWorkorderDrawing(order = {}, target = {}) {
 
 function WorkorderSheet({ sheet, busy, error, onUpdate }) {
   const [repairFeedback, setRepairFeedback] = useState("");
+  const [maintenanceConfirmed, setMaintenanceConfirmed] = useState(false);
+  useEffect(() => {
+    setMaintenanceConfirmed(false);
+  }, [sheet.workorderId]);
   const isDone = ["completed", "closed"].includes(sheet.status);
   const isStarted = ["in_progress", "completed", "closed"].includes(sheet.status);
   return (
@@ -2996,13 +3006,22 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
                 : `维修已完成，但设备未启动：${sheet.machineControl.error || "控制接口未确认"}`}
             </div>
           )}
+          <label className="maintenance-confirmation">
+            <input
+              type="checkbox"
+              checked={maintenanceConfirmed}
+              onChange={(event) => setMaintenanceConfirmed(event.target.checked)}
+              disabled={busy || isDone}
+            />
+            <span>我确认已完成维修并依据当前设备恢复数据复测，允许申请恢复运行</span>
+          </label>
           <div className="sheet-actions">
             <button className="button" type="button" disabled={busy || isStarted} onClick={() => onUpdate("in_progress")}>{busy ? "处理中" : "开始处理"}</button>
             <button
               className="button primary"
               type="button"
-              disabled={busy || isDone || !repairFeedback.trim()}
-              onClick={() => onUpdate("completed", buildRepairCompletionPayload({ feedback: repairFeedback, operator: sheet.assignee, deviceId: sheet.deviceId }))}
+              disabled={busy || isDone || !repairFeedback.trim() || !maintenanceConfirmed}
+              onClick={() => onUpdate("completed", buildRepairCompletionPayload({ feedback: repairFeedback, operator: sheet.assignee, deviceId: sheet.deviceId, recoverySample: sheet.recoverySample, maintenanceConfirmedBy: sheet.assignee }))}
             >提交结果</button>
           </div>
         </section>

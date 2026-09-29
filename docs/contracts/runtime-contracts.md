@@ -99,19 +99,20 @@ Goal/Event
   -> ExecutionManager
   -> Diagnosis / Knowledge / CAD / Maintenance / WorkOrder
   -> Evidence + Evaluator
-  -> waiting_repair
+  -> waiting_dispatch / in_progress
 ```
 
 事件边界去重保证同一个 `event_id` 返回同一个 Agent task/pipeline。自动工单使用
 稳定键 `monitor:<event_id>`，最多创建一张工单。创建成功后：
 
-- `pipeline.status = waiting_repair`：表示自动图暂停等待人工维修；
-- `workorder.status = open`（或后续合法 WorkOrder 状态）：表示真实工单状态；
+- `pipeline_status = waiting_dispatch`：工单已创建但尚未完成派工；
+- `pipeline_status = in_progress`：已完成派工并进入维修；
+- `backend_status/status`：真实工单事实状态；
 - 不在此处执行 Memory Learn、RAG Upsert 或 Full Case Report。
 
 ## 4. 关闭门禁学习与独立 RAG
 
-只有工单先以显式 `repair_verification.passed=true` 完成维修并关闭，且
+只有工单先以设备恢复数据验证通过完成维修并关闭，且
 `workorder.status=closed`、`repair_feedback` 有效时，才允许：
 
 ```text

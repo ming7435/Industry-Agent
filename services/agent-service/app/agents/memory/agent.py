@@ -6,7 +6,6 @@ from typing import Any, Mapping
 
 from app.memory import ExperienceLearningModule
 from app.memory import build_memory_stores
-from app.rag import RAGServiceClient
 from app.tools.registry import ToolRegistry
 from app.agents.base import BaseAgent
 

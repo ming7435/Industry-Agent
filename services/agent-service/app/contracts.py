@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentTask(BaseModel):
@@ -48,6 +48,8 @@ class KnowledgeDocument(BaseModel):
 
 
 class KnowledgeResult(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     query: str
     status: Literal["completed", "insufficient_evidence", "error"] = "completed"
     query_type: str = "hybrid"
@@ -65,6 +67,7 @@ class KnowledgeResult(BaseModel):
     total: int = 0
     backend_status: str = "unknown"
     degraded: bool = False
+    synthetic: bool = False
     warning: str = ""
     source: str = "rag-service-compatible"
     validation_findings: List[str] = Field(default_factory=list)
@@ -73,12 +76,16 @@ class KnowledgeResult(BaseModel):
     retrieval_scope: str = "unknown"
     retrieval_fallback: bool = False
     retrieval_fallback_reason: str = ""
+    model_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CADComponent(BaseModel):
     component_id: str
     name: str
     part_no: str = ""
+    # 设备归属必须随工程证据贯穿 Agent 链路，不能在模型转换时丢失。
+    device_id: str = ""
+    device_model: str = ""
     position: str = ""
     assembly_relation: str = ""
     drawing_ref: str = ""
@@ -175,6 +182,7 @@ class MaintenancePlan(BaseModel):
     risk_level: str = "medium"
     maintenance_required: bool = False
     maintenance_reason: str = ""
+    cad_required: bool = False
     workorder_ready: bool = False
     workorder_draft: Dict[str, Any] = Field(default_factory=dict)
 
@@ -182,7 +190,7 @@ class MaintenancePlan(BaseModel):
 class WorkOrder(BaseModel):
     workorder_id: str
     device_id: str
-    status: Literal["open", "in_progress", "completed", "closed", "rejected", "timeout"] = "open"
+    status: Literal["open", "in_progress", "awaiting_verification", "completed", "closed", "rejected", "timeout"] = "open"
     title: str
     plan_id: str = ""
     steps: List[str] = Field(default_factory=list)
@@ -247,7 +255,7 @@ class QualityResult(BaseModel):
     production_order_id: str = ""
     device_id: str = ""
     passed: bool = False
-    status: Literal["pass", "fail", "review"] = "fail"
+    status: Literal["pass", "fail", "review", "not_tested", "insufficient_data"] = "not_tested"
     qualified: bool = False
     quality_grade: str = ""
     inspection_items: List[Dict[str, Any]] = Field(default_factory=list)

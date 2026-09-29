@@ -19,7 +19,14 @@ class _Dispatcher:
             "repair_planning": "maintenance_plan",
             "workorder_create": "workorder",
         }[capability]
-        output = {"status": "open", "workorder_id": "WO-1"} if key == "workorder" else {"status": "completed", "evidence": [{"id": capability}]}
+        if key == "workorder":
+            output = {"status": "open", "workorder_id": "WO-1"}
+        elif key == "diagnosis":
+            output = {"status": "completed", "summary": "检测到异常", "diagnosis": "轴承异常", "confidence": 0.95, "evidence_status": "ready", "evidence_validated": True, "maintenance_required": True, "evidence": [{"id": capability}]}
+        elif key == "maintenance_plan":
+            output = {"status": "completed", "workorder_ready": True, "maintenance_required": True, "evidence": [{"id": capability}]}
+        else:
+            output = {"status": "completed", "evidence": [{"id": capability}]}
         return AgentResult(success=True, output=output, evidence=output.get("evidence", []), confidence=0.9)
 
 
@@ -44,7 +51,7 @@ def test_runtime_coordinator_uses_planned_capabilities_instead_of_graph_edges():
     ]
     assert result["runtime_result"]["status"] == "completed"
     assert result["workorder"]["workorder_id"] == "WO-1"
-    assert result["status"] == "waiting_repair"
+    assert result["status"] == "waiting_dispatch"
 
 
 def test_user_goal_does_not_expand_into_an_automatic_workorder_plan():

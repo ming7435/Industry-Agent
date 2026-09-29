@@ -14,6 +14,18 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping, Sequence
 
+try:
+    from app.corpus import normalize_corpus
+except ModuleNotFoundError:  # 允许离线烟测按文件路径加载本模块
+    _CORPUS_ALIASES = {
+        "alarm": "alarms", "alarms": "alarms", "case": "cases", "cases": "cases",
+        "experience": "cases", "manual": "manuals", "manuals": "manuals",
+        "engineering": "manuals", "bom": "manuals", "sop": "sop",
+    }
+
+    def normalize_corpus(value: Any) -> str:
+        return _CORPUS_ALIASES.get(str(value or "").strip().lower(), str(value or "").strip().lower())
+
 
 class DocumentStore:
     def __init__(self, path: str | None = None) -> None:
@@ -54,19 +66,25 @@ class DocumentStore:
         document_id = str(document_id or "").strip()
         if not document_id:
             raise ValueError("document_id must not be blank")
-        normalized_chunks = list(chunks or [{"chunk_id": f"{document_id}:0", "text": content, "metadata": dict(metadata)}])
+        normalized_metadata = dict(metadata or {})
+        normalized_metadata["corpus"] = normalize_corpus(
+            normalized_metadata.get("corpus")
+            or normalized_metadata.get("knowledge_type")
+            or collection
+        )
+        normalized_chunks = list(chunks or [{"chunk_id": f"{document_id}:0", "text": content, "metadata": normalized_metadata}])
         with self._lock, self._connect() as connection:
             connection.execute(
                 "INSERT INTO rag_documents(document_id, content, collection, metadata_json) VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(document_id) DO UPDATE SET content=excluded.content, collection=excluded.collection, metadata_json=excluded.metadata_json, updated_at=CURRENT_TIMESTAMP",
-                (document_id, str(content or ""), str(collection or ""), json.dumps(dict(metadata or {}), ensure_ascii=False, default=str)),
+                (document_id, str(content or ""), str(collection or ""), json.dumps(normalized_metadata, ensure_ascii=False, default=str)),
             )
             connection.execute("DELETE FROM rag_chunks WHERE document_id = ?", (document_id,))
             for index, chunk in enumerate(normalized_chunks):
                 chunk_id = str(chunk.get("chunk_id") or f"{document_id}:{index}")
                 connection.execute(
                     "INSERT INTO rag_chunks(document_id, chunk_id, text, metadata_json) VALUES (?, ?, ?, ?)",
-                    (document_id, chunk_id, str(chunk.get("text") or chunk.get("content") or content or ""), json.dumps(dict(chunk.get("metadata") or metadata or {}), ensure_ascii=False, default=str)),
+                    (document_id, chunk_id, str(chunk.get("text") or chunk.get("content") or content or ""), json.dumps({**normalized_metadata, **dict(chunk.get("metadata") or {})}, ensure_ascii=False, default=str)),
                 )
         return self.get(document_id) or {}
 
@@ -132,8 +150,8 @@ def _filter_matches(key: str, expected: Any, metadata: Mapping[str, Any], collec
         actual = collection
     elif key == "corpus":
         actual = metadata.get("corpus") or metadata.get("knowledge_type") or collection
-        aliases = {"alarm": "alarms", "case": "cases", "manual": "manuals", "sop": "sop", "bom": "bom"}
-        actual = aliases.get(str(actual).lower(), actual)
+        actual = normalize_corpus(actual)
+        expected = normalize_corpus(expected) if not isinstance(expected, (list, tuple, set)) else expected
     if isinstance(expected, (list, tuple, set)):
         return str(actual).casefold() in {str(item).casefold() for item in expected}
     return str(actual).casefold() == str(expected).casefold()

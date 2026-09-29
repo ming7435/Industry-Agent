@@ -20,7 +20,8 @@ pytest -c pytest-agent.ini -q services/agent-service/tests/test_evaluator.py ser
 
 1. 提交带稳定 `event_id` 的 `POST /api/v1/agent/event`。
 2. 确认返回的 `task_id/trace_id` 稳定，重复提交不重复执行图。
-3. 确认自动链路在 WorkOrder 后返回 `pipeline.status=waiting_repair`。
+3. 确认自动链路在 WorkOrder 后区分返回 `pipeline_status=waiting_dispatch`（未派工）
+   或 `pipeline_status=in_progress`（已派工），并保留 `backend_status` 事实状态。
 4. 查询工单并提交有效维修反馈，再执行 complete/close。
 5. 确认 close 响应进入 `memory -> rag -> report`，并且重复 close 不重复学习。
 6. 用 `GET /api/trace?task_id=...&trace_id=...` 检查 Trace 只属于当前任务。

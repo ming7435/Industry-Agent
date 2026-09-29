@@ -72,19 +72,17 @@ def _instantiate(cls: Any, candidates: dict[str, Any], what: str) -> Any:
         TypeError: If the class needs parameters that are not available in the
             candidate pool.
     """
+    kwargs = _matching_kwargs(cls, candidates)
+    if kwargs:
+        logger.debug("constructing {} with settings kwargs={}", what, sorted(kwargs))
+        return cls(**kwargs)
     try:
         return cls()
     except TypeError as exc:
-        kwargs = _matching_kwargs(cls, candidates)
-        if not kwargs:
-            raise TypeError(
-                f"cannot construct {what}: constructor needs arguments that are "
-                f"not present in settings ({exc})"
-            ) from exc
-        logger.warning(
-            "constructing {} with explicit settings kwargs={}", what, sorted(kwargs)
-        )
-        return cls(**kwargs)
+        raise TypeError(
+            f"cannot construct {what}: constructor needs arguments that are "
+            f"not present in settings ({exc})"
+        ) from exc
 
 
 def _singleton(key: str, factory: Callable[[], Any], description: str) -> Any:

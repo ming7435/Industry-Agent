@@ -85,7 +85,7 @@ def request_knowledge(state: MaintenanceGraphState) -> Dict[str, Any]:
 def request_cad(state: MaintenanceGraphState) -> Dict[str, Any]:
     request = state["request"]
     cad = dict(request.get("cad") or {})
-    if not cad and state.get("cad_required", True) and not request.get("runtime_managed"):
+    if not cad and state.get("cad_required", False) and not request.get("runtime_managed"):
         cad = state["agent"].request_cad(state["query"], state["diagnosis"], required=True)
     return {"cad": cad, "route": "plan_repair"}
 
@@ -146,9 +146,11 @@ def prepare_workorder(state: MaintenanceGraphState) -> Dict[str, Any]:
     plan = dict(state.get("plan_payload") or {})
     diagnosis = state["diagnosis"]
     draft = state["agent"]._safe_tool("get_workorder_template", {"device_id": diagnosis.device_id, "plan": plan})
+    device_name = str((diagnosis.raw or {}).get("device_name_zh") or (diagnosis.raw or {}).get("device_name") or (diagnosis.raw or {}).get("machine_name") or "").strip()
+    workorder_title = device_name or diagnosis.fault or str(plan.get("repair_target") or "设备异常")
     draft.update({
         "device_id": diagnosis.device_id,
-        "title": "设备维修：%s" % (diagnosis.fault or plan.get("repair_target") or "设备异常"),
+        "title": "设备维修：%s" % workorder_title,
         "plan_id": plan.get("plan_id", ""),
         "steps": list(plan.get("repair_steps") or []),
         "ready": bool(plan.get("workorder_ready")),

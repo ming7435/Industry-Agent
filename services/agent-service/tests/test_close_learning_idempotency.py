@@ -17,7 +17,13 @@ class _Requests:
                 "device_id": "D-1",
                 "status": "closed",
                 "repair_feedback": {"feedback": "fixed"},
-                "repair_verification": {"passed": True, "status": "verified"},
+                "repair_verification": {
+                    "passed": True,
+                    "status": "verified",
+                    "source": "device_recovery",
+                    "device_recovery": {"device_id": "D-1", "status": "running", "active_alarms": [], "metrics": {"health": 99}, "checked_at": "2026-09-28T12:00:00Z"},
+                    "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
+                },
                 "event_id": "EVT-1",
             },
         }

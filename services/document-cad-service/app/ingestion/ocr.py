@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .vision import ImageDescriber, VisionError
+from .vision import VisionError
 from config.settings import load_service_env
 
 

@@ -23,7 +23,7 @@ class _LifecycleRequests:
 
     def diagnose(self, _state, event):
         self.stages.append("Diagnosis")
-        return {"device_id": event["device_id"], "alarm_code": event["alarm_code"], "fault": "主轴轴承磨损"}
+        return {"device_id": event["device_id"], "alarm_code": event["alarm_code"], "fault": "主轴轴承磨损", "confidence": 0.95, "evidence": [{"id": "ALARM-E102"}], "evidence_status": "ready", "evidence_validated": True, "maintenance_required": True}
 
     def retrieve_knowledge(self, _state, _query):
         self.stages.append("Knowledge")
@@ -130,7 +130,7 @@ def test_event_to_closed_case_smoke(tmp_path):
     for node in (nodes.diagnosis, nodes.knowledge, nodes.cad, nodes.maintenance, nodes.workorder):
         state.update(node(state))
 
-    assert state["status"] == "waiting_repair"
+    assert state["status"] == "waiting_dispatch"
     assert {event for _name, event, _payload in tracing.loop_events} >= {
         "loop_start", "action_selected", "evidence_added", "review_result", "loop_stop",
     }
@@ -140,7 +140,11 @@ def test_event_to_closed_case_smoke(tmp_path):
         report_harness=_ReportHarness(requests.stages),
         learning_store_path=str(tmp_path / "learning.sqlite3"),
     )
-    feedback = {"feedback": "已更换轴承", "result": "repaired", "verification": {"passed": True}}
+    feedback = {"feedback": "已更换轴承", "result": "repaired", "verification": {
+        "passed": True, "status": "verified", "source": "device_recovery",
+        "device_recovery": {"device_id": "D-SMOKE-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2099-09-28T12:00:00Z"},
+        "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
+    }}
     completed = operations.execute_workorder("mark_repair_completed", {
         "workorder_id": "WO-SMOKE-1",
         "repair_feedback": feedback,

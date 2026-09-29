@@ -122,7 +122,14 @@ class KnowledgeAgent(BaseAgent):
             if previous is None or KnowledgeAgent._nonnegative_score(item.get("score")) > KnowledgeAgent._nonnegative_score(previous.get("score")):
                 best[key] = item
         ordered = sorted(best.values(), key=lambda value: KnowledgeAgent._nonnegative_score(value.get("score")), reverse=True)
-        scale = max(1.0, *(KnowledgeAgent._nonnegative_score(item.get("score")) for item in ordered))
+        if not ordered:
+            return []
+        scale = max(
+            [1.0, *(
+                KnowledgeAgent._nonnegative_score(item.get("score"))
+                for item in ordered
+            )]
+        )
         return [KnowledgeDocument(**{**item, "score": KnowledgeAgent._nonnegative_score(item.get("score")) / scale}) for item in ordered]
 
     @staticmethod
@@ -389,6 +396,10 @@ class KnowledgeAgent(BaseAgent):
             (str(item.get("retrieval_fallback_reason") or "") for item in raw_results if str(item.get("retrieval_fallback_reason") or "").strip()),
             "",
         )
+        model_metadata = next(
+            (dict(item.get("model_metadata") or {}) for item in raw_results if isinstance(item.get("model_metadata"), Mapping)),
+            {},
+        )
         answer = self._format_grounded_answer(answer, query=query, documents=[item.model_dump(mode="json") for item in normalized], retrieval_scope=retrieval_scope)
         return KnowledgeResult(
             query=query,
@@ -415,4 +426,5 @@ class KnowledgeAgent(BaseAgent):
             retrieval_scope=retrieval_scope,
             retrieval_fallback=retrieval_fallback,
             retrieval_fallback_reason=retrieval_fallback_reason,
+            model_metadata=model_metadata,
         )

@@ -44,7 +44,27 @@ def create_order(state: WorkOrderGraphState) -> Dict[str, Any]:
     order = agent.service.create_from_plan(plan)
     raw = order.model_dump(mode="json") if hasattr(order, "model_dump") else dict(order)
     agent.remember_idempotent(request, raw)
-    return {"workorder": raw, "route": "collect_dispatch_context"}
+    return {"workorder": raw, "route": "collect_dispatch_context" if _should_dispatch(request) else "validate"}
+
+
+def _should_dispatch(request: Dict[str, Any]) -> bool:
+    """判断创建请求是否已经进入自动派工流程。
+
+    监控/诊断产生的工单必须自动派工；人工创建的草稿先保持 open，
+    这样操作员可以在派工前修订或删除，不会绕过删除门禁。
+    """
+
+    if request.get("auto_dispatch") is not None:
+        return bool(request.get("auto_dispatch"))
+    source = str(request.get("source") or "").strip().lower()
+    if source in {"manual", "manual_draft"}:
+        return bool(request.get("assignee"))
+    plan = request.get("maintenance_plan") or request.get("plan") or {}
+    if isinstance(plan, dict) and plan.get("workorder_ready") is True:
+        return True
+    if request.get("event_id") or request.get("diagnosis_snapshot"):
+        return True
+    return bool(request.get("assignee")) or source not in {"", "manual", "manual_draft"}
 
 
 def collect_dispatch_context(state: WorkOrderGraphState) -> Dict[str, Any]:
@@ -72,7 +92,6 @@ def assign_order(state: WorkOrderGraphState) -> Dict[str, Any]:
 def execute_action(state: WorkOrderGraphState) -> Dict[str, Any]:
     agent = state["agent"]
     request = state["request"]
-    action = state["action"]
     try:
         result = agent.execute_action(request)
         raw = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
@@ -121,7 +140,7 @@ def build_workorder_graph():
     workflow.add_edge("initialize", "load_skill")
     workflow.add_edge("load_skill", "validate_plan")
     workflow.add_conditional_edges("validate_plan", _route, {"create_order": "create_order", "execute_action": "execute_action", "fallback": "fallback"})
-    workflow.add_edge("create_order", "collect_dispatch_context")
+    workflow.add_conditional_edges("create_order", _route, {"collect_dispatch_context": "collect_dispatch_context", "validate": "validate"})
     workflow.add_edge("collect_dispatch_context", "select_assignee")
     workflow.add_edge("select_assignee", "assign_order")
     workflow.add_edge("assign_order", "validate")

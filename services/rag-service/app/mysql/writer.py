@@ -8,7 +8,6 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from app.embedding import VectorRecord, prune_empty
-from app.ingestion import StructuredDocument
 
 from .schema import MySQLConfig
 

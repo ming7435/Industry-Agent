@@ -25,7 +25,7 @@ from app.common import AlarmCodeParser
 from app.llm import get_default_llm_client
 from app.tools.registry import ToolRegistry
 from app.agents.base import BaseAgent
-from app.workorder.policy import maintenance_decision
+from app.workorder.policy import auto_workorder_min_confidence, maintenance_decision, disposition_decision
 
 
 class DiagnosisAgent(BaseAgent):
@@ -340,6 +340,10 @@ class DiagnosisAgent(BaseAgent):
             diagnosis={**dict(parsed), "confidence": confidence, "alarm_definition": definition},
             event=state.abnormal_event,
         )
+        disposition, _ = disposition_decision(
+            diagnosis={**dict(parsed), "confidence": confidence, "alarm_definition": definition},
+            event=state.abnormal_event,
+        )
 
         return DiagnosisResult(
             event_id=event_id,
@@ -373,6 +377,10 @@ class DiagnosisAgent(BaseAgent):
             knowledge_warning=knowledge_warning,
             maintenance_required=maintenance_required,
             maintenance_reason=maintenance_reason,
+            disposition=disposition,
+            evidence_status="ready" if evidence_records or evidence else "insufficient",
+            requires_human_review=self._requires_human_review(confidence),
+            model_metadata=dict(getattr(state, "model_metadata", {}) or {}),
         )
 
     # ==========================================================
@@ -510,6 +518,10 @@ class DiagnosisAgent(BaseAgent):
             diagnosis={**event, "severity": severity, "alarm_definition": definition},
             event=event,
         )
+        disposition, _ = disposition_decision(
+            diagnosis={**event, "severity": severity, "alarm_definition": definition, "confidence": state.confidence},
+            event=event,
+        )
 
         # 防止重复记录
         already_called = any(
@@ -572,6 +584,10 @@ class DiagnosisAgent(BaseAgent):
             knowledge_warning=knowledge_warning,
             maintenance_required=maintenance_required,
             maintenance_reason=maintenance_reason,
+            disposition=disposition,
+            evidence_status="ready" if evidence_records or evidence else "insufficient",
+            requires_human_review=True,
+            model_metadata=dict(getattr(state, "model_metadata", {}) or {}),
         )
 
     # ==========================================================
@@ -580,6 +596,13 @@ class DiagnosisAgent(BaseAgent):
 
     def _model_name(self) -> str:
         return str(getattr(self.client, "model", "shared-llm"))
+
+    @staticmethod
+    def _requires_human_review(confidence: Any) -> bool:
+        try:
+            return confidence is None or float(confidence) < auto_workorder_min_confidence()
+        except (TypeError, ValueError):
+            return True
 
     def _model_source(self) -> str:
         return str(getattr(self.client, "provider", "llm"))

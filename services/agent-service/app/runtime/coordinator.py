@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -90,6 +91,9 @@ class RuntimeInputParser:
             findings.append("required_capabilities must be a list")
         if not user_text and not is_event:
             findings.append("goal is blank")
+        if required in {"workorder_update", "workorder_query"}:
+            # Router 不可用时也不能把自然语言查询默认成 update。
+            raw = {**raw, "target_input": {**entities, "action": self._fallback_workorder_action(user_text, required)}}
         return GoalEvent(
             goal=goal,
             entities=entities,
@@ -109,6 +113,8 @@ class RuntimeInputParser:
         if any(token in value for token in ("质检", "质量", "零件检测", "inspection")):
             return ("quality_inspection",)
         if any(token in value for token in ("工单", "派工", "维修完成", "重开")):
+            if any(token in value for token in ("查询", "查看", "状态", "获取") ) and not any(token in value for token in ("创建", "新建", "生成", "派工", "更新", "关闭", "维修完成", "重开")):
+                return ("workorder_query",)
             return ("workorder_update",)
         if any(token in value for token in ("图纸", "bom", "部件", "装配", "cad")):
             return ("drawing_search",)
@@ -119,6 +125,25 @@ class RuntimeInputParser:
         if any(token in value for token in ("故障", "报警", "诊断", "异常", "fault")):
             return ("fault_analysis",)
         return ("document_search",)
+
+    @staticmethod
+    def _fallback_workorder_action(text: str, capability: str) -> str:
+        if capability == "workorder_query":
+            return "query"
+        value = str(text or "")
+        if any(token in value for token in ("创建工单", "新建工单", "生成工单")):
+            return "create"
+        if "关闭工单" in value:
+            return "close"
+        if "重新打开工单" in value or "重开工单" in value:
+            return "reopen"
+        if "派工" in value:
+            return "assign"
+        if "维修完成" in value or "提交维修结果" in value:
+            return "mark_repair_completed"
+        if "更新工单" in value:
+            return "update"
+        return "query"
 
 
 class RuntimeCoordinator:
@@ -142,10 +167,45 @@ class RuntimeCoordinator:
             **dict(initial.get("context") or {}),
         }
         goal_event: GoalEvent = self.input_parser.parse(source_payload)
+        # 自然语言请求统一先经过 RouterAgent；RuntimeInputParser 只负责规范化
+        # 事件结构和作为路由不可用时的确定性兜底，不再覆盖 Router 的动作意图。
+        if goal_event.source == "user":
+            router = (getattr(self.container, "agents", {}) or {}).get("router")
+            if router is not None and str(source_payload.get("user_text") or "").strip():
+                try:
+                    route = router.run({"user_text": str(source_payload.get("user_text") or ""), "context": dict(goal_event.entities)})
+                    route_dict = route.model_dump() if hasattr(route, "model_dump") else dict(route or {})
+                    intent = str(route_dict.get("intent") or "")
+                    capability_by_intent = {
+                        "diagnosis": "fault_analysis", "knowledge": "document_search", "cad": "drawing_search",
+                        "maintenance": "repair_planning", "workorder_query": "workorder_query", "workorder_action": "workorder_update",
+                        "quality": "quality_inspection", "report": "case_reporting", "memory": "experience_retrieval",
+                    }
+                    capability = capability_by_intent.get(intent)
+                    try:
+                        route_confidence = float(route_dict.get("confidence") or 0.0)
+                    except (TypeError, ValueError):
+                        route_confidence = 0.0
+                    if capability and route_confidence >= 0.8:
+                        target_input = dict(route_dict.get("target_input") or {})
+                        entities = {**goal_event.entities, **dict(route_dict.get("entities") or {})}
+                        goal_event = GoalEvent(
+                            goal=goal_event.goal,
+                            entities=entities,
+                            constraints={**goal_event.constraints, "router_intent": intent, "router_target_agent": route_dict.get("target_agent", "")},
+                            required_capabilities=(capability,),
+                            source=goal_event.source,
+                            raw={**goal_event.raw, "route_result": route_dict, "target_input": target_input},
+                            validation_findings=tuple(route_dict.get("validation_findings") or goal_event.validation_findings),
+                        )
+                except Exception:
+                    # 路由器不可用时保留确定性解析结果，不把一次路由异常伪装成业务成功。
+                    pass
         planner_context = {
             **goal_event.entities,
             "constraints": dict(goal_event.constraints),
             "event": dict(goal_event.raw),
+            "target_input": dict((goal_event.raw or {}).get("target_input") or {}) if isinstance(goal_event.raw, Mapping) else {},
             "required_capabilities": list(goal_event.required_capabilities),
             "task_id": initial.get("task_id", ""),
             "trace_id": initial.get("trace_id", ""),
@@ -157,7 +217,9 @@ class RuntimeCoordinator:
         else:
             plan = self.container.planner.plan(goal_event.goal, planner_context)
             resume_index = 0
-        evaluator = RuntimeEvaluator(min_evidence_score=0.0, min_confidence=0.0)
+        min_evidence_score = float(os.getenv("RUNTIME_MIN_EVIDENCE_SCORE", "0.8"))
+        min_confidence = float(os.getenv("RUNTIME_MIN_CONFIDENCE", "0.8"))
+        evaluator = RuntimeEvaluator(min_evidence_score=min_evidence_score, min_confidence=min_confidence)
         replan_count = 0
         self.container.trace.record(
             type="runtime", name="runtime", node="runtime", agent="runtime",
@@ -337,7 +399,12 @@ class RuntimeCoordinator:
                 ),
             }
             if canonical_capability == "workorder_create":
-                next_state["status"] = "waiting_repair"
+                workorder_output = dict(result.output or {})
+                nested_order = workorder_output.get("workorder") if isinstance(workorder_output.get("workorder"), Mapping) else {}
+                backend_status = str(workorder_output.get("status") or nested_order.get("status") or "").strip().lower()
+                next_state["backend_status"] = backend_status
+                next_state["lifecycle_status"] = self._workorder_lifecycle_status(backend_status, workorder_output)
+                next_state["status"] = next_state["lifecycle_status"]
             domain = self.capabilities.domain_for(capability)
             trace_agent = str(action.payload.get("agent") or action.target)
             if result.observations:
@@ -413,6 +480,19 @@ class RuntimeCoordinator:
                         "status": "blocked",
                         "reason": "replan_limit_exceeded",
                     }
+            elif evaluation.status.value == "blocked":
+                # 领域 BLOCKED 是硬终止，不得继续消费计划中的后续动作，
+                # 尤其不能在证据失败后执行创建工单、关闭工单等副作用。
+                return {
+                    "state": {**next_state, "status": "blocked", "stop_reason": evaluation.reason},
+                    "action": action,
+                    "terminal_status": "blocked",
+                    "terminal_reason": evaluation.reason,
+                    "evidence_ids": self._evidence_ids(result.evidence),
+                    "evidence_score": evaluation.evidence_score,
+                    "confidence": evaluation.confidence,
+                    "done": False,
+                }
             elif result.next_actions:
                 # Agent 可能观察到会改变下一项有效能力的证据。决策必须留在 Runtime 契约内：
                 # 提取能力要求，请 Planner 生成新的 Action 计划，再由普通 dispatcher 选择已注册 Agent。
@@ -477,7 +557,7 @@ class RuntimeCoordinator:
         result: LoopResult = LoopEngine(
             LoopPolicy(
                 max_iterations=max(1, len(plan.actions) * 3 + 2),
-                min_evidence_score=0.0,
+                min_evidence_score=min_evidence_score,
                 timeout_seconds=max(1.0, execution_timeout + 1.0),
             ),
         ).run(
@@ -538,17 +618,7 @@ class RuntimeCoordinator:
         """恢复已持久化的 Action，且不再次调用 Planner。"""
 
         state = dict(record.get("state") or {})
-        action = dict(record.get("action") or {})
-        payload = action.get("payload")
-        payload = payload if isinstance(payload, Mapping) else {}
-        capability = str(payload.get("required_capability") or action.get("target") or "")
-        context = dict(state.get("context") or {})
-        approved = set(context.get("approved_capabilities") or [])
-        if capability:
-            approved.add(capability)
-        context.update({"approval_granted": True, "approved_capabilities": sorted(approved)})
         state.update({
-            "context": context,
             "runtime_resume": {
                 "plan": dict(record.get("plan") or {}),
                 "next_index": int(record.get("next_index") or 0),
@@ -606,6 +676,16 @@ class RuntimeCoordinator:
             if capability and capability not in requested:
                 requested.append(capability)
         return requested
+
+    @staticmethod
+    def _workorder_lifecycle_status(raw_status: str, result: Mapping[str, Any] | None = None) -> str:
+        """区分工单已创建、待派工和已进入维修，避免状态语义混用。"""
+        value = str(raw_status or "").strip().lower()
+        if value == "open":
+            return "waiting_dispatch"
+        if value in {"in_progress", "awaiting_verification", "completed", "closed", "rejected", "timeout"}:
+            return value
+        return "created" if (result or {}).get("success") else "workorder_error"
 
     @staticmethod
     def _evidence_ids(items: list[Any]) -> list[str]:

@@ -28,7 +28,9 @@ class WorkOrderAgentValidator:
                     WorkOrderValidator.validate_plan(plan)
                 except (TypeError, ValueError) as error:
                     findings.append(str(error))
-                if request.get("auto_dispatch") or request.get("source") == "monitor" or request.get("event_id"):
+                source = str(request.get("source") or "").strip().lower()
+                auto_requested = bool(request.get("auto_dispatch")) or source not in {"", "manual", "manual_draft"} or bool(request.get("event_id"))
+                if auto_requested or (plan.get("workorder_ready") is True and source not in {"manual", "manual_draft"}):
                     allowed, reason = auto_workorder_decision(
                         plan.get("diagnosis") if isinstance(plan.get("diagnosis"), Mapping) else request.get("diagnosis_snapshot") or {},
                         plan,

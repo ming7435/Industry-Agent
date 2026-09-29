@@ -79,13 +79,25 @@ class MySQLCADRepository:
         process merely to answer a health probe or an engineering lookup.
         """
         statements = (
-            "CREATE TABLE IF NOT EXISTS cad_drawings (drawing_id VARCHAR(128) PRIMARY KEY, drawing_name VARCHAR(255) NOT NULL DEFAULT '')",
+            "CREATE TABLE IF NOT EXISTS cad_drawings (drawing_id VARCHAR(128) PRIMARY KEY, drawing_name VARCHAR(255) NOT NULL DEFAULT '', version_id VARCHAR(128) NOT NULL DEFAULT '', version_label VARCHAR(64) NOT NULL DEFAULT '', is_current TINYINT(1) NOT NULL DEFAULT 1, source_format VARCHAR(32) NOT NULL DEFAULT '', object_ref VARCHAR(512) NOT NULL DEFAULT '')",
             "CREATE TABLE IF NOT EXISTS cad_entities (entity_id VARCHAR(160) PRIMARY KEY, entity_type VARCHAR(64) NOT NULL DEFAULT '', layer_name VARCHAR(255) NOT NULL DEFAULT '', block_name VARCHAR(255) NOT NULL DEFAULT '', device_id VARCHAR(128) NOT NULL DEFAULT '', text_content TEXT, raw_json JSON NOT NULL, drawing_id VARCHAR(128) NOT NULL DEFAULT '')",
             "CREATE TABLE IF NOT EXISTS cad_entity_relations (source_entity_id VARCHAR(160) NOT NULL, target_entity_id VARCHAR(160) NOT NULL, relation_type VARCHAR(128) NOT NULL DEFAULT '', evidence_text TEXT, metadata_json JSON, KEY idx_cad_rel_source (source_entity_id), KEY idx_cad_rel_target (target_entity_id))",
         )
         with self.connection.cursor() as cursor:
             for statement in statements:
                 cursor.execute(statement)
+            for statement in (
+                "ALTER TABLE cad_drawings ADD COLUMN version_id VARCHAR(128) NOT NULL DEFAULT ''",
+                "ALTER TABLE cad_drawings ADD COLUMN version_label VARCHAR(64) NOT NULL DEFAULT ''",
+                "ALTER TABLE cad_drawings ADD COLUMN is_current TINYINT(1) NOT NULL DEFAULT 1",
+                "ALTER TABLE cad_drawings ADD COLUMN source_format VARCHAR(32) NOT NULL DEFAULT ''",
+                "ALTER TABLE cad_drawings ADD COLUMN object_ref VARCHAR(512) NOT NULL DEFAULT ''",
+            ):
+                try:
+                    cursor.execute(statement)
+                except Exception:
+                    # 已有数据库可能已经完成迁移；重复添加列可以安全忽略。
+                    pass
             # CI 使用确定性的工程夹具，让跨服务闭环可以执行真实的 MySQL CAD 查询，而无需启用演示仓库。
             # 生产环境不会启用该夹具（开关默认关闭）。
             if os.getenv("CAD_CI_FIXTURE", "").lower() in {"1", "true", "yes"}:
@@ -127,7 +139,7 @@ class MySQLCADRepository:
         text = "%%%s%%" % needle
         select = (
             "SELECT e.entity_id, e.entity_type, e.layer_name, e.block_name, e.device_id, e.text_content, "
-            "e.raw_json, e.drawing_id, d.drawing_name "
+            "e.raw_json, e.drawing_id, d.drawing_name, d.version_id, d.version_label, d.is_current, d.source_format, d.object_ref "
             "FROM cad_entities e JOIN cad_drawings d ON d.drawing_id=e.drawing_id "
         )
         sql = select + (
@@ -224,15 +236,26 @@ class MySQLCADRepository:
         component_id = str(row.get("entity_id") or raw.get("component_id") or "")
         return {
             "component_id": component_id,
-            "part_no": str(raw.get("part_no") or row.get("block_name") or component_id),
+            "part_no": str(raw.get("part_no") or ""),
+            "part_identity_status": "validated" if raw.get("part_no") else "unknown",
             "name": str(raw.get("name") or row.get("text_content") or row.get("block_name") or row.get("entity_type") or component_id),
-            "position": str(raw.get("position") or row.get("layer_name") or ""),
-            "assembly_relation": str(raw.get("assembly_relation") or "工程关系见 cad_entity_relations"),
+            "position": str(raw.get("position") or ""),
+            "cad_layer": str(row.get("layer_name") or ""),
+            "installation_location": str(raw.get("position") or ""),
+            "assembly_relation": str(raw.get("assembly_relation") or ""),
             "drawing_ref": str(row.get("drawing_id") or ""),
             "drawing_name": str(row.get("drawing_name") or ""),
+            "version_id": str(row.get("version_id") or ""),
+            "version_label": str(row.get("version_label") or ""),
+            "current": bool(row.get("is_current", True)),
+            "source_format": str(row.get("source_format") or "unknown"),
+            "object_ref": str(row.get("object_ref") or ""),
             "quantity": int(raw.get("quantity") or 1),
             "material": str(raw.get("material") or ""),
             "device_id": str(row.get("device_id") or ""),
+            "device_model": str(raw.get("device_model") or row.get("device_model") or ""),
+            "tenant_id": str(raw.get("tenant_id") or row.get("tenant_id") or ""),
+            "project_id": str(raw.get("project_id") or row.get("project_id") or ""),
             "bom_items": list(raw.get("bom_items") or []),
             "part_relations": list(raw.get("part_relations") or []),
         }
@@ -250,9 +273,8 @@ def get_repository() -> DemoCADRepository | MySQLCADRepository:
         if _repository is not None:
             return _repository
         configured = bool((os.getenv("CAD_MYSQL_HOST") or os.getenv("MYSQL_HOST") or "").strip())
+        # 演示目录只能显式开启；开发环境默认也不能把示例部件冒充真实工程数据。
         allow_demo = os.getenv("CAD_ALLOW_DEMO_FALLBACK", "").lower() in {"1", "true", "yes"}
-        if not os.getenv("CAD_ALLOW_DEMO_FALLBACK"):
-            allow_demo = os.getenv("APP_ENV", "development").lower() not in {"prod", "production"}
         if configured:
             try:
                 _repository = MySQLCADRepository()

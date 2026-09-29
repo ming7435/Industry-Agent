@@ -38,3 +38,10 @@ class QualityAppealRequest(BaseModel):
     reason: str = Field(min_length=1)
     evidence: list[Dict[str, Any]] = Field(default_factory=list)
     applicant: str = ""
+
+
+class QualityAppealResolutionRequest(BaseModel):
+    appeal_id: str = ""
+    decision: Literal["approved", "rejected", "withdrawn", "closed"] = "approved"
+    reason: str = ""
+    operator: str = ""

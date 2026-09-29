@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,7 @@ class WorkOrderQuery(BaseModel):
     workorder: Dict[str, Any] = Field(default_factory=dict)
     repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
     repair_verification: Dict[str, Any] = Field(default_factory=dict)
+    maintenance_confirmed_by: str = ""
     status: str = ""
     assignee: str = ""
     fault_level: str = ""
@@ -32,6 +33,7 @@ class WorkOrderQuery(BaseModel):
     event_id: str = ""
     diagnosis_snapshot: Dict[str, Any] = Field(default_factory=dict)
     maintenance_plan_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    required_parts: List[Any] = Field(default_factory=list)
     closure_reason: str = ""
     priority: str = "normal"
     risk_level: str = ""

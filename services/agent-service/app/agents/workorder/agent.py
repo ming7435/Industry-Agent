@@ -15,7 +15,7 @@ from .validator import WorkOrderAgentValidator
 
 class WorkOrderAgent(BaseAgent):
     name = "workorder"
-    capabilities = ("workorder_create", "workorder_update")
+    capabilities = ("workorder_create", "workorder_query", "workorder_update")
 
     def __init__(self, tools: ToolRegistry | None = None, service: WorkOrderService | None = None) -> None:
         self.tools = tools or ToolRegistry()

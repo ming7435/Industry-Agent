@@ -44,6 +44,7 @@ class DiagnosisState:
     next_action: Optional[str] = None
     diagnosis: Optional[Dict[str, Any]] = None
     confidence: Optional[float] = None
+    model_metadata: Dict[str, Any] = field(default_factory=dict)
     trace_id: str = ""
     error: Optional[str] = None
 
@@ -71,6 +72,7 @@ class DiagnosisState:
             "next_action": self.next_action,
             "diagnosis": self.diagnosis,
             "confidence": self.confidence,
+            "model_metadata": dict(self.model_metadata),
             "trace_id": self.trace_id,
             "error": self.error,
         }
@@ -113,6 +115,10 @@ class DiagnosisResult:
     knowledge_warning: str = ""
     maintenance_required: bool = False
     maintenance_reason: str = ""
+    disposition: str = ""
+    evidence_status: str = "insufficient"
+    requires_human_review: bool = False
+    model_metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -149,4 +155,8 @@ class DiagnosisResult:
             "knowledge_warning": self.knowledge_warning,
             "maintenance_required": self.maintenance_required,
             "maintenance_reason": self.maintenance_reason,
+            "disposition": self.disposition,
+            "evidence_status": self.evidence_status,
+            "requires_human_review": self.requires_human_review,
+            "model_metadata": dict(self.model_metadata),
         }

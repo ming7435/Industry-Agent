@@ -10,7 +10,6 @@ from app.contracts import DiagnosisView, MaintenancePlan
 from app.agents.base import BaseAgent
 
 from .graph import build_maintenance_graph
-from .validator import MaintenancePlanValidator
 from app.workorder.policy import maintenance_decision
 
 
@@ -101,7 +100,6 @@ class MaintenanceAgent(BaseAgent):
         inventory: Mapping[str, Any] | None = None,
         part_availability: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        query = self._query(payload, diagnosis)
         tool_plan = self._safe_tool("generate_repair_plan", {"diagnosis": diagnosis.model_dump(mode="json")})
         documents = list(knowledge.get("documents") or [])
         components = list(cad.get("components") or [])
@@ -150,6 +148,7 @@ class MaintenanceAgent(BaseAgent):
             "risk_level": self._risk_level(diagnosis.severity),
             "maintenance_required": maintenance_required,
             "maintenance_reason": maintenance_reason,
+            "cad_required": self._requires_cad(diagnosis),
             "target_part": target_part,
             "engineering_context": engineering_context,
         }

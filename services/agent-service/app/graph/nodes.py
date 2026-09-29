@@ -1,6 +1,6 @@
 """LangGraph 节点：将共享状态映射为 Agent 输入和结果更新。"""
 from __future__ import annotations
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 import os
 from app.a2a.client import A2AError
 from app.common.serialization import _serialize_agent_result
@@ -345,11 +345,16 @@ class OrchestratorNodes:
             "maintenance_plan_snapshot": plan,
         })
         result = self.requests.execute_workorder({**state, "context": context}, action="create", from_agent="maintenance")
+        raw_status = str(result.get("status") or (result.get("workorder") or {}).get("status") or "")
         return self.tracing.finish("workorder", state, {
             "workorder_result": result,
             "workorder": result.get("workorder", {}),
             "pending_workorder_id": result.get("workorder_id", ""),
-            "status": "waiting_repair" if result.get("success") else "workorder_error",
+            # 不能把“创建成功”伪装成“等待维修”。保留后端事实状态，
+            # 同时用生命周期状态供 Runtime/UI 展示。
+            "backend_status": raw_status,
+            "lifecycle_status": _workorder_lifecycle_status(raw_status, result),
+            "status": _workorder_lifecycle_status(raw_status, result) if result.get("success") else "workorder_error",
         })
 
     def memory(self, state: AgentState) -> Dict[str, Any]:
@@ -379,10 +384,13 @@ class OrchestratorNodes:
                     "engineering_context": enriched.get("drawing_context") or enriched.get("engineering_context") or {},
                 }
             result = self.requests.execute_workorder({**state, "context": enriched}, action=action, from_agent="router")
+            raw_status = str(result.get("status") or (result.get("workorder") or {}).get("status") or "")
             return self.tracing.finish("workorder_action", state, {
                 "workorder_result": result,
                 "workorder": result.get("workorder", {}),
-                "status": "completed" if result.get("success") else "error",
+                "backend_status": raw_status,
+                "lifecycle_status": _workorder_lifecycle_status(raw_status, result),
+                "status": _workorder_lifecycle_status(raw_status, result) if result.get("success") else "error",
             })
         except Exception as error:
             return self.tracing.finish("workorder_action", state, {
@@ -425,3 +433,15 @@ class OrchestratorNodes:
         report = _serialize_agent_result(result)
         payload = {"report": report}
         return self.tracing.finish("report", state, payload)
+
+
+def _workorder_lifecycle_status(raw_status: str, result: Mapping[str, Any] | None = None) -> str:
+    """把事实源状态映射为不会混淆创建和维修阶段的流程状态。"""
+    value = str(raw_status or "").strip().lower()
+    if value == "open":
+        return "waiting_dispatch"
+    if value == "in_progress":
+        return "in_progress"
+    if value in {"awaiting_verification", "completed", "closed", "rejected", "timeout"}:
+        return value
+    return "created" if (result or {}).get("success") else "workorder_error"

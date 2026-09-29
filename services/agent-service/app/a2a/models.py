@@ -168,6 +168,7 @@ class WorkOrderRequest(A2ARequest):
     workorder: Dict[str, Any] = Field(default_factory=dict)
     repair_feedback: Dict[str, Any] | str = Field(default_factory=dict)
     repair_verification: Dict[str, Any] = Field(default_factory=dict)
+    maintenance_confirmed_by: str = ""
     status: str = ""
     assignee: str = ""
     fault_level: str = ""

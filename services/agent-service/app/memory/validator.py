@@ -40,6 +40,8 @@ class ExperienceValidator:
 
         findings: list[str] = []
         score = 0.0
+        if _contains_untrusted_flag(experience) or _contains_untrusted_flag(workorder) or _contains_untrusted_flag(repair_feedback):
+            findings.append("experience_source_is_synthetic_or_degraded")
         if str(workorder.get("status") or "").lower() == "closed" and repair_feedback:
             score += 0.45
         else:
@@ -75,9 +77,21 @@ class ExperienceValidator:
             "experience_content_missing",
             "repair_not_successful",
             "repair_verification_missing_or_failed",
+            "experience_source_is_synthetic_or_degraded",
         }
         if duplicate and score >= 0.8 and not set(findings).intersection(blocking_findings):
             findings.append("duplicate_experience")
             return ExperienceValidationResult(round(min(score, 1.0), 4), "duplicate", findings)
         status = "accepted" if score >= 0.8 and not set(findings).intersection(blocking_findings) else "rejected"
         return ExperienceValidationResult(round(min(score, 1.0), 4), status, findings)
+
+
+def _contains_untrusted_flag(value: Any) -> bool:
+    """递归检查来源对象，避免嵌套的演示数据进入长期经验库。"""
+    if isinstance(value, Mapping):
+        if value.get("synthetic") is True or value.get("is_synthetic") is True or value.get("degraded") is True:
+            return True
+        return any(_contains_untrusted_flag(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_untrusted_flag(item) for item in value)
+    return False

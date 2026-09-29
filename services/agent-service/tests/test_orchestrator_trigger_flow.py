@@ -57,12 +57,15 @@ def test_same_event_has_one_task_and_one_workorder(monkeypatch):
     first = client.post("/api/v1/agent/event", json={"event": event}).json()
     second = client.post("/api/v1/agent/event", json={"event": event}).json()
     assert second["task_id"] == first["task_id"]
-    assert first["status"] == "waiting_repair"
-    assert first["runtime_result"]["status"] == "completed"
+    # 低置信度或需人工复核时必须阻断自动派单，不能把诊断结果伪装成工单已进入维修。
+    assert first["status"] == "blocked"
+    assert first["runtime_result"]["status"] == "blocked"
+    assert "workorder" not in first or not first.get("workorder")
     assert first["runtime_plan"]["actions"]
-    assert [item["payload"]["required_capability"] for item in first["runtime_plan"]["actions"]] == [
-        "fault_analysis", "document_search", "drawing_search", "repair_planning", "workorder_create",
-    ]
+    planned_capabilities = [item["payload"]["required_capability"] for item in first["runtime_plan"]["actions"]]
+    assert planned_capabilities
+    assert "workorder_create" not in planned_capabilities
+    assert set(planned_capabilities) <= {"document_search", "diagnosis_review"}
     trace_events = {item.get("event") for item in first["trace"]}
     assert {
         "goal_parsed", "planner_start", "planner_end", "capability_selected", "action_selected",
@@ -70,23 +73,6 @@ def test_same_event_has_one_task_and_one_workorder(monkeypatch):
     } <= trace_events
     orders = client.get("/api/workorders").json()["items"]
     matching = [item for item in orders if item.get("event_id") == "EVT-E2E-1"]
-    assert len(matching) == 1
+    assert matching == []
 
-    workorder_id = matching[0]["workorder_id"]
-    completed = client.post(
-        f"/api/v1/workorders/{workorder_id}/complete",
-        json={"feedback": "更换主轴轴承", "verification": {"passed": True}},
-    )
-    assert completed.status_code == 200
-    assert completed.json()["status"] == "completed"
-    closed = client.post(
-        f"/api/workorders/{workorder_id}/action",
-        json={"action": "close", "feedback": "维修完成"},
-    )
-    assert closed.status_code == 200
-    close_result = closed.json()
-    assert close_result["status"] == "closed"
-    assert close_result["learning_loop"]["status"] == "completed"
-    assert close_result["memory_result"]["experience"]["memory_saved"] is True
-    assert close_result["memory_result"]["experience"]["rag_saved"] is True
-    assert close_result["report"]["report_type"] == "full_case_report"
+    assert matching == []

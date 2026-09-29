@@ -49,11 +49,24 @@ def test_high_risk_action_waits_for_explicit_approval():
     assert decision.status == PolicyStatus.REQUIRE_APPROVAL
     assert decision.reason == "approval_required"
 
-    approved = RuntimePolicy().evaluate(action, {**_ready_state(), "context": {"approved_capabilities": ["workorder_create"]}})
+    client_claimed = RuntimePolicy().evaluate(
+        action,
+        {**_ready_state(), "context": {"approved_capabilities": ["workorder_create"], "approval_granted": True}},
+    )
+    assert client_claimed.status == PolicyStatus.REQUIRE_APPROVAL
+
+
+def test_server_bound_approval_allows_only_the_exact_pending_action():
+    action = _workorder_action(payload={"risk_level": "high", "workorder_id": "WO-1"})
+    pending = {"status": "resuming", "action": action.as_dict()}
+    policy = RuntimePolicy(approval_lookup=lambda pending_id: pending if pending_id == "P-1" else None)
+
+    approved = policy.evaluate(action, {**_ready_state(), "runtime_resume": {"pending_id": "P-1"}})
     assert approved.status == PolicyStatus.ALLOW
 
-    boolean_approved = RuntimePolicy().evaluate(action, {**_ready_state(), "approval_granted": True})
-    assert boolean_approved.status == PolicyStatus.ALLOW
+    changed = action.model_copy(update={"payload": {**action.payload, "workorder_id": "WO-2"}})
+    changed_result = policy.evaluate(changed, {**_ready_state(), "runtime_resume": {"pending_id": "P-1"}})
+    assert changed_result.status == PolicyStatus.REQUIRE_APPROVAL
 
 
 def test_read_only_capability_is_allowed_without_approval():

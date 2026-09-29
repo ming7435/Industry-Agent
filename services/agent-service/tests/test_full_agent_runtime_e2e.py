@@ -25,8 +25,8 @@ class _Requests:
     def diagnose(self, _state, event):
         self.diagnosis_calls += 1
         if self.diagnosis_calls == 1:
-            return {"device_id": event["device_id"], "fault": "bearing", "confidence": 0.4, "evidence": []}
-        return {"device_id": event["device_id"], "fault": "bearing", "confidence": 0.95, "evidence": [{"id": "EV-1"}]}
+            return {"device_id": event["device_id"], "fault": "bearing", "confidence": 0.4, "evidence": [], "evidence_status": "insufficient"}
+        return {"device_id": event["device_id"], "fault": "bearing", "confidence": 0.95, "evidence": [{"id": "EV-1"}], "evidence_status": "ready", "evidence_validated": True, "maintenance_required": True}
 
     def retrieve_knowledge(self, _state, _query):
         return {"status": "completed", "documents": [{"document_id": "DOC-1"}]}
@@ -89,7 +89,7 @@ def test_full_evidence_driven_runtime_lifecycle(tmp_path):
     for node in (nodes.diagnosis, nodes.knowledge, nodes.cad, nodes.maintenance, nodes.workorder):
         state.update(node(state))
 
-    assert state["status"] == "waiting_repair"
+    assert state["status"] == "waiting_dispatch"
     assert requests.diagnosis_calls == 2
     assert requests.plan_calls == 2
 
