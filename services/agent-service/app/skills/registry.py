@@ -1,11 +1,12 @@
-"""智能体技能注册表。
+"""智能体 Markdown 技能文档注册表。
 
 目录约定::
 
-    app/skills/{agent_name}/*.yaml
+    app/skills/{agent_name}/*.md
 
-每个 YAML 是一个独立 Skill。运行时通过 ``select`` 选择一个或多个 Skill，
-再合并工具和步骤，避免一个 Agent 被一个 master skill 文件限制。
+每个 Markdown 文档是一个独立 Skill：YAML Front Matter 保存运行时需要的结构化字段，
+正文保存面向维护人员的说明。运行时通过 ``select`` 选择一个或多个 Skill，再合并工具
+和步骤，避免一个 Agent 被一个 master skill 文件限制。
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ SKILLS_ROOT = Path(__file__).resolve().parent
 
 @dataclass(frozen=True)
 class SkillDefinition:
-    """从 YAML 加载的一个 Skill 定义。"""
+    """从 Markdown 文档加载的一个 Skill 定义。"""
 
     agent: str
     name: str
@@ -41,10 +42,17 @@ class SkillDefinition:
     failure_policy: str = "stop"
     output_schema: Mapping[str, Any] = field(default_factory=dict)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    document: str = ""
     path: str = ""
 
     @classmethod
-    def from_payload(cls, agent: str, payload: Mapping[str, Any], path: Path) -> "SkillDefinition":
+    def from_payload(
+        cls,
+        agent: str,
+        payload: Mapping[str, Any],
+        path: Path,
+        document: str = "",
+    ) -> "SkillDefinition":
         name = str(payload.get("name") or path.stem)
         return cls(
             agent=agent,
@@ -61,6 +69,7 @@ class SkillDefinition:
             failure_policy=str(payload.get("failure_policy") or "stop"),
             output_schema=dict(payload.get("output_schema") or {}) if isinstance(payload.get("output_schema"), Mapping) else {},
             metadata=dict(payload),
+            document=document,
             path=str(path),
         )
 
@@ -73,7 +82,7 @@ class SkillDefinition:
         normalized: list[StepDefinition] = []
         for index, raw in enumerate(self.steps):
             step = StepDefinition.coerce(raw)
-            # Skill 级默认值只在结构化步骤未覆盖时生效，确保精简的旧版 YAML 仍有意义。
+            # Skill 级默认值只在结构化步骤未覆盖时生效，确保精简的 Front Matter 仍有意义。
             if not step.required_inputs and self.required_inputs:
                 step = step.model_copy(update={"required_inputs": list(self.required_inputs)})
             if not step.failure_policy or step.failure_policy == "stop":
@@ -96,11 +105,9 @@ class SkillRegistry:
         if agent not in self._cache:
             directory = self.root / agent
             definitions: List[SkillDefinition] = []
-            for path in sorted(directory.glob("*.yaml")) if directory.is_dir() else []:
-                payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-                if not isinstance(payload, Mapping):
-                    raise ValueError(f"Skill YAML must be a mapping: {path}")
-                definitions.append(SkillDefinition.from_payload(agent, payload, path))
+            for path in sorted(directory.glob("*.md")) if directory.is_dir() else []:
+                payload, document = _load_markdown_skill(path)
+                definitions.append(SkillDefinition.from_payload(agent, payload, path, document))
             self._cache[agent] = tuple(definitions)
         return list(self._cache[agent])
 
@@ -192,6 +199,31 @@ def _as_strings(value: Any) -> tuple[str, ...]:
     if isinstance(value, (list, tuple, set)):
         return tuple(str(item) for item in value if str(item).strip())
     return ()
+
+
+def _load_markdown_skill(path: Path) -> tuple[Mapping[str, Any], str]:
+    """读取 Skill Markdown，并分离 YAML Front Matter 与说明正文。"""
+
+    text = path.read_text(encoding="utf-8").lstrip("\ufeff")
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        raise ValueError(f"Skill Markdown 缺少 YAML Front Matter: {path}")
+
+    closing_index = next(
+        (index for index, line in enumerate(lines[1:], start=1) if line.strip() == "---"),
+        None,
+    )
+    if closing_index is None:
+        raise ValueError(f"Skill Markdown 的 YAML Front Matter 未闭合: {path}")
+
+    payload = yaml.safe_load("\n".join(lines[1:closing_index])) or {}
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"Skill Markdown Front Matter 必须是映射: {path}")
+
+    document = "\n".join(lines[closing_index + 1 :]).strip()
+    if not document:
+        raise ValueError(f"Skill Markdown 缺少说明正文: {path}")
+    return payload, document
 
 
 def _trigger_matches(trigger: str, context: Mapping[str, Any], text: str) -> bool:

@@ -110,6 +110,80 @@ def test_backend_qms_partial_checks_are_not_qualified(tmp_path, monkeypatch):
     assert appearance["status"] == "not_tested"
 
 
+def test_backend_qms_rejects_null_and_string_boolean_quality_values(tmp_path, monkeypatch):
+    from app.quality.inspection import PartInspectionService
+
+    service = PartInspectionService()
+    all_keys = ("scratch", "crack", "burr", "discoloration", "deformation")
+    null_appearance = service.call("inspect_part_appearance", part={"appearance": {key: None for key in all_keys}})
+    string_appearance = service.call("inspect_part_appearance", part={"appearance": {key: "false" for key in all_keys}})
+    null_rotation = service.call(
+        "inspect_part_function",
+        part={"function": {"runout_mm": 0.018, "rotation_test": None}},
+        specifications={"runout_mm": {"min": 0.0, "max": 0.03}},
+    )
+
+    assert null_appearance["status"] == "not_tested"
+    assert string_appearance["status"] == "not_tested"
+    assert null_rotation["status"] == "not_tested"
+
+
+def test_backend_qms_dimensions_reject_missing_bounds_and_non_finite_values():
+    from app.quality.inspection import PartInspectionService
+
+    service = PartInspectionService()
+    missing_bound = service.call(
+        "inspect_part_dimensions",
+        part={"measurements": {"outer_diameter_mm": 50.0}},
+        specifications={"outer_diameter_mm": {}},
+    )
+    invalid_value = service.call(
+        "inspect_part_dimensions",
+        part={"measurements": {"outer_diameter_mm": float("inf")}},
+        specifications={"outer_diameter_mm": {"min": 49.0, "max": 51.0}},
+    )
+
+    assert missing_bound["status"] == "not_tested"
+    assert invalid_value["status"] == "not_tested"
+
+
+def test_backend_recovery_freshness_enforces_age_and_clock_skew(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    from app.workorder.service import BackendBusinessService
+
+    now = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setenv("RECOVERY_MAX_AGE_SECONDS", "300")
+    monkeypatch.setenv("RECOVERY_CLOCK_SKEW_SECONDS", "30")
+    snapshot = lambda checked: {"checked_at": checked.isoformat(), "expires_at": (checked + timedelta(minutes=20)).isoformat()}
+
+    assert BackendBusinessService._recovery_is_fresh(snapshot(now - timedelta(seconds=299)), now=now)
+    assert not BackendBusinessService._recovery_is_fresh(snapshot(now - timedelta(seconds=301)), now=now)
+    assert not BackendBusinessService._recovery_is_fresh(snapshot(now + timedelta(seconds=31)), now=now)
+
+
+def test_backend_quality_persists_structured_validation_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("BACKEND_STORAGE", "sqlite")
+    monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "quality-contract.sqlite3"))
+    import app.main as main
+    main._service = None
+    client = TestClient(app)
+    checks = {
+        key: {"passed": True, "status": "pass", "sufficient_data": True, "items": [{"actual": True}], "defects": []}
+        for key in ("dimensions", "appearance", "material", "function", "process")
+    }
+
+    response = client.post(
+        "/tools/call",
+        json={"tool": "create_quality_check", "arguments": {"part_id": "PART-CONTRACT", "result": "passed", "quality_validation": checks}},
+    )
+    assert response.status_code == 200
+    assert response.json()["quality_check"]["status"] == "passed"
+
+    check_id = response.json()["quality_check_id"]
+    reread = client.post("/tools/call", json={"tool": "get_quality_check", "arguments": {"check_id": check_id}}).json()
+    assert reread["quality_check"]["quality_validation"] == checks
+
+
 def test_backend_unstructured_quality_evidence_is_not_qualified(tmp_path, monkeypatch):
     monkeypatch.setenv("BACKEND_STORAGE", "sqlite")
     monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "quality-evidence.sqlite3"))
@@ -283,6 +357,6 @@ def test_backend_repair_verification_rejects_expired_snapshot_and_has_no_health_
 
     current = BackendBusinessService._build_repair_verification(order, {
         "device_id": "D-FRESH", "status": "running", "active_alarms": [],
-        "metrics": {"vibration": 0.2}, "checked_at": "2099-09-28T12:00:00Z", "health_score": 1,
+        "metrics": {"vibration": 0.2}, "checked_at": "2026-09-28T12:00:00Z", "health_score": 1,
     }, {})
     assert current["passed"] is True

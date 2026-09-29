@@ -31,6 +31,16 @@ class QualityAgent(BaseAgent):
         decision = dict(state.get("decision") or {})
         request = dict(state.get("request") or {})
         part = dict(state.get("part") or request.get("part") or {})
+        quality_validation = {
+            key: dict(state.get(state_key) or {})
+            for key, state_key in (
+                ("dimensions", "dimension_check"),
+                ("appearance", "appearance_check"),
+                ("material", "material_check"),
+                ("function", "function_check"),
+                ("process", "process_check"),
+            )
+        }
         result_payload = {
             "inspection_type": "part_quality",
             "part_id": str(part.get("part_id") or request.get("part_id") or ""),
@@ -43,6 +53,7 @@ class QualityAgent(BaseAgent):
             "measurements": dict(part.get("measurements") or request.get("measurements") or {}),
             "specifications": dict(decision.get("specifications") or state.get("inspection_plan") or {}),
             "defects": list(decision.get("defects") or []),
+            "quality_validation": quality_validation,
             "qualified": bool(decision.get("qualified", decision.get("passed"))),
             "recommendation": self._recommendation(decision),
             "evidence": self._evidence(state),

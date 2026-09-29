@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 import hashlib
 import json
+import os
 
 from .repository import build_repository
 from ..quality import PartInspectionService
@@ -361,7 +362,7 @@ class BackendBusinessService:
         source_order = self.repository.get(source_workorder)
         if source_order is None or str(source_order.get("status") or "") != "closed":
             raise ValueError("经验记录只能来自已关闭工单")
-        if not self._verification_is_valid(source_order.get("repair_verification"), source_order):
+        if not self._verification_is_valid(source_order.get("repair_verification"), source_order, enforce_freshness=False):
             raise ValueError("经验记录来源工单缺少有效设备恢复验证")
         try:
             quality_score = float(item.get("experience_quality_score") or 0.0)
@@ -405,6 +406,7 @@ class BackendBusinessService:
             "result": result,
             "findings": list(values.get("findings") or []),
             "items": list(values.get("items") or []),
+            "quality_validation": dict(values.get("quality_validation") or values.get("inspection_summary") or {}),
             "evidence": list(values.get("evidence") or values.get("inspection_evidence") or []),
             "reviewer": str(values.get("reviewer") or operator),
             "risk_level": str(values.get("risk_level") or "R1"),
@@ -595,20 +597,23 @@ class BackendBusinessService:
             return False
         required = ("dimensions", "appearance", "material", "function", "process")
         return all(
-            checks.get(key) is True
-            or (isinstance(checks.get(key), Mapping) and checks[key].get("passed") is True)
+            isinstance(checks.get(key), Mapping)
+            and checks[key].get("passed") is True
+            and checks[key].get("sufficient_data") is True
+            and str(checks[key].get("status") or "").lower() == "pass"
+            and bool(checks[key].get("items"))
             for key in required
         )
 
     @classmethod
-    def _verification_is_valid(cls, verification: Any, order: Mapping[str, Any]) -> bool:
+    def _verification_is_valid(cls, verification: Any, order: Mapping[str, Any], *, enforce_freshness: bool = True) -> bool:
         if not isinstance(verification, Mapping) or verification.get("passed") is not True:
             return False
         if verification.get("source") != "device_recovery":
             return False
         recovery = verification.get("device_recovery")
         checks = verification.get("checks")
-        return isinstance(recovery, Mapping) and isinstance(checks, Mapping) and all(checks.get(key) is True for key in cls.REQUIRED_RECOVERY_CHECKS) and cls._recovery_is_fresh(recovery)
+        return isinstance(recovery, Mapping) and isinstance(checks, Mapping) and all(checks.get(key) is True for key in cls.REQUIRED_RECOVERY_CHECKS) and (not enforce_freshness or cls._recovery_is_fresh(recovery))
 
     @classmethod
     def _build_repair_verification(cls, order: Mapping[str, Any], recovery: Mapping[str, Any], feedback: Mapping[str, Any]) -> dict[str, Any]:
@@ -651,7 +656,7 @@ class BackendBusinessService:
         }
 
     @staticmethod
-    def _recovery_is_fresh(recovery: Mapping[str, Any]) -> bool:
+    def _recovery_is_fresh(recovery: Mapping[str, Any], *, now: datetime | None = None) -> bool:
         if any(recovery.get(key) is True for key in ("stale", "expired", "is_stale")):
             return False
         raw_checked_at = recovery.get("checked_at") or recovery.get("timestamp") or recovery.get("updated_at")
@@ -663,6 +668,19 @@ class BackendBusinessService:
                 _checked_at = _checked_at.replace(tzinfo=timezone.utc)
         except (TypeError, ValueError):
             return False
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        try:
+            max_age = float(os.getenv("RECOVERY_MAX_AGE_SECONDS", "86400"))
+            clock_skew = float(os.getenv("RECOVERY_CLOCK_SKEW_SECONDS", "30"))
+        except (TypeError, ValueError):
+            return False
+        if max_age < 0 or clock_skew < 0:
+            return False
+        age = (current - _checked_at).total_seconds()
+        if age > max_age or age < -clock_skew:
+            return False
         raw_expires_at = recovery.get("expires_at")
         if not raw_expires_at:
             return True
@@ -672,7 +690,7 @@ class BackendBusinessService:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
         except (TypeError, ValueError):
             return False
-        return expires_at > datetime.now(timezone.utc)
+        return expires_at > current
 
     def _get_record(self, record_type: str, record_id: str) -> dict[str, Any] | None:
         loader = getattr(self.repository, "get_record", None)

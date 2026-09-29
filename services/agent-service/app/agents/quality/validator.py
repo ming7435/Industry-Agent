@@ -35,8 +35,8 @@ class QualityValidator:
             findings.append("缺少生产零件检验规格，不能判定质量合格")
         for code, label, result in check_definitions:
             payload = dict(result or {})
-            passed = bool(payload.get("passed"))
-            sufficient_data = payload.get("sufficient_data") is not False and str(payload.get("status") or "").lower() not in {"not_tested", "pending", "insufficient_data"}
+            passed = payload.get("passed") is True
+            sufficient_data = payload.get("sufficient_data") is True and str(payload.get("status") or "").lower() not in {"not_tested", "pending", "insufficient_data"}
             trusted = payload.get("synthetic") is not True and payload.get("degraded") is not True
             item_passed = passed and sufficient_data and trusted
             inspection_items.append({"name": label, "passed": item_passed, "source": payload.get("source", "qms-mcp"), "status": payload.get("status", ""), "evidence_status": "trusted" if trusted else "untrusted"})
@@ -52,7 +52,7 @@ class QualityValidator:
             failed.append("part_identity_missing")
             findings.append("缺少生产零件编号，无法形成可追溯质检结果")
         checks = [
-            {"name": item[1], "passed": bool((result or {}).get("passed")) and (result or {}).get("synthetic") is not True and (result or {}).get("degraded") is not True}
+            {"name": item[1], "passed": (result or {}).get("passed") is True and (result or {}).get("sufficient_data") is True and (result or {}).get("synthetic") is not True and (result or {}).get("degraded") is not True}
             for item in check_definitions
             for result in [item[2]]
         ]
@@ -60,8 +60,8 @@ class QualityValidator:
             "inspection_type": "part_quality",
             "passed": passed,
             "qualified": passed,
-            "status": "pass" if passed else ("not_tested" if any(str((result or {}).get("status") or "").lower() in {"not_tested", "pending", "insufficient_data"} for _, _, result in check_definitions) else "fail"),
-            "quality_grade": "合格" if passed else "不合格",
+            "status": "pass" if passed else ("not_tested" if any((result or {}).get("sufficient_data") is not True or str((result or {}).get("status") or "").lower() in {"not_tested", "pending", "insufficient_data"} for _, _, result in check_definitions) else "fail"),
+            "quality_grade": "合格" if passed else ("未检测" if any(str((result or {}).get("status") or "").lower() in {"not_tested", "pending", "insufficient_data"} for _, _, result in check_definitions) else "不合格"),
             "failed_checks": cls._dedupe(failed),
             "findings": cls._dedupe(findings),
             "inspection_items": inspection_items,

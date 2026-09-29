@@ -158,6 +158,11 @@ def _create_dense() -> Any:
     """
     from app.milvus.retriever import DenseRetriever
 
+    # 在线向量查询必须与入库共享 Model Service embedder；不能让
+    # DenseRetriever 在这里悄悄回退到旧的供应商直连客户端。
+    embedder = get_embedder()
+    if embedder is None:
+        raise RuntimeError("model-service embedder is unavailable")
     collection_names = settings.milvus_search_collections
     return _instantiate(
         DenseRetriever,
@@ -169,6 +174,7 @@ def _create_dense() -> Any:
             "collection_names": collection_names,
             "dim": settings.embedding_dim,
             "embedding_dim": settings.embedding_dim,
+            "embedder": embedder,
         },
         what="DenseRetriever",
     )

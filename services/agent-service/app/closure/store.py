@@ -54,6 +54,7 @@ class MySQLClosureStore:
                 reinspection JSON NULL,
                 created_at VARCHAR(64) NOT NULL,
                 updated_at VARCHAR(64) NOT NULL,
+                quality_validation JSON NULL,
                 KEY idx_quality_target (target_type, target_id),
                 KEY idx_quality_status (status),
                 KEY idx_quality_part (part_id, part_no)
@@ -114,6 +115,11 @@ class MySQLClosureStore:
             except Exception:
                 # 已存在的数据库会在重复添加时报错，保留现有列即可。
                 pass
+            try:
+                cursor.execute("ALTER TABLE quality_checks ADD COLUMN quality_validation JSON NULL")
+            except Exception:
+                # 已存在的数据库会在重复添加时报错，保留现有列即可。
+                pass
             connection.commit()
         finally:
             cursor.close()
@@ -137,7 +143,7 @@ class MySQLClosureStore:
     @classmethod
     def _quality_row(cls, row: Mapping[str, Any]) -> dict[str, Any]:
         result = dict(row)
-        defaults: tuple[tuple[str, Any], ...] = (("findings", []), ("items", []), ("appeal_ids", []), ("reinspection", {}))
+        defaults: tuple[tuple[str, Any], ...] = (("findings", []), ("items", []), ("appeal_ids", []), ("reinspection", {}), ("quality_validation", {}))
         for key, default in defaults:
             result[key] = cls._loads(result.get(key), default)
         return result
@@ -165,14 +171,14 @@ class MySQLClosureStore:
         cursor = connection.cursor()
         try:
             cursor.execute(
-                "INSERT INTO quality_checks (quality_check_id, target_type, target_id, workorder_id, part_id, part_no, batch_id, production_order_id, inspection_type, score, result, findings, items, reviewer, risk_level, status, appeal_ids, reinspection, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO quality_checks (quality_check_id, target_type, target_id, workorder_id, part_id, part_no, batch_id, production_order_id, inspection_type, score, result, findings, items, reviewer, risk_level, status, appeal_ids, reinspection, quality_validation, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     record["quality_check_id"], record["target_type"], record["target_id"],
                     record["workorder_id"], record["part_id"], record["part_no"],
                     record["batch_id"], record["production_order_id"], record["inspection_type"],
                     record["score"], record["result"], self._json(record["findings"], []),
                     self._json(record["items"], []), record["reviewer"], record["risk_level"],
-                    record["status"], self._json(record["appeal_ids"], []), self._json(record.get("reinspection"), {}), record["created_at"], record["updated_at"],
+                    record["status"], self._json(record["appeal_ids"], []), self._json(record.get("reinspection"), {}), self._json(record.get("quality_validation"), {}), record["created_at"], record["updated_at"],
                 ),
             )
             connection.commit()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from typing import Any, Mapping
 
 from .policy import maintenance_decision
@@ -52,7 +53,7 @@ class WorkOrderValidator:
             raise ValueError("维修计划缺少 device_id")
 
     @staticmethod
-    def verification_passed(order: Mapping[str, Any], repair_feedback: Any = None) -> bool:
+    def verification_passed(order: Mapping[str, Any], repair_feedback: Any = None, *, enforce_freshness: bool = True) -> bool:
         """判断维修后的明确验证是否通过。
 
         维修反馈与维修验证分别记录：反馈描述技术人员完成的工作；
@@ -72,7 +73,7 @@ class WorkOrderValidator:
         required_checks = ("device_identity", "operational", "alarms_clear", "metrics_available")
         if any(checks.get(key) is not True for key in required_checks):
             return False
-        if not _recovery_is_fresh(recovery):
+        if enforce_freshness and not _recovery_is_fresh(recovery):
             return False
         status = str(value.get("status") or "verified").strip().lower()
         return status not in {"failed", "rejected", "invalid"}
@@ -130,7 +131,8 @@ class WorkOrderValidator:
             )
         else:
             valid = bool(str(feedback or "").strip())
-        return order.get("status") == "closed" and valid and WorkOrderValidator.verification_passed(order, feedback)
+        # 已关闭工单的历史记录可以回读/沉淀；当前关闭动作仍由默认的新鲜度门禁保护。
+        return order.get("status") == "closed" and valid and WorkOrderValidator.verification_passed(order, feedback, enforce_freshness=False)
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -143,13 +145,26 @@ def _parse_timestamp(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _recovery_is_fresh(recovery: Mapping[str, Any]) -> bool:
-    """只依据设备快照的明确时间/过期标记判断新鲜度，不猜测工业阈值。"""
+def _recovery_is_fresh(recovery: Mapping[str, Any], *, now: datetime | None = None) -> bool:
+    """使用服务端时钟和配置的时间窗判断设备恢复快照新鲜度。"""
 
     if any(recovery.get(key) is True for key in ("stale", "expired", "is_stale")):
         return False
     checked_at = _parse_timestamp(recovery.get("checked_at") or recovery.get("timestamp") or recovery.get("updated_at"))
     if checked_at is None:
         return False
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    try:
+        max_age = float(os.getenv("RECOVERY_MAX_AGE_SECONDS", "86400"))
+        clock_skew = float(os.getenv("RECOVERY_CLOCK_SKEW_SECONDS", "30"))
+    except (TypeError, ValueError):
+        return False
+    if max_age < 0 or clock_skew < 0:
+        return False
+    age = (current - checked_at).total_seconds()
+    if age > max_age or age < -clock_skew:
+        return False
     expires_at = _parse_timestamp(recovery.get("expires_at"))
-    return expires_at is None or expires_at > datetime.now(timezone.utc)
+    return expires_at is None or expires_at > current

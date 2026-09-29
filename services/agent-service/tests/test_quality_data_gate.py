@@ -69,3 +69,60 @@ def test_quality_record_with_unstructured_evidence_is_not_qualified():
 
     assert record["result"] == "pending"
     assert record["status"] == "open"
+
+
+def test_quality_validator_does_not_coerce_string_false_or_null_to_pass():
+    checks = [_passing_check(name) for name in ("尺寸", "外观", "材料", "功能", "工艺")]
+    checks[1]["passed"] = "false"
+    checks[1]["sufficient_data"] = None
+
+    result = QualityValidator.validate_part(
+        {"part_id": "PART-001"},
+        {"outer_diameter_mm": {"min": 49.98, "max": 50.02}},
+        *checks,
+    )
+
+    assert result["passed"] is False
+    assert result["status"] == "not_tested"
+    assert result["inspection_items"][1]["passed"] is False
+
+
+def test_qms_appearance_requires_explicit_boolean_values():
+    adapter = QualityMcpAdapter()
+
+    null_value = adapter.inspect_part_appearance({"appearance": {key: None for key in ("scratch", "crack", "burr", "discoloration", "deformation")}})
+    string_value = adapter.inspect_part_appearance({"appearance": {key: "false" for key in ("scratch", "crack", "burr", "discoloration", "deformation")}})
+    defect = adapter.inspect_part_appearance({"appearance": {key: False for key in ("scratch", "crack", "burr", "discoloration", "deformation")} | {"crack": True}})
+
+    assert null_value["status"] == "not_tested"
+    assert string_value["status"] == "not_tested"
+    assert defect["status"] == "fail"
+
+
+def test_qms_function_requires_true_rotation_and_finite_measurement():
+    adapter = QualityMcpAdapter()
+    specification = {"runout_mm": {"min": 0.0, "max": 0.03}}
+
+    null_rotation = adapter.inspect_part_function({"function": {"runout_mm": 0.018, "rotation_test": None}}, specifications=specification)
+    string_rotation = adapter.inspect_part_function({"function": {"runout_mm": 0.018, "rotation_test": "true"}}, specifications=specification)
+    nan_measurement = adapter.inspect_part_function({"function": {"runout_mm": float("nan"), "rotation_test": True}}, specifications=specification)
+
+    assert null_rotation["status"] == "not_tested"
+    assert string_rotation["status"] == "not_tested"
+    assert nan_measurement["status"] == "not_tested"
+
+
+def test_qms_dimensions_require_finite_measurements_and_a_real_bound():
+    adapter = QualityMcpAdapter()
+
+    missing_bound = adapter.inspect_part_dimensions(
+        {"measurements": {"outer_diameter_mm": 50.0}},
+        specifications={"outer_diameter_mm": {}},
+    )
+    invalid_value = adapter.inspect_part_dimensions(
+        {"measurements": {"outer_diameter_mm": float("inf")}},
+        specifications={"outer_diameter_mm": {"min": 49.0, "max": 51.0}},
+    )
+
+    assert missing_bound["status"] == "not_tested"
+    assert invalid_value["status"] == "not_tested"

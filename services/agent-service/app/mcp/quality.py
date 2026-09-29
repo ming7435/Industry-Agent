@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Mapping
 
 
@@ -90,21 +91,24 @@ class QualityMcpAdapter:
             value = _number(actual.get(key))
             minimum = _number(rule.get("min"))
             maximum = _number(rule.get("max"))
-            passed = value is not None and (minimum is None or value >= minimum) and (maximum is None or value <= maximum)
-            item = {"item": key, "actual": value, "min": minimum, "max": maximum, "passed": passed}
+            has_bound = minimum is not None or maximum is not None
+            passed = value is not None and has_bound and (minimum is None or value >= minimum) and (maximum is None or value <= maximum)
+            item = {"item": key, "actual": value, "min": minimum, "max": maximum, "passed": passed, "sufficient_data": value is not None and has_bound}
             items.append(item)
             if not passed:
                 defects.append({"type": "dimension", **item})
-        return _inspection_result(bool(items) and not defects, items, defects)
+        sufficient_data = bool(items) and all(item["sufficient_data"] for item in items)
+        return _inspection_result(sufficient_data and not defects, items, defects, sufficient_data=sufficient_data)
 
     def inspect_part_appearance(self, part: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         appearance = dict((part or {}).get("appearance") or {})
         required = ("scratch", "crack", "burr", "discoloration", "deformation")
-        missing = [key for key in required if key not in appearance]
-        defect_keys = [key for key in ("scratch", "crack", "burr", "discoloration", "deformation") if appearance.get(key)]
+        invalid = [key for key in required if type(appearance.get(key)) is not bool]
+        defect_keys = [key for key in required if appearance.get(key) is True]
         defects = [{"type": "appearance", "item": key, "message": "发现外观缺陷"} for key in defect_keys]
-        defects.extend({"type": "appearance", "item": key, "message": "缺少外观检测数据"} for key in missing)
-        return _inspection_result(bool(appearance) and not missing and not defect_keys, appearance, defects, sufficient_data=not missing and bool(appearance))
+        defects.extend({"type": "appearance", "item": key, "message": "外观检测值必须是布尔值"} for key in invalid)
+        sufficient_data = not invalid
+        return _inspection_result(sufficient_data and not defect_keys, appearance, defects, sufficient_data=sufficient_data)
 
     def inspect_part_material(self, part: Mapping[str, Any] | None = None, specifications: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         record = dict(part or {})
@@ -132,14 +136,15 @@ class QualityMcpAdapter:
         runout = _number(function.get("runout_mm"))
         rule_value = specs.get("runout_mm")
         rule: Mapping[str, Any] = rule_value if isinstance(rule_value, Mapping) else {}
-        runout_passed = not rule or (runout is not None and _in_range(runout, rule))
-        rotation_passed = bool(function) and function.get("rotation_test") is not False
+        rule_valid = bool(rule) and (_number(rule.get("min")) is not None or _number(rule.get("max")) is not None)
+        runout_passed = rule_valid and runout is not None and _in_range(runout, rule)
+        rotation_passed = type(function.get("rotation_test")) is bool and function.get("rotation_test") is True
         defects = []
         if not runout_passed:
             defects.append({"type": "function", "item": "runout_mm", "expected": dict(rule), "actual": runout})
         if not rotation_passed:
-            defects.append({"type": "function", "item": "rotation_test", "message": "旋转功能测试未通过"})
-        required_data = bool(rule) and runout is not None and "rotation_test" in function
+            defects.append({"type": "function", "item": "rotation_test", "message": "旋转功能测试必须明确为 True"})
+        required_data = rule_valid and runout is not None and type(function.get("rotation_test")) is bool
         return _inspection_result(required_data and runout_passed and rotation_passed, function, defects, sufficient_data=required_data)
 
     def inspect_part_process(self, part: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
@@ -150,8 +155,11 @@ class QualityMcpAdapter:
 
 
 def _number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
-        return None if value is None else float(value)
+        number = None if value is None else float(value)
+        return number if number is not None and math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 

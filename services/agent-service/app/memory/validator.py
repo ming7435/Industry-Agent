@@ -46,7 +46,10 @@ class ExperienceValidator:
             score += 0.45
         else:
             findings.append("workorder_not_closed_or_feedback_missing")
-        if not WorkOrderValidator.verification_passed(workorder, repair_feedback):
+        # 关闭动作本身已经在实时快照上完成新鲜度门禁；历史回读/经验复核不应因
+        # 当前时间窗过去而丢失原有有效验证。
+        enforce_freshness = str(workorder.get("status") or "").lower() != "closed"
+        if not WorkOrderValidator.verification_passed(workorder, repair_feedback, enforce_freshness=enforce_freshness):
             findings.append("repair_verification_missing_or_failed")
         if str(experience.get("content") or "").strip():
             score += 0.15

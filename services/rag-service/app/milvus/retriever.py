@@ -297,9 +297,11 @@ class DenseRetriever:
         if self._embedder is not None:
             return self._embedder
 
-        from app.embedding.model import get_embedder
+        # 在线查询必须走统一 Model Service；本地 SiliconFlow 客户端只保留给
+        # 明确的离线入库流程，不能在检索运行时暗中读取供应商密钥。
+        from app.clients.model import RemoteEmbedder
 
-        self._embedder = get_embedder()
+        self._embedder = RemoteEmbedder()
         if self._embedder is None:
             raise RuntimeError("embedding model is not available")
         return self._embedder
@@ -332,6 +334,19 @@ class DenseRetriever:
             raise RuntimeError("no Milvus collections were derived from RAG_DATA_DIR")
 
         vector = _embed_query(self._get_embedder(), query)
+        embedder_dimension = getattr(self._embedder, "dimension", None)
+        if callable(embedder_dimension):
+            embedder_dimension = embedder_dimension()
+        if embedder_dimension is not None and int(embedder_dimension) != len(vector):
+            raise RuntimeError(
+                "embedding model reported dimension %s but returned vector dimension %s"
+                % (embedder_dimension, len(vector))
+            )
+        if embedder_dimension is not None and self.dim > 0 and int(embedder_dimension) != self.dim:
+            raise RuntimeError(
+                "embedding dimension %s is incompatible with Milvus index dimension %s"
+                % (embedder_dimension, self.dim)
+            )
         expression, remaining = _build_expression(filters)
 
         client = self._get_client()

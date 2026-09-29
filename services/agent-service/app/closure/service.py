@@ -19,8 +19,11 @@ def _quality_evidence_is_complete(values: Mapping[str, Any]) -> bool:
         return False
     required = ("dimensions", "appearance", "material", "function", "process")
     return all(
-        checks.get(key) is True
-        or (isinstance(checks.get(key), Mapping) and checks[key].get("passed") is True)
+        isinstance(checks.get(key), Mapping)
+        and checks[key].get("passed") is True
+        and checks[key].get("sufficient_data") is True
+        and str(checks[key].get("status") or "").lower() == "pass"
+        and bool(checks[key].get("items"))
         for key in required
     )
 
@@ -80,6 +83,7 @@ class ClosureService:
             "result": result,
             "findings": list(values.get("findings") or []),
             "items": list(values.get("items") or []),
+            "quality_validation": dict(values.get("quality_validation") or values.get("inspection_summary") or {}),
             "evidence": evidence,
             "reviewer": str(values.get("reviewer") or operator or ""),
             "risk_level": str(values.get("risk_level") or "R1"),

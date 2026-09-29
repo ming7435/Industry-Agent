@@ -26,13 +26,13 @@ def test_duplicate_experience_retries_failed_rag_upsert():
             "repair_feedback": {"feedback": "replaced bearing"},
                 "repair_verification": {
                     "passed": True, "status": "verified", "source": "device_recovery",
-                    "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2099-09-28T12:00:00Z"},
+                    "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2026-09-28T12:00:00Z"},
                     "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
                 },
         },
         "repair_feedback": {"feedback": "replaced bearing", "verification": {
             "passed": True, "status": "verified", "source": "device_recovery",
-            "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2099-09-28T12:00:00Z"},
+                "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2026-09-28T12:00:00Z"},
             "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
         }},
         "diagnosis": {"fault": "bearing fault"},

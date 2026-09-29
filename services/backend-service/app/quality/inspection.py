@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 
@@ -51,17 +52,22 @@ class PartInspectionService:
             for key, rule in specifications.items():
                 if isinstance(rule, Mapping) and key.endswith("_mm"):
                     value = _number(actual.get(key))
-                    passed = value is not None and _in_range(value, rule)
-                    items.append({"item": key, "actual": value, "min": _number(rule.get("min")), "max": _number(rule.get("max")), "passed": passed})
+                    minimum = _number(rule.get("min"))
+                    maximum = _number(rule.get("max"))
+                    has_bound = minimum is not None or maximum is not None
+                    passed = value is not None and has_bound and _in_range(value, rule)
+                    items.append({"item": key, "actual": value, "min": minimum, "max": maximum, "passed": passed, "sufficient_data": value is not None and has_bound})
             defects = [{"type": "dimension", **item} for item in items if not item["passed"]]
-            return _inspection(bool(items) and not defects, items, defects)
+            sufficient_data = bool(items) and all(item["sufficient_data"] for item in items)
+            return _inspection(sufficient_data and not defects, items, defects, sufficient_data=sufficient_data)
         if operation == "inspect_part_appearance":
             appearance = dict(part.get("appearance") or {})
             required = ("scratch", "crack", "burr", "discoloration", "deformation")
-            missing = [key for key in required if key not in appearance]
-            defects = [{"type": "appearance", "item": key, "message": "发现外观缺陷"} for key in required if appearance.get(key)]
-            defects.extend({"type": "appearance", "item": key, "message": "缺少外观检测数据"} for key in missing)
-            return _inspection(not defects and not missing, appearance, defects, sufficient_data=bool(appearance) and not missing)
+            invalid = [key for key in required if type(appearance.get(key)) is not bool]
+            defects = [{"type": "appearance", "item": key, "message": "发现外观缺陷"} for key in required if appearance.get(key) is True]
+            defects.extend({"type": "appearance", "item": key, "message": "外观检测值必须是布尔值"} for key in invalid)
+            sufficient_data = not invalid
+            return _inspection(sufficient_data and not defects, appearance, defects, sufficient_data=sufficient_data)
         if operation == "inspect_part_material":
             material = dict(part.get("material") or {})
             defects = []
@@ -77,11 +83,17 @@ class PartInspectionService:
             function = dict(part.get("function") or {})
             defects = []
             rule = specifications.get("runout_mm")
-            if isinstance(rule, Mapping) and not _in_range(_number(function.get("runout_mm")), rule):
+            runout = _number(function.get("runout_mm"))
+            rule_valid = isinstance(rule, Mapping) and (_number(rule.get("min")) is not None or _number(rule.get("max")) is not None)
+            if rule_valid and not _in_range(runout, rule):
                 defects.append({"type": "function", "item": "runout_mm", "expected": dict(rule), "actual": _number(function.get("runout_mm"))})
-            if function.get("rotation_test") is False:
+            if type(function.get("rotation_test")) is bool and function.get("rotation_test") is False:
                 defects.append({"type": "function", "item": "rotation_test", "message": "旋转功能测试未通过"})
-            required_data = isinstance(rule, Mapping) and bool(rule) and function.get("runout_mm") is not None and "rotation_test" in function
+            required_data = rule_valid and runout is not None and type(function.get("rotation_test")) is bool
+            if not rule_valid:
+                defects.append({"type": "function", "item": "runout_mm", "message": "缺少有效的功能规格"})
+            if type(function.get("rotation_test")) is not bool:
+                defects.append({"type": "function", "item": "rotation_test", "message": "旋转功能测试必须明确为布尔值"})
             return _inspection(required_data and not defects, function, defects, sufficient_data=required_data)
         if operation == "inspect_part_process":
             process = dict(part.get("process") or {})
@@ -91,8 +103,11 @@ class PartInspectionService:
 
 
 def _number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
     try:
-        return None if value is None else float(value)
+        number = None if value is None else float(value)
+        return number if number is not None and math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 

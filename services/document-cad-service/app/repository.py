@@ -27,14 +27,35 @@ class DemoCADRepository:
     def __init__(self, items: list[Mapping[str, Any]] | None = None) -> None:
         self.items = [dict(item) for item in (items or DEMO_CATALOG)]
 
-    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    def search(self, query: str = "", limit: int = 20, filters: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+        filters = dict(filters or {})
+        candidates = [dict(item) for item in self.items]
+        # 结构化条件必须在截断前应用，避免目标设备被前 20 条无关记录遮住。
+        for key in ("device_id", "tenant_id", "project_id", "component_id"):
+            expected = str(filters.get(key) or "").strip()
+            if expected:
+                candidates = [item for item in candidates if str(item.get(key) or "") == expected]
+        drawing_id = str(filters.get("drawing_id") or "").strip()
+        if drawing_id:
+            candidates = [item for item in candidates if str(item.get("drawing_id") or item.get("drawing_ref") or "") == drawing_id]
+        part_no = str(filters.get("part_no") or "").strip()
+        if part_no:
+            candidates = [item for item in candidates if str(item.get("part_no") or (item.get("raw_json") or {}).get("part_no") or "") == part_no]
+        device_model = str(filters.get("device_model") or "").strip()
+        if device_model:
+            candidates = [item for item in candidates if str(item.get("device_model") or "") == device_model]
+        version = str(filters.get("version") or "").strip()
+        if version:
+            candidates = [item for item in candidates if str(item.get("version_id") or item.get("version_label") or "") == version]
+        elif not filters.get("include_history"):
+            candidates = [item for item in candidates if item.get("current", True) is True]
         text = str(query or "").lower().strip()
         if not text:
-            return [dict(item) for item in self.items[: min(limit, 2)]]
+            return candidates[: min(limit, 2)]
         exact = []
         fuzzy = []
-        for item in self.items:
-            values = [str(item.get(key) or "").lower() for key in ("component_id", "part_no", "name", "position", "drawing_ref")]
+        for item in candidates:
+            values = [str(item.get(key) or "").lower() for key in ("component_id", "part_no", "name", "position", "drawing_ref", "drawing_id")]
             if text in values:
                 exact.append(dict(item))
             elif any(token and any(token in value for value in values) for token in text.replace("/", " ").replace("-", " ").split()):
@@ -134,27 +155,50 @@ class MySQLCADRepository:
                 )
         self.connection.commit()
 
-    def search(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+    def search(self, query: str = "", limit: int = 20, filters: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
         needle = str(query or "").strip()
-        text = "%%%s%%" % needle
         select = (
             "SELECT e.entity_id, e.entity_type, e.layer_name, e.block_name, e.device_id, e.text_content, "
             "e.raw_json, e.drawing_id, d.drawing_name, d.version_id, d.version_label, d.is_current, d.source_format, d.object_ref "
             "FROM cad_entities e JOIN cad_drawings d ON d.drawing_id=e.drawing_id "
         )
-        sql = select + (
-            "WHERE e.entity_id LIKE %s OR e.block_name LIKE %s OR e.device_id LIKE %s "
-            "OR e.text_content LIKE %s OR d.drawing_name LIKE %s LIMIT %s"
-            if needle else "LIMIT %s"
-        )
+        filters = dict(filters or {})
+        clauses: list[str] = []
+        params: list[Any] = []
+        if needle:
+            text = "%%%s%%" % needle
+            clauses.append("(e.entity_id LIKE %s OR e.block_name LIKE %s OR e.device_id LIKE %s OR e.text_content LIKE %s OR d.drawing_name LIKE %s OR JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.part_no')) LIKE %s)")
+            params.extend([text] * 6)
+        exact_columns = {
+            "device_id": "e.device_id",
+            "component_id": "e.entity_id",
+            "drawing_id": "e.drawing_id",
+        }
+        for key, column in exact_columns.items():
+            value = str(filters.get(key) or "").strip()
+            if value:
+                clauses.append(f"{column} = %s")
+                params.append(value)
+        for key, expression in (("device_model", "JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.device_model'))"), ("tenant_id", "JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.tenant_id'))"), ("project_id", "JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.project_id'))"), ("part_no", "JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.part_no'))")):
+            value = str(filters.get(key) or "").strip()
+            if value:
+                clauses.append(f"{expression} = %s")
+                params.append(value)
+        version = str(filters.get("version") or "").strip()
+        if version:
+            clauses.append("(d.version_id = %s OR d.version_label = %s)")
+            params.extend([version, version])
+        elif not filters.get("include_history"):
+            clauses.append("d.is_current = 1")
+        sql = select
+        if clauses:
+            sql += "WHERE " + " AND ".join(clauses) + " "
+        sql += "LIMIT %s"
         try:
             with self.connection.cursor() as cursor:
                 size = max(1, min(int(limit), 100))
-                cursor.execute(sql, (text, text, text, text, text, size) if needle else (size,))
+                cursor.execute(sql, tuple(params) + (size,))
                 rows = cursor.fetchall()
-                if not rows and os.getenv("CAD_CI_FIXTURE", "").lower() in {"1", "true", "yes"}:
-                    cursor.execute(select + "LIMIT %s", (size,))
-                    rows = cursor.fetchall()
         except Exception as error:
             raise CADRepositoryError("CAD metadata query failed: %s" % error) from error
         values = [self._normalize(row) for row in rows]
@@ -244,6 +288,7 @@ class MySQLCADRepository:
             "installation_location": str(raw.get("position") or ""),
             "assembly_relation": str(raw.get("assembly_relation") or ""),
             "drawing_ref": str(row.get("drawing_id") or ""),
+            "drawing_id": str(row.get("drawing_id") or ""),
             "drawing_name": str(row.get("drawing_name") or ""),
             "version_id": str(row.get("version_id") or ""),
             "version_label": str(row.get("version_label") or ""),

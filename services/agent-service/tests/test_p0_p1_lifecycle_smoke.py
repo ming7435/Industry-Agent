@@ -142,7 +142,7 @@ def test_event_to_closed_case_smoke(tmp_path):
     )
     feedback = {"feedback": "已更换轴承", "result": "repaired", "verification": {
         "passed": True, "status": "verified", "source": "device_recovery",
-        "device_recovery": {"device_id": "D-SMOKE-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2099-09-28T12:00:00Z"},
+        "device_recovery": {"device_id": "D-SMOKE-1", "status": "running", "metrics": {"vibration": 0.2}, "checked_at": "2026-09-28T12:00:00Z"},
         "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
     }}
     completed = operations.execute_workorder("mark_repair_completed", {

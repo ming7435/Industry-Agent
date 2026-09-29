@@ -12,6 +12,8 @@
 ## 备份与恢复
 
 - 修改前备份：`.runtime/local-five-service-fix-backups/20260929-112202/`。
+- 后续业务修复备份：`.runtime/local-five-service-follow-up-backups/20260929-130000/`。
+- Skill Markdown 迁移备份：`.runtime/skill-md-backups/20260929-150000/`，其中保留迁移前的全部 Skill YAML 和注册表源码。
 - 共备份 447 个 `services/`、`shared/`、`scripts/`、`tests/` 下的 Python 源文件；不包含密钥。
 - 记录文件：`.runtime/local-five-service-fix-backups/20260929-112202/manifest.json`。
 - 恢复：先复制当前版本到另一个安全目录，再按原相对路径将备份目录中的目标文件复制回工作区；不要整目录覆盖本轮新增文件，也不要覆盖之后产生的新修改。
@@ -42,6 +44,8 @@
 - 质检整改任务全部完成后才进入复检；申诉批准进入整改态；结构化质检证据不完整时不能直接关闭或沉淀经验。
 - 删除了监控确认故障后的自动停机，以及工单完成后的自动启动/恢复控制；维修人员提交的是维修反馈和设备恢复证据，设备控制仍由明确的外部业务流程负责。
 - CAD 组件模型保留 `device_id/device_model`；指定设备的 CAD 证据缺少归属或属于其他设备时回退为证据不足，不能进入最终定位结果。
+- 诊断缓存键增加事件、版本、设备、租户和证据指纹；没有事件号、新证据、复核请求以及失败/降级结果不复用旧诊断。
+- Skill 目录从 32 个 YAML 配置迁移为 32 个 Markdown 文档。运行元数据保存在 YAML Front Matter，中文正文明确说明目标、触发条件、步骤和工具；注册表只扫描 `.md`，不会再把旧 YAML 当作活动 Skill。
 
 ### 2. Backend Service：已修复
 
@@ -76,6 +80,8 @@
 
 - 在线查询和入库仍通过 Model Service；没有为在线链路重新引入供应商密钥直连。离线视觉/向量实现保留为显式离线流程。
 - `DenseRetriever` 使用注入的模型客户端；依赖构造辅助函数不再忽略显式 endpoint/client 参数。
+- 默认在线 DenseRetriever 也通过 `RemoteEmbedder` 调用 Model Service；Model Service embedder 不可用时明确失败，不再暗中回退到供应商密钥直连。
+- 入库和查询同时校验远端声明维度、实际向量维度和 Milvus 索引维度；空向量或批次维度不一致会在写入前失败。
 - 补齐文档解析中表格、图片关系和本地资源解析辅助函数，避免合法文档在解析阶段报未定义异常。
 - embedding 向量维度和已有索引维度会被校验；文档 SQLite/cache 路径按当前配置目录使用，旧数据不自动删除。迁移时应先复制旧 SQLite 和 `artifacts/`，再执行现有索引/入库命令。
 - 搜索超时、连接释放和有界异步卸载保留现有实现；测试未发现需要放宽超时或重复写入的问题。
@@ -93,7 +99,7 @@
 
 - 设备、机型、图纸、部件编号和零件号沿 HTTP → Repository → Agent 结构化传递；指定设备不会悄悄退化为全库查询。
 - 编号按精确匹配，名称/位置才按模糊规则；JSON `raw_json` 中的 `part_no` 会参与标准化返回。
-- MySQL 查询使用参数化 SQL；关系查询按结果集分组，避免无关记录混入。
+- Demo 与 MySQL Repository 都在 `LIMIT` 前应用结构化过滤；MySQL 查询使用参数化 SQL，并正确组合 AND/OR，避免同名跨设备记录或无关记录混入。
 - `CAD_ALLOW_DEMO_FALLBACK` 未显式启用时没有 MySQL 就绪返回失败/不可用；不会用演示目录冒充生产工程数据。
 - Agent 最终校验再次核对设备归属，跨设备或没有设备归属的指定设备证据都会被拒绝。
 
@@ -126,17 +132,18 @@
 
 | 范围 | 命令 | 结果 |
 |---|---|---|
-| Agent | `pytest -c pytest-agent.ini -q` | **234 passed** |
-| Backend | `pytest -c pytest-backend.ini -q` | **14 passed** |
-| RAG | `pytest -c pytest-rag.ini -q` | **45 passed** |
-| Document-CAD | `pytest -c pytest-cad.ini -q` | **5 passed** |
+| Agent | `pytest -c pytest-agent.ini -q` | **250 passed** |
+| Backend | `pytest -c pytest-backend.ini -q` | **18 passed** |
+| RAG | `pytest -c pytest-rag.ini -q` | **48 passed** |
+| Document-CAD | `pytest -c pytest-cad.ini -q` | **8 passed** |
 | Model | `pytest -c pytest-model.ini -q` | **5 passed** |
 | 跨服务契约/集成 | `pytest tests/integration tests/e2e tests/performance -o addopts= -q -rs` | **10 passed, 3 skipped** |
 | Python 编译 | `python -m compileall -q services shared scripts` | 通过 |
 | 生产代码静态检查 | `python -m pyflakes services/agent-service/app services/agent-service/monitor_web_server.py services/backend-service/app services/rag-service/app services/document-cad-service/app services/model-service/app shared` | 无输出/通过 |
 | 前端单测 | `node --test`（`src/**/*.test.mjs`） | **22 passed** |
 | 前端构建 | `npm run build:monitor` | 通过（仅 chunk 大小提示） |
-| 项目总入口 | `python scripts/test_all.py` | 通过：5 + 14 + 234 + 45 + 5 + 10 passed；另 3 skipped |
+| Skill Markdown 专项 | `pytest -c pytest-agent.ini services/agent-service/tests/test_skill_registry.py -q` | **9 passed** |
+| 项目总入口 | `python scripts/test_all.py` | 通过：5 + 18 + 250 + 48 + 8 + 10 passed；另 3 skipped |
 
 3 个跳过项均是需要正在运行的 RC Compose/五服务环境或 RAG 服务的 Docker/性能冒烟测试，不是业务断言失败：
 

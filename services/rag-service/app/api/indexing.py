@@ -119,6 +119,9 @@ class UnifiedExperienceIndexer:
                 vectors = list(embedder.embed_texts([item["text"] for item in records]))
                 if len(vectors) != len(records):
                     raise RuntimeError("embedding provider returned an incomplete vector set")
+                dimensions = {len(vector) for vector in vectors if vector}
+                if len(dimensions) != 1:
+                    raise RuntimeError("embedding provider returned inconsistent or empty vector dimensions")
                 vector_records = [
                     VectorRecord(
                         id=item["id"],

@@ -127,7 +127,7 @@ def test_repair_verification_rejects_expired_recovery_without_inventing_health_t
             "status": "running",
             "active_alarms": [],
             "metrics": {"vibration": 0.2},
-            "checked_at": "2099-09-28T12:00:00Z",
+                "checked_at": "2026-09-28T12:00:00Z",
             "health_score": 1,
         },
     )

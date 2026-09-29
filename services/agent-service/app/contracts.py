@@ -263,6 +263,8 @@ class QualityResult(BaseModel):
     specifications: Dict[str, Any] = Field(default_factory=dict)
     defects: List[Dict[str, Any]] = Field(default_factory=list)
     failed_checks: List[str] = Field(default_factory=list)
+    # 五个检测维度的结构化结果，供后端原样持久化和复核。
+    quality_validation: Dict[str, Any] = Field(default_factory=dict)
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     recommendation: str = ""
     findings: List[str] = Field(default_factory=list)

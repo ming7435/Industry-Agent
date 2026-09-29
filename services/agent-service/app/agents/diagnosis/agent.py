@@ -164,7 +164,8 @@ class DiagnosisAgent(BaseAgent):
             result = output.get("final_result")
             if result is None:
                 raise RuntimeError("LangGraph 未生成诊断结果")
-            self.run_cache.put(event, result)
+            if result.status not in {AgentStatus.FALLBACK, AgentStatus.FAILED} and not result.error:
+                self.run_cache.put(event, result)
             return result
         except Exception as error:
             result = self._build_fallback_result(
@@ -177,7 +178,7 @@ class DiagnosisAgent(BaseAgent):
                 triggered_at=triggered_at,
                 diagnosis_run_id=diagnosis_run_id,
             )
-            self.run_cache.put(event, result)
+            # 网络/模型等瞬时失败不写入诊断缓存，下一次请求应重新尝试并生成新证据。
             return result
 
     def request_knowledge(self, event: Mapping[str, Any], query: str) -> Dict[str, Any]:

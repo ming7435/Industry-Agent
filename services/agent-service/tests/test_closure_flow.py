@@ -35,7 +35,7 @@ def test_memory_admission_does_not_use_production_quality_result():
         "passed": True,
         "status": "verified",
         "source": "device_recovery",
-        "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2099-09-28T12:00:00Z"},
+        "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"},
         "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
     }
     assert WorkOrderValidator.can_learn(order, order["repair_feedback"])

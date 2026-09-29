@@ -108,6 +108,7 @@ class RuntimeOperations:
                     "score": result.get("score") or result.get("quality_score"),
                     "findings": list(result.get("findings") or result.get("defects") or result.get("failed_checks") or []),
                     "items": list(result.get("inspection_items") or []),
+                    "quality_validation": dict(result.get("quality_validation") or result.get("inspection_summary") or {}),
                     "reviewer": str(values.get("reviewer") or "quality-agent"),
                     "risk_level": str(values.get("risk_level") or "R1"),
                 },

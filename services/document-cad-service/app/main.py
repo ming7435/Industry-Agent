@@ -48,28 +48,28 @@ def call_tool(request: ToolCall) -> Dict[str, Any]:
 
 
 def query_part(query: str = "", component: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, **_: Any) -> Dict[str, Any]:
-    matched = _match(query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history)
+    matched = _match(query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history, component_id=component, part_no=part_no)
     return {"query": query or component or part_no, "parts": matched, **_response_meta()}
 
 
 def query_bom(query: str = "", component: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, **_: Any) -> Dict[str, Any]:
-    matched = _match(query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history)
+    matched = _match(query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history, component_id=component, part_no=part_no)
     return {"query": query or component or part_no, "bom_items": [_bom(item) for item in matched], "engineering_status": "ready" if any(item.get("bom_items") for item in matched) else "insufficient_engineering_data", **_response_meta()}
 
 
 def query_drawing(query: str = "", component: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, **_: Any) -> Dict[str, Any]:
-    matched = _match(query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history)
+    matched = _match(query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history, component_id=component, part_no=part_no)
     return {"query": query or component or part_no, "drawings": [_drawing(item) for item in matched], **_response_meta()}
 
 
 def query_relation(query: str = "", component: str = "", component_id: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, **_: Any) -> Dict[str, Any]:
-    matched = _match(component_id or query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history)
+    matched = _match(component_id or query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history, component_id=component_id or component, part_no=part_no)
     relations = [relation for item in matched for relation in (item.get("part_relations") or [])]
     return {"query": query or component_id or component or part_no, "relations": relations, "assembly_relations": relations, "locations": [_location(item) for item in matched if item.get("installation_location") or item.get("position")], **_response_meta()}
 
 
 def fetch_engineering_record(query: str = "", component: str = "", part_no: str = "", **arguments: Any) -> Dict[str, Any]:
-    matched = _match(query or component or part_no, **arguments)
+    matched = _match(query or component or part_no, component_id=component, part_no=part_no, **arguments)
     relations = [relation for item in matched for relation in (item.get("part_relations") or [])]
     return {"query": query or component or part_no, "device_id": arguments.get("device_id", ""), "components": matched, "drawings": [_drawing(item) for item in matched], "bom_items": [_bom(item) for item in matched], "assembly_relations": relations, "part_relations": relations, "locations": [_location(item) for item in matched if item.get("installation_location") or item.get("position")], **_response_meta()}
 
@@ -77,11 +77,15 @@ def fetch_engineering_record(query: str = "", component: str = "", part_no: str 
 def _match(query: str, **filters: Any) -> list[Dict[str, Any]]:
     try:
         repository = get_repository()
-        values = repository.search(query)
+        structured = {
+            key: filters.get(key, "")
+            for key in ("device_id", "device_model", "drawing_id", "version", "include_history", "tenant_id", "project_id", "component_id", "part_no")
+        }
+        values = repository.search(query, filters=structured)
         for key in ("device_id", "device_model", "drawing_id", "tenant_id", "project_id", "component_id", "part_no"):
             expected = str(filters.get(key) or "").strip()
             if expected:
-                values = [item for item in values if str(item.get(key) or "") == expected]
+                values = [item for item in values if str(item.get(key) or (item.get("drawing_ref") if key == "drawing_id" else "")) == expected]
         version = str(filters.get("version") or "").strip()
         if version:
             values = [item for item in values if str(item.get("version_id") or item.get("version_label") or "") == version]

@@ -43,6 +43,11 @@ def upgrade() -> None:
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
     """)
+    # 结构化质检证据为可选列，保证旧库升级时不丢失已有记录。
+    try:
+        op.execute("ALTER TABLE quality_checks ADD COLUMN quality_validation JSON NULL")
+    except Exception:
+        pass
 
 
 def downgrade() -> None:

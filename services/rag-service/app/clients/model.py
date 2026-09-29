@@ -73,13 +73,24 @@ class ModelServiceClient:
 class RemoteEmbedder:
     def __init__(self) -> None:
         self.client = ModelServiceClient()
+        self._dimension: int | None = None
 
     @property
     def is_configured(self) -> bool:
         return bool(self.client.base_url)
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        return self.client.embeddings(texts)
+        values = self.client.embeddings(texts)
+        dimensions = {len(vector) for vector in values if vector}
+        if len(dimensions) > 1:
+            raise ModelServiceError("model-service returned inconsistent embedding dimensions")
+        if dimensions:
+            self._dimension = next(iter(dimensions))
+        return values
+
+    @property
+    def dimension(self) -> int | None:
+        return self._dimension
 
     def embed_query(self, query: str) -> list[float]:
         values = self.embed_texts([query])
