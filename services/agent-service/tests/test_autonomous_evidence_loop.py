@@ -90,10 +90,21 @@ def test_trigger_stops_before_workorder_when_evidence_is_still_missing():
     assert requests.workorder_calls == 0
 
 
-def test_orchestrator_ends_when_evidence_gate_blocks_maintenance():
+def test_orchestrator_returns_runtime_evidence_block_without_legacy_edges():
     from app.graph.workflow import AgentOrchestrator
 
-    assert AgentOrchestrator._after_maintenance({
-        "entry": "trigger",
-        "status": "blocked_insufficient_evidence",
-    }) == "blocked"
+    class _Coordinator:
+        def run(self, _state):
+            return {"status": "blocked_insufficient_evidence", "stop_reason": "evidence_gate", "workorder": {}}
+
+    container = SimpleNamespace(
+        coordinator=_Coordinator(),
+        tracing=_Tracing(),
+        requests=None,
+        trace=SimpleNamespace(list=lambda **_kwargs: []),
+    )
+    result = AgentOrchestrator(container=container).run_abnormal_event({"event_id": "EVT-BLOCK", "device_id": "D-2"})
+
+    assert result["status"] == "blocked_insufficient_evidence"
+    assert result["stop_reason"] == "evidence_gate"
+    assert result["workorder"] == {}

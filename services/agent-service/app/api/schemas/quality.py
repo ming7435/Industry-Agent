@@ -42,6 +42,6 @@ class QualityAppealRequest(BaseModel):
 
 class QualityAppealResolutionRequest(BaseModel):
     appeal_id: str = ""
-    decision: Literal["approved", "rejected", "withdrawn", "closed"] = "approved"
+    decision: Literal["approved", "rejected", "withdrawn"] = "approved"
     reason: str = ""
     operator: str = ""

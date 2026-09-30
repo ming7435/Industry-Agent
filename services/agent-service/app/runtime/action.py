@@ -255,7 +255,7 @@ class ActionModel(BaseModel):
             {
                 "action_type": self.action_type.value,
                 "target": self.target,
-                "payload": self.payload,
+                "payload": {key: value for key, value in self.payload.items() if key not in {"task_id", "trace_id"}},
                 "side_effect": self.side_effect,
                 "idempotency_key": self.idempotency_key,
             },

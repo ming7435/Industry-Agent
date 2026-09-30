@@ -12,11 +12,13 @@ except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时�
     _load_dotenv = None
 
 import hmac
+from hashlib import sha256
+import json
 import os
 from urllib.error import HTTPError
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.schemas.agent import ApprovalRequest, AbnormalEventRequest, RejectionRequest, UserQuestionRequest
@@ -27,7 +29,8 @@ from app.api.schemas.rag import RAGIngestRequest
 from app.api.schemas.workorder import RepairFeedbackRequest, WorkOrderActionRequest, WorkOrderCreateRequest
 from app.graph import AgentOrchestrator, build_orchestrator
 from app.harness.runs import build_run_records
-from app.runtime.event_store import EventResultStore
+from app.runtime.event_store import EventResultConflict, EventResultStore
+from app.runtime.durable_store import PendingResultError
 from app.tools.report.generate_report_file import get_report_file_path
 from app.clients.backend import BackendServiceError
 
@@ -49,10 +52,12 @@ _load_project_env()
 
 
 def require_write_auth(request: Request) -> str:
-    """验证写操作令牌；未配置令牌时保持本地开发兼容。"""
+    """验证写操作令牌；仅开发环境允许未配置令牌。"""
 
     expected = os.getenv("AGENT_API_TOKEN", "").strip()
     if not expected:
+        if os.getenv("APP_ENV", "development").strip().lower() in {"prod", "production"}:
+            raise HTTPException(status_code=503, detail="写操作身份验证未配置")
         return "local-development"
     authorization = request.headers.get("Authorization", "")
     bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
@@ -161,6 +166,18 @@ def compact_trace_summary(records: Any) -> list[Dict[str, Any]]:
 
 def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     app = FastAPI(title="Industrial Maintenance Agent Service", version="1.0.0")
+
+    @app.middleware("http")
+    async def authenticate_api_reads(request: Request, call_next: Callable[..., Any]) -> Any:
+        """为所有业务读取入口施加与写入相同的服务令牌边界。"""
+
+        if request.method == "GET" and request.url.path.startswith("/api/"):
+            try:
+                require_write_auth(request)
+            except HTTPException as error:
+                return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
+        return await call_next(request)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:8001", "http://localhost:8001"],
@@ -205,7 +222,33 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def abnormal_event(request: AbnormalEventRequest) -> Dict[str, Any]:
         event = dict(request.event or {})
         event_id = str(event.get("event_id") or "")
-        return event_results.get_or_create(event_id, lambda: runtime.run_abnormal_event(event))
+        event_key = ""
+        if event_id:
+            try:
+                raw_revision = event.get("event_revision", 1)
+                if isinstance(raw_revision, bool):
+                    raise ValueError("bool is not a revision")
+                revision = int(raw_revision)
+                if revision < 1:
+                    raise ValueError("revision must be positive")
+            except (TypeError, ValueError) as error:
+                raise HTTPException(status_code=422, detail="event_revision 必须是正整数") from error
+            event_key = json.dumps(
+                [str(event.get("tenant_id") or ""), str(event.get("device_id") or ""), event_id, revision],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if event_results.has_unmigrated_legacy_result(event_id, event_key):
+                raise HTTPException(status_code=409, detail="旧版事件结果需先核对归属和工单，不能自动重放")
+        fingerprint = sha256(json.dumps(event, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        try:
+            return event_results.get_or_create(event_key, lambda: runtime.run_abnormal_event(event), fingerprint=fingerprint)
+        except EventResultConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except PendingResultError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except TimeoutError as error:
+            raise HTTPException(status_code=504, detail="事件处理超时，结果未知，需要对账") from error
 
     @app.get("/api/rag/status", deprecated=True)
     @app.get("/api/v1/rag/status")

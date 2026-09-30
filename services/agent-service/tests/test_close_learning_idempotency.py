@@ -100,7 +100,7 @@ def test_close_learning_result_survives_runtime_reconstruction(tmp_path):
     assert second_result["report"]["report_id"] == "REPORT-1"
 
 
-def test_report_failure_retries_report_without_relearning(tmp_path):
+def test_report_failure_keeps_uncertain_stage_without_relearning_or_blind_retry(tmp_path):
     path = str(tmp_path / "learning.sqlite3")
     first_requests = _Requests()
     first_report = _FlakyReport()
@@ -117,10 +117,11 @@ def test_report_failure_retries_report_without_relearning(tmp_path):
     retried = second.execute_workorder("close", {"workorder_id": "WO-CLOSE-1"})
 
     assert second_requests.learn_calls == 0
-    assert second_report.calls == 2
-    assert retried["report"]["report_id"] == "REPORT-RETRY"
-    assert retried["learning_loop"]["status"] == "completed"
-    assert retried["learning_loop"]["stages"] == ["memory", "rag", "report"]
+    assert second_report.calls == 1
+    assert retried["report"]["success"] is False
+    assert "人工对账" in retried["report"]["error"]
+    assert retried["learning_loop"]["status"] == "waiting_report"
+    assert retried["learning_loop"]["stages"] == ["memory", "rag"]
 
 
 def test_concurrent_close_runs_learning_and_report_once(tmp_path):

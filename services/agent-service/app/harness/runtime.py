@@ -72,42 +72,47 @@ class AgentHarness:
         context.update({"agent_run_id": agent_run_id, "attempt": attempt})
         return context
 
+    def _begin_attempt(self, task: Any, attempt: int) -> tuple[dict[str, Any], float]:
+        task_id = task.get("task_id", "") if isinstance(task, dict) else ""
+        trace_id = task.get("trace_id", "") if isinstance(task, dict) else ""
+        agent_run_id = "AGENT-RUN-" + uuid4().hex[:12].upper()
+        agent_name = getattr(self.agent, "name", type(self.agent).__name__)
+        context = self._agent_trace_context(task, task_id, trace_id, agent_run_id, attempt)
+        record = {
+            "type": "agent", "name": agent_name, "agent": agent_name,
+            "agent_run_id": agent_run_id, "task_id": task_id,
+            "trace_id": trace_id, "attempt": attempt, "context": context,
+        }
+        started = perf_counter()
+        self.trace.record(event="agent_started", input=self._trace_payload(task), **record)
+        return record, started
+
+    def _run_bound(self, task: Any, record: dict[str, Any]) -> Any:
+        tools = getattr(self.agent, "tools", None)
+        bind_trace = getattr(tools, "trace_context", None)
+        if callable(bind_trace):
+            with bind_trace(task_id=record["task_id"], trace_id=record["trace_id"], context=record["context"]):
+                return self.agent.run(task)
+        return self.agent.run(task)
+
+    def _finish_attempt(self, event: str, task: Any, record: dict[str, Any], started: float, *, result: Any = None, error: Exception | None = None) -> None:
+        details: dict[str, Any] = {"elapsed_ms": round((perf_counter() - started) * 1000, 2)}
+        if event == "agent_completed":
+            details["output"] = self._trace_payload(result)
+        else:
+            details.update({"error": str(error), "input": self._trace_payload(task)})
+        self.trace.record(event=event, **record, **details)
+
     def execute_once(self, abnormal_event: Any):
         """执行一次尝试；超时和重试策略由 RuntimeDispatcher 管理。"""
 
-        task_id = abnormal_event.get("task_id", "") if isinstance(abnormal_event, dict) else ""
-        trace_id = abnormal_event.get("trace_id", "") if isinstance(abnormal_event, dict) else ""
-        agent_run_id = "AGENT-RUN-" + uuid4().hex[:12].upper()
-        agent_name = getattr(self.agent, "name", type(self.agent).__name__)
-        trace_context = self._agent_trace_context(abnormal_event, task_id, trace_id, agent_run_id, 1)
-        started = perf_counter()
-        self.trace.record(
-            type="agent", name=agent_name, event="agent_started", agent=agent_name,
-            agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=1,
-            input=self._trace_payload(abnormal_event), context=trace_context,
-        )
+        record, started = self._begin_attempt(abnormal_event, 1)
         try:
-            tools = getattr(self.agent, "tools", None)
-            bind_trace = getattr(tools, "trace_context", None)
-            if callable(bind_trace):
-                with bind_trace(task_id=task_id, trace_id=trace_id, context=trace_context):
-                    result = self.agent.run(abnormal_event)
-            else:
-                result = self.agent.run(abnormal_event)
-            self.trace.record(
-                type="agent", name=agent_name, event="agent_completed", agent=agent_name,
-                agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=1,
-                elapsed_ms=round((perf_counter() - started) * 1000, 2),
-                output=self._trace_payload(result), context=trace_context,
-            )
+            result = self._run_bound(abnormal_event, record)
+            self._finish_attempt("agent_completed", abnormal_event, record, started, result=result)
             return result
         except Exception as error:
-            self.trace.record(
-                type="agent", name=agent_name, event="agent_error", agent=agent_name,
-                agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=1,
-                elapsed_ms=round((perf_counter() - started) * 1000, 2), error=str(error),
-                input=self._trace_payload(abnormal_event), context=trace_context,
-            )
+            self._finish_attempt("agent_error", abnormal_event, record, started, error=error)
             raise
 
     def execute_agent(self, abnormal_event: Any):
@@ -119,31 +124,16 @@ class AgentHarness:
         # 可能会并发执行两次写入；这类 Agent 必须依赖幂等边界并只执行一次。
         max_retries = 0 if agent_name_for_policy in {"workorder", "memory", "quality"} else self.config.max_retries
         for attempt in range(max_retries + 1):
-            started = perf_counter()
-            task_id = abnormal_event.get("task_id", "") if isinstance(abnormal_event, dict) else ""
-            trace_id = abnormal_event.get("trace_id", "") if isinstance(abnormal_event, dict) else ""
-            agent_run_id = "AGENT-RUN-" + uuid4().hex[:12].upper()
-            agent_name = getattr(self.agent, "name", type(self.agent).__name__)
-            trace_context = self._agent_trace_context(abnormal_event, task_id, trace_id, agent_run_id, attempt + 1)
-            self.trace.record(type="agent", name=agent_name, event="agent_started", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, input=self._trace_payload(abnormal_event), context=trace_context)
+            record, started = self._begin_attempt(abnormal_event, attempt + 1)
             # 每次尝试使用独立线程池，使单次超时不会阻塞后续重试。
             executor = ThreadPoolExecutor(
                 max_workers=1,
                 thread_name_prefix="agent-runtime",
             )
-
-            def run_agent():
-                tools = getattr(self.agent, "tools", None)
-                bind_trace = getattr(tools, "trace_context", None)
-                if callable(bind_trace):
-                    with bind_trace(task_id=task_id, trace_id=trace_id, context=trace_context):
-                        return self.agent.run(abnormal_event)
-                return self.agent.run(abnormal_event)
-
-            future = executor.submit(run_agent)
+            future = executor.submit(self._run_bound, abnormal_event, record)
             try:
                 result = future.result(timeout=self.config.timeout_seconds)
-                self.trace.record(type="agent", name=agent_name, event="agent_completed", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2), output=self._trace_payload(result), context=trace_context)
+                self._finish_attempt("agent_completed", abnormal_event, record, started, result=result)
                 return result
             except TimeoutError:
                 last_error = AgentExecutionError(
@@ -151,10 +141,10 @@ class AgentHarness:
                     % (self.config.timeout_seconds, attempt + 1)
                 )
                 future.cancel()
-                self.trace.record(type="agent", name=agent_name, event="agent_timeout", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2), error=str(last_error), input=self._trace_payload(abnormal_event), context=trace_context)
+                self._finish_attempt("agent_timeout", abnormal_event, record, started, error=last_error)
             except Exception as error:
                 last_error = error
-                self.trace.record(type="agent", name=agent_name, event="agent_error", agent=agent_name, agent_run_id=agent_run_id, task_id=task_id, trace_id=trace_id, attempt=attempt + 1, elapsed_ms=round((perf_counter() - started) * 1000, 2), error=str(error), input=self._trace_payload(abnormal_event), context=trace_context)
+                self._finish_attempt("agent_error", abnormal_event, record, started, error=error)
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)
 

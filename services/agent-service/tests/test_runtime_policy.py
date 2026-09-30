@@ -41,6 +41,30 @@ def test_workorder_creation_requires_complete_runtime_evidence():
     assert set(decision.missing_evidence) == {"knowledge", "cad", "maintenance_plan"}
 
 
+def test_router_workorder_create_cannot_use_update_evidence_gate():
+    action = ActionModel.agent(
+        "workorder", {"required_capability": "workorder_update", "target_input": {"action": "create"}},
+        side_effect=True, idempotency_key="plan:create-1",
+    )
+
+    decision = RuntimePolicy().evaluate(action, {})
+
+    assert decision.reason == "missing_required_evidence"
+    assert set(decision.missing_evidence) == {"diagnosis", "knowledge", "cad", "maintenance_plan"}
+
+
+def test_workorder_query_cannot_smuggle_create_action():
+    action = ActionModel.agent(
+        "workorder",
+        {"required_capability": "workorder_query", "target_input": {"action": "create", "maintenance_plan": {"device_id": "D-1"}}},
+    )
+
+    decision = RuntimePolicy().evaluate(action, _ready_state())
+
+    assert decision.status == PolicyStatus.DENY
+    assert decision.reason == "workorder_action_scope_violation"
+
+
 def test_high_risk_action_waits_for_explicit_approval():
     action = _workorder_action(payload={"risk_level": "high"})
 

@@ -595,23 +595,36 @@ class RuntimeCoordinator:
         except Exception:
             agent = ""
         agent = agent or str(payload.get("agent") or action.target).split(".", 1)[0]
-        names = payload.get("active_skills") or payload.get("skills")
-        if isinstance(names, str):
-            names = [names]
+        # 工具授权和 Skill 元数据不能反过来当作业务意图参与 trigger 匹配。
+        trigger_payload = {
+            key: value for key, value in payload.items()
+            if key not in {"allowed_tools", "active_skills", "skills", "skill", "step"}
+        }
         try:
-            selected = registry.select(agent, context={**dict(state.get("context") or {}), "capability": capability}, names=list(names or []))
+            selected = registry.select(
+                agent,
+                context={
+                    **dict(state.get("context") or {}),
+                    **dict(state.get("event") or {}),
+                    **trigger_payload,
+                    "capability": capability,
+                    "user_text": str(state.get("user_text") or ""),
+                },
+            )
         except Exception:
             selected = []
         skill_names = [item.name for item in selected]
         steps = [step for item in selected for step in item.normalized_steps()]
         payload.setdefault("agent", agent)
-        payload.setdefault("active_skills", skill_names)
-        if steps:
-            payload.setdefault("skill", skill_names[0] if skill_names else "")
-            payload.setdefault("step", steps[0].id)
-            # 现有 Agent Graph 可能在一个 Runtime action 内执行多个 Skill 步骤。
-            # 除非 Action 明确收窄范围，否则守卫接收该 Agent 声明工具的并集。
-            payload.setdefault("allowed_tools", registry.merge_tools(registry.list(agent)))
+        # Action 自带的 Skill 名称可能来自 Planner 或客户端，不作为授权依据。
+        payload["active_skills"] = skill_names
+        payload["skill"] = skill_names[0] if skill_names else ""
+        payload["step"] = steps[0].id if steps else ""
+        # 一个 Runtime Action 可能执行所选 Skill 的多个步骤；守卫只接收
+        # 当前选中 Skill 的工具，不把该 Agent 其他 Skill 的工具全部放行。
+        # Planner/客户端给出的 allowed_tools 不是授权来源；每次以实际
+        # 选中的 Skill 重新计算，避免旧动作或嵌套参数扩大本轮工具范围。
+        payload["allowed_tools"] = registry.merge_tools(selected)
         return action.model_copy(update={"payload": payload})
 
     def resume_pending(self, record: Mapping[str, Any]) -> dict[str, Any]:

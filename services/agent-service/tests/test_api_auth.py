@@ -46,3 +46,30 @@ def test_write_endpoint_accepts_configured_token_and_uses_authenticated_actor(tm
 
     assert response.status_code == 200
     assert response.json()["approved_by"] == "api-token"
+
+
+def test_production_write_endpoint_fails_closed_without_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("AGENT_API_TOKEN", raising=False)
+    monkeypatch.setenv("EVENT_STORE_PATH", str(tmp_path / "events.sqlite3"))
+    client, manager = _client(tmp_path)
+    pending = _pending(manager)
+
+    response = client.post(
+        f"/api/v1/runtime/approvals/{pending['pending_id']}/reject",
+        json={"rejected_by": "operator-1", "reason": "unsafe"},
+    )
+
+    assert response.status_code == 503
+    assert manager.get(pending["pending_id"])["status"] == "pending_approval"
+
+
+def test_sensitive_read_requires_token_when_configured(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_API_TOKEN", "test-secret")
+    client, manager = _client(tmp_path)
+    _pending(manager)
+
+    assert client.get("/api/v1/runtime/approvals").status_code == 401
+    response = client.get("/api/v1/runtime/approvals", headers={"Authorization": "Bearer test-secret"})
+    assert response.status_code == 200
+    assert response.json()["count"] == 1

@@ -10,6 +10,7 @@ steps:
   - validate_evidence
 tools:
   - search_alarm_knowledge
+  - search_knowledge
   - fetch_document
   - fetch_chunk
 ---
@@ -34,10 +35,10 @@ tools:
 ## 可调用工具
 
 - `search_alarm_knowledge`
+- `search_knowledge`
 - `fetch_document`
 - `fetch_chunk`
 
 ## 运行说明
 
 运行时读取本文档顶部的 YAML Front Matter；正文用于说明技能目的、触发条件、执行步骤和工具边界。
-

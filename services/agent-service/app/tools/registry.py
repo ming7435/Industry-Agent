@@ -645,7 +645,7 @@ class ToolRegistry:
 
         if name not in self.mcp.handlers:
             return "tool_not_registered"
-        if allowed and name not in allowed:
+        if "allowed_tools" in context and name not in allowed:
             return "tool_not_allowed_for_step"
         required = {
             "get_alarm_definition": ("alarm_code",),

@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timezone
 
 
 def test_workorder_create_is_idempotent_by_key(tmp_path):
@@ -49,7 +50,7 @@ def test_repeated_close_returns_the_same_closed_workorder(tmp_path):
     adapter = WorkOrderMcpAdapter(path=str(tmp_path / "workorders.sqlite3"))
     order = adapter.create_workorder("D-1", "fault", idempotency_key="monitor:EVT-4")
     adapter.assign_workorder(order["workorder_id"], "TECH-001")
-    adapter.mark_repair_completed(order["workorder_id"], {"feedback": "fixed"}, {"device_recovery": {"device_id": "D-1", "status": "running", "active_alarms": [], "metrics": {"ok": True}, "checked_at": "2026-09-28T12:00:00Z"}})
+    adapter.mark_repair_completed(order["workorder_id"], {"feedback": "fixed"}, {"device_recovery": {"device_id": "D-1", "status": "running", "active_alarms": [], "metrics": {"ok": True}, "checked_at": datetime.now(timezone.utc).isoformat()}})
     first = adapter.close_workorder(order["workorder_id"])
     second = adapter.close_workorder(order["workorder_id"])
 
@@ -68,7 +69,7 @@ def test_close_requires_explicit_repair_verification(tmp_path):
         adapter.mark_repair_completed(order["workorder_id"], {"feedback": "fixed"})
 
     completed = adapter.mark_repair_completed(
-        order["workorder_id"], {"feedback": "fixed"}, {"device_recovery": {"device_id": "D-1", "status": "running", "active_alarms": [], "metrics": {"ok": True}, "checked_at": "2026-09-28T12:00:00Z"}}
+        order["workorder_id"], {"feedback": "fixed"}, {"device_recovery": {"device_id": "D-1", "status": "running", "active_alarms": [], "metrics": {"ok": True}, "checked_at": datetime.now(timezone.utc).isoformat()}}
     )
     assert completed["status"] == "completed"
     assert adapter.close_workorder(order["workorder_id"])["status"] == "closed"

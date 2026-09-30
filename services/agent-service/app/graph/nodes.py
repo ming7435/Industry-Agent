@@ -5,31 +5,19 @@ import os
 from app.a2a.client import A2AError
 from app.common.serialization import _serialize_agent_result
 from app.graph.state import AgentState
+from app.graph.runtime_node import RuntimeNode
 from app.runtime import evidence as evidence_loop
 from app.runtime.action import ActionModel
 from app.runtime.container import AgentContainer
 from app.runtime.loop_engine import LoopEngine, LoopPolicy
 from app.workorder.policy import auto_workorder_decision
 
-class OrchestratorNodes:
+class OrchestratorNodes(RuntimeNode):
+    """旧节点兼容层；正式 Graph 只加载 RuntimeNode。"""
+
     def __init__(self, container: AgentContainer) -> None:
-        self.container = container
+        super().__init__(container)
         self.requests = container.requests
-        self.tracing = container.tracing
-
-    def runtime(self, state: AgentState) -> Dict[str, Any]:
-        """Runtime 生命周期入口；由 Planner/LoopEngine 选择每个 Action。"""
-
-        self.tracing.start("runtime", state)
-        coordinator = getattr(self.container, "coordinator", None)
-        if coordinator is None:
-            return self.tracing.finish("runtime", state, {
-                "status": "blocked",
-                "stop_reason": "runtime_coordinator_unavailable",
-                "errors": ["Runtime coordinator is not configured"],
-            })
-        result = coordinator.run(state)
-        return self.tracing.finish("runtime", state, result)
 
     def _loop_trace(self, name: str, state: AgentState, event: str, payload: Dict[str, Any]) -> None:
         recorder = getattr(self.tracing, "loop_event", None)

@@ -18,6 +18,7 @@ steps:
 tools:
   - query_part
   - query_drawing
+  - query_bom
   - query_relation
   - fetch_engineering_record
 ---
@@ -50,10 +51,10 @@ tools:
 
 - `query_part`
 - `query_drawing`
+- `query_bom`
 - `query_relation`
 - `fetch_engineering_record`
 
 ## 运行说明
 
 运行时读取本文档顶部的 YAML Front Matter；正文用于说明技能目的、触发条件、执行步骤和工具边界。
-

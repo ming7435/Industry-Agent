@@ -54,6 +54,25 @@ def test_repair_plan_skill_allows_plan_generation_tool() -> None:
     assert "generate_repair_plan" in skill.tools
 
 
+def test_specialized_skill_replaces_default_but_keeps_always_skill() -> None:
+    registry = get_skill_registry()
+
+    assert [skill.name for skill in registry.select("knowledge", {"alarm_code": "700001"})] == ["alarm_search_skill"]
+    assert [skill.name for skill in registry.select("knowledge", {"query": "查询设备手册"})] == ["manual_search_skill"]
+    assert [skill.name for skill in registry.select("knowledge", {"query": "普通问题"})] == ["hybrid_search_skill"]
+    assert [skill.name for skill in registry.select("memory", {"query": "learn"})] == [
+        "experience_extraction", "memory_dedup", "memory_write",
+    ]
+
+
+def test_alarm_skill_includes_its_real_retrieval_fallback() -> None:
+    registry = get_skill_registry()
+    allowed = set(registry.merge_tools(registry.select("knowledge", {"alarm_code": "700001"})))
+
+    assert {"search_alarm_knowledge", "search_knowledge", "fetch_document", "fetch_chunk"} <= allowed
+    assert "search_manual" not in allowed
+
+
 def test_markdown_skill_loads_front_matter_and_document_body(tmp_path: Path) -> None:
     path = tmp_path / "diagnosis" / "alarm.md"
     path.parent.mkdir(parents=True)

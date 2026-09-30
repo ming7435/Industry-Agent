@@ -169,10 +169,21 @@ class SkillRegistry:
             "%s %s" % (key, value)
             for key, value in context.items()
         ).lower()
-        selected = [item for item in available if _trigger_matches(item.trigger, context, text)]
-        if selected:
-            return selected
-        return [item for item in available if item.trigger == "default"][:1] or available[:1]
+        specialized = [
+            item for item in available
+            if item.trigger.strip().lower() not in {"", "default", "always"}
+            and _trigger_matches(item.trigger, context, text)
+        ]
+        if specialized:
+            return [
+                item for item in available
+                if item in specialized or item.trigger.strip().lower() == "always"
+            ]
+        fallback = [
+            item for item in available
+            if item.trigger.strip().lower() in {"", "default", "always"}
+        ]
+        return fallback or available[:1]
 
     @staticmethod
     def merge_tools(skills: List[SkillDefinition]) -> List[str]:

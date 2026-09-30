@@ -8,7 +8,7 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.diagnosis import DiagnosisAgent
-from app.graph.nodes import OrchestratorNodes
+from app.graph.runtime_node import RuntimeNode
 from app.graph.state import AgentState
 from app.runtime.container import AgentContainer
 from app.tools.registry import ToolRegistry
@@ -17,7 +17,7 @@ from app.tools.registry import ToolRegistry
 class AgentOrchestrator:
     def __init__(self, diagnosis_agent: DiagnosisAgent | None = None, tools: ToolRegistry | None = None, container: AgentContainer | None = None) -> None:
         self.container = container or AgentContainer(diagnosis_agent=diagnosis_agent, tools=tools)
-        self.nodes = OrchestratorNodes(self.container)
+        self.nodes = RuntimeNode(self.container)
         graph = StateGraph(AgentState)
         # Graph 只负责状态和执行层；规划、能力选择、循环以及 Agent 执行
         # 统一由 RuntimeCoordinator 管理。
@@ -25,24 +25,6 @@ class AgentOrchestrator:
         graph.add_edge(START, "runtime")
         graph.add_edge("runtime", END)
         self.graph = graph.compile()
-
-    @staticmethod
-    def _after_diagnosis(state: AgentState) -> str:
-        return "knowledge" if state.get("entry") == "trigger" else "report"
-
-    @staticmethod
-    def _after_knowledge(state: AgentState) -> str:
-        return "cad" if state.get("entry") == "trigger" else "report"
-
-    @staticmethod
-    def _after_cad(state: AgentState) -> str:
-        return "maintenance" if state.get("entry") == "trigger" else "report"
-
-    @staticmethod
-    def _after_maintenance(state: AgentState) -> str:
-        if state.get("status") == "blocked_insufficient_evidence":
-            return "blocked"
-        return "workorder" if state.get("entry") == "trigger" else "report"
 
     def run_user(self, user_text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         return self._execute_graph({"entry": "user", "user_text": user_text, "context": context or {}})

@@ -126,6 +126,9 @@ class RuntimeDispatcher:
         self._emit("agent_selected", state, required_capability=capability, agent=agent_name)
         # 边界接受 Registry 别名，但任务适配器必须收到规范能力名称，确保每个 Agent 获得其领域请求结构。
         task = self._task_for_agent(canonical_capability, state, action.payload)
+        if canonical_capability in {"workorder_create", "workorder_update", "workorder_query"} and action.idempotency_key:
+            # 请求体中的 target_input 不能覆盖 Planner/Policy 已核对的副作用身份。
+            task["idempotency_key"] = action.idempotency_key
         task.setdefault("task_id", str(state.get("task_id") or ""))
         task.setdefault("trace_id", str(state.get("trace_id") or ""))
         runtime_context = self._runtime_context(action, state, agent_name)

@@ -45,6 +45,15 @@ def test_orchestrator_response_trace_isolated_to_current_task_and_trace():
     assert result["trace"] == []
 
 
+def test_orchestrator_loads_only_active_runtime_node():
+    from app.graph.workflow import AgentOrchestrator
+
+    container = SimpleNamespace(requests=None, tracing=_Tracing(), coordinator=SimpleNamespace(run=lambda state: state))
+    orchestrator = AgentOrchestrator(container=container)
+
+    assert type(orchestrator.nodes).__name__ == "RuntimeNode"
+
+
 def test_same_event_has_one_task_and_one_workorder(monkeypatch):
     from fastapi.testclient import TestClient
     from app.api.server import create_app

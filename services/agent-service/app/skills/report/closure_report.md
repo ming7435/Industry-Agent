@@ -13,6 +13,7 @@ tools:
   - get_maintenance_record
   - get_workorder
   - get_quality_record
+  - get_trace_summary
   - persist_report
 ---
 
@@ -39,9 +40,9 @@ tools:
 - `get_maintenance_record`
 - `get_workorder`
 - `get_quality_record`
+- `get_trace_summary`
 - `persist_report`
 
 ## 运行说明
 
 运行时读取本文档顶部的 YAML Front Matter；正文用于说明技能目的、触发条件、执行步骤和工具边界。
-

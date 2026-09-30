@@ -1,3 +1,6 @@
+import pytest
+from datetime import datetime, timezone
+
 from app.agents.memory.validator import MemoryAgentValidator
 from app.closure import ClosureService
 from app.mcp.workorder import WorkOrderMcpAdapter
@@ -12,7 +15,7 @@ def test_workorder_completion_keeps_feedback_and_verification():
     completed = adapter.mark_repair_completed(
         created["workorder_id"],
         {"feedback": "更换主轴轴承", "operator": "TECH-001"},
-        {"device_recovery": {"device_id": "D-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"}},
+        {"device_recovery": {"device_id": "D-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": datetime.now(timezone.utc).isoformat()}},
     )
     closed = adapter.close_workorder(created["workorder_id"], "维修完成")
 
@@ -35,7 +38,7 @@ def test_memory_admission_does_not_use_production_quality_result():
         "passed": True,
         "status": "verified",
         "source": "device_recovery",
-        "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"},
+        "device_recovery": {"device_id": "D-1", "status": "running", "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": datetime.now(timezone.utc).isoformat()},
         "checks": {"device_identity": True, "operational": True, "alarms_clear": True, "metrics_available": True},
     }
     assert WorkOrderValidator.can_learn(order, order["repair_feedback"])
@@ -75,6 +78,17 @@ def test_approved_quality_appeal_enters_rectification_workflow():
     task = service.create_closure_task({"quality_check_id": check["quality_check_id"], "title": "按申诉结论整改"})
     service.complete_closure_task(task["closure_task_id"])
     assert service.get_quality_check(check["quality_check_id"])["status"] == "reinspection"
+
+
+def test_appeal_resolution_cannot_close_quality_without_release():
+    service = ClosureService()
+    check = service.create_quality_check({"target_id": "PART-APPEAL", "result": "failed"})
+    appeal = service.submit_appeal(check["quality_check_id"], {"reason": "复核"})
+
+    with pytest.raises(ValueError, match="无效申诉结论"):
+        service.resolve_appeal(check["quality_check_id"], appeal["appeal_id"], decision="closed")
+
+    assert service.get_quality_check(check["quality_check_id"])["status"] == "appealed"
 
 
 def test_part_quality_record_keeps_production_identity():
@@ -138,7 +152,7 @@ def test_api_workorder_and_part_quality_flows_are_connected():
         json={
             "feedback": "replaced and retested",
             "operator": "TECH-001",
-            "verification": {"device_recovery": {"device_id": "D-API-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"}},
+            "verification": {"device_recovery": {"device_id": "D-API-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": datetime.now(timezone.utc).isoformat()}},
         },
     )
     assert completed.status_code == 200
@@ -149,7 +163,7 @@ def test_api_workorder_and_part_quality_flows_are_connected():
         json={
             "action": "close",
             "repair_feedback": {"feedback": "replaced and retested"},
-            "repair_verification": {"device_recovery": {"device_id": "D-API-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"}},
+            "repair_verification": {"device_recovery": {"device_id": "D-API-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": datetime.now(timezone.utc).isoformat()}},
         },
     )
     assert closed.status_code == 200

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
+import json
 from typing import Any, Callable, Mapping
 
 from .action import ActionModel
@@ -59,7 +60,21 @@ class Planner:
 
         event = context.get("event")
         event_id = str(context.get("event_id") or (event.get("event_id") if isinstance(event, Mapping) else "") or "").strip()
-        workorder_key = "monitor:%s" % event_id if event_id else "plan:%s" % sha256(goal.encode("utf-8")).hexdigest()[:16]
+        if event_id:
+            revision = max(1, int(context.get("event_revision") or (event.get("event_revision") if isinstance(event, Mapping) else 1) or 1))
+            workorder_key = "monitor:%s" % event_id
+            event_values = event if isinstance(event, Mapping) else {}
+            tenant_id = str(context.get("tenant_id") or event_values.get("tenant_id") or "").strip()
+            device_id = str(context.get("device_id") or event_values.get("device_id") or "").strip()
+            if tenant_id or device_id:
+                scope = json.dumps([tenant_id, device_id], ensure_ascii=False, separators=(",", ":"))
+                workorder_key += ":%s" % sha256(scope.encode("utf-8")).hexdigest()[:16]
+            if revision > 1:
+                workorder_key += ":r%s" % revision
+        else:
+            business_context = {key: value for key, value in context.items() if key not in {"task_id", "trace_id"}}
+            identity = json.dumps([goal, business_context], ensure_ascii=False, sort_keys=True, default=str)
+            workorder_key = "plan:%s" % sha256(identity.encode("utf-8")).hexdigest()[:16]
         payload = {"goal": goal, **context}
 
         def agent_for(capability: str, fallback: str) -> str:
@@ -87,7 +102,7 @@ class Planner:
             kwargs: dict[str, Any] = {"reason": reason, "confidence": 0.7, "side_effect": side_effect}
             if side_effect:
                 kwargs["idempotency_key"] = (
-                    "experience:%s" % event_id
+                    "experience:%s" % workorder_key
                     if canonical == "experience_learning" and event_id
                     else workorder_key
                     if canonical == "workorder_create"

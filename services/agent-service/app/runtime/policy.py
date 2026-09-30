@@ -53,8 +53,7 @@ class RuntimePolicy:
         context = current.get("context")
         context = context if isinstance(context, Mapping) else {}
         payload = dict(action.payload)
-        capability = action.required_capability or action.target
-        canonical_capability = self.capabilities.canonical_name(capability)
+        canonical_capability = self._effective_capability(action, current)
         maintenance = current.get("maintenance_plan")
         maintenance = maintenance if isinstance(maintenance, Mapping) else {}
         risk_level = str(
@@ -63,7 +62,19 @@ class RuntimePolicy:
             or payload.get("risk_level")
             or "normal"
         ).strip().lower()
-        definition = self.capabilities.metadata_for(capability)
+        declared_capability = self.capabilities.canonical_name(action.required_capability or action.target)
+        if declared_capability in {"workorder_create", "workorder_update", "workorder_query"}:
+            concrete_action = self._workorder_action(action, current, declared_capability)
+            allowed_actions = {
+                "workorder_create": {"create"},
+                "workorder_query": {"query", "get"},
+                "workorder_update": {
+                    "create", "assign", "update", "submit_feedback", "mark_repair_completed", "close", "reopen",
+                },
+            }
+            if concrete_action not in allowed_actions[declared_capability]:
+                return PolicyDecision(PolicyStatus.DENY, "workorder_action_scope_violation", risk_level)
+        definition = self.capabilities.metadata_for(canonical_capability)
         is_mutation = (
             action.side_effect
             or bool(definition and definition.side_effect)
@@ -100,6 +111,27 @@ class RuntimePolicy:
             return PolicyDecision(PolicyStatus.REQUIRE_APPROVAL, "approval_required", risk_level)
         return PolicyDecision(PolicyStatus.ALLOW, "policy_allow", risk_level)
 
+    def _effective_capability(self, action: ActionModel, state: Mapping[str, Any]) -> str:
+        """按最终业务动作选择门禁，避免粗粒度 Router 意图掩盖创建操作。"""
+
+        capability = self.capabilities.canonical_name(action.required_capability or action.target)
+        if capability != "workorder_update":
+            return capability
+        concrete_action = self._workorder_action(action, state, capability)
+        return "workorder_create" if concrete_action == "create" else capability
+
+    @staticmethod
+    def _workorder_action(action: ActionModel, state: Mapping[str, Any], capability: str) -> str:
+        payload = action.payload
+        target = payload.get("target_input")
+        if not isinstance(target, Mapping):
+            target = state.get("target_input")
+        if not isinstance(target, Mapping):
+            event = state.get("event")
+            target = event.get("target_input") if isinstance(event, Mapping) else {}
+        default = "create" if capability == "workorder_create" else "query" if capability == "workorder_query" else "update"
+        return str((target or {}).get("action") or payload.get("action") or default).strip().lower()
+
     def _server_approval_matches(
         self,
         action: ActionModel,
@@ -125,8 +157,7 @@ class RuntimePolicy:
         approved_action = ActionModel.coerce(record.get("action"))
         if approved_action is None:
             return False
-        approved_capability = approved_action.required_capability or approved_action.target
-        if self.capabilities.canonical_name(approved_capability) != canonical_capability:
+        if self._effective_capability(approved_action, state) != canonical_capability:
             return False
         # 指纹覆盖动作类型、目标、全部业务参数和幂等键；任何参数变化都重新审批。
         return approved_action.fingerprint == action.fingerprint

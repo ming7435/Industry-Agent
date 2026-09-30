@@ -49,13 +49,20 @@ def load_part(state: QualityWorkflowState) -> Dict[str, Any]:
         "production_order_id": request.get("production_order_id", ""),
         "part": supplied,
     })
-    part = dict(loaded.get("part") or supplied)
-    if not part:
-        return {"part": {}, "validation_findings": ["缺少可检测的生产零件"], "route": "fallback"}
-    if request.get("measurements"):
-        part["measurements"] = {**dict(part.get("measurements") or {}), **dict(request["measurements"])}
-    if request.get("specifications"):
-        part["specifications"] = {**dict(part.get("specifications") or {}), **dict(request["specifications"])}
+    part = dict(loaded.get("part") or {})
+    identifiers = ("part_id", "part_no", "batch_id", "production_order_id", "device_id")
+    identity_matches = all(
+        not request.get(key) or str(part.get(key) or "") == str(request[key])
+        for key in identifiers
+    )
+    trusted = (
+        loaded.get("success") is True and loaded.get("found") is True
+        and loaded.get("identity_verified") is True
+        and loaded.get("synthetic") is not True and loaded.get("degraded") is not True
+        and part.get("synthetic") is not True and part.get("degraded") is not True
+    )
+    if not part or not trusted or not identity_matches:
+        return {"part": {}, "validation_findings": ["生产零件身份或数据来源未核实，不能判定质量合格"], "route": "fallback"}
     return {"part": part, "route": "load_inspection_plan"}
 
 
@@ -63,10 +70,15 @@ def load_inspection_plan(state: QualityWorkflowState) -> Dict[str, Any]:
     agent = state["agent"]
     part = state.get("part") or {}
     specification = agent._safe_tool("get_part_specification", {"part": part})
-    plan = dict(state["request"].get("inspection_plan") or {})
+    verified_specification = (
+        specification.get("success") is True
+        and specification.get("synthetic") is not True
+        and specification.get("degraded") is not True
+    )
+    plan = dict(specification.get("specifications") or {}) if verified_specification else {}
     if not plan:
-        plan = dict(specification.get("specifications") or part.get("specifications") or {})
-    if specification.get("specifications"):
+        plan = dict(part.get("specifications") or {})
+    if verified_specification and specification.get("specifications"):
         part = {**part, "specifications": dict(specification["specifications"])}
     return {"part": part, "inspection_plan": plan}
 
@@ -75,7 +87,7 @@ def inspect_dimensions(state: QualityWorkflowState) -> Dict[str, Any]:
     agent = state["agent"]
     return {"dimension_check": agent._safe_tool("inspect_part_dimensions", {
         "part": state.get("part") or {},
-        "measurements": state["request"].get("measurements") or {},
+        "measurements": (state.get("part") or {}).get("measurements") or {},
         "specifications": state.get("inspection_plan") or {},
     })}
 

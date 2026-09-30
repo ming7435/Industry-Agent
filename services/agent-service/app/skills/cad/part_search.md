@@ -10,6 +10,8 @@ steps:
   - resolve_location
 tools:
   - query_part
+  - query_bom
+  - query_drawing
   - query_relation
   - fetch_engineering_record
 ---
@@ -34,10 +36,11 @@ tools:
 ## 可调用工具
 
 - `query_part`
+- `query_bom`
+- `query_drawing`
 - `query_relation`
 - `fetch_engineering_record`
 
 ## 运行说明
 
 运行时读取本文档顶部的 YAML Front Matter；正文用于说明技能目的、触发条件、执行步骤和工具边界。
-

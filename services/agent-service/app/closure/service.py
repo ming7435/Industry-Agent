@@ -169,7 +169,7 @@ class ClosureService:
         if check is None:
             raise KeyError("质检记录不存在：%s" % check_id)
         decision = str(decision or "approved").lower()
-        if decision not in {"approved", "rejected", "withdrawn", "closed"}:
+        if decision not in {"approved", "rejected", "withdrawn"}:
             raise ValueError("无效申诉结论：%s" % decision)
         appeals = list(self._appeals.get(check_id) or [])
         appeal = next((item for item in appeals if not appeal_id or item.get("appeal_id") == appeal_id), None)

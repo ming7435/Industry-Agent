@@ -12,7 +12,7 @@ def test_planner_decomposes_abnormal_event_into_existing_agent_actions():
     ]
     assert all(action.action_type in {ActionType.AGENT, ActionType.TOOL} for action in plan.actions)
     assert plan.actions[-1].side_effect is True
-    assert plan.actions[-1].idempotency_key == "monitor:EVT-PLAN-1"
+    assert plan.actions[-1].idempotency_key.startswith("monitor:EVT-PLAN-1:")
 
 
 def test_planner_emits_trace_lifecycle_without_executing_actions():

@@ -12,9 +12,11 @@ class _WorkOrderAgent(BaseAgent):
 
     def __init__(self):
         self.calls = 0
+        self.last_task = None
 
-    def run(self, _task):
+    def run(self, task):
         self.calls += 1
+        self.last_task = task
         return {"workorder_id": "WO-POLICY", "status": "open"}
 
 
@@ -77,3 +79,17 @@ def test_client_scoped_approval_does_not_allow_high_risk_workorder():
     assert result.success is False
     assert result.output["policy_status"] == "require_approval"
     assert agent.calls == 0
+
+
+def test_dispatcher_passes_planned_idempotency_key_to_workorder_agent():
+    dispatcher, agent, _trace = _dispatcher()
+    action = ActionModel.agent(
+        "workorder",
+        {"required_capability": "workorder_create", "target_input": {"idempotency_key": "client-forged"}},
+        side_effect=True,
+        idempotency_key="monitor:scoped:EVT-1:r2",
+    )
+    result = dispatcher.dispatch(action, _ready_state())
+
+    assert result.success is True
+    assert agent.last_task["idempotency_key"] == action.idempotency_key

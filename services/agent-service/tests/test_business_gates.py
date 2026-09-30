@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
 
@@ -91,7 +92,7 @@ def test_repair_verification_requires_device_recovery_data(tmp_path):
                 "alarm_code": "",
                 "active_alarms": [],
                 "metrics": {"spindle_temperature_c": 43.2, "spindle_vibration_rms": 0.18},
-                "checked_at": "2026-09-28T12:00:00Z",
+                "checked_at": datetime.now(timezone.utc).isoformat(),
             },
         },
     )
@@ -127,7 +128,7 @@ def test_repair_verification_rejects_expired_recovery_without_inventing_health_t
             "status": "running",
             "active_alarms": [],
             "metrics": {"vibration": 0.2},
-                "checked_at": "2026-09-28T12:00:00Z",
+                "checked_at": datetime.now(timezone.utc).isoformat(),
             "health_score": 1,
         },
     )
