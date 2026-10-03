@@ -58,3 +58,8 @@ def drawing_for(item: Mapping[str, Any]) -> Dict[str, Any]:
 
 def relation_for(item: Mapping[str, Any]) -> Dict[str, Any]:
     return {"component_id": item.get("component_id", ""), "part_no": item.get("part_no", ""), "relation": item.get("assembly_relation", ""), "location": item.get("position", ""), "drawing_ref": item.get("drawing_ref", "")}
+
+
+def component_relations(lookup: str) -> list[dict[str, Any]]:
+    """本地兼容关系投影；保留既有编号精确匹配和名称匹配规则。"""
+    return [relation_for(item) for item in match_components(lookup, engineering_components())]

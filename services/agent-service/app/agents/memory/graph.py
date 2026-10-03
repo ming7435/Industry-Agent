@@ -7,7 +7,7 @@ from typing import Any, Dict, Mapping
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 
 from .schemas import MemoryGraphState, MemoryResult
 from .validator import MemoryAgentValidator
@@ -158,21 +158,31 @@ def build_memory_graph():
         "rerank": "score_experience",
         "final": "build_result",
     }
-    for name, node in (("initialize", initialize), ("load_skill", load_skill), ("validate_search", validate_search), ("validate_admission", validate_admission), ("retrieve_memory", retrieve_memory), ("dedup", dedup), ("rerank", rerank), ("validate", validate), ("extract_experience", extract_experience), ("dedup_experience", dedup_experience), ("validate_experience", validate_experience), ("persist", persist), ("final", final), ("fallback", fallback)):
-        workflow.add_node(name, trace_skill_node("memory", name, node, skill_step=node_skill_steps.get(name, name)))
-    workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "load_skill")
-    workflow.add_conditional_edges("load_skill", _route, {"retrieve_memory": "retrieve_memory", "validate_search": "validate_search", "validate_admission": "validate_admission"})
-    workflow.add_conditional_edges("validate_search", _route, {"retrieve_memory": "retrieve_memory", "fallback": "fallback"})
-    workflow.add_edge("retrieve_memory", "dedup")
-    workflow.add_edge("dedup", "rerank")
-    workflow.add_edge("rerank", "validate")
-    workflow.add_edge("validate", "final")
-    workflow.add_conditional_edges("validate_admission", _route, {"extract_experience": "extract_experience", "fallback": "fallback"})
-    workflow.add_edge("extract_experience", "dedup_experience")
-    workflow.add_conditional_edges("dedup_experience", _route, {"validate_experience": "validate_experience", "final": "final"})
-    workflow.add_conditional_edges("validate_experience", _route, {"persist": "persist", "fallback": "fallback"})
-    workflow.add_edge("persist", "final")
-    workflow.add_edge("final", END)
-    workflow.add_edge("fallback", END)
+    prepare = prepare_skill_node("memory", initialize, load_skill, skill_steps=node_skill_steps)
+    steps = {}
+    for name, node in (("validate_search", validate_search), ("validate_admission", validate_admission), ("retrieve_memory", retrieve_memory), ("dedup", dedup), ("rerank", rerank), ("validate", validate), ("extract_experience", extract_experience), ("dedup_experience", dedup_experience), ("validate_experience", validate_experience), ("persist", persist), ("final", final), ("fallback", fallback)):
+        steps[name] = trace_skill_node("memory", name, node, skill_step=node_skill_steps.get(name, name))
+
+    def validate_entry(state: MemoryGraphState) -> Dict[str, Any]:
+        # 三条业务路径互斥；recent 不执行搜索或学习入口验证。
+        route = state.get("route")
+        if route in {"validate_search", "validate_admission"}:
+            return steps[route](state)
+        return {}
+
+    workflow.add_node("prepare", chain_nodes(prepare, validate_entry, stop_routes=("fallback",)))
+    workflow.add_node("retrieve_memory", steps["retrieve_memory"])
+    workflow.add_node("rank_results", chain_nodes(steps["dedup"], steps["rerank"], steps["validate"]))
+    workflow.add_node("extract", chain_nodes(steps["extract_experience"], steps["dedup_experience"]))
+    workflow.add_node("validate_experience", steps["validate_experience"])
+    workflow.add_node("persist", steps["persist"])
+    workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
+    workflow.add_edge(START, "prepare")
+    workflow.add_conditional_edges("prepare", _route, {"retrieve_memory": "retrieve_memory", "extract_experience": "extract", "fallback": "finish"})
+    workflow.add_edge("retrieve_memory", "rank_results")
+    workflow.add_edge("rank_results", "finish")
+    workflow.add_conditional_edges("extract", _route, {"validate_experience": "validate_experience", "final": "finish"})
+    workflow.add_conditional_edges("validate_experience", _route, {"persist": "persist", "fallback": "finish"})
+    workflow.add_edge("persist", "finish")
+    workflow.add_edge("finish", END)
     return workflow.compile()

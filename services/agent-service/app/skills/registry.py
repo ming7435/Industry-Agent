@@ -44,6 +44,7 @@ class SkillDefinition:
     metadata: Mapping[str, Any] = field(default_factory=dict)
     document: str = ""
     path: str = ""
+    aliases: tuple[str, ...] = ()
 
     @classmethod
     def from_payload(
@@ -57,6 +58,7 @@ class SkillDefinition:
         return cls(
             agent=agent,
             name=name,
+            aliases=_as_strings(payload.get("aliases")),
             version=str(payload.get("version") or "1.0"),
             goal=str(payload.get("goal") or ""),
             trigger=str(payload.get("trigger") or "default"),
@@ -112,7 +114,7 @@ class SkillRegistry:
         return list(self._cache[agent])
 
     def get(self, agent: str, name: str) -> SkillDefinition | None:
-        return next((item for item in self.list(agent) if item.name == name), None)
+        return next((item for item in self.list(agent) if name == item.name or name in item.aliases), None)
 
     def validate_tools(self, available_tools: Iterable[str]) -> None:
         """校验活动 Skill 的名称和工具引用。"""
@@ -127,14 +129,15 @@ class SkillRegistry:
         for directory in directories:
             paths_by_name: dict[str, str] = {}
             for skill in self.list(directory.name):
-                previous_path = paths_by_name.get(skill.name)
-                if previous_path:
-                    findings.append(
-                        "agent=%s duplicate skill=%s files=%s,%s"
-                        % (skill.agent, skill.name, previous_path, skill.path)
-                    )
-                else:
-                    paths_by_name[skill.name] = skill.path
+                for name in (skill.name, *skill.aliases):
+                    previous_path = paths_by_name.get(name)
+                    if previous_path:
+                        findings.append(
+                            "agent=%s duplicate skill=%s files=%s,%s"
+                            % (skill.agent, name, previous_path, skill.path)
+                        )
+                    else:
+                        paths_by_name[name] = skill.path
 
                 missing = sorted(set(skill.tools) - registered)
                 if missing:
@@ -161,7 +164,13 @@ class SkillRegistry:
         available = self.list(agent)
         context = context or {}
         if names:
-            selected = [item for name in names if (item := self.get(agent, str(name)))]
+            selected = []
+            seen = set()
+            for name in names:
+                item = self.get(agent, str(name))
+                if item is not None and item.name not in seen:
+                    selected.append(item)
+                    seen.add(item.name)
             if selected:
                 return selected
 

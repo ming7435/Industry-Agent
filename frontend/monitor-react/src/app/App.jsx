@@ -14,6 +14,9 @@ import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMark
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import "../workbench.css";
+import TeamAccess from '../TeamAccess.jsx';
+import SupervisorQueue from '../SupervisorQueue.jsx';
+import '../team.css';
 
 const workshopMachines = [
   {
@@ -145,6 +148,7 @@ const statusLabels = {
   running: "运行中",
   stopped: "已停止",
   offline: "离线",
+  unknown: "状态未知",
 };
 
 const alertLevelLabels = {
@@ -627,6 +631,8 @@ function useMetricHistory(machines) {
 }
 
 function App() {
+  const [teamActor, setTeamActor] = useState(null);
+  const [lineState, setLineState] = useState({state: 'unknown'});
   const [activeView, setActiveView] = useState(() => {
     if (typeof window === "undefined") return "monitor";
     const requested = new URLSearchParams(window.location.search).get("view");
@@ -696,6 +702,7 @@ function App() {
     <div className={`platform-shell ${bigScreen ? "big-screen" : "workbench"}`}>
       {!bigScreen && <WorkbenchSidebar activeView={activeView} onChange={setActiveView} hasError={Boolean(error || runner.last_error)} connected={Boolean(snapshot)} />}
       <main className={`app-shell ${!bigScreen && activeView === "monitor" ? "monitor-canvas-shell" : !bigScreen ? "content-shell" : ""}`}>
+        {!bigScreen && <TeamAccess actor={teamActor} onActor={setTeamActor} line={lineState} onLine={setLineState} />}
         {bigScreen ? (
           <Topbar
             snapshot={snapshot}
@@ -719,7 +726,7 @@ function App() {
         )}
         {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "maintenance" && <MaintenancePlanWorkspace snapshot={snapshot} sample={sample} />}
-        {!bigScreen && activeView === "workorder" && <WorkorderView snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
+        {!bigScreen && activeView === "workorder" && (teamActor ? <><SupervisorQueue actor={teamActor} /><WorkorderView key={teamActor.user_id} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} /></> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单，监督人查看全部并催办。</p></section>)}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
         {!bigScreen && activeView === "logs" && <LogsWorkspace snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
@@ -2706,7 +2713,7 @@ function MaintenancePlanWorkspace({ snapshot, sample }) {
   );
 }
 
-function WorkorderView({ snapshot, sample, onClosed }) {
+function WorkorderView({ snapshot, sample, onClosed, actor }) {
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [assignee, setAssignee] = useState("维修一组");
@@ -2730,8 +2737,8 @@ function WorkorderView({ snapshot, sample, onClosed }) {
     try {
       const body = await request("/api/workorders");
       const items = (body.items || []).map(normalizeWorkorderResponse);
-      setOrders(items);
-      if (!selectedId && items.length) setSelectedId(preferredWorkorderId(items, sample, snapshot));
+      setOrders(previous => items.map(item => ({...item, machine_control: previous.find(old => old.workorder_id === item.workorder_id)?.machine_control || item.machine_control})));
+      setSelectedId(previous => items.some(item => item.workorder_id === previous) ? previous : preferredWorkorderId(items, sample, snapshot));
       setError("");
       return items;
     } catch (err) {
@@ -2744,6 +2751,8 @@ function WorkorderView({ snapshot, sample, onClosed }) {
     // 报警触发的创建由运行时负责；查看队列不能创建或重新创建操作员明确删除的工单。
     loadOrders();
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    const timer = window.setInterval(loadOrders, 5000);
+    return () => window.clearInterval(timer);
   }, []);
 
   async function createOrder() {
@@ -2794,6 +2803,7 @@ function WorkorderView({ snapshot, sample, onClosed }) {
         body: JSON.stringify({ action, status, assignee, ...fields }),
       });
       const order = normalizeWorkorderResponse(response);
+      if (response.machine_control) order.machine_control = response.machine_control;
       setOrders((items) => items.map((item) => item.workorder_id === order.workorder_id ? order : item));
       setError("");
       if (status === "closed") onClosed?.();
@@ -2847,12 +2857,13 @@ function WorkorderView({ snapshot, sample, onClosed }) {
         error={error}
         onUpdate={updateOrder}
         onDelete={deleteOrder}
+        readOnly={actor?.role !== 'technician'}
       />
     </section>
   );
 }
 
-function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error, onUpdate, onDelete }) {
+function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error, onUpdate, onDelete, readOnly = false }) {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [order?.workorder_id]);
@@ -2892,13 +2903,13 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
           <h1>{getWorkorderDisplayTitle(order, target, { snapshot, sample: matchedSample, fault: matchedDiagnosis.fault || matchedDiagnosis.summary })}</h1>
           <p>{order.workorder_id} · {order.device_id} · {order.assignee || "未分配"} · {formatTime(order.updated_at)}</p>
         </div>
-        <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy} onClick={() => onDelete?.(order)}>删除工单</button></div>
+        <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy || readOnly || !['open', 'rejected', 'timeout'].includes(order.status)} onClick={() => onDelete?.(order)}>删除工单</button></div>
       </header>
 
       <div className="workorder-bigscreen-grid cad-only">
         <RepairCadPanel order={order} target={target} />
       </div>
-      <WorkorderSheet sheet={sheet} busy={busy} error={error} onUpdate={onUpdate} />
+      <WorkorderSheet sheet={sheet} busy={busy} error={error} onUpdate={onUpdate} readOnly={readOnly} />
     </section>
   );
 }
@@ -2956,7 +2967,7 @@ function resolveWorkorderDrawing(order = {}, target = {}) {
   return "";
 }
 
-function WorkorderSheet({ sheet, busy, error, onUpdate }) {
+function WorkorderSheet({ sheet, busy, error, onUpdate, readOnly = false }) {
   const [repairFeedback, setRepairFeedback] = useState("");
   const [maintenanceConfirmed, setMaintenanceConfirmed] = useState(false);
   useEffect(() => {
@@ -2997,13 +3008,13 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
         <section className="sheet-section feedback-card">
           <div className="sheet-subhead"><div><span className="section-kicker">WorkOrder 执行反馈</span><h3>完成后提交结果</h3></div></div>
           <label htmlFor="repair-feedback">处理说明</label>
-          <textarea id="repair-feedback" value={repairFeedback} onChange={(event) => setRepairFeedback(event.target.value)} placeholder="填写处理结果、复测数据或未解决原因" disabled={isDone} />
+          <textarea id="repair-feedback" value={repairFeedback} onChange={(event) => setRepairFeedback(event.target.value)} placeholder="填写处理结果、复测数据或未解决原因" disabled={readOnly || sheet.status === 'closed'} />
           {error && <div className="inline-error">{error}</div>}
           {sheet.machineControl && (
-            <div className={`machine-control-result ${sheet.machineControl.accepted ? "is-ok" : "is-error"}`} role="status">
-              {sheet.machineControl.accepted
-                ? "维修验证通过，设备已收到恢复运行指令。"
-                : `维修已完成，但设备未启动：${sheet.machineControl.error || "控制接口未确认"}`}
+            <div className={`machine-control-result ${sheet.machineControl.state === 'running' ? "is-ok" : "is-error"}`} role="status">
+              {sheet.machineControl.state === 'running'
+                ? "整线设备启动后已逐台读回，运行复核通过。"
+                : `整线尚未恢复运行：${sheet.machineControl.reason || sheet.machineControl.error || sheet.machineControl.state}`}
             </div>
           )}
           <label className="maintenance-confirmation">
@@ -3011,18 +3022,19 @@ function WorkorderSheet({ sheet, busy, error, onUpdate }) {
               type="checkbox"
               checked={maintenanceConfirmed}
               onChange={(event) => setMaintenanceConfirmed(event.target.checked)}
-              disabled={busy || isDone}
+              disabled={busy || readOnly || sheet.status === 'closed'}
             />
             <span>我确认已完成维修并依据当前设备恢复数据复测，允许申请恢复运行</span>
           </label>
           <div className="sheet-actions">
-            <button className="button" type="button" disabled={busy || isStarted} onClick={() => onUpdate("in_progress")}>{busy ? "处理中" : "开始处理"}</button>
+            <button className="button" type="button" disabled={busy || readOnly || isDone || sheet.accepted} onClick={() => onUpdate("in_progress")}>{busy ? "处理中" : sheet.accepted ? '已确认接单' : "确认接单"}</button>
             <button
               className="button primary"
               type="button"
-              disabled={busy || isDone || !repairFeedback.trim() || !maintenanceConfirmed}
+              disabled={busy || readOnly || sheet.status === 'closed' || (isDone && sheet.verificationPhase === 'poststart') || !repairFeedback.trim() || !maintenanceConfirmed}
               onClick={() => onUpdate("completed", buildRepairCompletionPayload({ feedback: repairFeedback, operator: sheet.assignee, deviceId: sheet.deviceId, recoverySample: sheet.recoverySample, maintenanceConfirmedBy: sheet.assignee }))}
-            >提交结果</button>
+            >{isDone ? '再次确认并申请复机' : '确认维修完成并申请复机'}</button>
+            {sheet.status === 'completed' && sheet.verificationPhase === 'poststart' && <button className="button" disabled={busy || readOnly} onClick={() => onUpdate('closed')}>关闭工单并生成总结</button>}
           </div>
         </section>
       </div>

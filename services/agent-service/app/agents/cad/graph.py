@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, TypedDict
+from app.agents.state import AgentExecutionState
+
+from typing import Any, Dict, List, Mapping
 
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 from app.contracts import CADComponent, CADResult
 
 from .schemas import CADQuery
@@ -17,16 +19,10 @@ from .validator import CADEngineeringValidator
 CAD_TOOLS = ("query_drawing", "query_bom", "query_part", "query_relation", "fetch_engineering_record")
 
 
-class CADGraphState(TypedDict, total=False):
+class CADGraphState(AgentExecutionState, total=False):
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     active_skill: str
-    active_skills: List[str]
     allowed_tools: List[str]
     pending_tools: List[str]
     query_type: str
@@ -170,18 +166,22 @@ def build_cad_graph():
         "validate_relation": "validate_engineering_context",
         "final": "build_result",
     }
-    for name, node in (("initialize", initialize), ("load_skill", load_skill), ("resolve_component", resolve_component), ("plan_engineering_query", plan_engineering_query), ("query", query), ("observe", observe), ("validate_relation", validate_relation), ("final", final), ("fallback", fallback)):
-        workflow.add_node(name, trace_skill_node("cad", name, node, skill_step=node_skill_steps.get(name, name)))
-    workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "load_skill")
-    workflow.add_edge("load_skill", "resolve_component")
-    workflow.add_edge("resolve_component", "plan_engineering_query")
+    prepare = prepare_skill_node("cad", initialize, load_skill, skill_steps=node_skill_steps)
+    steps = {}
+    for name, node in (("resolve_component", resolve_component), ("plan_engineering_query", plan_engineering_query), ("query", query), ("observe", observe), ("validate_relation", validate_relation), ("final", final), ("fallback", fallback)):
+        steps[name] = trace_skill_node("cad", name, node, skill_step=node_skill_steps.get(name, name))
+    workflow.add_node("prepare", chain_nodes(prepare, steps["resolve_component"], stop_routes=("fallback",)))
+    workflow.add_node("plan_engineering_query", steps["plan_engineering_query"])
+    # 队列耗尽或达到预算时 query 不产生新观测，不能再次处理上一轮结果。
+    workflow.add_node("query", chain_nodes(steps["query"], steps["observe"], stop_routes=("validate_relation", "fallback")))
+    workflow.add_node("validate_relation", steps["validate_relation"])
+    workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
+    workflow.add_edge(START, "prepare")
+    workflow.add_edge("prepare", "plan_engineering_query")
     workflow.add_conditional_edges("plan_engineering_query", _route, {"query": "query", "validate_relation": "validate_relation"})
-    workflow.add_conditional_edges("query", _route, {"observe": "observe", "validate_relation": "validate_relation"})
-    workflow.add_edge("observe", "plan_engineering_query")
-    workflow.add_conditional_edges("validate_relation", _route, {"final": "final", "fallback": "fallback"})
-    workflow.add_edge("final", END)
-    workflow.add_edge("fallback", END)
+    workflow.add_conditional_edges("query", _route, {"plan_engineering_query": "plan_engineering_query", "validate_relation": "validate_relation", "fallback": "finish"})
+    workflow.add_edge("validate_relation", "finish")
+    workflow.add_edge("finish", END)
     return workflow.compile()
 
 

@@ -28,12 +28,14 @@ class RuntimeOperations:
         learning_store_path: str | None = None,
         trace: Any | None = None,
         factory_client: Any | None = None,
+        repair_controller: Any | None = None,
     ) -> None:
         self.requests = requests
         self.closure_service = closure_service
         self.report_harness = report_harness
         self.trace = trace
         self.factory_client = factory_client
+        self.repair_controller = repair_controller
         self._learning_results: dict[str, Dict[str, Any]] = {}
         self._learning_stages: dict[tuple[str, str], Dict[str, Any]] = {}
         from threading import Lock
@@ -117,10 +119,21 @@ class RuntimeOperations:
             result["quality_check_id"] = check["quality_check_id"]
         return result
 
-    def execute_workorder(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router") -> Dict[str, Any]:
+    def execute_workorder(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router", *, actor_id: str = "") -> Dict[str, Any]:
         """API/事件入口：所有工单业务动作都通过 WorkOrder Agent。"""
 
         values = dict(payload or {})
+        if action == 'mark_repair_completed':
+            if not actor_id:
+                raise PermissionError('维修完成必须来自登录的被派工人员，不能用上下文声明确认人')
+            from app.clients.backend import BackendServiceClient
+            from app.monitor.factory_api import FactoryApiClient
+            from app.monitor.line_control import LineController
+            feedback = values.get('repair_feedback') or values.get('feedback') or ''
+            if isinstance(feedback, Mapping):
+                feedback = feedback.get('feedback') or feedback.get('result') or ''
+            controller = self.repair_controller or LineController(self.factory_client or FactoryApiClient(os.getenv('FACTORY_API_BASE_URL', 'http://127.0.0.1:4529')), BackendServiceClient())
+            return controller.confirm_and_restart(str(values.get('workorder_id') or ''), actor_id, str(feedback))
         values["action"] = action
         if action == "create" and not values.get("maintenance_plan"):
             values["maintenance_plan"] = {

@@ -6,6 +6,7 @@ COPY services/backend-service/requirements.txt /tmp/backend-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/backend-requirements.txt
 
 COPY services/backend-service /app/services/backend-service
+COPY shared /app/shared
 
 ENV PYTHONPATH=/app/services/backend-service:/app
 

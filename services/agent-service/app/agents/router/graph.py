@@ -2,31 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, TypedDict
+from app.agents.state import AgentExecutionState
+
+from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 from app.contracts import RouteResult
 
 from .validator import RouterValidator
 
 
-class RouterGraphState(TypedDict, total=False):
+class RouterGraphState(AgentExecutionState, total=False):
     """Router 单次运行在 LangGraph 节点之间传递的状态。"""
 
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     task: Dict[str, Any]
     text: str
     context: Dict[str, Any]
     active_skill: str
-    active_skills: list[str]
     intent: str
     reason: str
     entities: Dict[str, Any]
@@ -119,10 +115,6 @@ def fallback(state: RouterGraphState) -> Dict[str, Any]:
     return {"result": result}
 
 
-def _route(state: RouterGraphState) -> str:
-    return str(state.get("route") or "fallback")
-
-
 def build_router_graph():
     """构建并编译 Router Agent 工作流。"""
 
@@ -132,22 +124,20 @@ def build_router_graph():
         "load_skill": "select_target_agent",
         "final": "build_runtime_goal",
     }
+    workflow.add_node("prepare", prepare_skill_node("router", initialize, load_skill, skill_steps=node_skill_steps))
+    steps = {}
     for name, node in (
-        ("initialize", initialize),
-        ("load_skill", load_skill),
         ("classify_intent", classify_intent),
         ("extract_entities", extract_entities),
         ("validate_route", validate_route),
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("router", name, node, skill_step=node_skill_steps.get(name, name)))
-    workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "load_skill")
-    workflow.add_edge("load_skill", "classify_intent")
-    workflow.add_edge("classify_intent", "extract_entities")
-    workflow.add_edge("extract_entities", "validate_route")
-    workflow.add_conditional_edges("validate_route", _route, {"final": "final", "fallback": "fallback"})
-    workflow.add_edge("final", END)
-    workflow.add_edge("fallback", END)
+        steps[name] = trace_skill_node("router", name, node, skill_step=node_skill_steps.get(name, name))
+    workflow.add_node("route_request", chain_nodes(steps["classify_intent"], steps["extract_entities"], steps["validate_route"]))
+    workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
+    workflow.add_edge(START, "prepare")
+    workflow.add_edge("prepare", "route_request")
+    workflow.add_edge("route_request", "finish")
+    workflow.add_edge("finish", END)
     return workflow.compile()

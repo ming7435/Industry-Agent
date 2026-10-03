@@ -1,110 +1,47 @@
-from types import SimpleNamespace
+"""知识补检在真实领域图内有界执行，失败不得推进维修。"""
+from runtime_slimming_adapter import build_test_orchestrator, documents
 
 
-class _Tracing:
-    def start(self, *_args, **_kwargs):
-        return None
-
-    def finish(self, _name, _state, payload):
-        return payload
+def _event():
+    return {"event_id": "EVT-EVIDENCE", "device_id": "D-SLIM", "alarm_code": "700001",
+            "required_capabilities": ["document_search", "repair_planning", "workorder_create"]}
 
 
-class _EvidenceRequests:
-    def __init__(self, knowledge_results):
-        self.knowledge_results = list(knowledge_results)
-        self.knowledge_queries = []
-        self.maintenance_calls = 0
-        self.workorder_calls = 0
-
-    def diagnose(self, _state, event):
-        return {"device_id": event["device_id"], "fault": "主轴轴承振动"}
-
-    def retrieve_knowledge(self, _state, query):
-        self.knowledge_queries.append(query)
-        return self.knowledge_results.pop(0)
-
-    def retrieve_cad(self, _state, _query, _from_agent, context=None):
-        return {"components": [{"component_id": "BEARING-1"}], "status": "completed"}
-
-    def create_maintenance_plan(self, *_args, **_kwargs):
-        self.maintenance_calls += 1
-        return {"workorder_ready": True, "repair_steps": ["更换轴承"]}
-
-    def execute_workorder(self, *_args, **_kwargs):
-        self.workorder_calls += 1
-        return {"success": True, "workorder_id": "WO-1", "status": "open", "workorder": {"workorder_id": "WO-1"}}
-
-
-def _nodes(requests):
-    from app.graph.nodes import OrchestratorNodes
-
-    return OrchestratorNodes(SimpleNamespace(requests=requests, tracing=_Tracing()))
-
-
-def test_trigger_evidence_loop_refines_knowledge_query_once():
-    requests = _EvidenceRequests([
-        {"status": "insufficient_evidence", "documents": [], "evidence": []},
-        {"status": "completed", "documents": [{"document_id": "DOC-1"}], "evidence": [{"content": "检查轴承"}]},
+def test_trigger_evidence_loop_refines_knowledge_query_once(tmp_path, monkeypatch):
+    runtime = build_test_orchestrator(tmp_path, monkeypatch, model_responses=[], rag_results=[
+        {"documents": []}, {"documents": []}, {"documents": documents(query="处理700001 报警定义 含义 检查")},
     ])
-    nodes = _nodes(requests)
-    state = {
-        "entry": "trigger",
-        "task_id": "TASK-EVIDENCE-1",
-        "trace_id": "TRACE-EVIDENCE-1",
-        "event": {"event_id": "EVT-1", "device_id": "D-1"},
-        "diagnosis": {"device_id": "D-1", "fault": "主轴轴承振动"},
-        "context": {"enforce_evidence_gate": True},
-    }
-
-    result = nodes.knowledge(state)
-
+    result = runtime.run_abnormal_event({**_event(), "required_capabilities": ["document_search"]})
     assert result["knowledge"]["status"] == "completed"
-    assert len(requests.knowledge_queries) == 2
-    assert result["evidence_loop"]["attempts"] == 1
-    assert result["evidence_loop"]["status"] == "ready"
+    assert len(runtime.test_rag.calls) == 3
+    assert runtime.test_rag.calls[0]["query"] == runtime.test_rag.calls[1]["query"]
+    assert "报警定义 含义 检查" in runtime.test_rag.calls[2]["query"]
+    assert result["knowledge"]["query"] == runtime.test_rag.calls[2]["query"]
+    refined = [item for item in result["trace"] if item.get("event") == "step_started"
+               and item.get("agent") == "knowledge" and item.get("node") == "refine_query"]
+    assert len(refined) == 1
 
 
-def test_trigger_stops_before_workorder_when_evidence_is_still_missing():
-    requests = _EvidenceRequests([
-        {"status": "insufficient_evidence", "documents": [], "evidence": []},
-        {"status": "insufficient_evidence", "documents": [], "evidence": []},
-    ])
-    nodes = _nodes(requests)
-    state = {
-        "entry": "trigger",
-        "task_id": "TASK-EVIDENCE-2",
-        "trace_id": "TRACE-EVIDENCE-2",
-        "event": {"event_id": "EVT-2", "device_id": "D-2"},
-        "diagnosis": {"device_id": "D-2", "fault": "主轴轴承振动"},
-        "context": {"enforce_evidence_gate": True},
-    }
-    state.update(nodes.knowledge(state))
-    state.update(nodes.cad(state))
-
-    result = nodes.maintenance(state)
-
-    assert result["status"] == "blocked_insufficient_evidence"
-    assert result["stop_reason"] == "evidence_gate"
-    assert result["workorder"] == {}
-    assert requests.maintenance_calls == 0
-    assert requests.workorder_calls == 0
+def test_trigger_stops_before_workorder_when_evidence_is_still_missing(tmp_path, monkeypatch):
+    runtime = build_test_orchestrator(tmp_path, monkeypatch, model_responses=[], rag_results=[])
+    result = runtime.run_abnormal_event(_event())
+    assert result["runtime_result"]["status"] == "blocked"
+    assert result["stop_reason"] == "knowledge_evidence_gate"
+    assert not result.get("workorder")
+    assert len(runtime.test_rag.calls) == 3
+    assert len({call["query"] for call in runtime.test_rag.calls}) == 2
+    agents = {item.get("agent") for item in result["trace"] if item.get("event") == "step_started"}
+    assert not agents.intersection({"maintenance", "workorder", "memory", "report"})
+    assert not [call for call in runtime.test_boundary.calls if call[1] == "create_workorder"]
 
 
-def test_orchestrator_returns_runtime_evidence_block_without_legacy_edges():
-    from app.graph.workflow import AgentOrchestrator
-
-    class _Coordinator:
-        def run(self, _state):
-            return {"status": "blocked_insufficient_evidence", "stop_reason": "evidence_gate", "workorder": {}}
-
-    container = SimpleNamespace(
-        coordinator=_Coordinator(),
-        tracing=_Tracing(),
-        requests=None,
-        trace=SimpleNamespace(list=lambda **_kwargs: []),
-    )
-    result = AgentOrchestrator(container=container).run_abnormal_event({"event_id": "EVT-BLOCK", "device_id": "D-2"})
-
-    assert result["status"] == "blocked_insufficient_evidence"
-    assert result["stop_reason"] == "evidence_gate"
-    assert result["workorder"] == {}
+def test_orchestrator_returns_runtime_evidence_block_without_legacy_edges(tmp_path, monkeypatch):
+    runtime = build_test_orchestrator(tmp_path, monkeypatch, model_responses=[], rag_results=[])
+    result = runtime.run_abnormal_event({
+        "event_id": "EVT-BLOCK", "device_id": "D-2",
+        "required_capabilities": ["document_search", "repair_planning", "workorder_create"],
+    })
+    assert result["runtime_result"]["status"] == "blocked"
+    assert result["stop_reason"] == "knowledge_evidence_gate"
+    assert not result.get("workorder")
+    assert not [call for call in runtime.test_boundary.calls if call[1] == "create_workorder"]

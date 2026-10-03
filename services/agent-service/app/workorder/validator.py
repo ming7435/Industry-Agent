@@ -97,8 +97,7 @@ class WorkOrderValidator:
         fault_evidence = recovery.get("fault_evidence") if isinstance(recovery.get("fault_evidence"), Mapping) else {}
         checks = {
             "device_identity": bool(expected_device and actual_device == expected_device),
-            "operational": status in {"running", "idle", "ready", "standby", "normal", "completed"}
-            or (status in {"stopped", "paused"} and recovery.get("restart_requested") is True),
+            "operational": status in {"running", "idle", "ready", "standby", "normal", "completed"},
             "alarms_clear": not alarm_code and not active_alarms and not bool(fault_evidence.get("active")),
             "metrics_available": isinstance(metrics, Mapping) and bool(metrics),
             "recovery_fresh": _recovery_is_fresh(recovery),
@@ -118,7 +117,7 @@ class WorkOrderValidator:
     @classmethod
     def can_close(cls, order: Mapping[str, Any]) -> bool:
         """已完成的工单必须通过明确验证后才能关闭。"""
-        return str(order.get("status") or "") == "completed" and cls.verification_passed(order)
+        return str(order.get("status") or "") == "completed" and (order.get('repair_verification') or {}).get('phase') != 'prestart' and cls.verification_passed(order)
 
     @staticmethod
     def can_learn(order: Mapping[str, Any], repair_feedback: Any) -> bool:

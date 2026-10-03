@@ -19,7 +19,7 @@ def result_requires_emergency_stop(result: Any) -> bool:
             return True
     sample = getattr(result, "current_sample", None)
     sample_status = str(getattr(sample, "status", "") or "").lower()
-    return sample_status in {"fault", "failed", "emergency_stop", "e_stop", "offline"}
+    return sample_status in {"fault", "failed"}
 
 
 def result_requires_production_pause(result: Any) -> bool:

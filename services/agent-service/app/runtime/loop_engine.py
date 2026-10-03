@@ -247,7 +247,7 @@ class LoopEngine:
                 added = sorted(current_evidence - previous_evidence)
                 if added:
                     emit("evidence_added", evidence_ids=added)
-            if iteration and previous_evidence:
+            if iteration and previous_evidence and output.get("progress_made") is not True:
                 progress = self.guard.check_evidence_progress(previous_evidence, current_evidence)
                 if not progress.allowed and not evidence_decision.allowed:
                     history.append({"iteration": iteration, "stop_reason": progress.reason})

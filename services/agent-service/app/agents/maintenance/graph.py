@@ -2,28 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from app.agents.state import AgentExecutionState
+
+from typing import Any, Dict, List
 
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, trace_skill_node
 from app.contracts import DiagnosisView, MaintenancePlan
 
 from .schemas import MaintenanceQuery
 from .validator import MaintenancePlanValidator
 
 
-class MaintenanceGraphState(TypedDict, total=False):
+class MaintenanceGraphState(AgentExecutionState, total=False):
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     active_skill: str
-    active_skills: List[str]
     allowed_tools: List[str]
     diagnosis: DiagnosisView
     query: str
@@ -135,7 +131,11 @@ def validate(state: MaintenanceGraphState) -> Dict[str, Any]:
     agent = state["agent"]
     plan = dict(state.get("plan_payload") or {})
     findings = list(state.get("validation_findings") or [])
-    findings.extend(MaintenancePlanValidator.validate(plan, state.get("knowledge") or {}, state.get("cad") or {}, state.get("inventory") or {}))
+    diagnosis = state["diagnosis"]
+    # 输入模型把证据校验状态保存在 raw 中；验证器必须接收原始证据状态，
+    # 不能把未带诊断的中间方案误判为证据不足，也不能补造通过标记。
+    validation_plan = {**plan, "diagnosis": {**diagnosis.raw, **diagnosis.model_dump(mode="json")}}
+    findings.extend(MaintenancePlanValidator.validate(validation_plan, state.get("knowledge") or {}, state.get("cad") or {}, state.get("inventory") or {}))
     findings = agent._dedupe(findings)
     plan["validation_findings"] = findings
     plan["workorder_ready"] = MaintenancePlanValidator.workorder_ready(findings, plan)
@@ -170,13 +170,6 @@ def final(state: MaintenanceGraphState) -> Dict[str, Any]:
     return {"result": result, "stop_reason": "validator_pass" if result.workorder_ready else "validation_failed"}
 
 
-def fallback(state: MaintenanceGraphState) -> Dict[str, Any]:
-    agent = state["agent"]
-    diagnosis = state.get("diagnosis") or agent._normalize_diagnosis(state.get("request") or {})
-    plan = {"repair_target": diagnosis.fault or "设备异常", "validation_findings": ["维修计划流程未完成"], "workorder_ready": False}
-    return {"result": agent._plan_result(plan, diagnosis), "stop_reason": "fallback"}
-
-
 def _drawing_context(engineering_context: Dict[str, Any]) -> Dict[str, str]:
     viewer = dict(engineering_context.get("viewer_context") or {})
     refs = list(engineering_context.get("drawing_ref_details") or engineering_context.get("drawing_refs") or [])
@@ -203,9 +196,9 @@ def build_maintenance_graph():
         "prepare_workorder": "build_result",
         "final": "build_result",
     }
+    prepare = prepare_skill_node("maintenance", initialize, load_skill, skill_steps=node_skill_steps)
+    steps = {}
     for name, node in (
-        ("initialize", initialize),
-        ("load_skill", load_skill),
         ("assess_diagnosis", assess_diagnosis),
         ("request_knowledge", request_knowledge),
         ("request_cad", request_cad),
@@ -215,20 +208,19 @@ def build_maintenance_graph():
         ("validate", validate),
         ("prepare_workorder", prepare_workorder),
         ("final", final),
-        ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("maintenance", name, node, skill_step=node_skill_steps.get(name, name)))
-    workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "load_skill")
-    workflow.add_edge("load_skill", "assess_diagnosis")
-    workflow.add_edge("assess_diagnosis", "request_knowledge")
-    workflow.add_edge("request_knowledge", "request_cad")
-    workflow.add_edge("request_cad", "plan_repair")
-    workflow.add_edge("plan_repair", "check_parts_tools")
-    workflow.add_edge("check_parts_tools", "safety_validate")
+        steps[name] = trace_skill_node("maintenance", name, node, skill_step=node_skill_steps.get(name, name))
+    workflow.add_node("prepare", chain_nodes(prepare, steps["assess_diagnosis"]))
+    workflow.add_node("collect_context", chain_nodes(steps["request_knowledge"], steps["request_cad"]))
+    workflow.add_node("build_plan", chain_nodes(steps["plan_repair"], steps["check_parts_tools"]))
+    workflow.add_node("safety_validate", steps["safety_validate"])
+    workflow.add_node("validate", steps["validate"])
+    workflow.add_node("finish", chain_nodes(steps["prepare_workorder"], steps["final"]))
+    workflow.add_edge(START, "prepare")
+    workflow.add_edge("prepare", "collect_context")
+    workflow.add_edge("collect_context", "build_plan")
+    workflow.add_edge("build_plan", "safety_validate")
     workflow.add_edge("safety_validate", "validate")
-    workflow.add_edge("validate", "prepare_workorder")
-    workflow.add_edge("prepare_workorder", "final")
-    workflow.add_edge("final", END)
-    workflow.add_edge("fallback", END)
+    workflow.add_edge("validate", "finish")
+    workflow.add_edge("finish", END)
     return workflow.compile()

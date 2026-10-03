@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .models import AlertLevel, RuleType
+from shared.metric_ranges import classify_metric_range
 
 
 @dataclass(frozen=True)
@@ -33,92 +34,14 @@ class ThresholdBand:
         return AlertLevel.NORMAL
 
 
-def _contains(value: float, range_value: Any) -> bool:
-    """判断数值是否落在工厂快照给出的闭区间内。"""
-
-    if not isinstance(range_value, (list, tuple)) or len(range_value) != 2:
-        return False
-    try:
-        return float(range_value[0]) <= value <= float(range_value[1])
-    except (TypeError, ValueError):
-        return False
-
-
 def classify_metric_detail(
     value: Any,
     detail: Mapping[str, Any],
 ) -> Optional[Tuple[AlertLevel, Optional[float], str]]:
     """使用工厂指标详情中的正常、预警和报警区间进行分类。"""
 
-    if value is None or not isinstance(detail, Mapping):
-        return None
-    try:
-        numeric_value = float(value)
-    except (TypeError, ValueError):
-        return None
-
-    normal_range = detail.get("normal_range")
-    warn_range = detail.get("warn_range")
-    alarm_range = detail.get("alarm_range")
-    if _contains(numeric_value, normal_range):
-        return None
-
-    unit = str(detail.get("unit") or "")
-    if _contains(numeric_value, alarm_range):
-        threshold = _anomaly_threshold(alarm_range, normal_range, numeric_value)
-        return AlertLevel.HIGH, threshold, unit
-    if _contains(numeric_value, warn_range):
-        threshold = _anomaly_threshold(warn_range, normal_range, numeric_value)
-        return AlertLevel.INITIAL, threshold, unit
-
-    # 工厂区间之间可能存在空档；只要离开正常范围，就按方向推断最接近的严重度。
-    normal = _numeric_range(normal_range)
-    alarm = _numeric_range(alarm_range)
-    if normal and alarm:
-        low_direction = alarm[1] < normal[0]
-        high_direction = alarm[0] > normal[1]
-        if low_direction and numeric_value <= alarm[1]:
-            return AlertLevel.HIGH, alarm[1], unit
-        if high_direction and numeric_value >= alarm[0]:
-            return AlertLevel.HIGH, alarm[0], unit
-    return AlertLevel.INITIAL, _anomaly_threshold(warn_range, normal_range, numeric_value), unit
-
-
-def _numeric_range(range_value: Any) -> Optional[Tuple[float, float]]:
-    """把合法的区间配置转换为浮点数二元组。"""
-
-    if not isinstance(range_value, (list, tuple)) or len(range_value) != 2:
-        return None
-    try:
-        return float(range_value[0]), float(range_value[1])
-    except (TypeError, ValueError):
-        return None
-
-
-def _range_boundary(range_value: Any, value: float) -> Optional[float]:
-    """返回数值穿越区间时更接近的一侧边界。"""
-
-    numeric = _numeric_range(range_value)
-    if numeric is None:
-        return None
-    return numeric[0] if value < numeric[0] else numeric[1]
-
-
-def _anomaly_threshold(
-    range_value: Any,
-    normal_range: Any,
-    value: float,
-) -> Optional[float]:
-    """返回指标离开正常区间时跨过的边界值。"""
-
-    normal = _numeric_range(normal_range)
-    target = _numeric_range(range_value)
-    if normal and target:
-        if value > normal[1]:
-            return target[0]
-        if value < normal[0]:
-            return target[1]
-    return _range_boundary(range_value, value)
+    result = classify_metric_range(value, detail)
+    return (AlertLevel(result[0]), result[1], result[2]) if result else None
 
 
 @dataclass(frozen=True)

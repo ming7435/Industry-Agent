@@ -123,12 +123,14 @@ def test_workorder_to_memory_route_is_allowed_for_closed_feedback():
     assert is_allowed_a2a_route("workorder", "memory")
 
 
-def test_api_workorder_and_part_quality_flows_are_connected():
+def test_workorder_requires_personal_session_and_part_quality_is_unchanged():
     from fastapi.testclient import TestClient
 
     from app.api.server import create_app
 
-    client = TestClient(create_app())
+    from app.graph import build_orchestrator
+    runtime = build_orchestrator()
+    client = TestClient(create_app(runtime))
     created = client.post(
         "/api/workorders",
         json={
@@ -137,15 +139,15 @@ def test_api_workorder_and_part_quality_flows_are_connected():
             "steps": ["replace bearing"],
         },
     )
-    assert created.status_code == 200
-    workorder_id = created.json()["workorder_id"]
+    assert created.status_code == 401
+    created = runtime.container.operations.execute_workorder('create', {'device_id': 'D-API-001', 'title': 'spindle bearing fault', 'steps': ['replace bearing']})
+    workorder_id = created['workorder_id']
 
     assigned = client.post(
         f"/api/workorders/{workorder_id}/action",
         json={"action": "assign", "assignee": "TECH-001"},
     )
-    assert assigned.status_code == 200
-    assert assigned.json()["status"] == "in_progress"
+    assert assigned.status_code == 401
 
     completed = client.post(
         f"/api/v1/workorders/{workorder_id}/complete",
@@ -155,8 +157,7 @@ def test_api_workorder_and_part_quality_flows_are_connected():
             "verification": {"device_recovery": {"device_id": "D-API-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": datetime.now(timezone.utc).isoformat()}},
         },
     )
-    assert completed.status_code == 200
-    assert completed.json()["workorder"]["repair_verification"]["passed"] is True
+    assert completed.status_code == 401
 
     closed = client.post(
         f"/api/workorders/{workorder_id}/action",
@@ -166,9 +167,8 @@ def test_api_workorder_and_part_quality_flows_are_connected():
             "repair_verification": {"device_recovery": {"device_id": "D-API-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": datetime.now(timezone.utc).isoformat()}},
         },
     )
-    assert closed.status_code == 200
-    assert closed.json()["status"] == "closed"
-    assert closed.json()["memory_result"]["success"] is True
+    assert closed.status_code == 401
+    # 完整的注册、派工、维修与复机正向链路由跨服务隔离测试覆盖。
 
     quality = client.post(
         "/api/quality/parts/PART-API-001",
@@ -191,18 +191,22 @@ def test_api_workorder_and_part_quality_flows_are_connected():
     assert any(item["quality_check_id"] == quality.json()["quality_check_id"] and item["target_type"] == "production_part" for item in checks["items"])
 
 
-def test_api_allows_operator_to_delete_workorder_and_report():
+def test_anonymous_cannot_create_delete_or_read_workorder():
     from fastapi.testclient import TestClient
 
     from app.api.server import create_app
 
-    client = TestClient(create_app())
+    from app.graph import build_orchestrator
+    runtime = build_orchestrator()
+    client = TestClient(create_app(runtime))
     created = client.post("/api/workorders", json={"device_id": "D-DELETE", "title": "删除测试"})
-    assert created.status_code == 200
-    workorder_id = created.json()["workorder_id"]
+    assert created.status_code == 401
+    created = runtime.container.operations.execute_workorder('create', {'device_id': 'D-DELETE', 'title': '删除测试'})
+    workorder_id = created['workorder_id']
     deleted = client.delete(f"/api/workorders/{workorder_id}")
-    assert deleted.status_code == 200
-    assert deleted.json()["deleted"] is True
+    assert deleted.status_code == 401
+    assert client.get(f'/api/workorders/{workorder_id}').status_code == 401
+    assert runtime.container.operations.execute_workorder('query', {'workorder_id': workorder_id})['workorder_id'] == workorder_id
 
     assert "/api/reports/{report_id}" in client.get("/openapi.json").json()["paths"]
 

@@ -15,6 +15,8 @@ class MonitorStatus(str, Enum):
     WARNING = "warning"
     ALARM = "alarm"
     FAULT = "fault"
+    STOPPED = "stopped"
+    UNKNOWN = "unknown"
 
 
 class AlertLevel(str, Enum):

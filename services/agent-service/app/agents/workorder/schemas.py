@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from app.agents.state import AgentExecutionState
+
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -71,16 +73,10 @@ class WorkOrderResult(BaseModel):
     error: str = ""
 
 
-class WorkOrderGraphState(TypedDict, total=False):
+class WorkOrderGraphState(AgentExecutionState, total=False):
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     active_skill: str
-    active_skills: List[str]
     allowed_tools: List[str]
     action: str
     plan: Dict[str, Any]

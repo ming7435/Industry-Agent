@@ -5,6 +5,23 @@ from app.harness import TraceRecorder
 from app.runtime.action import ActionModel
 from app.runtime.coordinator import RuntimeCoordinator
 from app.runtime.planner import Plan
+import pytest
+
+
+@pytest.mark.parametrize("capability,remaining,expected", [
+    ("fault_analysis", ["document_search", "drawing_search", "repair_planning", "workorder_create"],
+     ["document_search", "diagnosis_review", "drawing_search", "repair_planning", "workorder_create"]),
+    ("repair_planning", ["workorder_create", "case_reporting"],
+     ["maintenance_replan", "workorder_create", "case_reporting"]),
+])
+def test_replan_preserves_unfinished_pipeline_without_duplicate_writes(capability, remaining, expected):
+    # 真实协调器向 Planner 提交的能力序列不能遗失尚未完成的任务。
+    coordinator = RuntimeCoordinator(SimpleNamespace())
+    actions = [ActionModel.agent(name, {"required_capability": name}) for name in remaining]
+    requested = coordinator._replan_capabilities(capability, {}, actions)
+    assert requested == expected
+    assert requested.count("workorder_create") == 1
+    assert [item.required_capability for item in actions] == remaining
 
 
 class _ReplanningPlanner:

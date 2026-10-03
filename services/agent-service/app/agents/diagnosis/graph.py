@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from app.agents.state import AgentExecutionState
+
 import json
 from time import perf_counter
-from typing import Any, Dict, List, Mapping, Optional, TypedDict
+from typing import Any, Dict, List, Mapping, Optional
 
 from langgraph.graph import END, START, StateGraph
 
@@ -12,18 +14,13 @@ from app.agents.diagnosis import evidence, parsing, tool_policy
 from app.agents.diagnosis.prompt import build_diagnosis_messages
 from app.agents.diagnosis.schemas import AgentStatus, DiagnosisResult, DiagnosisState
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 
 
-class DiagnosisGraphState(TypedDict, total=False):
+class DiagnosisGraphState(AgentExecutionState, total=False):
     """LangGraph 节点之间传递的运行时状态。"""
 
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     event: Dict[str, Any]
     agent_state: DiagnosisState
     event_id: str
@@ -32,7 +29,6 @@ class DiagnosisGraphState(TypedDict, total=False):
     task_id: str
     triggered_at: Any
     diagnosis_run_id: str
-    active_skills: List[str]
     response: Dict[str, Any]
     assistant: Dict[str, Any]
     guarded_calls: List[Dict[str, Any]]
@@ -430,9 +426,9 @@ def build_diagnosis_graph():
     """构建并编译一次 Diagnosis Agent 工作流。"""
 
     workflow = StateGraph(DiagnosisGraphState)
+    workflow.add_node("prepare", prepare_skill_node("diagnosis", initialize_diagnosis_state, load_diagnosis_skill, skill_steps=NODE_SKILL_STEPS))
+    steps = {}
     for name, node in (
-        ("initialize", initialize_diagnosis_state),
-        ("load_skill", load_diagnosis_skill),
         ("reason", request_diagnosis_reasoning),
         ("tool_guard", guard_tool_calls),
         ("act", execute_tool_calls),
@@ -442,12 +438,15 @@ def build_diagnosis_graph():
         ("final", build_final_diagnosis_result),
         ("fallback", build_fallback_diagnosis_result),
     ):
-        workflow.add_node(name, trace_skill_node("diagnosis", name, node, skill_step=NODE_SKILL_STEPS.get(name, name)))
+        steps[name] = trace_skill_node("diagnosis", name, node, skill_step=NODE_SKILL_STEPS.get(name, name))
+    for name in ("reason", "tool_guard", "loop_guard", "validate"):
+        workflow.add_node(name, steps[name])
+    workflow.add_node("execute_observe", chain_nodes(steps["act"], steps["observe"], stop_routes=("fallback",)))
+    workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
 
-    workflow.add_edge(START, "initialize")
+    workflow.add_edge(START, "prepare")
     # 初始化和 Skill 加载都可能因配置问题直接进入降级路径。
-    workflow.add_conditional_edges("initialize", select_next_diagnosis_route, {"load_skill": "load_skill", "fallback": "fallback"})
-    workflow.add_conditional_edges("load_skill", select_next_diagnosis_route, {"reason": "reason", "fallback": "fallback"})
+    workflow.add_conditional_edges("prepare", select_next_diagnosis_route, {"reason": "reason", "fallback": "finish"})
     # 推理结果决定是否调用工具；没有工具调用时先经过 Validator。
     workflow.add_conditional_edges(
         "reason",
@@ -457,14 +456,12 @@ def build_diagnosis_graph():
             "tool_guard": "tool_guard",
             "loop_guard": "loop_guard",
             "validate": "validate",
-            "fallback": "fallback",
+            "fallback": "finish",
         },
     )
-    workflow.add_conditional_edges("tool_guard", select_next_diagnosis_route, {"act": "act", "reason": "reason", "fallback": "fallback"})
-    workflow.add_conditional_edges("act", select_next_diagnosis_route, {"observe": "observe", "fallback": "fallback"})
-    workflow.add_edge("observe", "loop_guard")
-    workflow.add_conditional_edges("loop_guard", select_next_diagnosis_route, {"reason": "reason", "fallback": "fallback"})
-    workflow.add_conditional_edges("validate", select_next_diagnosis_route, {"final": "final", "reason": "reason", "fallback": "fallback"})
-    workflow.add_edge("final", END)
-    workflow.add_edge("fallback", END)
+    workflow.add_conditional_edges("tool_guard", select_next_diagnosis_route, {"act": "execute_observe", "reason": "reason", "fallback": "finish"})
+    workflow.add_conditional_edges("execute_observe", select_next_diagnosis_route, {"loop_guard": "loop_guard", "fallback": "finish"})
+    workflow.add_conditional_edges("loop_guard", select_next_diagnosis_route, {"reason": "reason", "fallback": "finish"})
+    workflow.add_conditional_edges("validate", select_next_diagnosis_route, {"final": "finish", "reason": "reason", "fallback": "finish"})
+    workflow.add_edge("finish", END)
     return workflow.compile()

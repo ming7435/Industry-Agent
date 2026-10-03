@@ -8,6 +8,9 @@ import sqlite3
 from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
 
 
 class BusinessStoreError(RuntimeError):
@@ -44,6 +47,12 @@ class SQLiteRepository:
     def update(self, order: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(order)
         with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            current = connection.execute('SELECT payload FROM workorders WHERE workorder_id=?', (value['workorder_id'],)).fetchone()
+            stored = json.loads(current[0]) if current else None
+            if stored is None or int(stored.get('_revision', 0)) != int(value.get('_revision', 0)):
+                raise ValueError('工单已被其他操作更新，请刷新后重试')
+            value['_revision'] = int(value.get('_revision', 0)) + 1
             connection.execute("UPDATE workorders SET payload=?, updated_at=CURRENT_TIMESTAMP WHERE workorder_id=?", (json.dumps(value, ensure_ascii=False, default=str), value["workorder_id"]))
         return value
 
@@ -83,18 +92,50 @@ class SQLiteRepository:
             return bool(cursor.rowcount)
 
 
+def _mysql_operation(method):
+    @wraps(method)
+    def execute(self, *args, **kwargs):
+        with self._session():
+            return method(self, *args, **kwargs)
+    return execute
+
+
 class MySQLRepository:
     def __init__(self) -> None:
         try:
             import mysql.connector
         except ImportError as error:
             raise BusinessStoreError("mysql-connector-python is required") from error
+        self._connector = mysql.connector
+        self._active_connection = ContextVar('workorder_connection')
+        self._initialize()
+
+    @property
+    def connection(self):
+        return self._active_connection.get()
+
+    @contextmanager
+    def _session(self):
+        # 每次业务读写独立连接，读取也结束事务；不保留跨线程的旧快照。
+        connection = self._connector.connect(
+            host=os.getenv('MYSQL_HOST', 'mysql'), port=int(os.getenv('MYSQL_PORT', '3306')),
+            user=os.getenv('MYSQL_USER', 'industry'), password=os.getenv('MYSQL_PASSWORD', os.getenv('MYSQL_APP_PASSWORD', 'industry')),
+            database=os.getenv('MYSQL_DATABASE', 'industry_agent'), autocommit=False,
+        )
+        token = self._active_connection.set(connection)
         try:
-            self.connection = mysql.connector.connect(
-                host=os.getenv("MYSQL_HOST", "mysql"), port=int(os.getenv("MYSQL_PORT", "3306")),
-                user=os.getenv("MYSQL_USER", "industry"), password=os.getenv("MYSQL_PASSWORD", os.getenv("MYSQL_APP_PASSWORD", "industry")),
-                database=os.getenv("MYSQL_DATABASE", "industry_agent"), autocommit=False,
-            )
+            yield
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            self._active_connection.reset(token)
+            connection.close()
+
+    @_mysql_operation
+    def _initialize(self):
+        try:
             cursor = self.connection.cursor()
             cursor.execute("CREATE TABLE IF NOT EXISTS workorders (workorder_id VARCHAR(64) PRIMARY KEY, idempotency_key VARCHAR(255) UNIQUE, payload JSON NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)")
             cursor.execute("CREATE TABLE IF NOT EXISTS business_records (record_type VARCHAR(64) NOT NULL, record_id VARCHAR(128) NOT NULL, payload JSON NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY(record_type, record_id))")
@@ -103,6 +144,7 @@ class MySQLRepository:
         except Exception as error:
             raise BusinessStoreError("MySQL WorkOrder persistence unavailable: %s" % error) from error
 
+    @_mysql_operation
     def create(self, order: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(order)
         key = str(value.get("idempotency_key") or "") or None
@@ -127,6 +169,7 @@ class MySQLRepository:
         finally:
             cursor.close()
 
+    @_mysql_operation
     def get(self, workorder_id: str) -> dict[str, Any] | None:
         cursor = self.connection.cursor(dictionary=True)
         cursor.execute("SELECT payload FROM workorders WHERE workorder_id=%s", (str(workorder_id),))
@@ -134,14 +177,23 @@ class MySQLRepository:
         cursor.close()
         return dict(json.loads(row["payload"])) if row else None
 
+    @_mysql_operation
     def update(self, order: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(order)
-        cursor = self.connection.cursor()
+        cursor = self.connection.cursor(dictionary=True)
+        cursor.execute('SELECT payload FROM workorders WHERE workorder_id=%s FOR UPDATE', (value['workorder_id'],))
+        row = cursor.fetchone()
+        stored = json.loads(row['payload']) if row else None
+        if stored is None or int(stored.get('_revision', 0)) != int(value.get('_revision', 0)):
+            cursor.close()
+            raise ValueError('工单已被其他操作更新，请刷新后重试')
+        value['_revision'] = int(value.get('_revision', 0)) + 1
         cursor.execute("UPDATE workorders SET payload=%s WHERE workorder_id=%s", (json.dumps(value, ensure_ascii=False, default=str), value["workorder_id"]))
         self.connection.commit()
         cursor.close()
         return value
 
+    @_mysql_operation
     def list(self) -> list[dict[str, Any]]:
         cursor = self.connection.cursor(dictionary=True)
         cursor.execute("SELECT payload FROM workorders ORDER BY workorder_id")
@@ -149,6 +201,7 @@ class MySQLRepository:
         cursor.close()
         return [dict(json.loads(row["payload"])) for row in rows]
 
+    @_mysql_operation
     def delete(self, workorder_id: str) -> bool:
         cursor = self.connection.cursor()
         try:
@@ -162,6 +215,7 @@ class MySQLRepository:
         finally:
             cursor.close()
 
+    @_mysql_operation
     def save_record(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(payload)
         cursor = self.connection.cursor()
@@ -179,6 +233,7 @@ class MySQLRepository:
             cursor.close()
         return value
 
+    @_mysql_operation
     def get_record(self, record_type: str, record_id: str) -> dict[str, Any] | None:
         cursor = self.connection.cursor(dictionary=True)
         cursor.execute("SELECT payload FROM business_records WHERE record_type=%s AND record_id=%s", (str(record_type), str(record_id)))
@@ -186,6 +241,7 @@ class MySQLRepository:
         cursor.close()
         return dict(json.loads(row["payload"])) if row else None
 
+    @_mysql_operation
     def list_records(self, record_type: str) -> list[dict[str, Any]]:
         cursor = self.connection.cursor(dictionary=True)
         cursor.execute("SELECT payload FROM business_records WHERE record_type=%s ORDER BY updated_at", (str(record_type),))
@@ -193,6 +249,7 @@ class MySQLRepository:
         cursor.close()
         return [dict(json.loads(row["payload"])) for row in rows]
 
+    @_mysql_operation
     def delete_record(self, record_type: str, record_id: str) -> bool:
         cursor = self.connection.cursor()
         try:

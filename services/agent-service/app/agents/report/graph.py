@@ -2,27 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from app.agents.state import AgentExecutionState
+
+from typing import Any, Dict, List
 
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 from app.contracts import ReportResult
 
 from .schemas import ReportQuery
 
 
-class ReportWorkflowState(TypedDict, total=False):
+class ReportWorkflowState(AgentExecutionState, total=False):
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     active_skill: str
-    active_skills: List[str]
     allowed_tools: List[str]
     diagnosis: Dict[str, Any]
     maintenance_plan: Dict[str, Any]
@@ -159,20 +155,22 @@ def build_report_graph():
         "validate": "validate_result",
         "final": "build_result",
     }
+    workflow.add_node("prepare", prepare_skill_node("report", initialize, load_skill, skill_steps=node_skill_steps))
+    steps = {}
     for name, node in (
-        ("initialize", initialize), ("load_skill", load_skill), ("collect_sources", collect_sources),
+        ("collect_sources", collect_sources),
         ("check_completeness", check_completeness), ("compose", compose), ("validate", validate),
         ("persist", persist), ("final", final), ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("report", name, node, skill_step=node_skill_steps.get(name, name)))
-    workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "load_skill")
-    workflow.add_edge("load_skill", "collect_sources")
-    workflow.add_edge("collect_sources", "check_completeness")
-    workflow.add_conditional_edges("check_completeness", lambda state: state.get("route", "fallback"), {"compose": "compose", "fallback": "fallback"})
-    workflow.add_edge("compose", "validate")
-    workflow.add_edge("validate", "persist")
-    workflow.add_edge("persist", "final")
-    workflow.add_edge("final", END)
-    workflow.add_edge("fallback", END)
+        steps[name] = trace_skill_node("report", name, node, skill_step=node_skill_steps.get(name, name))
+    workflow.add_node("collect_context", chain_nodes(steps["collect_sources"], steps["check_completeness"]))
+    workflow.add_node("compose", chain_nodes(steps["compose"], steps["validate"]))
+    workflow.add_node("persist", steps["persist"])
+    workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
+    workflow.add_edge(START, "prepare")
+    workflow.add_edge("prepare", "collect_context")
+    workflow.add_conditional_edges("collect_context", lambda state: state.get("route", "fallback"), {"compose": "compose", "fallback": "finish"})
+    workflow.add_edge("compose", "persist")
+    workflow.add_edge("persist", "finish")
+    workflow.add_edge("finish", END)
     return workflow.compile()

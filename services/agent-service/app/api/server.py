@@ -33,6 +33,8 @@ from app.runtime.event_store import EventResultConflict, EventResultStore
 from app.runtime.durable_store import PendingResultError
 from app.tools.report.generate_report_file import get_report_file_path
 from app.clients.backend import BackendServiceError
+from app.clients.backend import BackendServiceClient
+from app.api.team_auth import team_actor, require_assignee, human_action
 
 
 def _load_project_env() -> None:
@@ -209,13 +211,37 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.post("/api/agent/question", deprecated=True, dependencies=[Depends(require_write_auth)])
     @app.post("/api/v1/agent/question", dependencies=[Depends(require_write_auth)])
-    def question(request: UserQuestionRequest) -> Dict[str, Any]:
-        return runtime.run_user(request.user_text, request.context)
+    def question(body: UserQuestionRequest, request: Request) -> Dict[str, Any]:
+        return guarded_question(body, request)
 
     @app.post("/api/agent/question/summary", deprecated=True, dependencies=[Depends(require_write_auth)])
     @app.post("/api/v1/agent/question/summary", dependencies=[Depends(require_write_auth)])
-    def question_summary(request: UserQuestionRequest) -> Dict[str, Any]:
-        return compact_question_response(runtime.run_user(request.user_text, request.context))
+    def question_summary(body: UserQuestionRequest, request: Request) -> Dict[str, Any]:
+        return compact_question_response(guarded_question(body, request))
+
+    def guarded_question(body: UserQuestionRequest, request: Request) -> Dict[str, Any]:
+        # 与实际 Router 使用同一意图解析；人工工单不经可由 context 注入的 A2A 路径。
+        forbidden = {'user_text', 'required_capabilities', 'runtime_resume', 'target_input'}
+        if forbidden.intersection(body.context):
+            raise HTTPException(422, '问答上下文不能覆盖任务正文、运行计划或内部动作')
+        from app.agents.router.agent import RouterAgent
+        route = RouterAgent().run({'user_text': body.user_text, 'context': body.context})
+        from app.runtime.coordinator import RuntimeInputParser
+        capabilities = RuntimeInputParser().parse({**body.context, 'user_text': body.user_text}).required_capabilities
+        protected = any(c.startswith('workorder_') for c in capabilities)
+        if route.target_agent == 'workorder' or protected:
+            actor = team_actor(request)
+            if route.intent != 'workorder_query' and capabilities != ('workorder_query',):
+                raise HTTPException(403, '请在工单系统中接单、提交维修反馈和确认；问答不执行工单变更')
+            order_id = str(route.target_input.get('workorder_id') or '')
+            if order_id and actor.get('role') != 'supervisor':
+                require_assignee(order_id, actor)
+            result = runtime.container.operations.execute_workorder('query', {'workorder_id': order_id}, from_agent='router')
+            if not order_id:
+                result['items'] = [o for o in result.get('items', []) if actor.get('role') == 'supervisor' or o.get('assignee') == actor['user_id']]
+                result['count'] = len(result['items'])
+            return result
+        return runtime.run_user(body.user_text, body.context)
 
     @app.post("/api/agent/event", deprecated=True, dependencies=[Depends(require_write_auth)])
     @app.post("/api/v1/agent/event", dependencies=[Depends(require_write_auth)])
@@ -349,20 +375,27 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return result
 
     @app.get("/api/workorders")
-    def workorders() -> Dict[str, Any]:
+    def workorders(request: Request) -> Dict[str, Any]:
+        actor = team_actor(request)
         result = runtime.container.operations.execute_workorder("query", {}, from_agent="router")
-        return {"items": result.get("items", []), "count": len(result.get("items", [])), "backend": "workorder-agent"}
+        items = [o for o in result.get('items', []) if actor['role'] == 'supervisor' or o.get('assignee') == actor['user_id']]
+        return {'items': items, 'count': len(items), 'backend': 'workorder-agent'}
 
     @app.post("/api/workorders", dependencies=[Depends(require_write_auth)])
-    def workorder_create(request: WorkOrderCreateRequest) -> Dict[str, Any]:
-        return runtime.container.operations.execute_workorder("create", request.model_dump(mode="json"), from_agent="router")
+    def workorder_create(body: WorkOrderCreateRequest, request: Request) -> Dict[str, Any]:
+        team_actor(request)
+        raise HTTPException(403, '工单由系统根据已验证的诊断和维修方案自动派发，人工入口不创建或指定负责人')
 
     @app.get("/api/workorders/{workorder_id}")
-    def workorder(workorder_id: str) -> Dict[str, Any]:
+    def workorder(workorder_id: str, request: Request) -> Dict[str, Any]:
+        actor = team_actor(request)
+        if actor['role'] != 'supervisor':
+            require_assignee(workorder_id, actor)
         return runtime.container.operations.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router")
 
     @app.delete("/api/workorders/{workorder_id}", dependencies=[Depends(require_write_auth)])
-    def delete_workorder(workorder_id: str) -> Dict[str, Any]:
+    def delete_workorder(workorder_id: str, request: Request) -> Dict[str, Any]:
+        require_assignee(workorder_id, team_actor(request))
         try:
             result = runtime.container.registry.execute("delete_workorder", {"workorder_id": workorder_id}, context={"agent": "router", "step": "delete_workorder"})
         except HTTPError as error:
@@ -470,30 +503,19 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return result
 
     @app.post("/api/workorders/{workorder_id}/action", dependencies=[Depends(require_write_auth)])
-    def workorder_action(workorder_id: str, request: WorkOrderActionRequest) -> Dict[str, Any]:
-        payload = request.model_dump(mode="json")
+    def workorder_action(workorder_id: str, body: WorkOrderActionRequest, request: Request) -> Dict[str, Any]:
+        payload = body.model_dump(mode="json")
         payload["workorder_id"] = workorder_id
         payload["repair_feedback"] = payload.get("repair_feedback") or payload.get("feedback") or ""
-        return runtime.container.operations.execute_workorder(request.action, payload, from_agent="router")
+        return closure_call(human_action, workorder_id, body.action, payload, request, runtime.container.operations)
 
     @app.post("/api/v1/workorders/{workorder_id}/feedback", dependencies=[Depends(require_write_auth)])
-    def submit_feedback_v1(workorder_id: str, request: RepairFeedbackRequest) -> Dict[str, Any]:
-        feedback = request.model_dump(mode="json")
-        return runtime.container.operations.execute_workorder("submit_feedback", {"workorder_id": workorder_id, "repair_feedback": feedback}, from_agent="router")
+    def submit_feedback_v1(workorder_id: str, body: RepairFeedbackRequest, request: Request) -> Dict[str, Any]:
+        return closure_call(human_action, workorder_id, 'submit_feedback', body.model_dump(mode='json'), request)
 
     @app.post("/api/v1/workorders/{workorder_id}/complete", dependencies=[Depends(require_write_auth)])
-    def complete_workorder_v1(workorder_id: str, request: RepairFeedbackRequest) -> Dict[str, Any]:
-        feedback = request.model_dump(mode="json")
-        return runtime.container.operations.execute_workorder(
-            "mark_repair_completed",
-            {
-                "workorder_id": workorder_id,
-                "repair_feedback": feedback,
-                "repair_verification": feedback.get("verification") or {},
-                "maintenance_confirmed_by": feedback.get("operator") or "",
-            },
-            from_agent="router",
-        )
+    def complete_workorder_v1(workorder_id: str, body: RepairFeedbackRequest, request: Request) -> Dict[str, Any]:
+        return closure_call(human_action, workorder_id, 'mark_repair_completed', body.model_dump(mode='json'), request, runtime.container.operations)
 
     @app.post("/api/v1/quality/checks", dependencies=[Depends(require_write_auth)])
     def create_quality_check(request: QualityCheckRequest) -> Dict[str, Any]:

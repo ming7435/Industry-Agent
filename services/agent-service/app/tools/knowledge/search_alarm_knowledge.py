@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
-from .search_knowledge import search_knowledge as _search_knowledge
+from .search_knowledge import search_filtered_knowledge
 
 
 def search_alarm_knowledge(
@@ -15,7 +15,4 @@ def search_alarm_knowledge(
     alarm_code: str = "",
     **_: Any,
 ) -> Dict[str, Any]:
-    values = {**dict(filters or {}), "knowledge_type": "alarm"}
-    if alarm_code:
-        values["alarm_code"] = alarm_code
-    return _search_knowledge(rag, query, limit=limit, filters=values)
+    return search_filtered_knowledge(rag, query, knowledge_type="alarm", limit=limit, filters=filters, alarm_code=alarm_code)

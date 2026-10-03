@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .workorder import BackendBusinessService
 from .workorder.repository import BusinessStoreError
+from .team.routes import create_router, internal_auth
+from .line_control.routes import create_router as create_line_router
 
 
 class ToolCall(BaseModel):
@@ -49,6 +51,10 @@ def get_service() -> BackendBusinessService:
     return _service
 
 
+app.include_router(create_router(get_service))
+app.include_router(create_line_router(get_service))
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     try:
@@ -59,7 +65,12 @@ def health() -> dict[str, Any]:
 
 
 @app.post("/tools/call")
-def call_tool(request: ToolCall) -> dict[str, Any]:
+def call_tool(request: ToolCall, http_request: Request) -> dict[str, Any]:
+    internal_auth(http_request)
+    return execute_tool(request)
+
+
+def execute_tool(request: ToolCall) -> dict[str, Any]:
     try:
         service = get_service()
         arguments = dict(request.arguments)
@@ -80,39 +91,45 @@ def call_tool(request: ToolCall) -> dict[str, Any]:
 
 
 @app.get("/api/workorders/{workorder_id}")
-def get_workorder(workorder_id: str) -> dict[str, Any]:
-    return call_tool(ToolCall(tool="get_workorder", arguments={"workorder_id": workorder_id}))
+def get_workorder(workorder_id: str, request: Request) -> dict[str, Any]:
+    internal_auth(request)
+    return execute_tool(ToolCall(tool="get_workorder", arguments={"workorder_id": workorder_id}))
 
 
 @app.get("/api/workorders")
-def list_workorders() -> dict[str, Any]:
-    return call_tool(ToolCall(tool="list_workorders", arguments={}))
+def list_workorders(request: Request) -> dict[str, Any]:
+    internal_auth(request)
+    return execute_tool(ToolCall(tool="list_workorders", arguments={}))
 
 
 @app.delete("/api/workorders/{workorder_id}")
-def delete_workorder(workorder_id: str) -> dict[str, Any]:
-    result = call_tool(ToolCall(tool="delete_workorder", arguments={"workorder_id": workorder_id}))
+def delete_workorder(workorder_id: str, request: Request) -> dict[str, Any]:
+    internal_auth(request)
+    result = execute_tool(ToolCall(tool="delete_workorder", arguments={"workorder_id": workorder_id}))
     if not result.get("deleted"):
         raise HTTPException(status_code=404, detail="工单不存在：%s" % workorder_id)
     return result
 
 
 @app.get("/api/reports")
-def list_reports() -> dict[str, Any]:
-    return call_tool(ToolCall(tool="list_reports", arguments={}))
+def list_reports(request: Request) -> dict[str, Any]:
+    internal_auth(request)
+    return execute_tool(ToolCall(tool="list_reports", arguments={}))
 
 
 @app.get("/api/reports/{report_id}")
-def get_report(report_id: str) -> dict[str, Any]:
-    result = call_tool(ToolCall(tool="get_report", arguments={"report_id": report_id}))
+def get_report(report_id: str, request: Request) -> dict[str, Any]:
+    internal_auth(request)
+    result = execute_tool(ToolCall(tool="get_report", arguments={"report_id": report_id}))
     if not result.get("found"):
         raise HTTPException(status_code=404, detail="报告不存在：%s" % report_id)
     return result
 
 
 @app.delete("/api/reports/{report_id}")
-def delete_report(report_id: str) -> dict[str, Any]:
-    result = call_tool(ToolCall(tool="delete_report", arguments={"report_id": report_id}))
+def delete_report(report_id: str, request: Request) -> dict[str, Any]:
+    internal_auth(request)
+    result = execute_tool(ToolCall(tool="delete_report", arguments={"report_id": report_id}))
     if not result.get("deleted"):
         raise HTTPException(status_code=404, detail="报告不存在：%s" % report_id)
     return result

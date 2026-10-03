@@ -1,0 +1,7 @@
+.team-access { background: #f5fbf9; border: 1px solid #c6dfd9; border-radius: 12px; margin: 12px 0 20px; color: #16383e; padding: 12px 16px; }
+.team-access summary { cursor: pointer; font-weight: 700; }
+.team-access-body { max-width: 760px; padding-top: 12px; }
+.team-access form { display: flex; flex-direction: column; gap: 12px; }
+.team-access label { display: flex; flex-direction: column; gap: 6px; }
+.team-access input, .team-access select { border: 1px solid #c6d8df; background: white; padding: 10px; border-radius: 8px; }
+.monitor-canvas-shell .team-access { position: absolute; z-index: 20; top: 80px; right: 18px; max-width: min(520px, 80%); max-height: 75vh; overflow: auto; box-shadow: 0 6px 20px #13323b12; }

@@ -217,6 +217,8 @@ class RuntimeDispatcher:
             event["runtime_managed"] = True
             event["runtime_capability"] = capability
             if capability == "diagnosis_review":
+                # 复核必须重新执行诊断，不能命中原事件版本的低置信度缓存。
+                event["review"] = True
                 event["knowledge"] = dict(state.get("knowledge") or {})
                 event["runtime_evidence"] = list(state.get("evidence") or [])
             return event

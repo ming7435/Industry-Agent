@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from datetime import datetime, timezone
 
 import pytest
@@ -6,41 +5,27 @@ import pytest
 from app.workorder.validator import WorkOrderValidator
 
 
-class _Tracing:
-    def start(self, *_args, **_kwargs):
-        return None
+def test_low_confidence_diagnosis_cannot_auto_create_workorder(tmp_path, monkeypatch):
+    from runtime_slimming_adapter import build_test_orchestrator
 
-    def finish(self, _name, _state, payload):
-        return payload
-
-
-class _WorkOrderRequests:
-    def __init__(self):
-        self.calls = 0
-
-    def execute_workorder(self, *_args, **_kwargs):
-        self.calls += 1
-        return {"success": True, "workorder_id": "WO-UNEXPECTED", "status": "open"}
-
-
-def test_low_confidence_diagnosis_cannot_auto_create_workorder():
-    from app.graph.nodes import OrchestratorNodes
-
-    requests = _WorkOrderRequests()
-    nodes = OrchestratorNodes(SimpleNamespace(requests=requests, tracing=_Tracing()))
-    result = nodes.workorder(
+    runtime = build_test_orchestrator(tmp_path, monkeypatch, model_responses=[], rag_results=[])
+    diagnosis = {"device_id": "D-LOW", "fault": "轴承振动", "confidence": 0.42}
+    result = runtime._execute_graph(
         {
             "entry": "trigger",
-            "event": {"event_id": "EVT-LOW-CONF", "device_id": "D-LOW"},
-            "diagnosis": {"device_id": "D-LOW", "fault": "轴承振动", "confidence": 0.42},
-            "maintenance_plan": {"workorder_ready": True, "maintenance_required": True},
+            "event": {"event_id": "EVT-LOW-CONF", "device_id": "D-LOW", "required_capabilities": ["workorder_create"]},
+            "diagnosis": diagnosis,
+            "knowledge": {"documents": [{"document_id": "DOC-GATE", "source": "test"}]},
+            "cad": {"components": [{"component_id": "C-GATE", "device_id": "D-LOW"}]},
+            "maintenance_plan": {"diagnosis": diagnosis, "workorder_ready": True, "maintenance_required": True},
         }
     )
 
-    assert requests.calls == 0
-    assert result["status"] == "blocked_diagnosis_confidence"
-    assert result["workorder"] == {}
-    assert "置信度" in result["stop_reason"]
+    assert not [call for call in runtime.test_boundary.calls if call[1] == "create_workorder"]
+    assert result["runtime_result"]["status"] in {"blocked", "error"}
+    assert not result.get("workorder")
+    assert result["diagnosis"]["confidence"] == 0.42
+    assert "置信度" in str(result["runtime_result"])
 
 
 def test_maintenance_required_is_explicit_and_gates_workorder_readiness():

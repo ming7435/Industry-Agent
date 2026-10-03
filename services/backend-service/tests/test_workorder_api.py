@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
@@ -13,6 +14,8 @@ def test_workorder_verification_close_and_idempotency(tmp_path, monkeypatch):
     import app.main as main
     main._service = None
     client = TestClient(app)
+    main.get_service().team.devices = lambda: [{'device_id': 'CNC-001'}]
+    technician_id = main.get_service().team.register('测试维修', 'test-password-123', 'technician', 'CNC-001')['user_id']
     payload = {"device_id": "CNC-001", "title": "主轴异常", "idempotency_key": "e2e-1"}
     first = client.post("/tools/call", json={"tool": "create_workorder", "arguments": payload}).json()
     second = client.post("/tools/call", json={"tool": "create_workorder", "arguments": payload}).json()
@@ -20,9 +23,9 @@ def test_workorder_verification_close_and_idempotency(tmp_path, monkeypatch):
     workorder_id = first["workorder_id"]
     denied = client.post("/tools/call", json={"tool": "close_workorder", "arguments": {"workorder_id": workorder_id}})
     assert denied.status_code == 409
-    assigned = client.post("/tools/call", json={"tool": "assign_workorder", "arguments": {"workorder_id": workorder_id, "assignee": "TECH-001"}})
+    assigned = client.post("/tools/call", json={"tool": "assign_workorder", "arguments": {"workorder_id": workorder_id, "assignee": technician_id}})
     assert assigned.status_code == 200
-    complete = client.post("/tools/call", json={"tool": "mark_repair_completed", "arguments": {"workorder_id": workorder_id, "feedback": {"feedback": "已更换"}, "repair_verification": {"device_recovery": {"device_id": "CNC-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": "2026-09-28T12:00:00Z"}}}})
+    complete = client.post("/tools/call", json={"tool": "mark_repair_completed", "arguments": {"workorder_id": workorder_id, "feedback": {"feedback": "已更换"}, "repair_verification": {"device_recovery": {"device_id": "CNC-001", "status": "running", "alarm_code": "", "active_alarms": [], "metrics": {"spindle_vibration_rms": 0.2}, "checked_at": datetime.now(timezone.utc).isoformat()}}}})
     assert complete.status_code == 200
     assert complete.json()["workorder"]["repair_verification"]["source"] == "device_recovery"
     closed = client.post("/tools/call", json={"tool": "close_workorder", "arguments": {"workorder_id": workorder_id}})
@@ -209,8 +212,8 @@ def test_backend_demo_operational_records_are_explicitly_marked(tmp_path, monkey
     production = client.post("/tools/call", json={"tool": "get_production_status", "arguments": {"device_id": "CNC-001"}}).json()
     part = client.post("/tools/call", json={"tool": "get_production_part", "arguments": {"part_id": "PART-001"}}).json()
 
-    assert technician["synthetic"] is True
-    assert technician["items"][0]["synthetic"] is True
+    assert technician['items'] == []
+    assert not technician.get('synthetic')
     assert production["synthetic"] is True
     assert part["synthetic"] is True
 
@@ -357,6 +360,6 @@ def test_backend_repair_verification_rejects_expired_snapshot_and_has_no_health_
 
     current = BackendBusinessService._build_repair_verification(order, {
         "device_id": "D-FRESH", "status": "running", "active_alarms": [],
-        "metrics": {"vibration": 0.2}, "checked_at": "2026-09-28T12:00:00Z", "health_score": 1,
+        "metrics": {"vibration": 0.2}, "checked_at": datetime.now(timezone.utc).isoformat(), "health_score": 1,
     }, {})
     assert current["passed"] is True

@@ -18,11 +18,15 @@ class McpClient:
     def call(self, server: str, operation: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
         base_url = self.base_urls.get(server) or os.getenv("MCP_%s_URL" % server.upper(), "").rstrip("/")
         if base_url:
+            headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+            backend_url = os.getenv('BACKEND_SERVICE_BASE_URL', '').rstrip('/')
+            if server in {'mes', 'qms', 'inventory'} and base_url == backend_url and os.getenv('BACKEND_INTERNAL_TOKEN'):
+                headers['Authorization'] = 'Bearer ' + os.environ['BACKEND_INTERNAL_TOKEN']
             request = Request(
                 base_url + "/tools/call",
                 data=json.dumps({"tool": operation, "arguments": dict(arguments)}, ensure_ascii=False).encode("utf-8"),
                 method="POST",
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
+                headers=headers,
             )
             with urlopen(request, timeout=float(os.getenv("MCP_TIMEOUT_SECONDS", "15"))) as response:
                 payload = json.loads(response.read().decode("utf-8"))

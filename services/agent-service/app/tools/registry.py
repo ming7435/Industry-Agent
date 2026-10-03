@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 from time import perf_counter
-from typing import Any, Dict, Iterator, Mapping
+from typing import Any, Callable, Dict, Iterator, Mapping
 
 from app.mcp.client import McpClient
 from app.mcp.quality import QualityMcpAdapter
@@ -121,6 +122,19 @@ class ToolExecutionContext:
         }
 
 
+@dataclass(frozen=True)
+class ToolDefinition:
+    """处理器、模型声明和外部路由的单一规范定义。"""
+
+    name: str
+    handler: Callable[..., dict[str, Any]]
+    description: str
+    server: str
+    operation: str
+    parameters: Mapping[str, Any]
+    exposed_to_model: bool
+
+
 class ToolRegistry:
     def __init__(self, base_url: str | None = None, rag_index: RAGIndex | None = None, rag_client: RAGServiceClient | None = None, trace: TraceRecorder | None = None, cad_base_url: str | None = None, rag_base_url: str | None = None) -> None:
         self.base_url = base_url
@@ -135,79 +149,86 @@ class ToolRegistry:
         self.workorder_mcp = None if self.backend_base_url else WorkOrderMcpAdapter()
         self.quality_mcp = None if self.backend_base_url else QualityMcpAdapter()
         self.report_store = {} if self.backend_base_url else build_report_store()
-        self.mcp = McpClient({
-            "get_alarm_definition": get_alarm_definition,
-            "get_device_history": self._get_device_history,
-            "get_device_logs": get_device_logs,
-            "get_device_status": self.get_device_status,
-            "get_active_alarms": self.get_active_alarms,
-            "get_production_status": get_production_status_tool,
-            "intent_classifier_tool": intent_classifier_tool_fn,
-            "search_knowledge": lambda **arguments: search_knowledge_tool(self.rag, **arguments),
-            "search_alarm_knowledge": lambda **arguments: search_alarm_knowledge_tool(self.rag, **arguments),
-            "search_sop": lambda **arguments: search_sop_tool(self.rag, **arguments),
-            "search_manual": lambda **arguments: search_manual_tool(self.rag, **arguments),
-            "search_fault_cases": lambda **arguments: search_fault_cases_tool(self.rag, **arguments),
-            "search_semantic_memory": lambda **arguments: search_semantic_memory_tool(self.rag, **arguments),
-            "fetch_document": lambda **arguments: fetch_knowledge_document(self.rag, **arguments),
-            "fetch_chunk": lambda **arguments: fetch_knowledge_chunk(self.rag, **arguments),
-            "document_parser": self.document_parser,
-            "query_cad": self.query_cad,
-            "query_bom": self.query_bom,
-            "query_part": self.query_part,
-            "query_part_relation": self.query_part_relation,
-            "query_assembly_relation": self.query_assembly_relation,
-            "get_drawing_metadata": self.get_drawing_metadata,
-            "get_component_location": self.get_component_location,
-            "query_drawing": self.query_drawing,
-            "query_relation": self.query_relation,
-            "fetch_engineering_record": self.fetch_engineering_record,
-            "generate_repair_plan": self.generate_repair_plan,
-            "query_spare_part": self.query_spare_part,
-            "query_inventory": self.query_inventory,
-            "query_stock": self.query_stock,
-            "query_part_availability": self.query_part_availability,
-            "get_workorder_template": self.get_workorder_template,
-            "submit_workorder_draft": self.submit_workorder_draft,
-            "create_workorder": self.create_workorder,
-            "update_workorder": self.update_workorder,
-            "get_workorder": self.get_workorder,
-            "query_workorder": self.query_workorder,
-            "list_workorders": self.list_workorders,
-            "delete_workorder": self.delete_workorder,
-            "assign_workorder": self.assign_workorder,
-            "submit_repair_feedback": self.submit_repair_feedback,
-            "mark_repair_completed": self.mark_repair_completed,
-            "record_repair_verification_failed": self.record_repair_verification_failed,
-            "close_workorder": self.close_workorder,
-            "reopen_workorder": self.reopen_workorder,
-            "query_technicians": self.query_technicians,
-            "query_technician_skills": self.query_technician_skills,
-            "query_technician_workload": self.query_technician_workload,
-            "query_shift": self.query_shift,
-            "query_team_availability": self.query_team_availability,
-            "get_production_part": self.get_production_part,
-            "get_part_specification": self.get_part_specification,
-            "inspect_part_dimensions": self.inspect_part_dimensions,
-            "inspect_part_appearance": self.inspect_part_appearance,
-            "inspect_part_material": self.inspect_part_material,
-            "inspect_part_function": self.inspect_part_function,
-            "inspect_part_process": self.inspect_part_process,
-            "generate_report": self.generate_report,
-            "get_diagnosis_record": self.get_diagnosis_record,
-            "get_maintenance_record": self.get_maintenance_record,
-            "get_quality_record": self.get_quality_record,
-            "get_trace_summary": self.get_trace_summary,
-            "persist_report": self.persist_report,
-            "delete_report": self.delete_report,
-            "generate_report_file": self.generate_report_file,
-            "ingest_knowledge": self.ingest_knowledge,
-        }, base_urls={
+        self.definitions = self._build_definitions()
+        self.mcp = McpClient({name: definition.handler for name, definition in self.definitions.items()}, base_urls={
             "cad": self.cad_base_url,
             "mes": self.backend_base_url,
             "inventory": os.getenv("MCP_INVENTORY_URL", "").rstrip("/") or self.backend_base_url,
             "qms": os.getenv("MCP_QMS_URL", "").rstrip("/") or self.backend_base_url,
         })
+
+    def _build_definitions(self) -> dict[str, ToolDefinition]:
+        """集中定义所有工具；副作用名称和模型暴露范围保持独立。"""
+        generic_parameters = {"type": "object", "additionalProperties": True}
+        definitions = [
+            ToolDefinition("get_alarm_definition", get_alarm_definition, "查询报警定义", "knowledge", "get_alarm_definition", {"type":"object","properties":{"alarm_code":{"type":"string","description":"报警代码"}},"required":["alarm_code"],"additionalProperties":False}, True),
+            ToolDefinition("get_device_status", self.get_device_status, "查询设备状态", "plc", "get_device_status", generic_parameters, True),
+            ToolDefinition("get_active_alarms", self.get_active_alarms, "查询设备当前活动报警", "plc", "get_active_alarms", generic_parameters, True),
+            ToolDefinition("get_production_status", get_production_status_tool, "查询MES生产状态", "mes", "get_production_status", generic_parameters, True),
+            ToolDefinition("intent_classifier_tool", intent_classifier_tool_fn, "识别用户意图并选择目标Agent", "knowledge", "intent_classifier_tool", generic_parameters, True),
+            ToolDefinition("get_device_history", self._get_device_history, "查询设备历史", "plc", "get_device_history", {"type":"object","properties":{"device_id":{"type":"string","description":"设备编号"},"metric_keys":{"type":"array","items":{"type":"string"},"description":"指标键列表"},"metric":{"type":"string","description":"单个指标键"},"limit":{"type":"integer","minimum":3,"maximum":120},"alarm_code":{"type":"string","description":"关联报警代码"}},"required":["device_id"],"additionalProperties":False}, True),
+            ToolDefinition("get_device_logs", get_device_logs, "查询设备日志和PLC事件", "plc", "get_device_logs", generic_parameters, True),
+            ToolDefinition("search_knowledge", lambda **arguments: search_knowledge_tool(self.rag, **arguments), "检索工业知识", "knowledge", "search_knowledge", generic_parameters, True),
+            ToolDefinition("search_alarm_knowledge", lambda **arguments: search_alarm_knowledge_tool(self.rag, **arguments), "检索报警知识", "knowledge", "search_alarm_knowledge", generic_parameters, True),
+            ToolDefinition("search_sop", lambda **arguments: search_sop_tool(self.rag, **arguments), "检索SOP规程", "knowledge", "search_sop", generic_parameters, True),
+            ToolDefinition("search_manual", lambda **arguments: search_manual_tool(self.rag, **arguments), "检索维修手册", "knowledge", "search_manual", generic_parameters, True),
+            ToolDefinition("search_fault_cases", lambda **arguments: search_fault_cases_tool(self.rag, **arguments), "检索历史故障案例", "knowledge", "search_fault_cases", generic_parameters, True),
+            ToolDefinition("search_semantic_memory", lambda **arguments: search_semantic_memory_tool(self.rag, **arguments), "检索语义记忆", "knowledge", "search_semantic_memory", generic_parameters, True),
+            ToolDefinition("fetch_document", lambda **arguments: fetch_knowledge_document(self.rag, **arguments), "获取知识文档全文", "knowledge", "fetch_document", generic_parameters, True),
+            ToolDefinition("fetch_chunk", lambda **arguments: fetch_knowledge_chunk(self.rag, **arguments), "获取知识文档片段", "knowledge", "fetch_chunk", generic_parameters, True),
+            ToolDefinition("document_parser", self.document_parser, "解析维修手册、SOP或工程文档", "knowledge", "document_parser", generic_parameters, True),
+            ToolDefinition("query_cad", self.query_cad, "查询CAD和BOM", "cad", "fetch_engineering_record", generic_parameters, True),
+            ToolDefinition("query_bom", self.query_bom, "查询BOM物料清单", "cad", "query_bom", generic_parameters, True),
+            ToolDefinition("query_part", self.query_part, "查询工程零件", "cad", "query_part", generic_parameters, True),
+            ToolDefinition("query_part_relation", self.query_part_relation, "查询零件上下游关系", "cad", "query_relation", generic_parameters, True),
+            ToolDefinition("query_assembly_relation", self.query_assembly_relation, "查询装配关系", "cad", "query_relation", generic_parameters, True),
+            ToolDefinition("get_drawing_metadata", self.get_drawing_metadata, "查询图纸元数据", "cad", "query_drawing", generic_parameters, True),
+            ToolDefinition("get_component_location", self.get_component_location, "查询部件安装位置", "cad", "query_relation", generic_parameters, True),
+            ToolDefinition("query_drawing", self.query_drawing, "从 CAD 服务查询图纸引用和定位元数据", "cad", "query_drawing", generic_parameters, True),
+            ToolDefinition("query_relation", self.query_relation, "从 CAD 服务查询装配关系", "cad", "query_relation", generic_parameters, True),
+            ToolDefinition("fetch_engineering_record", self.fetch_engineering_record, "从 CAD 服务获取完整工程记录", "cad", "fetch_engineering_record", generic_parameters, True),
+            ToolDefinition("generate_repair_plan", self.generate_repair_plan, "生成维修计划草案", "local", "generate_repair_plan", generic_parameters, True),
+            ToolDefinition("query_spare_part", self.query_spare_part, "查询备件库存", "inventory", "query_spare_part", generic_parameters, True),
+            ToolDefinition("query_inventory", self.query_inventory, "查询库存", "inventory", "query_inventory", generic_parameters, True),
+            ToolDefinition("query_stock", self.query_stock, "查询库存余量", "inventory", "query_stock", generic_parameters, True),
+            ToolDefinition("query_part_availability", self.query_part_availability, "查询备件可用性", "inventory", "query_part_availability", generic_parameters, True),
+            ToolDefinition("get_workorder_template", self.get_workorder_template, "获取工单草案模板", "mes", "get_workorder_template", generic_parameters, True),
+            ToolDefinition("submit_workorder_draft", self.submit_workorder_draft, "提交工单草案", "mes", "submit_workorder_draft", generic_parameters, True),
+            ToolDefinition("create_workorder", self.create_workorder, "创建维修工单", "mes", "create_workorder", generic_parameters, True),
+            ToolDefinition("update_workorder", self.update_workorder, "更新维修工单", "mes", "update_workorder", generic_parameters, True),
+            ToolDefinition("get_workorder", self.get_workorder, "获取单个维修工单", "mes", "get_workorder", generic_parameters, True),
+            ToolDefinition("query_workorder", self.query_workorder, "查询维修工单", "mes", "query_workorder", generic_parameters, True),
+            ToolDefinition("list_workorders", self.list_workorders, "查询工单列表", "mes", "list_workorders", generic_parameters, True),
+            ToolDefinition("delete_workorder", self.delete_workorder, "删除维修工单", "mes", "delete_workorder", generic_parameters, True),
+            ToolDefinition("assign_workorder", self.assign_workorder, "派工并更新负责人", "mes", "assign_workorder", generic_parameters, True),
+            ToolDefinition("submit_repair_feedback", self.submit_repair_feedback, "提交维修反馈", "mes", "submit_repair_feedback", generic_parameters, True),
+            ToolDefinition("mark_repair_completed", self.mark_repair_completed, "标记维修完成", "mes", "mark_repair_completed", generic_parameters, True),
+            ToolDefinition("close_workorder", self.close_workorder, "关闭维修工单", "mes", "close_workorder", generic_parameters, True),
+            ToolDefinition("reopen_workorder", self.reopen_workorder, "重新打开维修工单", "mes", "reopen_workorder", generic_parameters, True),
+            ToolDefinition("query_technicians", self.query_technicians, "查询可派工维修人员", "mes", "query_technicians", generic_parameters, True),
+            ToolDefinition("query_technician_skills", self.query_technician_skills, "查询维修人员技能", "mes", "query_technician_skills", generic_parameters, True),
+            ToolDefinition("query_technician_workload", self.query_technician_workload, "查询维修人员负载", "mes", "query_technician_workload", generic_parameters, True),
+            ToolDefinition("query_shift", self.query_shift, "查询当前班次", "mes", "query_shift", generic_parameters, True),
+            ToolDefinition("query_team_availability", self.query_team_availability, "查询班组可用性", "mes", "query_team_availability", generic_parameters, True),
+            ToolDefinition("get_production_part", self.get_production_part, "获取已生产零件及生产追溯信息", "qms", "get_production_part", generic_parameters, True),
+            ToolDefinition("get_part_specification", self.get_part_specification, "获取零件质量规格和检验标准", "qms", "get_part_specification", generic_parameters, True),
+            ToolDefinition("inspect_part_dimensions", self.inspect_part_dimensions, "检测零件尺寸是否符合规格", "qms", "inspect_part_dimensions", generic_parameters, True),
+            ToolDefinition("inspect_part_appearance", self.inspect_part_appearance, "检测零件外观缺陷", "qms", "inspect_part_appearance", generic_parameters, True),
+            ToolDefinition("inspect_part_material", self.inspect_part_material, "检测零件材料和硬度", "qms", "inspect_part_material", generic_parameters, True),
+            ToolDefinition("inspect_part_function", self.inspect_part_function, "检测零件功能和关键性能", "qms", "inspect_part_function", generic_parameters, True),
+            ToolDefinition("inspect_part_process", self.inspect_part_process, "检测零件生产过程记录是否完整", "qms", "inspect_part_process", generic_parameters, True),
+            ToolDefinition("generate_report", self.generate_report, "生成结构化运维报告", "mes", "generate_report", generic_parameters, True),
+            ToolDefinition("get_diagnosis_record", self.get_diagnosis_record, "获取已有诊断记录", "local", "get_diagnosis_record", generic_parameters, True),
+            ToolDefinition("get_maintenance_record", self.get_maintenance_record, "获取已有维修计划记录", "local", "get_maintenance_record", generic_parameters, True),
+            ToolDefinition("get_quality_record", self.get_quality_record, "获取已有质检记录", "local", "get_quality_record", generic_parameters, True),
+            ToolDefinition("get_trace_summary", self.get_trace_summary, "获取流程 Trace 摘要", "local", "get_trace_summary", generic_parameters, True),
+            ToolDefinition("persist_report", self.persist_report, "持久化结构化报告", "mes", "persist_report", generic_parameters, True),
+            ToolDefinition("delete_report", self.delete_report, "删除结构化报告", "mes", "delete_report", generic_parameters, True),
+            ToolDefinition("generate_report_file", self.generate_report_file, "导出报告文件", "local", "generate_report_file", generic_parameters, True),
+            ToolDefinition("ingest_knowledge", self.ingest_knowledge, "将维修手册 JSONL 入库到 RAG", "knowledge", "ingest_knowledge", generic_parameters, True),
+            ToolDefinition("record_repair_verification_failed", self.record_repair_verification_failed, "记录维修验收未通过", "mes", "record_repair_verification_failed", generic_parameters, False),
+        ]
+        return {definition.name: definition for definition in definitions}
 
     @contextmanager
     def trace_context(
@@ -494,40 +515,10 @@ class ToolRegistry:
     ) -> Dict[str, Any]:
         """通过 MCP 客户端分派工具，并记录开始、失败和完成轨迹。"""
 
-        # 工具名称到 MCP 服务的映射保持集中管理，避免 Agent 直接依赖外部系统。
-        server = {
-            "get_device_status": "plc", "get_device_history": "plc", "get_active_alarms": "plc",
-            "get_device_logs": "plc",
-            "get_production_status": "mes", "query_cad": "cad", "query_bom": "cad",
-            "query_part": "cad", "query_part_relation": "cad", "query_assembly_relation": "cad",
-            "get_drawing_metadata": "cad", "get_component_location": "cad",
-            "create_workorder": "mes", "update_workorder": "mes", "get_workorder": "mes", "query_workorder": "mes",
-            "list_workorders": "mes", "delete_workorder": "mes", "assign_workorder": "mes", "submit_repair_feedback": "mes",
-            "get_workorder_template": "mes", "submit_workorder_draft": "mes",
-            "mark_repair_completed": "mes", "record_repair_verification_failed": "mes", "close_workorder": "mes", "reopen_workorder": "mes",
-            "query_technicians": "mes", "query_technician_skills": "mes", "query_technician_workload": "mes", "query_shift": "mes", "query_team_availability": "mes",
-            "get_production_part": "qms", "get_part_specification": "qms",
-            "inspect_part_dimensions": "qms", "inspect_part_appearance": "qms",
-            "inspect_part_material": "qms", "inspect_part_function": "qms", "inspect_part_process": "qms",
-            "query_spare_part": "inventory", "query_inventory": "inventory", "query_stock": "inventory", "query_part_availability": "inventory",
-            "search_knowledge": "knowledge", "search_alarm_knowledge": "knowledge", "search_sop": "knowledge", "search_manual": "knowledge", "search_fault_cases": "knowledge", "search_semantic_memory": "knowledge",
-            "fetch_document": "knowledge", "fetch_chunk": "knowledge", "document_parser": "knowledge", "ingest_knowledge": "knowledge",
-            "generate_report": "mes",
-            # 维修方案由 Maintenance Agent 根据诊断、知识和 CAD 证据本地生成，
-            # 不是 MES 持久化操作，不能转发到 Backend 的 /tools/call。
-            "generate_repair_plan": "local",
-        # 报告来源读取器只转换 Runtime 状态中已有的记录，不查询 Backend
-        # 持久化；即使配置了 Backend HTTP 边界，也继续在本地执行。
-            "get_diagnosis_record": "local", "get_maintenance_record": "local", "get_quality_record": "local",
-            "get_trace_summary": "local", "persist_report": "mes", "delete_report": "mes", "generate_report_file": "local",
-        }.get(name, "knowledge")
-        operation = {
-            "query_cad": "fetch_engineering_record",
-            "query_part_relation": "query_relation",
-            "query_assembly_relation": "query_relation",
-            "get_drawing_metadata": "query_drawing",
-            "get_component_location": "query_relation",
-        }.get(name, name)
+        definition = self.definitions.get(name)
+        # 兼容调用方显式注册的额外本地处理器；权限仍检查原请求名称。
+        server = definition.server if definition else "knowledge"
+        operation = definition.operation if definition else name
         started = perf_counter()
         input_payload = self.normalize_tool_arguments(name, arguments)
         task_id, trace_id = _TOOL_TRACE_CONTEXT.get()
@@ -731,105 +722,15 @@ class ToolRegistry:
         return False
 
     def tool_schemas(self) -> list[Dict[str, Any]]:
-        descriptions = {
-            "get_alarm_definition": "查询报警定义",
-            "get_device_status": "查询设备状态",
-            "get_active_alarms": "查询设备当前活动报警",
-            "get_production_status": "查询MES生产状态",
-            "intent_classifier_tool": "识别用户意图并选择目标Agent",
-            "get_device_history": "查询设备历史",
-            "get_device_logs": "查询设备日志和PLC事件",
-            "search_knowledge": "检索工业知识",
-            "search_alarm_knowledge": "检索报警知识",
-            "search_sop": "检索SOP规程",
-            "search_manual": "检索维修手册",
-            "search_fault_cases": "检索历史故障案例",
-            "search_semantic_memory": "检索语义记忆",
-            "fetch_document": "获取知识文档全文",
-            "fetch_chunk": "获取知识文档片段",
-            "document_parser": "解析维修手册、SOP或工程文档",
-            "query_cad": "查询CAD和BOM",
-            "query_bom": "查询BOM物料清单",
-            "query_part": "查询工程零件",
-            "query_part_relation": "查询零件上下游关系",
-            "query_assembly_relation": "查询装配关系",
-            "get_drawing_metadata": "查询图纸元数据",
-            "get_component_location": "查询部件安装位置",
-            "query_drawing": "从 CAD 服务查询图纸引用和定位元数据",
-            "query_relation": "从 CAD 服务查询装配关系",
-            "fetch_engineering_record": "从 CAD 服务获取完整工程记录",
-            "generate_repair_plan": "生成维修计划草案",
-            "query_spare_part": "查询备件库存",
-            "query_inventory": "查询库存",
-            "query_stock": "查询库存余量",
-            "query_part_availability": "查询备件可用性",
-            "get_workorder_template": "获取工单草案模板",
-            "submit_workorder_draft": "提交工单草案",
-            "create_workorder": "创建维修工单",
-            "update_workorder": "更新维修工单",
-            "get_workorder": "获取单个维修工单",
-            "query_workorder": "查询维修工单",
-            "list_workorders": "查询工单列表",
-            "delete_workorder": "删除维修工单",
-            "assign_workorder": "派工并更新负责人",
-            "submit_repair_feedback": "提交维修反馈",
-            "mark_repair_completed": "标记维修完成",
-            "close_workorder": "关闭维修工单",
-            "reopen_workorder": "重新打开维修工单",
-            "query_technicians": "查询可派工维修人员",
-            "query_technician_skills": "查询维修人员技能",
-            "query_technician_workload": "查询维修人员负载",
-            "query_shift": "查询当前班次",
-            "query_team_availability": "查询班组可用性",
-            "get_production_part": "获取已生产零件及生产追溯信息",
-            "get_part_specification": "获取零件质量规格和检验标准",
-            "inspect_part_dimensions": "检测零件尺寸是否符合规格",
-            "inspect_part_appearance": "检测零件外观缺陷",
-            "inspect_part_material": "检测零件材料和硬度",
-            "inspect_part_function": "检测零件功能和关键性能",
-            "inspect_part_process": "检测零件生产过程记录是否完整",
-            "generate_report": "生成结构化运维报告",
-            "get_diagnosis_record": "获取已有诊断记录",
-            "get_maintenance_record": "获取已有维修计划记录",
-            "get_quality_record": "获取已有质检记录",
-            "get_trace_summary": "获取流程 Trace 摘要",
-            "persist_report": "持久化结构化报告",
-            "delete_report": "删除结构化报告",
-            "generate_report_file": "导出报告文件",
-            "ingest_knowledge": "将维修手册 JSONL 入库到 RAG",
-        }
-        # 对诊断工具声明真实参数，避免模型把事件上下文误当成工具参数。
-        parameter_overrides = {
-            "get_alarm_definition": {
-                "type": "object",
-                "properties": {"alarm_code": {"type": "string", "description": "报警代码"}},
-                "required": ["alarm_code"],
-                "additionalProperties": False,
-            },
-            "get_device_history": {
-                "type": "object",
-                "properties": {
-                    "device_id": {"type": "string", "description": "设备编号"},
-                    "metric_keys": {"type": "array", "items": {"type": "string"}, "description": "指标键列表"},
-                    "metric": {"type": "string", "description": "单个指标键"},
-                    "limit": {"type": "integer", "minimum": 3, "maximum": 120},
-                    "alarm_code": {"type": "string", "description": "关联报警代码"},
-                },
-                "required": ["device_id"],
-                "additionalProperties": False,
-            },
-        }
         return [
             {
                 "type": "function",
                 "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": parameter_overrides.get(
-                        name,
-                        {"type": "object", "additionalProperties": True},
-                    ),
+                    "name": definition.name,
+                    "description": definition.description,
+                    "parameters": deepcopy(dict(definition.parameters)),
                 },
             }
-            for name, description in descriptions.items()
+            for definition in self.definitions.values()
+            if definition.exposed_to_model
         ]

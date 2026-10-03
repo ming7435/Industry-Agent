@@ -1,4 +1,11 @@
 from app.runtime.operations import RuntimeOperations
+import pytest
+
+
+def test_runtime_rejects_client_claimed_confirmation_without_trusted_actor():
+    operations = RuntimeOperations(_Requests(), closure_service=None)
+    with pytest.raises(PermissionError):
+        operations.execute_workorder('mark_repair_completed', {'workorder_id': 'WO-1', 'maintenance_confirmed_by': 'TECH-001', 'repair_verification': {'passed': True}})
 
 
 class _Requests:
@@ -45,7 +52,8 @@ def test_verified_completion_does_not_automatically_start_machine():
     factory = _Factory()
     operations = RuntimeOperations(_Requests(), closure_service=None, factory_client=factory)
 
-    result = operations.execute_workorder(
+    with pytest.raises(PermissionError):
+        operations.execute_workorder(
         "mark_repair_completed",
         {
             "workorder_id": "WO-1",
@@ -56,14 +64,14 @@ def test_verified_completion_does_not_automatically_start_machine():
     )
 
     assert factory.calls == []
-    assert "machine_control" not in result
 
 
 def test_repair_person_confirmation_does_not_automatically_restart_machine():
     factory = _Factory()
     operations = RuntimeOperations(_Requests(), closure_service=None, factory_client=factory)
 
-    result = operations.execute_workorder(
+    with pytest.raises(PermissionError):
+        operations.execute_workorder(
         "mark_repair_completed",
         {
             "workorder_id": "WO-1",
@@ -75,14 +83,14 @@ def test_repair_person_confirmation_does_not_automatically_restart_machine():
     )
 
     assert factory.calls == []
-    assert "machine_control" not in result
 
 
 def test_machine_controller_is_not_called_by_repair_completion():
     factory = _Factory(RuntimeError("device controller unavailable"))
     operations = RuntimeOperations(_Requests(), closure_service=None, factory_client=factory)
 
-    result = operations.execute_workorder(
+    with pytest.raises(PermissionError):
+        operations.execute_workorder(
         "mark_repair_completed",
         {
             "workorder_id": "WO-1",
@@ -94,4 +102,3 @@ def test_machine_controller_is_not_called_by_repair_completion():
     )
 
     assert factory.calls == []
-    assert "machine_control" not in result

@@ -7,7 +7,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 
 from .schemas import WorkOrderGraphState, WorkOrderResult
 from .validator import WorkOrderAgentValidator
@@ -36,7 +36,7 @@ def create_order(state: WorkOrderGraphState) -> Dict[str, Any]:
     request = state["request"]
     existing = agent.find_idempotent(request)
     if existing:
-        return {"workorder": existing, "route": "collect_dispatch_context"}
+        return {"workorder": existing, "route": "validate" if existing.get('assignee') else "collect_dispatch_context"}
     plan = dict(state.get("plan") or {})
     for key in ("idempotency_key", "event_id", "diagnosis_snapshot", "maintenance_plan_snapshot"):
         if request.get(key):
@@ -44,7 +44,7 @@ def create_order(state: WorkOrderGraphState) -> Dict[str, Any]:
     order = agent.service.create_from_plan(plan)
     raw = order.model_dump(mode="json") if hasattr(order, "model_dump") else dict(order)
     agent.remember_idempotent(request, raw)
-    return {"workorder": raw, "route": "collect_dispatch_context" if _should_dispatch(request) else "validate"}
+    return {"workorder": raw, "route": "collect_dispatch_context" if _should_dispatch(request) and not raw.get('assignee') else "validate"}
 
 
 def _should_dispatch(request: Dict[str, Any]) -> bool:
@@ -97,7 +97,8 @@ def execute_action(state: WorkOrderGraphState) -> Dict[str, Any]:
         raw = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
         return {"workorder": raw, "route": "validate"}
     except Exception as error:
-        return {"validation_findings": [str(error)], "route": "fallback"}
+        # 原执行异常路径仍须经过最终校验，再构造失败结果；不重试业务写入。
+        return {"validation_findings": [str(error)], "route": "validate"}
 
 
 def validate(state: WorkOrderGraphState) -> Dict[str, Any]:
@@ -134,18 +135,28 @@ def _route(state: WorkOrderGraphState) -> str:
 def build_workorder_graph():
     workflow = StateGraph(WorkOrderGraphState)
     node_skill_steps = {"final": "validate_result"}
-    for name, node in (("initialize", initialize), ("load_skill", load_skill), ("validate_plan", validate_plan), ("create_order", create_order), ("collect_dispatch_context", collect_dispatch_context), ("select_assignee", select_assignee), ("assign_order", assign_order), ("execute_action", execute_action), ("validate", validate), ("final", final), ("fallback", fallback)):
-        workflow.add_node(name, trace_skill_node("workorder", name, node, skill_step=node_skill_steps.get(name, name)))
-    workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "load_skill")
-    workflow.add_edge("load_skill", "validate_plan")
-    workflow.add_conditional_edges("validate_plan", _route, {"create_order": "create_order", "execute_action": "execute_action", "fallback": "fallback"})
-    workflow.add_conditional_edges("create_order", _route, {"collect_dispatch_context": "collect_dispatch_context", "validate": "validate"})
-    workflow.add_edge("collect_dispatch_context", "select_assignee")
-    workflow.add_edge("select_assignee", "assign_order")
-    workflow.add_edge("assign_order", "validate")
-    workflow.add_edge("execute_action", "validate")
-    workflow.add_conditional_edges("validate", _route, {"final": "final", "fallback": "fallback"})
-    workflow.add_edge("final", END)
-    workflow.add_edge("fallback", END)
+    workflow.add_node("prepare", prepare_skill_node("workorder", initialize, load_skill, skill_steps=node_skill_steps))
+    steps = {}
+    for name, node in (("validate_plan", validate_plan), ("create_order", create_order), ("collect_dispatch_context", collect_dispatch_context), ("select_assignee", select_assignee), ("assign_order", assign_order), ("execute_action", execute_action), ("validate", validate), ("final", final), ("fallback", fallback)):
+        steps[name] = trace_skill_node("workorder", name, node, skill_step=node_skill_steps.get(name, name))
+    for name in ("validate_plan", "create_order", "assign_order", "execute_action"):
+        workflow.add_node(name, steps[name])
+    workflow.add_node("dispatch_context", chain_nodes(steps["collect_dispatch_context"], steps["select_assignee"]))
+    validated_result = chain_nodes(steps["validate"], result_node(steps["final"], steps["fallback"]))
+
+    def finish(state: WorkOrderGraphState) -> Dict[str, Any]:
+        # 输入门禁失败直接回退；执行动作（包括异常）保持原最终校验。
+        if state.get("route") == "fallback":
+            return steps["fallback"](state)
+        return validated_result(state)
+
+    workflow.add_node("finish", finish)
+    workflow.add_edge(START, "prepare")
+    workflow.add_edge("prepare", "validate_plan")
+    workflow.add_conditional_edges("validate_plan", _route, {"create_order": "create_order", "execute_action": "execute_action", "fallback": "finish"})
+    workflow.add_conditional_edges("create_order", _route, {"collect_dispatch_context": "dispatch_context", "validate": "finish"})
+    workflow.add_edge("dispatch_context", "assign_order")
+    workflow.add_edge("assign_order", "finish")
+    workflow.add_edge("execute_action", "finish")
+    workflow.add_edge("finish", END)
     return workflow.compile()

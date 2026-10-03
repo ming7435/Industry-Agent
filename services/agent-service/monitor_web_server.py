@@ -249,6 +249,13 @@ class MonitorWebState:
             max_workers=1,
             thread_name_prefix="diagnosis-agent",
         )
+        from app.clients.backend import BackendServiceClient
+        from app.monitor.line_control import LineController
+        self.line_controller = None
+        if os.getenv('BACKEND_SERVICE_BASE_URL'):
+            self.line_controller = LineController(self.client, BackendServiceClient())
+        self.control_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='virtual-line-control')
+        self.line_state = {'state': 'unknown'}
         self.latest_diagnosis: Optional[Dict[str, Any]] = None
         self.latest_pipeline: Optional[Dict[str, Any]] = None
         self.latest_diagnoses_by_device: Dict[str, Dict[str, Any]] = {}
@@ -347,6 +354,7 @@ class MonitorWebState:
 
         self.runner.stop(timeout=3.0)
         self.diagnosis_executor.shutdown(wait=False, cancel_futures=True)
+        self.control_executor.shutdown(wait=False, cancel_futures=True)
 
     def _on_result(self, result) -> None:
         """接收运行器回调，并更新前端可读取的最新结果。"""
@@ -371,6 +379,10 @@ class MonitorWebState:
         event = trigger.abnormal_event.to_dict() if trigger.abnormal_event else None
         if not event:
             return
+        from app.monitor.models import MonitorStatus
+        if trigger.status == MonitorStatus.FAULT and self.line_controller:
+            control = self.control_executor.submit(self.line_controller.handle_fault, str(event.get('event_id') or event.get('key') or ''), trigger.device_id, str(event.get('message') or '监控确认故障'))
+            control.add_done_callback(self._on_line_control_done)
         with self.lock:
             generation = self._diagnosis_generation
             self.diagnosis_pending += 1
@@ -378,6 +390,15 @@ class MonitorWebState:
         future.add_done_callback(
             lambda completed: self._on_diagnosis_done(completed, generation, event)
         )
+
+    def _on_line_control_done(self, future):
+        try:
+            result = future.result()
+        except Exception as error:
+            result = {'state': 'failed', 'reason': type(error).__name__}
+        with self.lock:
+            self.line_state = result
+            self.machine_controls = dict(result.get('devices') or {})
 
     def _on_diagnosis_done(self, future: Future, generation: int, event: Dict[str, Any] | None = None) -> None:
         """保存异步诊断结果；统计归零后完成的旧任务不会污染新会话。"""
@@ -470,6 +491,7 @@ class MonitorWebState:
                 "diagnosis_task_count": self.diagnosis_task_count,
                 "latest_error": self.latest_error,
                 "machine_controls": dict(self.machine_controls),
+                'line_control': dict(getattr(self, 'line_state', {'state': 'unknown'})),
                 "latest_result": public_result,
                 "latest_results": {
                     device_id: _compact_monitor_result(item)
@@ -543,6 +565,9 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         """处理前端静态资源和监控快照查询。"""
 
         parsed = urlparse(self.path)
+        if parsed.path.startswith('/api/team/'):
+            self._proxy_team('GET')
+            return
         if parsed.path == "/api/monitor/snapshot":
             self._json(self.state.snapshot())
             return
@@ -555,6 +580,9 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         """处理监控开关和统计重置请求。"""
 
         parsed = urlparse(self.path)
+        if parsed.path.startswith('/api/team/'):
+            self._proxy_team('POST')
+            return
         if self._should_proxy(parsed.path):
             self._proxy_to_agent_service("POST")
             return
@@ -616,11 +644,17 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
     def _proxy_to_agent_service(self, method: str) -> None:
         """把平台 API 请求转发给 Agent Service，保持前端同源调用。"""
 
+        origin = self.headers.get('Origin')
+        if method != 'GET' and origin and urlparse(origin).netloc != self.headers.get('Host'):
+            self._error(HTTPStatus.FORBIDDEN, '仅允许同源请求')
+            return
         body = None
         if method in {"POST", "PUT", "PATCH"}:
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length) if length else b""
         headers = agent_request_headers(self.headers.get("Content-Type", "application/json"))
+        if self.headers.get('Cookie'):
+            headers['Cookie'] = self.headers['Cookie']
         request = Request(
             AGENT_SERVICE_BASE_URL.rstrip("/") + self.path,
             data=body,
@@ -647,6 +681,45 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
         except URLError as error:
             self._error(HTTPStatus.BAD_GATEWAY, "Agent Service unavailable: %s" % error.reason)
+
+    def _proxy_team(self, method):
+        allowed = {'GET': {'/api/team/me', '/api/team/devices', '/api/team/reminders', '/api/team/workorders', '/api/team/line'}, 'POST': {'/api/team/register', '/api/team/login', '/api/team/logout', '/api/team/reminders'}}
+        path = urlparse(self.path).path
+        import re
+        reminder_read = method == 'POST' and re.fullmatch(r'/api/team/reminders/[a-f0-9]{32}/read', path)
+        if path not in allowed.get(method, set()) and not reminder_read:
+            self._error(HTTPStatus.NOT_FOUND, '未允许的账号接口')
+            return
+        origin = self.headers.get('Origin')
+        if origin and urlparse(origin).netloc != self.headers.get('Host'):
+            self._error(HTTPStatus.FORBIDDEN, '仅允许同源请求')
+            return
+        body = self.rfile.read(int(self.headers.get('Content-Length', '0'))) if method == 'POST' else None
+        headers = {'Content-Type': 'application/json'}
+        if self.headers.get('Cookie'):
+            headers['Cookie'] = self.headers['Cookie']
+        if self.headers.get('Host'):
+            headers['Host'] = self.headers['Host']
+        if origin:
+            headers['Origin'] = origin
+        request = Request(os.getenv('BACKEND_SERVICE_BASE_URL', 'http://127.0.0.1:8030').rstrip('/') + self.path, data=body, method=method, headers=headers)
+        try:
+            response = urlopen(request, timeout=15)
+        except HTTPError as error:
+            response = error
+        except (URLError, TimeoutError):
+            self._error(HTTPStatus.BAD_GATEWAY, '维修账号服务不可用')
+            return
+        with response:
+            payload = response.read()
+            self.send_response(response.code)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            for cookie in response.headers.get_all('Set-Cookie', []):
+                self.send_header('Set-Cookie', cookie)
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
 
     def _serve_static(self, path: str) -> None:
         """从前端目录安全地返回静态文件。"""

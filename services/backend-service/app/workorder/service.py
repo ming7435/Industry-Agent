@@ -11,6 +11,8 @@ import os
 
 from .repository import build_repository
 from ..quality import PartInspectionService
+from ..team.service import TeamService
+from shared.repair_recovery import repair_checks
 
 
 class BackendBusinessService:
@@ -26,8 +28,9 @@ class BackendBusinessService:
     }
     REQUIRED_RECOVERY_CHECKS = ("device_identity", "operational", "alarms_clear", "metrics_available")
 
-    def __init__(self, repository: Any | None = None) -> None:
+    def __init__(self, repository: Any | None = None, team_service: TeamService | None = None) -> None:
         self.repository = repository or build_repository()
+        self.team = team_service or TeamService()
         self.inspection = PartInspectionService()
         self._quality: dict[str, dict[str, Any]] = {str(item.get("quality_check_id")): item for item in self._list_records("quality") if item.get("quality_check_id")}
         self._closure_tasks: dict[str, dict[str, Any]] = {str(item.get("closure_task_id")): item for item in self._list_records("closure") if item.get("closure_task_id")}
@@ -135,6 +138,8 @@ class BackendBusinessService:
         if status not in allowed:
             raise ValueError("不允许的工单状态迁移：%s -> %s" % (previous, status))
         if status == "closed" and previous != "closed":
+            if (order.get('repair_verification') or {}).get('phase') == 'prestart':
+                raise ValueError('预启动验证不能代替运行复核，暂不允许关闭')
             if previous != "completed" or not self._verification_is_valid(order.get("repair_verification"), order):
                 raise ValueError("工单关闭前必须完成维修并通过基于设备恢复数据的验证")
         if previous == "closed" and status != "open":
@@ -183,8 +188,13 @@ class BackendBusinessService:
             raise ValueError("技师不存在：%s" % assignee)
         if candidate.get("available") is False:
             raise ValueError("技师当前不可用：%s" % assignee)
-        self._reserve_required_parts(self._require(workorder_id))
-        return self.update_workorder(workorder_id, status="in_progress", assignee=assignee)
+        current = self._require(workorder_id)
+        if current.get('assignee'):
+            if current['assignee'] == assignee:
+                return self._order_result(current)
+            raise ValueError('已派工任务不能隐式更换负责人')
+        self._reserve_required_parts(current)
+        return self.update_workorder(workorder_id, status="in_progress", assignee=assignee, assignee_name=candidate['name'])
 
     def submit_repair_feedback(self, workorder_id: str, feedback: Any = "", repair_feedback: Any = None, **_: Any) -> dict[str, Any]:
         order = self._require(workorder_id)
@@ -234,6 +244,8 @@ class BackendBusinessService:
 
     def close_workorder(self, workorder_id: str, reason: str = "", **_: Any) -> dict[str, Any]:
         order = self._require(workorder_id)
+        if (order.get('repair_verification') or {}).get('phase') == 'prestart':
+            raise ValueError('预启动验证不能代替运行复核，暂不允许关闭')
         if order.get("status") == "closed":
             return self._order_result(order, already_closed=True)
         if order.get("status") != "completed":
@@ -248,6 +260,36 @@ class BackendBusinessService:
     def get_workorder_template(self, device_id: str = "", plan: Mapping[str, Any] | None = None, **_: Any) -> dict[str, Any]:
         return {"template_id": "WO-TPL-MAINT-001", "device_id": device_id, "title": "设备维修工单", "steps": list((plan or {}).get("repair_steps") or []), "source": "backend-service"}
 
+    def remind(self, workorder_id, actor, text):
+        order = self._require(workorder_id)
+        return self.team.create_reminder(workorder_id, actor['user_id'], str(order.get('assignee') or ''), text)
+
+    def confirm_team_repair(self, workorder_id, actor_id, feedback, snapshot):
+        order = self._require(workorder_id)
+        tech = next((t for t in self.team.technicians() if t['user_id'] == actor_id), None)
+        if not tech or order.get('assignee') != actor_id:
+            raise PermissionError('仅被派工维修人员可以确认')
+        checks = repair_checks(order.get('device_id'), snapshot, 'prestart')
+        if not str(feedback).strip() or not all(checks.values()):
+            raise ValueError('维修反馈或设备恢复数据不满足预启动验证')
+        if order.get('status') == 'completed' and (order.get('repair_verification') or {}).get('phase') == 'poststart':
+            return self._order_result(order, already_confirmed=True)
+        verification = {'source': 'device_recovery', 'phase': 'prestart', 'passed': True, 'checks': checks, 'device_recovery': dict(snapshot), 'verified_at': self._now()}
+        fields = {'repair_feedback': {'feedback': feedback, 'operator': actor_id}, 'maintenance_confirmed_by': actor_id, 'repair_verification': verification}
+        if order.get('status') == 'in_progress':
+            self.update_workorder(workorder_id, 'awaiting_verification', **fields)
+        elif order.get('status') not in {'awaiting_verification', 'completed'}:
+            raise ValueError('工单必须已派发且尚未关闭')
+        return self.update_workorder(workorder_id, 'completed', **fields)
+
+    def finalize_team_repair(self, workorder_id, snapshot):
+        order = self._require(workorder_id)
+        checks = repair_checks(order.get('device_id'), snapshot, 'poststart')
+        if order.get('status') != 'completed' or not order.get('maintenance_confirmed_by') or not all(checks.values()):
+            raise ValueError('工单或启动后设备证据不满足运行复核')
+        verification = {'source': 'device_recovery', 'phase': 'poststart', 'passed': True, 'checks': checks, 'device_recovery': dict(snapshot), 'verified_at': self._now()}
+        return self.update_workorder(workorder_id, 'completed', repair_verification=verification)
+
     def submit_workorder_draft(self, **values: Any) -> dict[str, Any]:
         draft_id = str(values.get("draft_id") or "WOD-" + uuid4().hex[:12].upper())
         draft = {**dict(values), "draft_id": draft_id, "submitted": True, "source": "backend-service"}
@@ -258,20 +300,22 @@ class BackendBusinessService:
         return {"device_id": device_id, "line": "A线", "status": "running", "cycle_state": "processing", "cycle_state_label": "加工中", "source": "backend-local-fixture", "synthetic": True, "degraded": True, "checked_at": self._now()}
 
     def query_technicians(self, **kwargs: Any) -> dict[str, Any]:
-        item = {"technician_id": "TECH-001", "name": "张工", "skills": ["机械", "主轴"], "available": True, "workload": 1, "synthetic": True, "degraded": True}
-        return {"success": True, "items": [item], "total": 1, "backend": "backend-local-fixture", "synthetic": True, "degraded": True, **kwargs}
+        orders = self.repository.list()
+        items = [{"technician_id": user['user_id'], "name": user['username'], "primary_device_id": user['primary_device_id'], "available": bool(user['enabled']), "workload": sum(1 for order in orders if order.get('assignee') == user['user_id'] and order.get('status') not in {'completed', 'closed', 'rejected'}), 'registered': True} for user in self.team.technicians()]
+        return {'success': True, 'items': items, 'total': len(items), 'backend': 'backend-service'}
 
     def query_technician_skills(self, technician_id: str = "", **_: Any) -> dict[str, Any]:
-        return {"success": True, "items": [{"technician_id": technician_id or "TECH-001", "skills": ["机械", "主轴"], "synthetic": True}], "backend": "backend-local-fixture", "synthetic": True, "degraded": True}
+        return {'success': True, 'items': [], 'status': 'not_recorded', 'backend': 'backend-service'}
 
     def query_technician_workload(self, technician_id: str = "", **_: Any) -> dict[str, Any]:
-        return {"success": True, "items": [{"technician_id": technician_id or "TECH-001", "workload": 1, "synthetic": True}], "backend": "backend-local-fixture", "synthetic": True, "degraded": True}
+        return {'success': True, 'items': [item for item in self.query_technicians()['items'] if item['technician_id'] == technician_id], 'backend': 'backend-service'}
 
     def query_shift(self, **_: Any) -> dict[str, Any]:
-        return {"success": True, "shift": "白班", "start": "08:00", "end": "20:00", "backend": "backend-local-fixture", "synthetic": True, "degraded": True}
+        return {'success': True, 'status': 'not_recorded', 'backend': 'backend-service'}
 
     def query_team_availability(self, **_: Any) -> dict[str, Any]:
-        return {"success": True, "available": True, "team": "设备维修一组", "available_count": 1, "backend": "backend-local-fixture", "synthetic": True, "degraded": True}
+        count = len(self.team.technicians())
+        return {'success': True, 'available': count > 0, 'team': '设备维修一组', 'available_count': count, 'backend': 'backend-service'}
 
     def query_spare_part(self, query: str = "", **_: Any) -> dict[str, Any]:
         part_no = query or "SP-ASSY-TC820-001"
@@ -613,6 +657,8 @@ class BackendBusinessService:
             return False
         recovery = verification.get("device_recovery")
         checks = verification.get("checks")
+        if verification.get('phase') == 'prestart':
+            return isinstance(recovery, Mapping) and all(repair_checks(order.get('device_id'), recovery, 'prestart').values())
         return isinstance(recovery, Mapping) and isinstance(checks, Mapping) and all(checks.get(key) is True for key in cls.REQUIRED_RECOVERY_CHECKS) and (not enforce_freshness or cls._recovery_is_fresh(recovery))
 
     @classmethod
@@ -627,8 +673,7 @@ class BackendBusinessService:
         metrics = values.get("metrics") or values.get("metric_details")
         checks = {
             "device_identity": bool(device_id and recovery_device_id and device_id == recovery_device_id),
-            "operational": status in {"running", "idle", "ready", "standby", "normal", "completed"}
-            or (status in {"stopped", "paused"} and values.get("restart_requested") is True),
+            "operational": status in {"running", "idle", "ready", "standby", "normal", "completed"},
             "alarms_clear": alarms_clear,
             "metrics_available": isinstance(metrics, Mapping) and bool(metrics),
             "recovery_fresh": cls._recovery_is_fresh(values),

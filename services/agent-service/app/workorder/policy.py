@@ -67,6 +67,10 @@ def auto_workorder_decision(
     """判断自动触发的维修方案是否可以进入工单派发。"""
 
     diagnosis = diagnosis or {}
+    # DiagnosisView 将扩展证据与安全标记保存在 raw；显式外层字段优先。
+    raw = diagnosis.get("raw")
+    if isinstance(raw, Mapping):
+        diagnosis = {**raw, **diagnosis}
     plan = plan or {}
     raw_confidence = diagnosis.get("confidence")
     try:

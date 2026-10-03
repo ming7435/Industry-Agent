@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TypedDict
+from app.agents.state import AgentExecutionState
+
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -45,18 +47,12 @@ class QualityQuery(BaseModel):
         return cls(**values)
 
 
-class QualityWorkflowState(TypedDict, total=False):
+class QualityWorkflowState(AgentExecutionState, total=False):
     """Quality LangGraph 节点之间传递的运行时状态。"""
 
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     active_skill: str
-    active_skills: List[str]
     allowed_tools: List[str]
     decision: Dict[str, Any]
     validation_findings: List[str]

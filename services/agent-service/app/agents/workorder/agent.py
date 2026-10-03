@@ -38,7 +38,11 @@ class WorkOrderAgent(BaseAgent):
 
     def find_idempotent(self, request: Mapping[str, Any]) -> dict[str, Any] | None:
         key = str(request.get("idempotency_key") or "")
-        return dict(self._idempotency[key]) if key and key in self._idempotency else None
+        if not key or key not in self._idempotency:
+            return None
+        # 缓存仅存定位，不用创建时未派工的旧快照覆盖数据库中的实际负责人。
+        cached = self._idempotency[key]
+        return self.service.get(cached['workorder_id'])
 
     def remember_idempotent(self, request: Mapping[str, Any], order: Mapping[str, Any]) -> None:
         key = str(request.get("idempotency_key") or "")
@@ -78,6 +82,14 @@ class WorkOrderAgent(BaseAgent):
 
     @staticmethod
     def rank_candidates(context: Mapping[str, Any], request: Mapping[str, Any], plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+        if any('primary_device_id' in item for item in context.get('candidates') or []):
+            device_id = str(context.get('device_id') or '')
+            candidates = [dict(item) for item in context.get('candidates') or [] if item.get('available') is True]
+            for item in candidates:
+                primary = bool(device_id and item.get('primary_device_id') == device_id)
+                item['dispatch_score'] = 100 if primary else 1
+                item['dispatch_reasons'] = ['主要负责该设备' if primary else '同组工作量最少候补']
+            return sorted(candidates, key=lambda item: (-item['dispatch_score'], int(item.get('workload') or 0), str(item.get('technician_id') or '')))
         availability = context.get("availability") or {}
         shift = context.get("shift") or {}
         current_shift = str(shift.get("shift") or shift.get("name") or "")

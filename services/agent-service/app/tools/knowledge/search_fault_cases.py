@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
-from .search_knowledge import search_knowledge as _search_knowledge
+from .search_knowledge import search_filtered_knowledge
 
 
 def search_fault_cases(
@@ -14,5 +14,4 @@ def search_fault_cases(
     filters: Mapping[str, Any] | None = None,
     **_: Any,
 ) -> Dict[str, Any]:
-    selected = {key: value for key, value in dict(filters or {}).items() if key != "alarm_code"}
-    return _search_knowledge(rag, query, limit=limit, filters={**selected, "knowledge_type": "case"})
+    return search_filtered_knowledge(rag, query, knowledge_type="case", limit=limit, filters=filters, remove_alarm_code=True)

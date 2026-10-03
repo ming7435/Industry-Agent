@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, TypedDict
+from app.agents.state import AgentExecutionState
+
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field
 
@@ -49,13 +51,8 @@ class MemoryResult(BaseModel):
     error: str = ""
 
 
-class MemoryGraphState(TypedDict, total=False):
+class MemoryGraphState(AgentExecutionState, total=False):
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     action: str
     items: List[Dict[str, Any]]

@@ -7,7 +7,7 @@ from typing import Any, Dict
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 from .schemas import QualityQuery, QualityWorkflowState
 from .validator import QualityValidator
 
@@ -131,10 +131,6 @@ def validate_part(state: QualityWorkflowState) -> Dict[str, Any]:
     return {"decision": decision, "validation_findings": list(decision.get("findings") or [])}
 
 
-def decision(state: QualityWorkflowState) -> Dict[str, Any]:
-    return {"route": "final"}
-
-
 def final(state: QualityWorkflowState) -> Dict[str, Any]:
     result = state["agent"]._build_result(state)
     return {"result": result, "stop_reason": "validator_pass" if result.passed else "validator_fail"}
@@ -151,12 +147,12 @@ def build_quality_graph():
     node_skill_steps = {
         "initialize": "identify_part",
         "load_skill": "select_skills",
-        "decision": "determine_pass_fail",
+        "validate_part": "determine_pass_fail",
         "final": "build_result",
     }
+    workflow.add_node("prepare", prepare_skill_node("quality", initialize, load_skill, skill_steps=node_skill_steps))
+    steps = {}
     for name, node in (
-        ("initialize", initialize),
-        ("load_skill", load_skill),
         ("load_part", load_part),
         ("load_inspection_plan", load_inspection_plan),
         ("inspect_dimensions", inspect_dimensions),
@@ -165,27 +161,24 @@ def build_quality_graph():
         ("inspect_function", inspect_function),
         ("inspect_process", inspect_process),
         ("validate_part", validate_part),
-        ("decision", decision),
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("quality", name, node, skill_step=node_skill_steps.get(name, name)))
-    workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "load_skill")
-    workflow.add_edge("load_skill", "load_part")
+        steps[name] = trace_skill_node("quality", name, node, skill_step=node_skill_steps.get(name, name))
+    workflow.add_node("load_input", chain_nodes(steps["load_part"], steps["load_inspection_plan"], stop_routes=("fallback",)))
+    workflow.add_node("inspect", chain_nodes(*(steps[name] for name in (
+        "inspect_dimensions", "inspect_appearance", "inspect_material", "inspect_function", "inspect_process",
+    ))))
+    workflow.add_node("validate_part", steps["validate_part"])
+    workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
+    workflow.add_edge(START, "prepare")
+    workflow.add_edge("prepare", "load_input")
     workflow.add_conditional_edges(
-        "load_part",
+        "load_input",
         lambda state: state.get("route", "load_inspection_plan"),
-        {"load_inspection_plan": "load_inspection_plan", "fallback": "fallback"},
+        {"load_inspection_plan": "inspect", "fallback": "finish"},
     )
-    workflow.add_edge("load_inspection_plan", "inspect_dimensions")
-    workflow.add_edge("inspect_dimensions", "inspect_appearance")
-    workflow.add_edge("inspect_appearance", "inspect_material")
-    workflow.add_edge("inspect_material", "inspect_function")
-    workflow.add_edge("inspect_function", "inspect_process")
-    workflow.add_edge("inspect_process", "validate_part")
-    workflow.add_edge("validate_part", "decision")
-    workflow.add_edge("decision", "final")
-    workflow.add_edge("final", END)
-    workflow.add_edge("fallback", END)
+    workflow.add_edge("inspect", "validate_part")
+    workflow.add_edge("validate_part", "finish")
+    workflow.add_edge("finish", END)
     return workflow.compile()

@@ -213,7 +213,7 @@ class DeviceMonitor:
             observations = self._detect_legacy_temperature_vibration(sample)
 
         if sample.status and str(sample.status).lower() in {
-            "fault", "failed", "emergency_stop", "e_stop", "offline"
+            "fault", "failed"
         }:
             observations.append(
                 AnomalyObservation(
@@ -580,6 +580,10 @@ class DeviceMonitor:
             return MonitorStatus.ALARM
         if observations:
             return MonitorStatus.WARNING
+        if str(sample.status or '').lower() in {'offline', 'unknown', 'disconnected'}:
+            return MonitorStatus.UNKNOWN
+        if str(sample.status or '').lower() in {'emergency_stop', 'e_stop', 'stopped', 'paused'}:
+            return MonitorStatus.STOPPED
         return MonitorStatus.NORMAL
 
     def _build_trigger_if_ready(

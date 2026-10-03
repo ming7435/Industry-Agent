@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, TypedDict
+from app.agents.state import AgentExecutionState
+
+from typing import Any, Dict, List, Mapping
 
 from langgraph.graph import END, START, StateGraph
 
 from app.skills import get_skill_registry
-from app.agents.base import trace_skill_node
+from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 from app.contracts import KnowledgeResult
 
 from .schemas import KnowledgeQuery
@@ -26,16 +28,10 @@ KNOWLEDGE_TOOLS = (
 )
 
 
-class KnowledgeGraphState(TypedDict, total=False):
+class KnowledgeGraphState(AgentExecutionState, total=False):
     agent: Any
-    active_agent: str
-    current_step: str
-    step_history: list[dict[str, Any]]
-    completed_steps: list[dict[str, Any]]
-    failed_steps: list[dict[str, Any]]
     request: Dict[str, Any]
     active_skill: str
-    active_skills: List[str]
     allowed_tools: List[str]
     query_type: str
     retrieval_plan: List[str]
@@ -176,7 +172,7 @@ def observe(state: KnowledgeGraphState) -> Dict[str, Any]:
     # 不要在命中第一条结果后停止。互补来源（报警 + SOP、手册 + 历史案例）
     # 是证据质量计算的一部分。精确文档/分块获取是例外，因为它已经明确
     # 指向所需证据，不应扩散为全库检索。
-    should_complete = requested_lookup or (covered and not pending)
+    should_complete = requested_lookup or (bool(documents) and covered and not pending)
     if should_complete:
         route = "rerank"
     elif pending and state.get("step_count", 0) < state.get("max_steps", 4):
@@ -270,9 +266,9 @@ NODE_SKILL_STEPS = {
 
 def build_knowledge_graph():
     workflow = StateGraph(KnowledgeGraphState)
+    prepare = prepare_skill_node("knowledge", initialize, load_skill)
+    steps = {}
     for name, node in (
-        ("initialize", initialize),
-        ("load_skill", load_skill),
         ("classify_query", classify_query),
         ("plan_retrieval", plan_retrieval),
         ("retrieve", retrieve),
@@ -283,17 +279,18 @@ def build_knowledge_graph():
         ("final", final),
         ("fallback", fallback),
     ):
-        workflow.add_node(name, trace_skill_node("knowledge", name, node, skill_step=NODE_SKILL_STEPS.get(name, name)))
-    workflow.add_edge(START, "initialize")
-    workflow.add_edge("initialize", "load_skill")
-    workflow.add_edge("load_skill", "classify_query")
-    workflow.add_edge("classify_query", "plan_retrieval")
-    workflow.add_edge("plan_retrieval", "retrieve")
-    workflow.add_edge("retrieve", "observe")
-    workflow.add_conditional_edges("observe", _route, {"retrieve": "retrieve", "refine_query": "refine_query", "rerank": "rerank"})
+        steps[name] = trace_skill_node("knowledge", name, node, skill_step=NODE_SKILL_STEPS.get(name, name))
+    workflow.add_node("prepare", chain_nodes(prepare, steps["classify_query"], steps["plan_retrieval"], stop_routes=("fallback",)))
+    workflow.add_node("retrieve", chain_nodes(steps["retrieve"], steps["observe"]))
+    for name in ("refine_query", "rerank", "validate"):
+        workflow.add_node(name, steps[name])
+    # 知识不足先补充明确的回退原因，再沿原路径构造结果。
+    workflow.add_node("finish", result_node(steps["final"], chain_nodes(steps["fallback"], steps["final"])))
+    workflow.add_edge(START, "prepare")
+    workflow.add_conditional_edges("prepare", _route, {"retrieve": "retrieve", "fallback": "finish"})
+    workflow.add_conditional_edges("retrieve", _route, {"retrieve": "retrieve", "refine_query": "refine_query", "rerank": "rerank"})
     workflow.add_edge("refine_query", "retrieve")
     workflow.add_edge("rerank", "validate")
-    workflow.add_conditional_edges("validate", _route, {"final": "final", "fallback": "fallback"})
-    workflow.add_edge("fallback", "final")
-    workflow.add_edge("final", END)
+    workflow.add_edge("validate", "finish")
+    workflow.add_edge("finish", END)
     return workflow.compile()

@@ -25,7 +25,14 @@ class BackendServiceClient:
         self.timeout = float(os.getenv("BACKEND_SERVICE_TIMEOUT_SECONDS", "15"))
 
     def call(self, tool: str, arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        request = Request(self.base_url + "/tools/call", data=json.dumps({"tool": tool, "arguments": dict(arguments or {})}, ensure_ascii=False).encode("utf-8"), method="POST", headers={"Content-Type": "application/json", "Accept": "application/json"})
+        return self.request('/tools/call', {'tool': tool, 'arguments': dict(arguments or {})})
+
+    def request(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+        token = os.getenv('BACKEND_INTERNAL_TOKEN', '').strip()
+        if token:
+            headers['Authorization'] = 'Bearer ' + token
+        request = Request(self.base_url + path, data=json.dumps(dict(body), ensure_ascii=False).encode('utf-8'), method='POST', headers=headers)
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
@@ -37,6 +44,36 @@ class BackendServiceClient:
         if not isinstance(result, dict):
             raise BackendServiceError("backend-service returned invalid JSON")
         return result
+
+    def resolve_session(self, token: str):
+        return self.request('/internal/team/session/resolve', {'token': token}).get('user')
+
+    def line_call(self, operation: str, **body):
+        return self.request('/internal/line/' + operation, body)['result']
+
+    def status(self):
+        return self.line_call('status')
+
+    def claim_fault_event(self, event_id, device_id, device_ids):
+        return self.line_call('claim_fault_event', event_id=event_id, device_id=device_id, device_ids=device_ids)
+
+    def claim_control(self, event_id, device_id, action):
+        return self.line_call('claim_control', event_id=event_id, device_id=device_id, action=action)
+
+    def record_device_control(self, event_id, device_id, action, outcome):
+        return self.line_call('record_device_control', event_id=event_id, device_id=device_id, action=action, outcome=outcome)
+
+    def set_stop_result(self, generation, result):
+        return self.line_call('set_stop_result', generation=generation, result=result)
+
+    def begin_restart(self, generation):
+        return self.line_call('begin_restart', generation=generation)
+
+    def finish_restart(self, generation, result):
+        return self.line_call('finish_restart', generation=generation, result=result)
+
+    def list_open_faults(self):
+        return self.line_call('list_open_faults')
 
     def record_part_quality(self, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         return self.call("create_quality_check", {**dict(payload), "operator": operator})

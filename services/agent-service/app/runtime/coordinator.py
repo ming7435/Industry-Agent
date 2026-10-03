@@ -450,6 +450,19 @@ class RuntimeCoordinator:
                 state_change={"status": evaluation.status.value, "reason": evaluation.reason, "recommended_action": evaluation.recommended_action},
                 keys=["status", "reason", "recommended_action"], tool_name="", latency=0.0, error="",
             )
+            if domain == "knowledge" and evaluation.status.value != "final":
+                # Knowledge Graph 已完成自己的有界补检；仍缺证据时不能把
+                # “剩余计划”误当作补检计划，直接启动维修和派工。
+                return {
+                    "state": {**next_state, "status": "blocked", "stop_reason": "knowledge_evidence_gate"},
+                    "action": action,
+                    "terminal_status": "blocked",
+                    "terminal_reason": "knowledge_evidence_gate",
+                    "evidence_ids": self._evidence_ids(result.evidence),
+                    "evidence_score": evaluation.evidence_score,
+                    "confidence": evaluation.confidence,
+                    "done": False,
+                }
             if evaluation.status.value == "replan":
                 if replan_count < 2:
                     replan_count += 1
@@ -542,6 +555,9 @@ class RuntimeCoordinator:
                 # 计划循环是有边界的动作序列，而不是置信度复核循环；领域置信度保留在 AgentResult 输出中，
                 # 不得提前停止剩余 Action。
                 "confidence": None,
+                # 不同领域可以使用同一批证据完成不同业务动作。
+                # 真实领域验收通过属于进展，但不等于整个计划结束。
+                "progress_made": evaluation.status.value == "final",
                 "done": False,
             }
 
@@ -654,7 +670,9 @@ class RuntimeCoordinator:
     def _replan_capabilities(self, capability: str, output: Mapping[str, Any], remaining: list[ActionModel]) -> list[str]:
         definition = self.capabilities.metadata_for(capability)
         if definition and definition.replan_capabilities:
-            return list(definition.replan_capabilities)
+            # 复核能力只替换失败动作，未完成的后续任务仍须交给 Planner。
+            # 与 Agent 建议路径共用顺序去重，避免重复加入创建等副作用能力。
+            return self._next_action_capabilities(list(definition.replan_capabilities), remaining)
         return [item.required_capability for item in remaining if item.required_capability] or [capability]
 
     @staticmethod
