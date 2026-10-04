@@ -33,6 +33,7 @@ class SkillDefinition:
     version: str = "1.0"
     goal: str = ""
     trigger: str = "default"
+    triggers: tuple[str, ...] = ()
     steps: tuple[Any, ...] = ()
     tools: tuple[str, ...] = ()
     required_inputs: tuple[str, ...] = ()
@@ -62,6 +63,7 @@ class SkillDefinition:
             version=str(payload.get("version") or "1.0"),
             goal=str(payload.get("goal") or ""),
             trigger=str(payload.get("trigger") or "default"),
+            triggers=_as_strings(payload.get("triggers")),
             steps=tuple(payload.get("steps") or []),
             tools=tuple(str(item) for item in payload.get("tools") or payload.get("allowed_tools") or []),
             required_inputs=tuple(str(item) for item in payload.get("required_inputs") or []),
@@ -74,6 +76,22 @@ class SkillDefinition:
             document=document,
             path=str(path),
         )
+
+    @property
+    def conditions(self) -> tuple[str, ...]:
+        """多触发条件取或；未声明时保持旧 trigger 行为。"""
+        return self.triggers or (self.trigger,)
+
+    @property
+    def is_always(self) -> bool:
+        return any(value.strip().lower() == 'always' for value in self.conditions)
+
+    @property
+    def is_default(self) -> bool:
+        return any(value.strip().lower() in {'', 'default'} for value in self.conditions)
+
+    def matches(self, context: Mapping[str, Any], text: str) -> bool:
+        return any(_trigger_matches(value, context, text) for value in self.conditions)
 
     def normalized_steps(self) -> list["StepDefinition"]:
         """将旧版字符串步骤和新版映射步骤归一为可执行的统一结构。"""
@@ -158,12 +176,12 @@ class SkillRegistry:
         """选择多个 Skill。
 
         显式 ``names`` 优先；没有显式名称时按简单 trigger 规则匹配，
-        最后保证至少返回一个 default Skill。
+        未指定名称时才按 trigger 匹配或回退；显式未知/空名称不授权默认 Skill。
         """
 
         available = self.list(agent)
         context = context or {}
-        if names:
+        if names is not None:
             selected = []
             seen = set()
             for name in names:
@@ -171,26 +189,24 @@ class SkillRegistry:
                 if item is not None and item.name not in seen:
                     selected.append(item)
                     seen.add(item.name)
-            if selected:
-                return selected
+            return selected
 
         text = " ".join(
-            "%s %s" % (key, value)
-            for key, value in context.items()
+            str(value) for value in context.values() if value
         ).lower()
         specialized = [
             item for item in available
-            if item.trigger.strip().lower() not in {"", "default", "always"}
-            and _trigger_matches(item.trigger, context, text)
+            if not item.is_default and not item.is_always
+            and item.matches(context, text)
         ]
         if specialized:
             return [
                 item for item in available
-                if item in specialized or item.trigger.strip().lower() == "always"
+                if item in specialized or item.is_always
             ]
         fallback = [
             item for item in available
-            if item.trigger.strip().lower() in {"", "default", "always"}
+            if item.is_default or item.is_always
         ]
         return fallback or available[:1]
 
@@ -250,6 +266,14 @@ def _trigger_matches(trigger: str, context: Mapping[str, Any], text: str) -> boo
     normalized = trigger.strip().lower()
     if normalized in {"", "default", "always"}:
         return True
+    if normalized in {'learn', 'search', 'recent'} and context.get('action'):
+        # 检索文本可描述“学习”，不能因此选择写入路径的 Skill。
+        return str(context['action']).strip().lower() == normalized
+    if normalized in {'closure', 'trace'} and context.get('report_type'):
+        report_type = str(context['report_type']).strip().lower()
+        if normalized == 'closure':
+            return report_type in {'closure', 'closure_report', 'full_case_report'}
+        return report_type in {'trace', 'trace_report'}
     if normalized in {"exists(alarm_code)", "alarm_code_or_exact_code"}:
         return bool(context.get("alarm_code")) or any(token in text for token in ("报警", "alarm", "故障码"))
     if normalized in {"no_alarm_code", "without_alarm_code"}:

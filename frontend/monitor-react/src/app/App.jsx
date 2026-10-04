@@ -13,6 +13,7 @@ import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMes
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
+import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
 import "../workbench.css";
 import TeamAccess from '../TeamAccess.jsx';
 import SupervisorQueue from '../SupervisorQueue.jsx';
@@ -636,7 +637,7 @@ function App() {
   const [activeView, setActiveView] = useState(() => {
     if (typeof window === "undefined") return "monitor";
     const requested = new URLSearchParams(window.location.search).get("view");
-    return ["monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested) ? requested : "monitor";
+    return ["cad", "monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested) ? requested : "monitor";
   });
   const [ragMessages, setRagMessages] = useState(() => {
     if (typeof window === "undefined") return [];
@@ -665,7 +666,7 @@ function App() {
     if (typeof window === "undefined") return undefined;
     const handleHistoryNavigation = () => {
       const requested = new URLSearchParams(window.location.search).get("view");
-      if (["monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested || "")) {
+      if (["cad", "monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested || "")) {
         setActiveView(requested);
       } else if (!requested) {
         setActiveView("monitor");
@@ -724,6 +725,7 @@ function App() {
             onSelectMachine={setSelectedMachineId}
           />
         )}
+        {!bigScreen && activeView === "cad" && <ProductionCadWorkspace />}
         {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "maintenance" && <MaintenancePlanWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "workorder" && (teamActor ? <><SupervisorQueue actor={teamActor} /><WorkorderView key={teamActor.user_id} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} /></> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单，监督人查看全部并催办。</p></section>)}

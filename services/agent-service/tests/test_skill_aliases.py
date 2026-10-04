@@ -21,7 +21,7 @@ def test_old_names_resolve_to_canonical_definitions_once():
 
 def test_explicit_selection_keeps_first_requested_order():
     registry = get_skill_registry()
-    assert [s.name for s in registry.select("cad", names=["part_search_skill", "bom_analysis_skill", "drawing_lookup_skill"])] == ["drawing_lookup_skill", "bom_analysis_skill"]
+    assert [s.name for s in registry.select("cad", names=["part_search_skill", "bom_analysis_skill", "drawing_lookup_skill"])] == ["drawing_lookup_skill"]
 
 
 def test_alias_conflict_reports_both_source_paths(tmp_path):

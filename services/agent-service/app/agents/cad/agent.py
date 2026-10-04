@@ -26,6 +26,12 @@ class CADAgent(BaseAgent):
     def query_bom(self, query: str, device_id: str = "") -> CADResult:
         return self.run({"query": query, "device_id": device_id})
 
+    def production_modeling(self, **options: Any) -> Any:
+        """独立生产前建模入口，保持现有工程查询 Graph 不变。"""
+        from .modeling_service import CADModelingService
+
+        return CADModelingService(**options)
+
     def run(self, task: Any) -> CADResult:
         request = CADQuery.from_payload(task)
         output = self.graph.invoke({"agent": self, "request": request.model_dump(mode="json")})

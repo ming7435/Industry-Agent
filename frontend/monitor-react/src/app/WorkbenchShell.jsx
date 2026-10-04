@@ -2,6 +2,7 @@ import React from "react";
 
 const groups = [
   { label: "生产运营", items: [
+    { id: "cad", label: "生产建模", icon: "cad" },
     { id: "monitor", label: "监控中心", icon: "monitor" },
     { id: "diagnosis", label: "智能诊断", icon: "diagnosis" },
     { id: "maintenance", label: "维修方案", icon: "maintenance" },
@@ -16,6 +17,7 @@ const groups = [
 ];
 
 const pages = {
+  cad: { title: "生产前零件建模", description: "按需求与图纸生成、校验并下载真实三维实体", category: "生产运营" },
   monitor: { title: "监控中心", description: "查看设备运行状态与异常处置进度", category: "生产运营" },
   diagnosis: { title: "智能诊断", description: "查看 Runtime 诊断结论、证据与处置建议", category: "生产运营" },
   maintenance: { title: "维修方案", description: "查看诊断生成的维修步骤、工具、备件与证据", category: "生产运营" },
@@ -28,6 +30,7 @@ const pages = {
 
 function WorkbenchIcon({ name }) {
   const paths = {
+    cad: <><path d="M12 2 3 7v10l9 5 9-5V7l-9-5ZM3 7l9 5 9-5M12 12v10" /></>,
     monitor: <><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M7 13l3-3 2 2 4-4 2 2M8 21h8m-4-3v3" /></>,
     diagnosis: <><path d="M12 3a6 6 0 0 0-3.7 10.7L7 18h10l-1.3-4.3A6 6 0 0 0 12 3Z" /><path d="M9 21h6M10 18h4" /></>,
     workorder: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4.5V3h6v1.5M9 10h6M9 14h6M9 18h4" /></>,

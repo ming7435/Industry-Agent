@@ -32,6 +32,7 @@ from app.harness.runs import build_run_records
 from app.runtime.event_store import EventResultConflict, EventResultStore
 from app.runtime.durable_store import PendingResultError
 from app.tools.report.generate_report_file import get_report_file_path
+from app.tools.query_contracts import QueryArgumentError
 from app.clients.backend import BackendServiceError
 from app.clients.backend import BackendServiceClient
 from app.api.team_auth import team_actor, require_assignee, human_action
@@ -284,7 +285,10 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/rag/search", deprecated=True)
     @app.get("/api/v1/rag/search")
     def rag_search(query: str, limit: int = 5) -> Dict[str, Any]:
-        return runtime.container.registry.search_knowledge(query, limit=limit)
+        try:
+            return runtime.container.registry.search_knowledge(query, limit=limit)
+        except QueryArgumentError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post("/api/rag/ingest", deprecated=True, dependencies=[Depends(require_write_auth)])
     @app.post("/api/v1/rag/ingest", dependencies=[Depends(require_write_auth)])
@@ -587,6 +591,10 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:
         return runtime.container.operations.execute_memory("search", request.model_dump(mode="json"), from_agent="router")
 
+    # 生产建模只增加 CAD 专用路由，不替换维修定位或其他服务接口。
+    from app.agents.cad.modeling_api import build_modeling_router
+
+    app.include_router(build_modeling_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
     return app
 
 

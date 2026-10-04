@@ -61,7 +61,7 @@ def test_specialized_skill_replaces_default_but_keeps_always_skill() -> None:
     assert [skill.name for skill in registry.select("knowledge", {"query": "查询设备手册"})] == ["manual_search_skill"]
     assert [skill.name for skill in registry.select("knowledge", {"query": "普通问题"})] == ["hybrid_search_skill"]
     assert [skill.name for skill in registry.select("memory", {"query": "learn"})] == [
-        "experience_extraction", "memory_dedup", "memory_write",
+        "experience_extraction", "memory_dedup",
     ]
 
 

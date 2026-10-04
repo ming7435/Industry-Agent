@@ -116,9 +116,11 @@ def trace_skill_node(
             selected = [selected]
         requested_skills = list(selected)
         registry = get_skill_registry()
-        definitions = registry.select(agent_name, request, names=selected) if selected else []
-        if not definitions:
-            definitions = registry.select(agent_name, request)
+        # 显式空值或未知技能保持未映射；只有未声明选择时才按上下文匹配。
+        definitions = registry.select(
+            agent_name, request,
+            names=requested_skills if "active_skills" in current else None,
+        )
         # 领域 Graph 会在节点声明旁传入该绑定；基础包装器不感知领域节点名称和别名。
         skill_step_id = str(skill_step or node_name)
         match = next(

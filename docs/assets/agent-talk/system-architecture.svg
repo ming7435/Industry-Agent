@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1110" viewBox="0 0 1600 1110" role="img">
+<title>Industry-Agent｜五服务与数据边界</title><desc>依据当前本地源码；箭头表示主要调用/输入方向，响应沿调用路径返回。端口不是存活证明。</desc>
+<rect x="0" y="0" width="1600" height="1110" fill="#f5f9fa"/>
+<text x="60" y="68" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="38" font-weight="700" fill="#17383f">Industry-Agent｜五服务与数据边界</text>
+<text x="60" y="111" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" fill="#526f75">依据当前本地源码；箭头表示主要调用/输入方向，响应沿调用路径返回。端口不是存活证明。</text>
+<polyline points="60,128 1540,128" fill="none" stroke="#d5e3e5" stroke-width="2" stroke-linejoin="round"/>
+<rect x="60" y="165" width="400" height="120" rx="16" fill="#ffffff" stroke="#d5e3e5" stroke-width="2"/>
+<rect x="76" y="187" width="5" height="30" rx="2" fill="#306da6" stroke="#306da6" stroke-width="2"/>
+<text x="94" y="212" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="700" fill="#17383f">浏览器工作台</text>
+<text x="94" y="248" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">问题、当前故障、维修反馈</text>
+<rect x="530" y="150" width="540" height="150" rx="16" fill="#eaf6f3" stroke="#d5e3e5" stroke-width="2"/>
+<rect x="546" y="172" width="5" height="30" rx="2" fill="#087f79" stroke="#087f79" stroke-width="2"/>
+<text x="564" y="197" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="700" fill="#17383f">监控 / Web 工作台  :8001</text>
+<text x="564" y="233" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">设备采样 → 规则 → 异常事件</text>
+<text x="564" y="266" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">React 页面 + 本地 API 代理</text>
+<rect x="1140" y="165" width="400" height="120" rx="16" fill="#eef4fb" stroke="#d5e3e5" stroke-width="2"/>
+<rect x="1156" y="187" width="5" height="30" rx="2" fill="#306da6" stroke="#306da6" stroke-width="2"/>
+<text x="1174" y="212" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="700" fill="#17383f">虚拟工厂  :4529</text>
+<text x="1174" y="248" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">设备身份、报警、指标、状态</text>
+<polyline points="460,225 530,225" fill="none" stroke="#306da6" stroke-width="3" stroke-linejoin="round"/>
+<polygon points="530.00,225.00 517.00,231.00 517.00,219.00" fill="#306da6"/>
+<polyline points="1140,225 1070,225" fill="none" stroke="#306da6" stroke-width="3" stroke-linejoin="round"/>
+<polygon points="1070.00,225.00 1083.00,219.00 1083.00,231.00" fill="#306da6"/>
+<polyline points="800,300 800,360" fill="none" stroke="#087f79" stroke-width="3" stroke-linejoin="round"/>
+<polygon points="800.00,360.00 794.00,347.00 806.00,347.00" fill="#087f79"/>
+<text x="835" y="335" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" fill="#17383f">GoalEvent / 业务请求</text>
+<rect x="400" y="360" width="800" height="170" rx="16" fill="#eaf6f3" stroke="#d5e3e5" stroke-width="2"/>
+<rect x="416" y="382" width="5" height="30" rx="2" fill="#087f79" stroke="#087f79" stroke-width="2"/>
+<text x="434" y="407" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="700" fill="#17383f">Agent 服务  :8010</text>
+<text x="434" y="443" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">Runtime：规划 → 授权 → 调度 → 执行 → 评估</text>
+<text x="434" y="476" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">9 个领域 Agent；Skill / Tool / Evidence / Trace</text>
+<polyline points="620,530 620,575 280,575 280,620" fill="none" stroke="#087f79" stroke-width="3" stroke-linejoin="round"/>
+<polygon points="280.00,620.00 274.00,607.00 286.00,607.00" fill="#087f79"/>
+<polyline points="800,530 800,575 800,575 800,620" fill="none" stroke="#087f79" stroke-width="3" stroke-linejoin="round"/>
+<polygon points="800.00,620.00 794.00,607.00 806.00,607.00" fill="#087f79"/>
+<polyline points="980,530 980,575 1320,575 1320,620" fill="none" stroke="#087f79" stroke-width="3" stroke-linejoin="round"/>
+<polygon points="1320.00,620.00 1314.00,607.00 1326.00,607.00" fill="#087f79"/>
+<rect x="60" y="620" width="440" height="180" rx="16" fill="#ffffff" stroke="#d5e3e5" stroke-width="2"/>
+<rect x="76" y="642" width="5" height="30" rx="2" fill="#087f79" stroke="#087f79" stroke-width="2"/>
+<text x="94" y="667" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="700" fill="#17383f">Backend  :8030</text>
+<text x="94" y="703" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">工单 / 团队 / 质检 / 报告</text>
+<text x="94" y="736" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">状态迁移、审计、业务持久化</text>
+<text x="94" y="769" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">真实适配器缺失 → 明确不可用</text>
+<rect x="580" y="620" width="440" height="180" rx="16" fill="#ffffff" stroke="#d5e3e5" stroke-width="2"/>
+<rect x="596" y="642" width="5" height="30" rx="2" fill="#087f79" stroke="#087f79" stroke-width="2"/>
+<text x="614" y="667" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="700" fill="#17383f">RAG  :8020</text>
+<text x="614" y="703" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">文档 → 片段 → 检索 → 证据</text>
+<text x="614" y="736" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">关键词 + 向量 + 重排</text>
+<text x="614" y="769" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">文档目录 / Whoosh / Milvus</text>
+<rect x="1100" y="620" width="440" height="180" rx="16" fill="#ffffff" stroke="#d5e3e5" stroke-width="2"/>
+<rect x="1116" y="642" width="5" height="30" rx="2" fill="#087f79" stroke="#087f79" stroke-width="2"/>
+<text x="1134" y="667" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="700" fill="#17383f">Document-CAD  :8050</text>
+<text x="1134" y="703" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">图纸 / BOM / 装配 / 部件位置</text>
+<text x="1134" y="736" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">设备 + 机型 + 编号范围</text>
+<text x="1134" y="769" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">工程归属校验，不用无关模型</text>
+<polyline points="800,800 800,870" fill="none" stroke="#306da6" stroke-width="3" stroke-linejoin="round"/>
+<polygon points="800.00,870.00 794.00,857.00 806.00,857.00" fill="#306da6"/>
+<text x="825" y="842" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="400" fill="#306da6">向量 / 重排</text>
+<polyline points="1200,425 1570,425 1570,930 1040,930" fill="none" stroke="#306da6" stroke-width="3" stroke-linejoin="round"/>
+<polygon points="1040.00,930.00 1053.00,924.00 1053.00,936.00" fill="#306da6"/>
+<text x="1225" y="857" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" fill="#306da6">Agent 模型请求</text>
+<rect x="560" y="870" width="480" height="125" rx="16" fill="#eef4fb" stroke="#d5e3e5" stroke-width="2"/>
+<rect x="576" y="892" width="5" height="30" rx="2" fill="#306da6" stroke="#306da6" stroke-width="2"/>
+<text x="594" y="917" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="27" font-weight="700" fill="#17383f">Model 服务  :8040</text>
+<text x="594" y="953" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="400" fill="#526f75">统一路由：聊天 / 向量 / 重排</text>
+<text x="60" y="1042" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" fill="#526f75">聊天默认：DeepSeek 官方接口；辅助能力按各自供应商配置。图中没有密钥，也未进行收费模型探测。</text>
+<text x="60" y="1080" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="22" font-weight="400" fill="#95601a">虚拟整线控制是显式模式下的独立控制分支，不由模型直接向 PLC 发指令。</text>
+</svg>

@@ -91,7 +91,7 @@ def test_registry_definitions_drive_handlers_and_schemas(monkeypatch):
     definitions = getattr(tools, "definitions", None)
     assert definitions is not None, "缺少单一工具定义"
     schemas = {item["function"]["name"]: item["function"] for item in tools.tool_schemas()}
-    assert len(definitions) == 66 and len(schemas) == 65
+    assert len(definitions) == 66 and len(schemas) == 58
     assert set(definitions) == set(tools.mcp.handlers)
     assert "record_repair_verification_failed" not in schemas
     assert schemas["get_alarm_definition"]["parameters"] == {
@@ -99,7 +99,7 @@ def test_registry_definitions_drive_handlers_and_schemas(monkeypatch):
         "required": ["alarm_code"], "additionalProperties": False,
     }
     definitions["query_stock"] = replace(definitions["query_stock"], description="定义中的说明", operation="query_inventory")
-    assert next(item["function"]["description"] for item in tools.tool_schemas() if item["function"]["name"] == "query_stock") == "定义中的说明"
+    assert next(item["function"]["description"] for item in tools.tool_schemas(allowed_tools=["query_stock"]) if item["function"]["name"] == "query_stock") == "定义中的说明"
     calls = []
     monkeypatch.setattr(tools.mcp, "call", lambda server, operation, args: calls.append((server, operation)) or {"success": True})
     tools.execute("query_stock", {"query": "泵"})

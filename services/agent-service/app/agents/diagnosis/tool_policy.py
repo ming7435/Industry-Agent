@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from inspect import signature
 from typing import Any, Dict, List, Mapping
 
 from .schemas import DiagnosisState
@@ -40,12 +41,20 @@ def select_skill(event: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def tool_schemas_for(tools: Any, allowed_tools: List[str]) -> List[Dict[str, Any]]:
-    """按白名单过滤 MCP 工具 schema。"""
+    """按原名白名单声明工具，兼容旧式零参数适配器，不扩展授权。"""
 
     allowed = set(allowed_tools or [])
+    provider = tools.tool_schemas
+    try:
+        signature(provider).bind(allowed_tools=allowed_tools)
+    except (TypeError, ValueError):
+        # 仅判断接口形状；不能把提供者内部 TypeError 当作旧接口再调用一次。
+        schemas = provider()
+    else:
+        schemas = provider(allowed_tools=allowed_tools)
     return [
         schema
-        for schema in tools.tool_schemas()
+        for schema in schemas
         if (schema.get("function") or {}).get("name") in allowed
     ]
 
@@ -102,7 +111,7 @@ def guard_tool_call(name: str, arguments: Mapping[str, Any], state: DiagnosisSta
             "tool_not_allowed_for_step": "TOOL_NOT_ALLOWED",
             "tool_not_registered": "TOOL_NOT_ALLOWED",
             "duplicate_tool_call": "DUPLICATE_TOOL_CALL",
-        }.get(reason, "INVALID_ARGUMENT" if reason.startswith("missing_required_argument") else "OK")
+        }.get(reason, "OK" if decision.get("allow") else "INVALID_ARGUMENT")
         return {"allow": bool(decision.get("allow")), "code": code, "message": reason or "allowed"}
 
     if name not in set(state.allowed_tools or []):

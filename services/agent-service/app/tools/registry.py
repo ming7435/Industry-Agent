@@ -6,10 +6,13 @@ import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from time import perf_counter
-from typing import Any, Callable, Dict, Iterator, Mapping
+from typing import Any, Callable, Dict, Iterable, Iterator, Mapping
+
+from pydantic import BaseModel
+from app.tools.query_contracts import QUERY_ARGUMENT_MODELS, query_argument_error, validated_query
 
 from app.mcp.client import McpClient
 from app.mcp.quality import QualityMcpAdapter
@@ -133,6 +136,8 @@ class ToolDefinition:
     operation: str
     parameters: Mapping[str, Any]
     exposed_to_model: bool
+    compatibility_for: str = ''
+    argument_model: type[BaseModel] | None = None
 
 
 class ToolRegistry:
@@ -177,27 +182,27 @@ class ToolRegistry:
             ToolDefinition("fetch_document", lambda **arguments: fetch_knowledge_document(self.rag, **arguments), "获取知识文档全文", "knowledge", "fetch_document", generic_parameters, True),
             ToolDefinition("fetch_chunk", lambda **arguments: fetch_knowledge_chunk(self.rag, **arguments), "获取知识文档片段", "knowledge", "fetch_chunk", generic_parameters, True),
             ToolDefinition("document_parser", self.document_parser, "解析维修手册、SOP或工程文档", "knowledge", "document_parser", generic_parameters, True),
-            ToolDefinition("query_cad", self.query_cad, "查询CAD和BOM", "cad", "fetch_engineering_record", generic_parameters, True),
+            ToolDefinition("query_cad", self.query_cad, "查询CAD和BOM", "cad", "fetch_engineering_record", generic_parameters, False, compatibility_for="fetch_engineering_record"),
             ToolDefinition("query_bom", self.query_bom, "查询BOM物料清单", "cad", "query_bom", generic_parameters, True),
             ToolDefinition("query_part", self.query_part, "查询工程零件", "cad", "query_part", generic_parameters, True),
-            ToolDefinition("query_part_relation", self.query_part_relation, "查询零件上下游关系", "cad", "query_relation", generic_parameters, True),
-            ToolDefinition("query_assembly_relation", self.query_assembly_relation, "查询装配关系", "cad", "query_relation", generic_parameters, True),
-            ToolDefinition("get_drawing_metadata", self.get_drawing_metadata, "查询图纸元数据", "cad", "query_drawing", generic_parameters, True),
-            ToolDefinition("get_component_location", self.get_component_location, "查询部件安装位置", "cad", "query_relation", generic_parameters, True),
+            ToolDefinition("query_part_relation", self.query_part_relation, "查询零件上下游关系", "cad", "query_relation", generic_parameters, False, compatibility_for="query_relation"),
+            ToolDefinition("query_assembly_relation", self.query_assembly_relation, "查询装配关系", "cad", "query_relation", generic_parameters, False, compatibility_for="query_relation"),
+            ToolDefinition("get_drawing_metadata", self.get_drawing_metadata, "查询图纸元数据", "cad", "query_drawing", generic_parameters, False, compatibility_for="query_drawing"),
+            ToolDefinition("get_component_location", self.get_component_location, "查询部件安装位置", "cad", "query_relation", generic_parameters, False, compatibility_for="query_relation"),
             ToolDefinition("query_drawing", self.query_drawing, "从 CAD 服务查询图纸引用和定位元数据", "cad", "query_drawing", generic_parameters, True),
             ToolDefinition("query_relation", self.query_relation, "从 CAD 服务查询装配关系", "cad", "query_relation", generic_parameters, True),
             ToolDefinition("fetch_engineering_record", self.fetch_engineering_record, "从 CAD 服务获取完整工程记录", "cad", "fetch_engineering_record", generic_parameters, True),
             ToolDefinition("generate_repair_plan", self.generate_repair_plan, "生成维修计划草案", "local", "generate_repair_plan", generic_parameters, True),
             ToolDefinition("query_spare_part", self.query_spare_part, "查询备件库存", "inventory", "query_spare_part", generic_parameters, True),
             ToolDefinition("query_inventory", self.query_inventory, "查询库存", "inventory", "query_inventory", generic_parameters, True),
-            ToolDefinition("query_stock", self.query_stock, "查询库存余量", "inventory", "query_stock", generic_parameters, True),
+            ToolDefinition("query_stock", self.query_stock, "查询库存余量", "inventory", "query_stock", generic_parameters, False, compatibility_for="query_inventory"),
             ToolDefinition("query_part_availability", self.query_part_availability, "查询备件可用性", "inventory", "query_part_availability", generic_parameters, True),
             ToolDefinition("get_workorder_template", self.get_workorder_template, "获取工单草案模板", "mes", "get_workorder_template", generic_parameters, True),
             ToolDefinition("submit_workorder_draft", self.submit_workorder_draft, "提交工单草案", "mes", "submit_workorder_draft", generic_parameters, True),
             ToolDefinition("create_workorder", self.create_workorder, "创建维修工单", "mes", "create_workorder", generic_parameters, True),
             ToolDefinition("update_workorder", self.update_workorder, "更新维修工单", "mes", "update_workorder", generic_parameters, True),
             ToolDefinition("get_workorder", self.get_workorder, "获取单个维修工单", "mes", "get_workorder", generic_parameters, True),
-            ToolDefinition("query_workorder", self.query_workorder, "查询维修工单", "mes", "query_workorder", generic_parameters, True),
+            ToolDefinition("query_workorder", self.query_workorder, "查询维修工单", "mes", "query_workorder", generic_parameters, False, compatibility_for="get_workorder"),
             ToolDefinition("list_workorders", self.list_workorders, "查询工单列表", "mes", "list_workorders", generic_parameters, True),
             ToolDefinition("delete_workorder", self.delete_workorder, "删除维修工单", "mes", "delete_workorder", generic_parameters, True),
             ToolDefinition("assign_workorder", self.assign_workorder, "派工并更新负责人", "mes", "assign_workorder", generic_parameters, True),
@@ -228,7 +233,13 @@ class ToolRegistry:
             ToolDefinition("ingest_knowledge", self.ingest_knowledge, "将维修手册 JSONL 入库到 RAG", "knowledge", "ingest_knowledge", generic_parameters, True),
             ToolDefinition("record_repair_verification_failed", self.record_repair_verification_failed, "记录维修验收未通过", "mes", "record_repair_verification_failed", generic_parameters, False),
         ]
-        return {definition.name: definition for definition in definitions}
+        result = {}
+        for definition in definitions:
+            argument_model = QUERY_ARGUMENT_MODELS.get(definition.name)
+            if argument_model is not None:
+                definition = replace(definition, argument_model=argument_model, parameters=argument_model.model_json_schema())
+            result[definition.name] = definition
+        return result
 
     @contextmanager
     def trace_context(
@@ -286,27 +297,35 @@ class ToolRegistry:
     def intent_classifier_tool(self, user_text: str, **_: Any) -> Dict[str, Any]:
         return intent_classifier_tool_fn(user_text=user_text)
 
+    @validated_query('search_knowledge')
     def search_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return search_knowledge_tool(self.rag, query, limit=limit, filters=filters)
 
+    @validated_query('search_alarm_knowledge')
     def search_alarm_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, alarm_code: str = "", **_: Any) -> Dict[str, Any]:
         return search_alarm_knowledge_tool(self.rag, query, limit=limit, filters=filters, alarm_code=alarm_code)
 
+    @validated_query('search_sop')
     def search_sop(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return search_sop_tool(self.rag, query, limit=limit, filters=filters)
 
+    @validated_query('search_manual')
     def search_manual(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return search_manual_tool(self.rag, query, limit=limit, filters=filters)
 
+    @validated_query('search_fault_cases')
     def search_fault_cases(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return search_fault_cases_tool(self.rag, query, limit=limit, filters=filters)
 
+    @validated_query('search_semantic_memory')
     def search_semantic_memory(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
         return search_semantic_memory_tool(self.rag, query, limit=limit, filters=filters)
 
+    @validated_query('fetch_document')
     def fetch_document(self, document_id: str = "", **_: Any) -> Dict[str, Any]:
         return fetch_knowledge_document(self.rag, document_id)
 
+    @validated_query('fetch_chunk')
     def fetch_chunk(self, document_id: str = "", chunk_id: str = "", **_: Any) -> Dict[str, Any]:
         return fetch_knowledge_chunk(self.rag, document_id, chunk_id)
 
@@ -316,33 +335,43 @@ class ToolRegistry:
     def rag_status(self, **_: Any) -> Dict[str, Any]:
         return rag_status_tool(self.rag)
 
+    @validated_query('query_cad')
     def query_cad(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
         return query_cad_tool(query=query, device_id=device_id, component=component, part_no=part_no)
 
+    @validated_query('query_bom')
     def query_bom(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
         return query_bom_tool(query=query, device_id=device_id, component=component, part_no=part_no)
 
+    @validated_query('query_part')
     def query_part(self, query: str = "", device_id: str = "", component: str = "", part_no: str = "", **_: Any) -> Dict[str, Any]:
         return query_part_tool(query=query, device_id=device_id, component=component, part_no=part_no)
 
+    @validated_query('query_part_relation')
     def query_part_relation(self, part_no: str = "", component_id: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
         return query_part_relation_tool(part_no=part_no, component_id=component_id, query=query)
 
+    @validated_query('query_assembly_relation')
     def query_assembly_relation(self, component_id: str = "", component: str = "", part_no: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
         return query_assembly_relation_tool(component_id=component_id, component=component, part_no=part_no, query=query)
 
+    @validated_query('get_drawing_metadata')
     def get_drawing_metadata(self, component_id: str = "", part_no: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
         return get_drawing_metadata_tool(component_id=component_id, part_no=part_no, query=query)
 
+    @validated_query('get_component_location')
     def get_component_location(self, component_id: str = "", part_no: str = "", query: str = "", **_: Any) -> Dict[str, Any]:
         return get_component_location_tool(component_id=component_id, part_no=part_no, query=query)
 
+    @validated_query('query_drawing')
     def query_drawing(self, **arguments: Any) -> Dict[str, Any]:
         return query_drawing_tool(**arguments)
 
+    @validated_query('query_relation')
     def query_relation(self, **arguments: Any) -> Dict[str, Any]:
         return query_relation_tool(**arguments)
 
+    @validated_query('fetch_engineering_record')
     def fetch_engineering_record(self, **arguments: Any) -> Dict[str, Any]:
         return fetch_engineering_record_tool(**arguments)
 
@@ -649,6 +678,12 @@ class ToolRegistry:
         missing = [key for key in required if not arguments.get(key)]
         if missing:
             return "missing_required_argument:%s" % ",".join(missing)
+        definition = self.definitions.get(name)
+        if definition and definition.argument_model is not None:
+            # 与 Python 直接调用入口共享校验，不修改原始请求。
+            error = query_argument_error(name, arguments)
+            if error:
+                return error
         calls = context.get("tool_calls") or []
         if isinstance(calls, (list, tuple)):
             for item in calls:
@@ -721,7 +756,9 @@ class ToolRegistry:
         # 本地开发也默认关闭演示 CAD，避免示例部件被当作真实工程依据。
         return False
 
-    def tool_schemas(self) -> list[Dict[str, Any]]:
+    def tool_schemas(self, allowed_tools: Iterable[str] | None = None) -> list[Dict[str, Any]]:
+        """默认隐藏重复查询；显式白名单只暴露获准原名，内部工具始终隐藏。"""
+        allowed = None if allowed_tools is None else set(allowed_tools)
         return [
             {
                 "type": "function",
@@ -732,5 +769,6 @@ class ToolRegistry:
                 },
             }
             for definition in self.definitions.values()
-            if definition.exposed_to_model
+            if (definition.exposed_to_model or (allowed is not None and definition.compatibility_for))
+            and (allowed is None or definition.name in allowed)
         ]
