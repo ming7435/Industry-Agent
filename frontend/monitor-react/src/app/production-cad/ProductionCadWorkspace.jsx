@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import CadSolidPreview from "./CadSolidPreview.jsx";
+import ManufacturingPanel from "./ManufacturingPanel.jsx";
 import { buildCadPayload, cadFileUrl, cadPending, cadRequest, cadStatus, canConfirmCad, createCadCommandState, fileBase64, validateCadUpload } from "./productionCad.mjs";
 import "./productionCad.css";
 
@@ -85,7 +86,7 @@ export default function ProductionCadWorkspace() {
   const stl = task?.artifacts?.find((item) => item.format === "stl");
   return <section className="production-cad">
     <header><span className="cad-eyebrow">CAD Agent · 生产准备</span><h1>生产前零件建模</h1><p>按需求或对应图纸生成真实三维实体，校验后查看、下载并确认设计版本。</p></header>
-    <div className="cad-boundary"><strong>当前范围：设计文件与加工准备。</strong> 已接入实体建模；未接入刀路、机床后处理和机器生产下发。设计确认不等于允许机器启动。</div>
+    <div className="cad-boundary"><strong>当前范围：实体建模与虚拟车削生产。</strong> 圆柱 / 同轴通孔可生成刀路和虚拟 NC、单独确认并下发本机虚拟工厂。复杂特征不会被省略加工；不接入真实 PLC 或真实机床后处理。<br />{health?.production_message || "正在检查虚拟工厂加工接口…"}。设计确认不等于启动生产。</div>
     {error && <div className="cad-alert" role="alert">{error}</div>}
     <section className="cad-card" id="cad-design-form"><h2>{revision ? "修改设计 · 创建新版本" : "零件需求与图纸"}</h2>
       <p>{health ? health.ready ? `CAD 内核已就绪：${health.engine || "CadQuery"}` : "CAD 内核未就绪，请安装独立建模依赖后重试" : "正在检查 CAD 内核…"}</p>
@@ -120,6 +121,7 @@ export default function ProductionCadWorkspace() {
         {!!task.manufacturing_missing?.length && <div className="cad-boundary">加工准备尚缺：{task.manufacturing_missing.join("、")}。当前仅完成几何建模，未进入机器生产。</div>}
         <div className="cad-actions"><button className="cad-primary" type="button" disabled={busy || !canConfirmCad(task)} onClick={confirm}>{task.status === "confirmed" ? "此版本已确认" : "确认当前设计版本"}</button><button type="button" disabled={busy} onClick={revise}>修改参数并建立新版本</button></div></>}
       {!stl && !cadPending(task.status) && <button type="button" disabled={busy} onClick={revise}>补充需求并建立新版本</button>}
+      {task.status === "confirmed" && <ManufacturingPanel key={`${task.design_id}:${task.digest}`} design={task} />}
       <h3>此任务的 CAD Agent 执行明细</h3><p>每一步展示实际工具输入和返回；文件内容仅记录摘要，避免把整份图纸重复写入日志。</p>
       <ol className="cad-events">{task.events.map((event, index) => <li key={index}><details><summary>{index + 1}. {toolLabels[event.tool] || event.tool} · {event.status === "failed" ? "失败" : "完成"}</summary><p>Agent：{event.agent} · 工具：{event.tool} · {new Date(event.timestamp).toLocaleString()}</p><h4>输入 / 上下文</h4><pre>{JSON.stringify(event.input, null, 2)}</pre><h4>返回体</h4><pre>{JSON.stringify(event.output, null, 2)}</pre>{event.error && <p role="alert">{event.error}</p>}</details></li>)}</ol>
     </section>}

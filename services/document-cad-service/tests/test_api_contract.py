@@ -10,8 +10,9 @@ def test_cad_health_and_tool_contract(monkeypatch):
     try:
         client = TestClient(app)
         health = client.get("/health")
-        assert health.status_code == 200
+        assert health.status_code == 503
         assert health.json()["service"] == "document-cad-service"
+        assert health.json()["ready"] is False
 
         response = client.post("/tools/call", json={"tool": "query_bom", "arguments": {"query": "主轴"}})
         assert response.status_code == 200

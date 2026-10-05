@@ -173,7 +173,7 @@ class SearchResponse(BaseModel):
             "Reason of the degradation: dense_timeout / bm25_timeout / "
             "all_retrievers_failed / rerank_timeout / reranker_unavailable / "
             "embedding_unavailable / milvus_unavailable / whoosh_unavailable / "
-            "llm_timeout / request_timeout. Empty when not degraded."
+            "llm_timeout / request_timeout / document_store_unavailable. Empty when not degraded."
         ),
     )
     latency_ms: LatencyBreakdown = Field(
@@ -191,7 +191,7 @@ class HealthResponse(BaseModel):
     whoosh: bool = Field(..., description="BM25 route (Whoosh) availability.")
     embedding: bool = Field(..., description="bge-m3 embedder availability.")
     reranker: bool = Field(..., description="bge-reranker availability.")
-    llm: bool = Field(..., description="DeepSeek client configuration state.")
+    llm: bool = Field(..., description="Model Service 已观测到的聊天能力就绪状态；未探测时为 false。")
     reranker_error: str = Field(
         default="",
         description="Detailed reranker load failure when reranker is unavailable.",

@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict
 import os
 
 from .durable_store import DurableJsonStore
+from .event_plan_reader import EventPlanReader
 from app.config.settings import allow_degraded_storage
 
 
@@ -31,6 +32,7 @@ class EventResultStore:
         if not configured_path and not allow_degraded_storage():
             raise RuntimeError("生产模式要求配置 EVENT_STORE_PATH")
         self._durable = DurableJsonStore(configured_path) if configured_path else None
+        self._plan_reader = EventPlanReader(configured_path) if configured_path else None
 
     def has_unmigrated_legacy_result(self, event_id: str, scoped_key: str) -> bool:
         """旧版仅按事件 ID 保存的结果不能被新作用域静默重放。"""
@@ -42,6 +44,30 @@ class EventResultStore:
             legacy = legacy or self._durable.get("agent_event", event_id) is not None
             scoped = scoped or self._durable.get("agent_event", scoped_key) is not None
         return legacy and not scoped
+
+    def list_results(self, limit: int = 1000) -> list[Dict[str, Any]]:
+        """读取既有事件结果供方案工作台展示；不执行事件或生成工单。"""
+        limit = max(1, min(int(limit), 5000))
+        if self._durable is not None:
+            stored = self._durable.values("agent_event", limit)
+        else:
+            with self._lock:
+                stored = list(reversed(list(self._results.values())))[:limit]
+        return [
+            dict(value.get("result") or {}) if value.get("_event_result_store_version") == 2 else dict(value)
+            for value in stored
+        ]
+
+    def list_plan_results(self):
+        """方案投影与历史日志全文分离；大历史库由单个只读任务渐进加载。"""
+        if self._plan_reader is not None:
+            return self._plan_reader.snapshot()
+        results = self.list_results(limit=5000)
+        return results, {"status": "ready", "loaded_records": len(results), "total_records": len(results), "error": ""}
+
+    def close(self):
+        if self._plan_reader is not None:
+            self._plan_reader.close()
 
     def get_or_create(self, event_id: str, producer: Callable[[], Dict[str, Any]], *, fingerprint: str = "") -> Dict[str, Any]:
         key = str(event_id or "").strip()
@@ -70,6 +96,8 @@ class EventResultStore:
                         self._results.move_to_end(key)
                         return unwrap(cached)
                 result = self._durable.get_or_create("agent_event", key, produce) if self._durable is not None else produce()
+                if self._plan_reader is not None:
+                    self._plan_reader.invalidate()
                 with self._lock:
                     self._results[key] = dict(result)
                     self._results.move_to_end(key)

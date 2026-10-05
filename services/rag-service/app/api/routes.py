@@ -17,13 +17,15 @@ Two endpoints are exposed:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import json
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import JSONResponse
 from loguru import logger
 
@@ -38,7 +40,7 @@ from .deps import (
     get_reranker,
 )
 from app.reranker import reranker_error
-from .models import DocumentIngestRequest, DocumentUpsertRequest, ErrorResponse, HealthResponse, HitModel, SearchRequest, SearchResponse
+from .models import DocumentIngestRequest, DocumentUpsertRequest, ErrorResponse, HealthResponse, HitModel, LatencyBreakdown, SearchRequest, SearchResponse
 from .documents import get_document_store
 from .pipeline import SearchPipeline
 from app.retrieval import Hit
@@ -73,6 +75,14 @@ def _validate_ingest_path(raw_path: str) -> Path:
     return path
 
 
+async def _invoke(loader: Callable[[], Any]) -> Any:
+    """同步构造/探针卸载到线程，异步返回值在事件循环内真正等待。"""
+    if inspect.iscoroutinefunction(loader):
+        return await loader()
+    value = await asyncio.to_thread(loader)
+    return await value if inspect.isawaitable(value) else value
+
+
 async def _resolve(loader: Callable[[], Any]) -> Any | None:
     """Resolve a component without blocking the event loop.
 
@@ -85,7 +95,7 @@ async def _resolve(loader: Callable[[], Any]) -> Any | None:
     """
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(loader),
+            _invoke(loader),
             timeout=settings.health_probe_timeout_ms / 1000,
         )
     except TimeoutError:
@@ -126,7 +136,7 @@ async def _probe(component: Any) -> bool:
     try:
         return bool(
             await asyncio.wait_for(
-                asyncio.to_thread(probe),
+                _invoke(probe),
                 timeout=settings.health_probe_timeout_ms / 1000,
             )
         )
@@ -155,14 +165,8 @@ async def _ready(loader: Callable[[], Any]) -> bool:
 
 
 async def _llm_ready() -> bool:
-    """Report whether the DeepSeek client is usable.
-
-    Returns:
-        ``True`` when the client exists and is configured (SDK plus API key).
-        No network call is made, so the health endpoint stays fast and free.
-    """
-    client = await _resolve(get_llm_client)
-    return bool(client is not None and getattr(client, "is_configured", False))
+    """只读取 Model Service 的能力观测，不主动调用收费生成接口。"""
+    return await _ready(get_llm_client)
 
 
 @router.post(
@@ -173,13 +177,11 @@ async def _llm_ready() -> bool:
 )
 async def search(
     request: SearchRequest,
-    pipeline: SearchPipeline = Depends(get_pipeline),
 ) -> SearchResponse | JSONResponse:
     """Run the online retrieval + generation chain.
 
     Args:
         request: Query, metadata filters and desired number of evidences.
-        pipeline: The orchestration pipeline, resolved as a singleton dependency.
 
     Returns:
         A :class:`SearchResponse`; or a ``503`` payload when neither the BM25 nor
@@ -189,7 +191,37 @@ async def search(
         HTTPException: Only for framework-level validation problems; dependency
             failures are reported inside the response body.
     """
-    document_hits = get_document_store().search(request.query, request.top_n, request.filters)
+    started = perf_counter()
+    request_id = str(uuid4())
+
+    async def within_budget(loader: Callable[[], Any]) -> Any:
+        remaining = settings.request_timeout_ms / 1000 - (perf_counter() - started)
+        if remaining <= 0:
+            raise TimeoutError
+        return await asyncio.wait_for(_invoke(loader), timeout=remaining)
+
+    document_failed = False
+    try:
+        # FastAPI 同步 Depends 虽然会卸载构造，但其耗时不属于原管道预算。
+        # 这里从构造开始计时，并将相同起点交给后续检索/生成。
+        pipeline = await within_budget(get_pipeline)
+        try:
+            document_hits = await within_budget(
+                lambda: get_document_store().search(request.query, request.top_n, request.filters)
+            )
+        except TimeoutError:
+            raise
+        except Exception as error:
+            document_hits = []
+            document_failed = True
+            logger.warning("request_id={} document store unavailable error_type={}", request_id, type(error).__name__)
+    except TimeoutError:
+        return SearchResponse(
+            request_id=request_id,
+            degraded=True,
+            degrade_reason="request_timeout",
+            latency_ms=LatencyBreakdown(total=round((perf_counter() - started) * 1000)),
+        )
     supplemental_hits = [
         Hit(
             chunk_id=str(item.get("chunk_id") or ""),
@@ -211,8 +243,11 @@ async def search(
             content={"error": "all_dependencies_unavailable"},
         )
 
-    request_id = str(uuid4())
-    return await pipeline.search(request, request_id, supplemental_hits=supplemental_hits)
+    response = await pipeline.search(request, request_id, supplemental_hits=supplemental_hits, started_at=started)
+    if document_failed:
+        response.degraded = True
+        response.degrade_reason = response.degrade_reason or "document_store_unavailable"
+    return response
 
 
 def _hit_matches_filters(hit: HitModel, filters: dict[str, Any]) -> bool:

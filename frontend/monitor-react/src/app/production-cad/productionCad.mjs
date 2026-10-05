@@ -45,7 +45,7 @@ export async function cadRequest(path, { method = "GET", body, signal, key } = {
     response = await fetch(path, { method, signal, credentials: "same-origin", headers: { "Content-Type": "application/json", ...(key ? { "Idempotency-Key": key } : {}) }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
   } catch (error) {
     if (signal?.aborted) throw error;
-    throw new Error("CAD 请求未收到确认，结果暂不确定。保持参数不变再次提交，会复用原命令身份，不会重复建模。");
+    throw new Error("CAD 请求未收到确认，结果暂不确定。请刷新任务状态核对结果；生产请求不会自动重新发送。");
   }
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -62,4 +62,28 @@ export function fileBase64(file) {
     reader.onerror = () => reject(new Error("图纸读取失败"));
     reader.readAsDataURL(file);
   });
+}
+
+export function buildManufacturingPayload(form, digest) {
+  if (!/^[a-f0-9]{64}$/.test(digest || "")) throw new Error("设计版本摘要无效");
+  const payload = { design_digest: digest, device_id: "TRAK-TC820LTYSI-001", postprocessor: "virtual-trak-turning-v1" };
+  for (const key of ["stock_diameter_mm", "stock_length_mm", "grip_length_mm", "clearance_mm", "pass_depth_mm", "spindle_rpm", "feed_mm_per_rev", "tolerance_mm", "tool_id", "drill_tool_id", "drill_diameter_mm"]) {
+    const input = form[key];
+    if (["drill_tool_id", "drill_diameter_mm"].includes(key) && (input === "" || input == null)) continue;
+    if (typeof input === "boolean" || input == null || String(input).trim() === "") throw new Error(`请明确填写 ${key}`);
+    const value = Number(input);
+    if (!Number.isFinite(value) || value <= 0 || (key.endsWith("tool_id") && (!Number.isInteger(value) || value > 99))) throw new Error(`${key} 必须是合法正数，刀具号为 1–99 的整数`);
+    payload[key] = value;
+  }
+  return payload;
+}
+
+export const manufacturingStatus = (status) => ({ prepared: "加工包已准备", submitting: "正在下发", received: "工厂已接收 · 待确认启动", running: "虚拟加工中", paused: "故障暂停 · 待人工确认", completed: "虚拟加工完成", interrupted: "重启中断 · 待人工确认", uncertain: "结果不确定 · 只读对账", rejected: "工厂拒绝 / 尚未下发" }[status] || "未知状态");
+export const canDispatchManufacturing = (record, checked) => checked === true && ["prepared", "received", "paused", "interrupted", "rejected"].includes(record?.status) && /^[a-f0-9]{64}$/.test(record?.digest || "") && record?.program?.simulation_only === true && record?.program?.simulation?.passed === true;
+export const shouldRenewManufacturingConfirmation = (previous, next) => ["uncertain", "submitting"].includes(previous) && ["received", "paused", "interrupted", "rejected", "prepared"].includes(next);
+export const mergeManufacturingProgress = (items, next) => items.some((item) => item.program_id === next.program_id) ? items.map((item) => item.program_id === next.program_id ? next : item) : [next, ...items];
+
+export function manufacturingFileUrl(designId, programId, kind, download = false) {
+  if (!/^CAD-[A-F0-9]{20}$/.test(designId || "") || !/^CAM-[A-F0-9]{20}$/.test(programId || "") || !["nc", "toolpath", "package"].includes(kind)) throw new Error("无效的加工文件地址");
+  return `/api/cad/designs/${designId}/manufacturing/${programId}/files/${kind}${download ? "?download=1" : ""}`;
 }

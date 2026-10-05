@@ -3,7 +3,7 @@
 Design rules:
 
 * **延迟初始化。** 模块导入时不导入或构造组件，因此离线组件缺失或损坏不会阻止进程启动。
-* **容错。** 构造失败会记录日志并缓存为 ``None``；请求处理器将其转换为相应的降级结果，只有整个检索层不可用时才返回 HTTP 503。
+* **容错与恢复。** 构造失败会暂时缓存为 ``None``，冷却后自动重试；请求处理器将其转换为相应的降级结果，只有整个检索层不可用时才返回 HTTP 503。
 * **线程安全。** 模块级缓存使用双重检查锁。锁可重入，因为管道单例在自身工厂中还要解析组件单例；访问器可能来自事件循环、启动预热任务或工作线程。
 * **适配友好。** 构造器支持无参调用时直接使用；需要参数时按名称从 :mod:`config.settings` 读取（见 :func:`_matching_kwargs`），吸收构造器形状差异而不硬编码猜测。
 """
@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from threading import RLock
+from time import monotonic
 from typing import Any, Callable
 
 from loguru import logger
@@ -24,6 +25,9 @@ from .pipeline import SearchPipeline
 _MISSING = object()
 
 _instances: dict[str, Any] = {}
+_retry_after: dict[str, float] = {}
+# 故障期间限制重复构造，同时允许外部服务恢复后自动接回在线链路。
+_RETRY_DELAY_SECONDS = 5.0
 # 这里必须可重入：管道工厂在已持有锁时还要解析组件单例，普通 Lock 会在第一次 /search 时死锁。
 _lock = RLock()
 
@@ -86,7 +90,7 @@ def _instantiate(cls: Any, candidates: dict[str, Any], what: str) -> Any:
 
 
 def _singleton(key: str, factory: Callable[[], Any], description: str) -> Any:
-    """Return the cached component for ``key``, creating it once.
+    """复用成功依赖；失败依赖经过冷却后重新构造。
 
     Args:
         key: Cache key.
@@ -95,15 +99,15 @@ def _singleton(key: str, factory: Callable[[], Any], description: str) -> Any:
 
     Returns:
         The component, or ``None`` when it could not be created. ``None`` is
-        cached, so a broken component is not retried on every request.
+        暂存，冷却期间避免每次请求重复构造，冷却后自动恢复。
     """
     cached = _instances.get(key, _MISSING)
-    if cached is not _MISSING:
+    if cached is not _MISSING and (cached is not None or monotonic() < _retry_after.get(key, 0)):
         return cached
 
     with _lock:
         cached = _instances.get(key, _MISSING)
-        if cached is not _MISSING:
+        if cached is not _MISSING and (cached is not None or monotonic() < _retry_after.get(key, 0)):
             return cached
 
         try:
@@ -118,6 +122,10 @@ def _singleton(key: str, factory: Callable[[], Any], description: str) -> Any:
             value = None
 
         _instances[key] = value
+        if value is None:
+            _retry_after[key] = monotonic() + _RETRY_DELAY_SECONDS
+        else:
+            _retry_after.pop(key, None)
         return value
 
 
@@ -272,23 +280,24 @@ def get_llm_client() -> Any:
 def get_pipeline() -> SearchPipeline:
     """Return the orchestration pipeline singleton.
 
-    The pipeline captures the component singletons on first use; call
-    :func:`reset_dependencies` to rebuild it after an environment fix.
+    组件单例恢复后重建管道，避免管道继续持有首次构造时的 ``None``。
 
     Returns:
         The shared :class:`~app.api.pipeline.SearchPipeline`.
     """
-    return _singleton(
-        "pipeline",
-        lambda: SearchPipeline(
-            bm25=get_bm25_retriever(),
-            dense=get_dense_retriever(),
-            embedder=get_embedder(),
-            reranker=get_reranker(),
-            llm=get_llm_client(),
-        ),
-        "search pipeline",
-    )
+    with _lock:
+        components = resolve_components()
+        current = tuple(components.values())
+        previous = _instances.get("pipeline_components", ())
+        pipeline = _instances.get("pipeline")
+        if pipeline is not None and len(previous) == len(current) and all(
+            before is after for before, after in zip(previous, current)
+        ):
+            return pipeline
+        pipeline = SearchPipeline(**components)
+        _instances["pipeline"] = pipeline
+        _instances["pipeline_components"] = current
+        return pipeline
 
 
 def resolve_components() -> dict[str, Any]:
@@ -314,6 +323,7 @@ def reset_dependencies() -> None:
     """
     with _lock:
         _instances.clear()
+        _retry_after.clear()
     logger.info("dependency singletons reset")
 
 

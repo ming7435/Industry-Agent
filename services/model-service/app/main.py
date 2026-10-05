@@ -38,24 +38,15 @@ gateway = ModelGateway()
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    synthetic = gateway.name == "fake"
-    def capability(provider: Any, name: str, model: str) -> dict[str, Any]:
-        configured = not synthetic and bool(getattr(provider, "api_key", "")) and bool(model)
-        return {
-            # 配置齐全不等于远端已可达；健康检查不主动调用收费生成接口，
-            # 因此只能报告 not_probed，不能把未探测的能力标成 ready。
-            "ready": False,
-            "configured": configured,
-            "reachable": "not_probed" if configured else ("synthetic" if synthetic else "unavailable"),
-            "provider": getattr(provider, "name", "unknown"),
-            "model": model,
-            "capability": name,
-            "synthetic": synthetic,
-        }
     chat_model = getattr(gateway.chat_provider, "model", "fake-chat")
     embedding_model = getattr(gateway.aux_provider, "embedding_model", "fake-embedding")
     rerank_model = getattr(gateway.aux_provider, "reranker_model", "fake-reranker")
-    vision_model = os.getenv("SILICONFLOW_VISION_MODEL", "") or getattr(gateway.aux_provider, "model", "")
+    capabilities = {
+        "chat": gateway.capability_status(gateway.chat_provider, "chat", chat_model),
+        "embedding": gateway.capability_status(gateway.aux_provider, "embedding", embedding_model),
+        "rerank": gateway.capability_status(gateway.aux_provider, "rerank", rerank_model),
+        "vision": gateway.capability_status(gateway.aux_provider, "vision", gateway.vision_model),
+    }
     return {
         "status": "ok",
         "service": "model-service",
@@ -64,13 +55,9 @@ def health() -> dict[str, Any]:
         "chat_provider": gateway.name,
         # 向量/重排仍可使用独立的 SiliconFlow，不会参与聊天请求。
         "aux_provider": gateway.aux_name,
-        "ready": False,
-        "capabilities": {
-            "chat": capability(gateway.chat_provider, "chat", chat_model),
-            "embedding": capability(gateway.aux_provider, "embedding", embedding_model),
-            "rerank": capability(gateway.aux_provider, "rerank", rerank_model),
-            "vision": capability(gateway.aux_provider, "vision", vision_model),
-        },
+        # 不做收费探测；只读近期真实业务调用的观测，视觉能力单独报告。
+        "ready": all(capabilities[name]["ready"] for name in ("chat", "embedding", "rerank")),
+        "capabilities": capabilities,
     }
 
 

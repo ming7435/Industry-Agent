@@ -10,6 +10,8 @@ import { buildReportDisplaySections } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
+import { request } from "./apiRequest.mjs";
+import { buildMaintenanceWorkspaceRecords, loadMaintenanceWorkspace, maintenanceDispatchView, maintenanceHistoryNotice } from "./maintenanceWorkspace.mjs";
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
@@ -459,17 +461,6 @@ function alarmLevelText(latest) {
 }
 
 
-async function request(path, options = {}) {
-  const response = await fetch(path, {
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || `请求失败：${response.status}`);
-  return body;
-}
-
 function normalizeWorkorderResponse(body) {
   if (body?.workorder && typeof body.workorder === "object") {
     return {
@@ -727,7 +718,7 @@ function App() {
         )}
         {!bigScreen && activeView === "cad" && <ProductionCadWorkspace />}
         {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} sample={sample} />}
-        {!bigScreen && activeView === "maintenance" && <MaintenancePlanWorkspace snapshot={snapshot} sample={sample} />}
+        {!bigScreen && activeView === "maintenance" && <MaintenancePlanWorkspace snapshot={snapshot} sample={sample} actor={teamActor} />}
         {!bigScreen && activeView === "workorder" && (teamActor ? <><SupervisorQueue actor={teamActor} /><WorkorderView key={teamActor.user_id} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} /></> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单，监督人查看全部并催办。</p></section>)}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
         {!bigScreen && activeView === "logs" && <LogsWorkspace snapshot={snapshot} />}
@@ -2654,45 +2645,48 @@ function ReportWorkspace({ snapshot }) {
 }
 
 
-function MaintenancePlanWorkspace({ snapshot, sample }) {
+function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
+  const [planItems, setPlanItems] = useState([]);
+  const [history, setHistory] = useState({ status: "loading" });
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
-  const candidateDiagnosis = getLatestDiagnosis(snapshot, sample);
-  const diagnosisIsCurrent = diagnosisMatchesCurrent(snapshot, sample, candidateDiagnosis);
-  const latestDiagnosis = diagnosisIsCurrent ? candidateDiagnosis : {};
-  const pipeline = diagnosisIsCurrent ? getLatestPipeline(snapshot, sample) : {};
-  const pipelinePlan = pipeline?.maintenance_plan || {};
-  const currentAlarm = String(sample?.alarm_code || latestDiagnosis?.alarm_code || "").trim();
+  const [orderError, setOrderError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const refreshRef = useRef(null);
+  const currentAlarm = String(sample?.alarm_code || "").trim();
   const currentDevice = String(sample?.device_id || snapshot?.device_id || "").trim();
-  const currentFaultActive = Boolean(sample?.alarm_code) && ["alarm", "fault", "warning"].includes(String(sample?.status || "").toLowerCase());
-  const hasCurrentIncident = Boolean(currentAlarm || Object.keys(latestDiagnosis).length);
-  const selectedOrder = orders.find((order) => order.workorder_id === selectedId)
-    || (!hasCurrentIncident ? orders[0] : undefined);
-  const hasCurrentDiagnosis = Boolean(selectedOrder)
-    && String(selectedOrder.device_id || "") === currentDevice
-    && (!currentAlarm || String(selectedOrder.alarm_code || "") === currentAlarm)
-    && Object.keys(latestDiagnosis).length > 0;
-  const showCurrentPipeline = !selectedOrder && Object.keys(latestDiagnosis).length > 0 && Boolean(pipelinePlan.plan_id || pipelinePlan.repair_steps?.length);
-  const plan = buildMaintenancePlanView({
-    order: selectedOrder || { device_id: currentDevice, alarm_code: currentAlarm },
-    plan: hasCurrentDiagnosis || showCurrentPipeline ? pipelinePlan : {},
-    diagnosis: hasCurrentDiagnosis || showCurrentPipeline ? latestDiagnosis : {},
-  });
+  const records = buildMaintenanceWorkspaceRecords({ snapshot, items: planItems, orders });
+  const currentRecord = records.find(record => record.device_id === currentDevice && (!currentAlarm || record.alarm_code === currentAlarm));
+  const selectedRecord = records.find(record => record.recordId === selectedId) || currentRecord || records[0];
+  const linkedOrders = selectedRecord?.plan_id ? orders.filter(order => (order.plan_id || order.maintenance_plan_snapshot?.plan_id) === selectedRecord.plan_id) : [];
+  const hasCurrentDiagnosis = Boolean(selectedRecord && selectedRecord === currentRecord);
+  const plan = selectedRecord ? buildMaintenancePlanView({ plan: selectedRecord, diagnosis: selectedRecord.diagnosis }) : null;
 
   useEffect(() => {
     let cancelled = false;
-    request("/api/workorders")
-      .then((body) => {
-        if (cancelled) return;
-        const items = (body.items || []).map(normalizeWorkorderResponse);
-        setOrders(items);
-        setSelectedId((current) => current || preferredWorkorderId(items, sample, snapshot));
-        setError("");
-      })
-      .catch((err) => { if (!cancelled) setError(err.message); });
-    return () => { cancelled = true; };
-  }, []);
+    let refreshing = false;
+    setOrders([]);
+    setOrderError("");
+    async function refresh() {
+      if (refreshing) return;
+      refreshing = true;
+      setLoading(true);
+      const result = await loadMaintenanceWorkspace(request, actor);
+      refreshing = false;
+      if (cancelled) return;
+      if (!result.planError) setPlanItems(result.items);
+      setHistory(result.history);
+      setOrders(result.orders.map(normalizeWorkorderResponse));
+      setError(result.planError);
+      setOrderError(result.orderError);
+      setLoading(false);
+    }
+    refreshRef.current = refresh;
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [actor?.user_id, actor?.role]);
 
   function openWorkorder() {
     const params = new URLSearchParams(window.location.search);
@@ -2703,14 +2697,16 @@ function MaintenancePlanWorkspace({ snapshot, sample }) {
 
   return (
     <section className="workspace-view active maintenance-workspace" aria-label="维修方案">
-      <ModuleHero eyebrow="Maintenance Agent" title="维修方案" text="独立承载故障分析、维修步骤、工具、备件与 Evidence；工单只负责执行反馈。" action={<button className="button primary" type="button" onClick={openWorkorder}>进入工单执行</button>} />
-      {error && <div className="inline-error" role="status">维修方案服务暂不可用：{error}</div>}
-      <section className="workorder-queue maintenance-plan-queue" aria-label="方案关联工单">
-        <div className="workorder-queue-heading"><div><span className="eyebrow">方案关联</span><h2>选择工单查看维修方案</h2></div><span>{orders.length} 条记录</span></div>
-        {orders.length ? <div className="workorder-queue-list">{orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}><span><strong>{getWorkorderDisplayTitle(order, order.repair_target, { snapshot })}</strong><small>{order.workorder_id} · {order.device_id}</small></span><em>{labelFor(workorderStatusLabels, order.status)}</em></button>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title="暂无关联工单" text="完成诊断并生成工单后，维修方案会在这里显示。" />}
+      <ModuleHero eyebrow="Maintenance Agent" title="维修方案" text="查看已有诊断生成的方案、维修依据与派发条件；工单负责执行反馈。" action={<><button className="button" type="button" disabled={loading} onClick={() => refreshRef.current?.()}>{loading ? "刷新中…" : "刷新方案"}</button><button className="button primary" type="button" onClick={openWorkorder}>进入工单执行</button></>} />
+      {error && <div className="inline-error" role="status">方案列表刷新失败：{error}{records.length > 0 ? "；仍可查看已读取的方案。" : ""}</div>}
+      {orderError && <div className="workspace-notice" role="status">关联工单读取失败：{orderError}；维修方案仍可独立查看。</div>}
+      {maintenanceHistoryNotice(history) && <div className="workspace-notice" role="status">{maintenanceHistoryNotice(history)}</div>}
+      <section className="workorder-queue maintenance-plan-queue" aria-label="维修方案列表">
+        <div className="workorder-queue-heading"><div><span className="eyebrow">已有方案</span><h2>选择维修方案</h2></div><span>{records.length} 条记录</span></div>
+        {records.length ? <div className="workorder-queue-list">{records.map(record => <button key={record.recordId} type="button" className={`workorder-queue-item ${selectedRecord?.recordId === record.recordId ? "is-selected" : ""}`} onClick={() => setSelectedId(record.recordId)}><span><strong>{getDeviceDisplayName(record.device_id, { snapshot })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong><small>{record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · ${formatTime(record.created_at)}` : ""}</small></span><em>{maintenanceDispatchView(record).label}</em></button>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title={history?.status === "loading" ? "正在读取已有维修方案" : history?.status === "failed" ? "历史方案暂未读出" : "暂无已生成的维修方案"} text={history?.status === "loading" ? "后台只读加载较大的历史记录，请稍候；这里不会将尚未读出的方案判断为不存在。" : "诊断生成方案后会自动显示；未满足派发条件的方案也可查看。"} />}
       </section>
-      {hasCurrentIncident && !selectedOrder && <div className="workspace-notice" role="status">{currentFaultActive ? `当前报警 ${currentAlarm}` : `最新诊断报警 ${currentAlarm}`} 尚未关联工单；下方显示的是诊断阶段生成的维修方案，请先完成工单派发。</div>}
-      {(selectedOrder || showCurrentPipeline) && <MaintenancePlanPanel plan={plan} hasCurrentDiagnosis={hasCurrentDiagnosis || showCurrentPipeline} />}
+      {currentAlarm && !currentRecord && <div className="workspace-notice" role="status">{history?.status === "ready" && !error ? `当前设备 ${currentDevice} 的报警 ${currentAlarm} 尚无对应维修方案；列表中保留的是已有方案。` : `正在核对当前设备 ${currentDevice} 的报警 ${currentAlarm} 对应方案；历史记录尚未完整读出，不能判定方案不存在。`}</div>}
+      {selectedRecord && <><div className="workspace-notice" role="status">{hasCurrentDiagnosis ? "当前设备方案" : "历史 / 其他设备方案"} · {selectedRecord.device_id} · 报警 {selectedRecord.alarm_code || "待确认"}{selectedRecord.event_id ? ` · ${selectedRecord.event_id}` : ""}{linkedOrders.length ? ` · 已关联工单 ${linkedOrders.map(order => order.workorder_id).join("、")}` : actor?.user_id ? " · 当前账号未读取到关联工单，派发情况以授权工单列表为准" : " · 工单关联情况需登录后在工单系统查看"}</div><MaintenanceDispatchStatus record={selectedRecord} hasOrder={linkedOrders.length > 0} /><MaintenancePlanPanel plan={plan} hasCurrentDiagnosis={hasCurrentDiagnosis} /></>}
     </section>
   );
 }
@@ -2718,7 +2714,6 @@ function MaintenancePlanWorkspace({ snapshot, sample }) {
 function WorkorderView({ snapshot, sample, onClosed, actor }) {
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState("");
-  const [assignee, setAssignee] = useState("维修一组");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const candidateDiagnosis = getLatestDiagnosis(snapshot, sample);
@@ -2732,6 +2727,9 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
   const currentFaultActive = Boolean(currentFaultCode) && ["alarm", "fault", "warning"].includes(currentFaultStatus);
   const currentIncidentCode = currentFaultCode || String(latestDiagnosis?.alarm_code || "").trim();
   const hasCurrentIncident = Boolean(currentIncidentCode);
+  const currentDevice = String(liveSample?.device_id || snapshot?.device_id || "");
+  const currentPlanRecord = buildMaintenanceWorkspaceRecords({ snapshot }).find(record => record.device_id === currentDevice && record.alarm_code === currentIncidentCode);
+  const hasVisibleIncidentOrder = orders.some(order => String(order.device_id || "") === currentDevice && String(order.alarm_code || "") === currentIncidentCode);
   const selectedOrder = orders.find((order) => order.workorder_id === selectedId)
     || (!hasCurrentIncident ? orders[0] : undefined);
 
@@ -2755,41 +2753,7 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     const timer = window.setInterval(loadOrders, 5000);
     return () => window.clearInterval(timer);
-  }, []);
-
-  async function createOrder() {
-    setBusy(true);
-    try {
-      const target = resolveRepairTarget({ alarm_code: sample?.alarm_code }, sample);
-      const title = buildWorkorderTitle(latestDiagnosis, target, sample, snapshot);
-      const response = await request("/api/workorders", {
-        method: "POST",
-        body: JSON.stringify({
-          device_id: sample?.device_id || snapshot?.device_id || "unknown",
-          title,
-          steps: buildRepairSteps(latestDiagnosis, target),
-          assignee,
-          alarm_code: sample?.alarm_code || latestDiagnosis.alarm_code || "",
-          diagnosis_context: latestDiagnosis,
-          repair_target: target,
-          drawing_context: {
-            mesh_name: target.component,
-            location: target.location,
-            drawing_url: target.drawing_ref || "",
-          },
-        }),
-      });
-      const order = normalizeWorkorderResponse(response);
-      await loadOrders();
-      setSelectedId(order.workorder_id);
-      setError("");
-      window.scrollTo({ top: 0, left: 0, behavior: "smooth" });
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
+  }, [actor?.user_id, currentDevice, currentIncidentCode]);
 
   async function updateOrder(status, fields = {}) {
     if (!selectedOrder) return;
@@ -2802,7 +2766,7 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
           : "update";
       const response = await request(`/api/workorders/${selectedOrder.workorder_id}/action`, {
         method: "POST",
-        body: JSON.stringify({ action, status, assignee, ...fields }),
+        body: JSON.stringify({ action, status, ...fields }),
       });
       const order = normalizeWorkorderResponse(response);
       if (response.machine_control) order.machine_control = response.machine_control;
@@ -2847,9 +2811,9 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
               <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{labelFor(workorderStatusLabels, order.status)}</em>
             </button>)}
           </div>
-        ) : <div className="workorder-queue-empty">暂无工单；监控发现异常后会自动生成，或从当前故障创建工单。</div>}
+        ) : <div className="workorder-queue-empty">暂无可见工单；系统仅在诊断证据、维修方案和派发条件通过后自动派发。可在维修方案页查看未满足条件的具体原因。</div>}
       </section>
-      {hasCurrentIncident && !selectedOrder && <div className="workspace-notice" role="status">{currentFaultActive ? `当前报警 ${currentIncidentCode}` : `最新诊断报警 ${currentIncidentCode}`} 尚未关联工单；列表中的记录为历史工单，请先完成工单派发。</div>}
+      {hasCurrentIncident && !hasVisibleIncidentOrder && <><div className="workspace-notice" role="status">当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统按派发条件处理，可在维修方案页查看已有方案和依据。</div>{currentPlanRecord && <MaintenanceDispatchStatus record={currentPlanRecord} />}</>}
       <WorkorderDetail
         order={selectedOrder || null}
         sample={sample}
@@ -2876,7 +2840,7 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
           <span className="workorder-empty-icon" aria-hidden="true">□</span>
           <span className="eyebrow">工单队列</span>
           <h2>当前没有待处理工单</h2>
-          <p>虚拟工厂触发故障后，维修工单会自动派发并显示在这里。</p>
+          <p>诊断、维修方案与派发条件通过后，系统自动派发工单；维修人员查看本人工单，监督人查看全部工单。</p>
           {error && <div className="inline-error" role="alert">{error}</div>}
         </div>
       </section>
@@ -2916,6 +2880,11 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
   );
 }
 
+function MaintenanceDispatchStatus({ record, hasOrder = false }) {
+  const status = maintenanceDispatchView(record, { hasOrder });
+  return <section className="maintenance-plan-panel" aria-label="自动派发条件"><div className="maintenance-plan-heading"><h2>{status.label}</h2><span>工单就绪：{status.ready}</span></div>{status.reason && <p>{status.reason}</p>}{status.findings.length > 0 && <PlanList title="未满足的条件" items={status.findings} />}{status.stopReason && <p>流程停止原因：{status.stopReason}</p>}<p>系统按证据校验、审批与人员授权要求派发；方案存在不代表已创建工单。</p></section>;
+}
+
 function MaintenancePlanPanel({ plan, hasCurrentDiagnosis }) {
   const diagnosis = plan.diagnosis || {};
   const evidence = (plan.evidence || []).map((item) => {
@@ -2939,7 +2908,7 @@ function MaintenancePlanPanel({ plan, hasCurrentDiagnosis }) {
         <>
           <div className="maintenance-plan-diagnosis">
             <div><span>故障分析</span><strong>{diagnosis.fault || diagnosis.summary || "待确认"}</strong><p>{diagnosis.cause || diagnosis.diagnosis || "暂无原因分析"}</p></div>
-            <div><span>建议与风险</span><strong>{diagnosis.recommendation || "按方案步骤执行并复测"}</strong><p>{diagnosis.severity || plan.riskLevel || "风险等级待确认"}{plan.estimatedTime ? ` · 预计 ${plan.estimatedTime}` : ""}{hasCurrentDiagnosis ? " · 当前诊断" : " · 工单记录"}</p></div>
+            <div><span>建议与风险</span><strong>{diagnosis.recommendation || "按方案步骤执行并复测"}</strong><p>{diagnosis.severity || plan.riskLevel || "风险等级待确认"}{plan.estimatedTime ? ` · 预计 ${plan.estimatedTime}` : ""}{hasCurrentDiagnosis ? " · 当前设备方案" : " · 已保存方案"}</p></div>
           </div>
           <div className="maintenance-plan-grid">
             <PlanList title="维修步骤" items={plan.steps} ordered />

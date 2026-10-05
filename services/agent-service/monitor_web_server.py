@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import sys
@@ -14,7 +15,7 @@ from threading import Lock
 from time import monotonic
 from typing import Any, Dict, List, Mapping, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -31,6 +32,7 @@ AGENT_EVENT_TIMEOUT_SECONDS = float(
 MONITOR_PROXY_TIMEOUT_SECONDS = float(
     os.getenv("MONITOR_PROXY_TIMEOUT_SECONDS", str(max(AGENT_EVENT_TIMEOUT_SECONDS, 90.0)))
 )
+CAD_PRODUCTION_BODY_TIMEOUT_SECONDS = 5.0
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
@@ -124,7 +126,7 @@ def compact_public_pipeline(pipeline: Mapping[str, Any] | None) -> Dict[str, Any
     if isinstance(pipeline.get("maintenance_plan"), Mapping):
         result["maintenance_plan"] = _compact_stage(
             pipeline["maintenance_plan"],
-            ("plan_id", "diagnosis", "repair_target", "target_part", "engineering_context", "repair_steps", "tools", "parts", "safety", "required_tools", "required_parts", "safety_requirements", "pre_checks", "post_checks", "estimated_time", "estimated_duration", "cad_components", "inventory_status", "part_availability", "validation_findings", "risk_level", "workorder_ready", "workorder_draft"),
+            ("plan_id", "diagnosis", "repair_target", "target_part", "engineering_context", "repair_steps", "tools", "parts", "safety", "required_tools", "required_parts", "safety_requirements", "pre_checks", "post_checks", "estimated_time", "estimated_duration", "cad_components", "inventory_status", "part_availability", "validation_findings", "risk_level", "workorder_ready", "workorder_draft", "evidence", "source_documents", "maintenance_required", "maintenance_reason", "cad_required", "synthetic"),
         )
     result["trace"] = _compact_trace(pipeline.get("trace"))
     runtime_result = pipeline.get("runtime_result")
@@ -631,6 +633,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             "/api/v1/runs",
             "/api/memory/",
             "/api/workorders",
+            "/api/maintenance/",
             "/api/v1/workorders",
             "/api/experience/",
             "/api/reports",
@@ -644,14 +647,27 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
     def _proxy_to_agent_service(self, method: str) -> None:
         """把平台 API 请求转发给 Agent Service，保持前端同源调用。"""
 
-        origin = self.headers.get('Origin')
-        if method != 'GET' and origin and urlparse(origin).netloc != self.headers.get('Host'):
-            self._error(HTTPStatus.FORBIDDEN, '仅允许同源请求')
-            return
         body = None
-        if method in {"POST", "PUT", "PATCH"}:
-            length = int(self.headers.get("Content-Length", "0"))
-            body = self.rfile.read(length) if length else b""
+        # Starlette 的终端 '$' 也接受最终换行，斜杠重定向还能去掉尾斜杠；两者均须防护。
+        path_parts = unquote(urlparse(self.path).path).strip("/").removesuffix("\n").split("/")
+        cad_production_write = (
+            method != "GET"
+            and len(path_parts) >= 5
+            and path_parts[:3] == ["api", "cad", "designs"]
+            and path_parts[4] == "manufacturing"
+        )
+        if cad_production_write:
+            body = self._read_local_cad_production_body()
+            if body is None:
+                return
+        else:
+            origin = self.headers.get('Origin')
+            if method != 'GET' and origin and urlparse(origin).netloc != self.headers.get('Host'):
+                self._error(HTTPStatus.FORBIDDEN, '仅允许同源请求')
+                return
+            if method in {"POST", "PUT", "PATCH"}:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length) if length else b""
         headers = agent_request_headers(self.headers.get("Content-Type", "application/json"))
         if self.headers.get('Cookie'):
             headers['Cookie'] = self.headers['Cookie']
@@ -681,6 +697,56 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
         except URLError as error:
             self._error(HTTPStatus.BAD_GATEWAY, "Agent Service unavailable: %s" % error.reason)
+
+    def _read_local_cad_production_body(self) -> bytes | None:
+        """在服务凭据代理前验证虚拟生产写入的传输来源和请求边界。"""
+        def reject(status: HTTPStatus, message: str) -> None:
+            self.close_connection = True
+            self._error(status, message)
+
+        try:
+            local_peer = ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            local_peer = False
+        port = self.server.server_port
+        authorities = {f"localhost:{port}", f"127.0.0.1:{port}", f"[::1]:{port}"}
+        if port == 80:
+            authorities.update({"localhost", "127.0.0.1", "[::1]"})
+        hosts = self.headers.get_all("Host", [])
+        origins = self.headers.get_all("Origin", [])
+        if not local_peer or len(hosts) != 1 or hosts[0].lower() not in authorities:
+            reject(HTTPStatus.FORBIDDEN, "CAD 生产写入仅允许本机地址和当前服务端口")
+            return None
+        if len(origins) != 1 or origins[0].lower() != "http://" + hosts[0].lower():
+            reject(HTTPStatus.FORBIDDEN, "CAD 生产写入需要完整的 HTTP 同源 Origin")
+            return None
+        lengths = self.headers.get_all("Content-Length", [])
+        if (
+            self.headers.get_all("Transfer-Encoding", [])
+            or len(lengths) != 1
+            or not lengths[0].isascii()
+            or not lengths[0].isdigit()
+        ):
+            reject(HTTPStatus.BAD_REQUEST, "CAD 生产写入的 Content-Length 无效")
+            return None
+        # 新生产接口仅接收小型 JSON；CAD 文件上传仍走原有上传接口。
+        if len(lengths[0]) > 10 or int(lengths[0]) > 1024 * 1024:
+            reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "CAD 生产请求体过大")
+            return None
+        length = int(lengths[0])
+        original_timeout = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(CAD_PRODUCTION_BODY_TIMEOUT_SECONDS)
+            body = self.rfile.read(length)
+        except (OSError, TimeoutError):
+            reject(HTTPStatus.BAD_REQUEST, "CAD 生产请求体读取失败")
+            return None
+        finally:
+            self.connection.settimeout(original_timeout)
+        if len(body) != length:
+            reject(HTTPStatus.BAD_REQUEST, "CAD 生产请求体长度与 Content-Length 不一致")
+            return None
+        return body
 
     def _proxy_team(self, method):
         allowed = {'GET': {'/api/team/me', '/api/team/devices', '/api/team/reminders', '/api/team/workorders', '/api/team/line'}, 'POST': {'/api/team/register', '/api/team/login', '/api/team/logout', '/api/team/reminders'}}

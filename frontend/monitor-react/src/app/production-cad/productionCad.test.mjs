@@ -52,3 +52,36 @@ test("响应未知时原请求复用命令身份，改变参数或明确新任�
   const current = state.keyFor(path, payload); state.reset();
   assert.notEqual(state.keyFor(path, payload), current);
 });
+
+test("工艺字段必须显式填写，不能将空值和布尔值转为零", () => {
+  const form = { stock_diameter_mm: "34", stock_length_mm: "70", grip_length_mm: "20", clearance_mm: "2", pass_depth_mm: "1", spindle_rpm: "1200", feed_mm_per_rev: "0.1", tolerance_mm: "0.02", tool_id: "1", drill_tool_id: "2", drill_diameter_mm: "10" };
+  const value = cad.buildManufacturingPayload(form, "d".repeat(64));
+  assert.equal(value.spindle_rpm, 1200);
+  assert.equal(value.device_id, "TRAK-TC820LTYSI-001");
+  assert.throws(() => cad.buildManufacturingPayload({ ...form, spindle_rpm: "" }, "d".repeat(64)));
+  assert.throws(() => cad.buildManufacturingPayload({ ...form, feed_mm_per_rev: true }, "d".repeat(64)));
+});
+
+test("只有已准备且人工确认的虚拟加工包才允许发送，文件链接禁止越权路径", () => {
+  const record = { status: "prepared", digest: "d".repeat(64), program: { simulation_only: true, simulation: { passed: true } } };
+  assert.equal(cad.canDispatchManufacturing(record, false), false);
+  assert.equal(cad.canDispatchManufacturing(record, true), true);
+  assert.equal(cad.canDispatchManufacturing({ ...record, status: "uncertain" }, true), false);
+  assert.throws(() => cad.manufacturingFileUrl("CAD-0123456789ABCDEF0123", "../../outside", "nc"));
+  assert.equal(cad.manufacturingFileUrl("CAD-0123456789ABCDEF0123", "CAM-0123456789ABCDEF0123", "nc", true), "/api/cad/designs/CAD-0123456789ABCDEF0123/manufacturing/CAM-0123456789ABCDEF0123/files/nc?download=1");
+});
+
+test("超时经只读对账恢复后，新人工确认不能复用旧的已提交身份", () => {
+  assert.equal(cad.shouldRenewManufacturingConfirmation("uncertain", "received"), true);
+  assert.equal(cad.shouldRenewManufacturingConfirmation("uncertain", "paused"), true);
+  assert.equal(cad.shouldRenewManufacturingConfirmation("submitting", "interrupted"), true);
+  assert.equal(cad.shouldRenewManufacturingConfirmation("uncertain", "uncertain"), false);
+  assert.equal(cad.shouldRenewManufacturingConfirmation("running", "running"), false);
+});
+
+test("工厂轮询返回的新状态同时更新加工包列表，其他任务保持独立", () => {
+  const items = [{ program_id: "one", status: "prepared" }, { program_id: "two", status: "running" }];
+  const next = { program_id: "one", status: "completed", job: { progress: 1 } };
+  assert.deepEqual(cad.mergeManufacturingProgress(items, next), [next, items[1]]);
+  assert.equal(items[0].status, "prepared");
+});

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from threading import Lock
+from threading import Lock, RLock
 from typing import Any, Mapping
 
 
@@ -19,6 +19,15 @@ DEMO_CATALOG = [
 
 class CADRepositoryError(RuntimeError):
     pass
+
+
+def _ci_fixture_enabled() -> bool:
+    """夹具开关只能用于明确的测试环境，不能被演示回退吞掉。"""
+
+    enabled = os.getenv("CAD_CI_FIXTURE", "").lower() in {"1", "true", "yes"}
+    if enabled and os.getenv("APP_ENV", "development").lower() not in {"ci", "test", "testing"}:
+        raise CADRepositoryError("CAD CI fixtures are restricted to test environments")
+    return enabled
 
 
 class DemoCADRepository:
@@ -46,7 +55,7 @@ class DemoCADRepository:
             candidates = [item for item in candidates if str(item.get("device_model") or "") == device_model]
         version = str(filters.get("version") or "").strip()
         if version:
-            candidates = [item for item in candidates if str(item.get("version_id") or item.get("version_label") or "") == version]
+            candidates = [item for item in candidates if version in {str(item.get("version_id") or ""), str(item.get("version_label") or "")}]
         elif not filters.get("include_history"):
             candidates = [item for item in candidates if item.get("current", True) is True]
         text = str(query or "").lower().strip()
@@ -73,13 +82,18 @@ class MySQLCADRepository:
     backend = "mysql-engineering-metadata"
 
     def __init__(self) -> None:
+        self._connection_lock = RLock()
+        self.connection = None
+        # 工程夹具只能写入测试数据库，必须在建立连接和执行 DDL 之前检查。
+        _ci_fixture_enabled()
         try:
             import pymysql
         except ImportError as error:
             raise CADRepositoryError("CAD MySQL repository requires PyMySQL") from error
         try:
+            self._driver = pymysql
             mysql_port = os.getenv("CAD_MYSQL_PORT") or os.getenv("MYSQL_PORT") or "3306"
-            self.connection = pymysql.connect(
+            self._connection_options = dict(
                 host=os.getenv("CAD_MYSQL_HOST") or os.getenv("MYSQL_HOST", "127.0.0.1"),
                 port=int(mysql_port),
                 user=os.getenv("CAD_MYSQL_USER") or os.getenv("MYSQL_USER", "root"),
@@ -87,18 +101,54 @@ class MySQLCADRepository:
                 database=os.getenv("CAD_MYSQL_DATABASE") or os.getenv("MYSQL_DATABASE", "industry_agent"),
                 charset="utf8mb4",
                 connect_timeout=int(os.getenv("CAD_MYSQL_CONNECT_TIMEOUT", "5")),
+                read_timeout=int(os.getenv("CAD_MYSQL_READ_TIMEOUT", "5")),
+                write_timeout=int(os.getenv("CAD_MYSQL_WRITE_TIMEOUT", "5")),
+                autocommit=True,
                 cursorclass=pymysql.cursors.DictCursor,
             )
+            self.connection = pymysql.connect(**self._connection_options)
             self._ensure_schema()
         except Exception as error:
-            raise CADRepositoryError("CAD MySQL unavailable: %s" % error) from error
+            self.close()
+            raise CADRepositoryError("CAD MySQL unavailable (%s)" % type(error).__name__) from error
+
+    def close(self) -> None:
+        """关闭仓库拥有的连接，供缓存失效与断线恢复使用。"""
+
+        with self._connection_lock:
+            connection, self.connection = self.connection, None
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:
+                    # 失效连接的关闭错误不能覆盖原查询错误或阻止下一次重连。
+                    pass
+
+    def _query(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        """串行执行只读 SQL；明确的断线错误最多重试一次。"""
+
+        with self._connection_lock:
+            for attempt in range(2):
+                try:
+                    if self.connection is None:
+                        self.connection = self._driver.connect(**self._connection_options)
+                    else:
+                        self.connection.ping(reconnect=False)
+                    with self.connection.cursor() as cursor:
+                        cursor.execute(sql, params)
+                        return list(cursor.fetchall())
+                except Exception as error:
+                    disconnected = isinstance(error, (self._driver.err.InterfaceError, self._driver.err.OperationalError)) and bool(error.args) and error.args[0] in {0, 2003, 2006, 2013, 2014, 2055}
+                    if disconnected:
+                        self.close()
+                        if attempt == 0:
+                            continue
+                    # 驱动错误可能包含数据库地址或凭据，HTTP 响应只保留错误类型。
+                    raise CADRepositoryError("CAD metadata query failed (%s)" % type(error).__name__) from error
+        raise CADRepositoryError("CAD metadata query unavailable")
 
     def _ensure_schema(self) -> None:
-        """Create the small engineering read schema when migrations are absent.
-
-        CAD owns these tables; it must not depend on the Agent or RAG migration
-        process merely to answer a health probe or an engineering lookup.
-        """
+        """创建 CAD 自有的工程查询表，不依赖其他服务的迁移流程。"""
         statements = (
             "CREATE TABLE IF NOT EXISTS cad_drawings (drawing_id VARCHAR(128) PRIMARY KEY, drawing_name VARCHAR(255) NOT NULL DEFAULT '', version_id VARCHAR(128) NOT NULL DEFAULT '', version_label VARCHAR(64) NOT NULL DEFAULT '', is_current TINYINT(1) NOT NULL DEFAULT 1, source_format VARCHAR(32) NOT NULL DEFAULT '', object_ref VARCHAR(512) NOT NULL DEFAULT '')",
             "CREATE TABLE IF NOT EXISTS cad_entities (entity_id VARCHAR(160) PRIMARY KEY, entity_type VARCHAR(64) NOT NULL DEFAULT '', layer_name VARCHAR(255) NOT NULL DEFAULT '', block_name VARCHAR(255) NOT NULL DEFAULT '', device_id VARCHAR(128) NOT NULL DEFAULT '', text_content TEXT, raw_json JSON NOT NULL, drawing_id VARCHAR(128) NOT NULL DEFAULT '')",
@@ -116,12 +166,13 @@ class MySQLCADRepository:
             ):
                 try:
                     cursor.execute(statement)
-                except Exception:
+                except Exception as error:
                     # 已有数据库可能已经完成迁移；重复添加列可以安全忽略。
-                    pass
+                    if not error.args or error.args[0] != 1060:
+                        raise
             # CI 使用确定性的工程夹具，让跨服务闭环可以执行真实的 MySQL CAD 查询，而无需启用演示仓库。
             # 生产环境不会启用该夹具（开关默认关闭）。
-            if os.getenv("CAD_CI_FIXTURE", "").lower() in {"1", "true", "yes"}:
+            if _ci_fixture_enabled():
                 cursor.execute(
                     "INSERT IGNORE INTO cad_drawings (drawing_id, drawing_name) VALUES (%s, %s)",
                     ("DWG-CI-SPINDLE-001", "TC820 主轴总成工程图"),
@@ -166,9 +217,14 @@ class MySQLCADRepository:
         clauses: list[str] = []
         params: list[Any] = []
         if needle:
-            text = "%%%s%%" % needle
-            clauses.append("(e.entity_id LIKE %s OR e.block_name LIKE %s OR e.device_id LIKE %s OR e.text_content LIKE %s OR d.drawing_name LIKE %s OR JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.part_no')) LIKE %s)")
-            params.extend([text] * 6)
+            columns = ("e.entity_id", "e.block_name", "e.device_id", "e.text_content", "d.drawing_name", "e.drawing_id", "JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.part_no'))")
+            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+", needle.lower()):
+                # 结构化标识符使用完整匹配，避免扩展编号或相似部件进入工程结果。
+                clauses.append("(" + " OR ".join(f"LOWER({column}) = LOWER(%s)" for column in columns) + ")")
+                params.extend([needle] * len(columns))
+            else:
+                clauses.append("(" + " OR ".join(f"{column} LIKE %s" for column in columns) + ")")
+                params.extend(["%%%s%%" % needle] * len(columns))
         exact_columns = {
             "device_id": "e.device_id",
             "component_id": "e.entity_id",
@@ -194,13 +250,8 @@ class MySQLCADRepository:
         if clauses:
             sql += "WHERE " + " AND ".join(clauses) + " "
         sql += "LIMIT %s"
-        try:
-            with self.connection.cursor() as cursor:
-                size = max(1, min(int(limit), 100))
-                cursor.execute(sql, tuple(params) + (size,))
-                rows = cursor.fetchall()
-        except Exception as error:
-            raise CADRepositoryError("CAD metadata query failed: %s" % error) from error
+        size = max(1, min(int(limit), 100))
+        rows = self._query(sql, tuple(params) + (size,))
         values = [self._normalize(row) for row in rows]
         relations = self._relations_for_many([value["component_id"] for value in values])
         for value in values:
@@ -226,14 +277,13 @@ class MySQLCADRepository:
         )
 
         try:
-            with self.connection.cursor() as cursor:
-                cursor.execute(sql, tuple(ids) + tuple(ids))
-                rows = cursor.fetchall()
-        except Exception as error:
+            rows = self._query(sql, tuple(ids) + tuple(ids))
+        except CADRepositoryError as error:
             # 较旧的工程数据库可能还没有关系记录。部件查询仍可使用；在离线解析器填充前，只有关系子资源为空。
-            if "doesn't exist" in str(error).lower() or "unknown table" in str(error).lower():
+            cause = error.__cause__
+            if cause is not None and cause.args and cause.args[0] == 1146:
                 return {}
-            raise CADRepositoryError("CAD relation query failed: %s" % error) from error
+            raise
         values: dict[str, list[dict[str, Any]]] = {item: [] for item in ids}
         for row in rows:
             metadata = row.get("metadata_json") or {}
@@ -263,9 +313,8 @@ class MySQLCADRepository:
         return values
 
     def count(self) -> int:
-        with self.connection.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) AS total FROM cad_entities")
-            row = cursor.fetchone() or {}
+        rows = self._query("SELECT COUNT(*) AS total FROM cad_entities")
+        row = rows[0] if rows else {}
         return int(row.get("total") or 0)
 
     @staticmethod
@@ -307,22 +356,34 @@ class MySQLCADRepository:
 
 
 _repository: Any | None = None
+_repository_key: tuple[str | None, ...] | None = None
 _lock = Lock()
 
 
 def get_repository() -> DemoCADRepository | MySQLCADRepository:
-    global _repository
-    if _repository is not None:
-        return _repository
+    global _repository, _repository_key
+    key = tuple(os.getenv(name) for name in (
+        "APP_ENV", "CAD_CI_FIXTURE", "CAD_ALLOW_DEMO_FALLBACK",
+        "CAD_MYSQL_HOST", "CAD_MYSQL_PORT", "CAD_MYSQL_USER", "CAD_MYSQL_PASSWORD", "CAD_MYSQL_DATABASE",
+        "CAD_MYSQL_CONNECT_TIMEOUT", "CAD_MYSQL_READ_TIMEOUT", "CAD_MYSQL_WRITE_TIMEOUT",
+        "MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE",
+    ))
     with _lock:
         if _repository is not None:
-            return _repository
+            if key == _repository_key and not (isinstance(_repository, MySQLCADRepository) and _repository.connection is None):
+                return _repository
+            if isinstance(_repository, MySQLCADRepository):
+                _repository.close()
+            _repository = None
+            _repository_key = None
+        _ci_fixture_enabled()
         configured = bool((os.getenv("CAD_MYSQL_HOST") or os.getenv("MYSQL_HOST") or "").strip())
-        # 演示目录只能显式开启；开发环境默认也不能把示例部件冒充真实工程数据。
-        allow_demo = os.getenv("CAD_ALLOW_DEMO_FALLBACK", "").lower() in {"1", "true", "yes"}
+        # 演示目录只允许在非生产环境显式开启，生产故障必须返回不可用。
+        allow_demo = os.getenv("CAD_ALLOW_DEMO_FALLBACK", "").lower() in {"1", "true", "yes"} and os.getenv("APP_ENV", "development").lower() not in {"prod", "production"}
         if configured:
             try:
                 _repository = MySQLCADRepository()
+                _repository_key = key
                 return _repository
             except CADRepositoryError:
                 if not allow_demo:
@@ -330,13 +391,17 @@ def get_repository() -> DemoCADRepository | MySQLCADRepository:
         if not allow_demo:
             raise CADRepositoryError("CAD MySQL is required when demo fallback is disabled")
         _repository = DemoCADRepository()
+        _repository_key = key
         return _repository
 
 
 def reset_repository() -> None:
-    global _repository
+    global _repository, _repository_key
     with _lock:
+        if isinstance(_repository, MySQLCADRepository):
+            _repository.close()
         _repository = None
+        _repository_key = None
 
 
 __all__ = ["CADRepositoryError", "DemoCADRepository", "MySQLCADRepository", "get_repository", "reset_repository"]

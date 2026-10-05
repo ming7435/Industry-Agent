@@ -9,12 +9,15 @@ from fastapi.responses import FileResponse
 from .agent import CADAgent
 from .modeling_schemas import ConfirmRequest, DesignRequest, ImportRequest, RevisionRequest
 from .modeling_service import CADDesignConflict
+from .manufacturing_schemas import DispatchRequest, ManufacturingRequest
+from .manufacturing_service import CADManufacturingService
 
 
 def build_modeling_router(require_auth, trace=None):
     router = APIRouter(prefix="/api/cad/designs", tags=["CAD 生产建模"], dependencies=[Depends(require_auth)])
     service_lock = Lock()
     owned_services = set()
+    owned_manufacturing = set()
 
     def service(request):
         with service_lock:
@@ -29,10 +32,23 @@ def build_modeling_router(require_auth, trace=None):
         # 只关闭本路由创建的 CAD 队列；已有任务有界排空，其他服务不受影响。
         with service_lock:
             services = list(owned_services)
+            manufacturers = list(owned_manufacturing)
+        for instance in manufacturers:
+            instance.close()
         for instance in services:
             instance.close()
 
     router.add_event_handler("shutdown", shutdown)
+
+    def manufacturing(request):
+        modeling = service(request)
+        with service_lock:
+            if not getattr(request.app.state, "cad_manufacturing_service", None):
+                from app.config import get_settings
+                request.app.state.cad_manufacturing_service = CADManufacturingService(
+                    modeling, get_settings().factory_api_base_url)
+                owned_manufacturing.add(request.app.state.cad_manufacturing_service)
+            return request.app.state.cad_manufacturing_service
 
     def call(operation, *arguments):
         try:
@@ -44,12 +60,12 @@ def build_modeling_router(require_auth, trace=None):
         except OverflowError as error:
             raise HTTPException(413, detail=str(error)) from error
         except ValueError as error:
-            raise HTTPException(422, detail="CAD 请求或上传内容无效") from error
+            raise HTTPException(422, detail=str(error) or "CAD 请求或上传内容无效") from error
 
     @router.get("/status")
     def status(request: Request):
         value = service(request).kernel.health()
-        return {**value, "service": "cad-agent-modeling", "production_connected": False,
+        return {**value, **manufacturing(request).capabilities(), "service": "cad-agent-modeling",
             "formats": ["step", "stp", "dxf", "pdf", "png", "jpg", "jpeg"]}
 
     @router.get("")
@@ -80,6 +96,33 @@ def build_modeling_router(require_auth, trace=None):
     @router.get("/{design_id}/artifacts/{artifact_id}")
     def artifact(design_id: str, artifact_id: str, request: Request, download: bool = False):
         path, record = call(service(request).artifact, design_id, artifact_id)
+        return FileResponse(path, media_type=record["media_type"], filename=record["filename"],
+            content_disposition_type="attachment" if download else "inline", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"})
+
+    @router.get("/{design_id}/manufacturing")
+    def list_manufacturing(design_id: str, request: Request):
+        items = call(manufacturing(request).list, design_id)
+        return {"items": items, "count": len(items)}
+
+    @router.post("/{design_id}/manufacturing", status_code=201)
+    def prepare_manufacturing(design_id: str, body: ManufacturingRequest, request: Request, actor: str = Depends(require_auth)):
+        return call(manufacturing(request).prepare, design_id, body, actor)
+
+    @router.get("/{design_id}/manufacturing/{program_id}")
+    def get_manufacturing(design_id: str, program_id: str, request: Request):
+        return call(manufacturing(request).get, design_id, program_id)
+
+    @router.post("/{design_id}/manufacturing/{program_id}/dispatch")
+    def dispatch_manufacturing(design_id: str, program_id: str, body: DispatchRequest, request: Request, actor: str = Depends(require_auth)):
+        return call(manufacturing(request).dispatch, design_id, program_id, body, actor)
+
+    @router.get("/{design_id}/manufacturing/{program_id}/production")
+    def get_production(design_id: str, program_id: str, request: Request):
+        return call(manufacturing(request).production, design_id, program_id)
+
+    @router.get("/{design_id}/manufacturing/{program_id}/files/{kind}")
+    def manufacturing_file(design_id: str, program_id: str, kind: str, request: Request, download: bool = False):
+        path, record = call(manufacturing(request).file, design_id, program_id, kind)
         return FileResponse(path, media_type=record["media_type"], filename=record["filename"],
             content_disposition_type="attachment" if download else "inline", headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"})
 

@@ -36,6 +36,7 @@ from app.tools.query_contracts import QueryArgumentError
 from app.clients.backend import BackendServiceError
 from app.clients.backend import BackendServiceClient
 from app.api.team_auth import team_actor, require_assignee, human_action
+from app.api.maintenance_plans import list_saved_maintenance_plans
 
 
 def _load_project_env() -> None:
@@ -190,6 +191,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     )
     runtime = orchestrator or build_orchestrator()
     event_results = EventResultStore()
+    app.add_event_handler("shutdown", event_results.close)
 
     def closure_call(callable_: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """把质检闭环的业务拒绝转换成可读的 HTTP 状态。"""
@@ -377,6 +379,12 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             "limit": max(1, min(limit, 100)),
         }, from_agent="router")
         return result
+
+    @app.get("/api/maintenance/plans")
+    def maintenance_plans(device_id: str = "", limit: int = 100) -> Dict[str, Any]:
+        """展示既有维修方案；个人工单授权仍由工单读取接口检查。"""
+        results, history = event_results.list_plan_results()
+        return {**list_saved_maintenance_plans(results, device_id, max(1, min(limit, 500))), "history": history}
 
     @app.get("/api/workorders")
     def workorders(request: Request) -> Dict[str, Any]:

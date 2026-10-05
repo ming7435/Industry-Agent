@@ -322,12 +322,14 @@ class SearchPipeline:
         request: SearchRequest,
         request_id: str,
         supplemental_hits: list[Hit] | None = None,
+        started_at: float | None = None,
     ) -> SearchResponse:
         """Run the full online chain for one request.
 
         Args:
             request: Validated search request.
             request_id: UUID4 identifying this request in every log line.
+            started_at: HTTP 请求构造依赖之前的单调时钟起点；直接调用时由管道创建。
 
         Returns:
             The complete response, degraded or not. Never raises for a
@@ -335,8 +337,9 @@ class SearchPipeline:
             ``degraded=True`` and a ``degrade_reason``.
         """
         progress = _Progress(request_id=request_id, supplemental_hits=list(supplemental_hits or []))
-        started = _now()
-        request_budget_s = settings.request_timeout_ms / 1000
+        started = _now() if started_at is None else started_at
+        # 依赖构造、补充文档查询和生成共用一个预算，不能在进入管道后重新计时。
+        request_budget_s = max(0.0, settings.request_timeout_ms / 1000 - (_now() - started))
 
         try:
             await asyncio.wait_for(

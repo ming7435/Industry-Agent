@@ -83,6 +83,17 @@ class DurableJsonStore:
             ).fetchall()
         return [str(row["state_key"]) for row in rows]
 
+    def values(self, namespace: str, limit: int = 1000) -> list[dict[str, Any]]:
+        """只读列出已完成的结果；不领取或重试仍未完成的操作。"""
+        with self._lock, closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT payload FROM runtime_state WHERE namespace = ? "
+                "ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+                (str(namespace), max(1, min(int(limit), 5000))),
+            ).fetchall()
+        values = [json.loads(row["payload"]) for row in rows]
+        return [value for value in values if isinstance(value, dict)]
+
     def get_or_create(self, namespace: str, key: str, producer: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         """以短事务领取键；耗时生产在事务外执行，失败则保留未知状态。"""
 
