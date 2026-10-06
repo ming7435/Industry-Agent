@@ -16,6 +16,11 @@ export async function request(path, options = {}) {
     ...options,
   });
   const body = await response.json();
-  if (!response.ok) throw new Error(errorDetail(body.error) || errorDetail(body.detail) || `请求失败：${response.status}`);
+  if (!response.ok) {
+    const error = new Error(errorDetail(body.error) || errorDetail(body.detail) || `请求失败：${response.status}`);
+    error.status = response.status;
+    error.detail = body.detail;
+    throw error;
+  }
   return body;
 }

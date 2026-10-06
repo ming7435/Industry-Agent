@@ -1,9 +1,4 @@
-"""Small standalone document/chunk store for the RAG HTTP contract.
-
-The store is SQLite-backed so remote Agent memory survives Agent Service
-restarts without requiring Milvus/MySQL during local development. Optional
-retrieval backends can be layered on top of the same document payload.
-"""
+"""在线正文与分块使用 MySQL；SQLite 仅保留隔离测试和旧数据读取兼容。"""
 
 from __future__ import annotations
 
@@ -13,6 +8,7 @@ import sqlite3
 from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping, Sequence
+from shared.document_store import MySQLDocumentStore
 
 try:
     from app.corpus import normalize_corpus
@@ -28,6 +24,11 @@ except ModuleNotFoundError:  # 允许离线烟测按文件路径加载本模块
 
 
 class DocumentStore:
+    def __new__(cls, path=None):
+        if os.getenv("APP_ENV", "development").lower() != "testing":
+            return MySQLDocumentStore()
+        return super().__new__(cls)
+
     def __init__(self, path: str | None = None) -> None:
         default = Path(__file__).resolve().parents[2] / "data" / "rag_documents.sqlite3"
         configured_path = path or os.getenv("RAG_DOCUMENT_STORE_PATH") or str(default)
@@ -157,8 +158,13 @@ def _filter_matches(key: str, expected: Any, metadata: Mapping[str, Any], collec
     return str(actual).casefold() == str(expected).casefold()
 
 
-_document_store = DocumentStore()
+_document_store = None
+_store_lock = Lock()
 
 
 def get_document_store() -> DocumentStore:
+    global _document_store
+    with _store_lock:
+        if _document_store is None:
+            _document_store = DocumentStore()
     return _document_store

@@ -51,7 +51,8 @@ class AgentContainer:
         self.registry = registry
         self.tools = registry
         self.capabilities = build_capability_registry()
-        self.trace = TraceRecorder()
+        from app.harness.trace_store import MySQLTraceStore
+        self.trace = TraceRecorder(store=MySQLTraceStore() if os.getenv('APP_ENV', 'development').lower() != 'testing' else None)
         self.pending_tasks = PendingTaskStore(settings.pending_task_store_path)
         self.policy = RuntimePolicy(self.capabilities, approval_lookup=self.pending_tasks.get)
         self.approvals = ApprovalManager(self.pending_tasks, trace=self.trace)
@@ -127,12 +128,14 @@ class AgentContainer:
             policy=self.policy,
             resolvers=resolvers,
         )
+        registry.closure_service = self.closure_service
         self.coordinator = RuntimeCoordinator(self)
         self.approvals.resume_callback = self.coordinator.resume_pending
         self.operations = RuntimeOperations(
             self.requests,
             self.closure_service,
             report_harness=self.harnesses.get("report"),
+            quality_harness=self.harnesses.get('quality'),
             learning_store_path=os.getenv("LEARNING_RESULT_STORE_PATH", ""),
             trace=self.trace,
             factory_client=FactoryApiClient(settings.factory_api_base_url),

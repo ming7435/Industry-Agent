@@ -42,7 +42,10 @@ class RAGServiceClient:
         # 会注入 RAG_SERVICE_BASE_URL。
         configured_base_url = "" if base_url is None else base_url
         self.base_url = str(configured_base_url).strip().rstrip("/")
-        self.timeout = float(os.getenv("RAG_SERVICE_TIMEOUT_SECONDS", "15"))
+        # RAG 从依赖构造、文档查询到生成统一使用 REQUEST_TIMEOUT_MS；客户端
+        # 不能在该预算结束前断开，并预留响应序列化和本机传输的五秒余量。
+        request_budget = max(0.0, float(os.getenv("REQUEST_TIMEOUT_MS", "35000")) / 1000)
+        self.timeout = max(float(os.getenv("RAG_SERVICE_TIMEOUT_SECONDS", "30")), request_budget + 5.0)
         explicit_fallback = os.getenv("RAG_ALLOW_LOCAL_FALLBACK")
         if explicit_fallback is None:
             self.allow_fallback = os.getenv("APP_ENV", "development").strip().lower() not in {"prod", "production"}

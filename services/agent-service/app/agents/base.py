@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from functools import wraps
+from contextlib import nullcontext
+from time import perf_counter
 from typing import Any, Callable, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -109,8 +111,10 @@ def trace_skill_node(
         agent = current.get("agent")
         request = current.get("request") or current.get("task") or current.get("event") or {}
         request = request if isinstance(request, Mapping) else {}
-        task_id = str(current.get("task_id") or request.get("task_id") or "")
-        trace_id = str(current.get("trace_id") or request.get("trace_id") or "")
+        tools = getattr(agent, 'tools', None)
+        bound = tools.current_trace_context() if hasattr(tools, 'current_trace_context') else {}
+        task_id = str(current.get("task_id") or request.get("task_id") or bound.get('task_id') or "")
+        trace_id = str(current.get("trace_id") or request.get("trace_id") or bound.get('trace_id') or "")
         selected = current.get("active_skills") or []
         if isinstance(selected, str):
             selected = [selected]
@@ -130,21 +134,28 @@ def trace_skill_node(
         skill_name = match[0].name if match else ""
         step_id = match[1].id if match else skill_step_id
         started_at = datetime.now(timezone.utc).isoformat()
+        started = perf_counter()
+        from uuid import uuid4
+        node_context = {**bound, 'agent': agent_name, 'skill': skill_name, 'step': step_id, 'step_run_id':'STEP-' + uuid4().hex}
         trace = getattr(agent, "runtime_trace", None) or getattr(getattr(agent, "tools", None), "trace", None)
         if trace is not None:
             trace.record(
                 type="agent_step", name=node_name, node=node_name, agent=agent_name,
                 event="step_started", task_id=task_id, trace_id=trace_id,
+                context=node_context, input=current,
                 state_change={"skill": skill_name, "requested_skills": requested_skills, "step": step_id, "mapped": bool(match), "input_keys": sorted(current)},
                 keys=["skill", "requested_skills", "step", "mapped", "input_keys"], tool_name="", latency=0.0, error="",
             )
         try:
-            output = dict(node(state))
+            scope = tools.trace_context(task_id=task_id, trace_id=trace_id, context=node_context) if hasattr(tools, 'trace_context') else nullcontext()
+            with scope:
+                output = dict(node(state))
         except Exception as error:
             if trace is not None:
                 trace.record(
                     type="agent_step", name=node_name, node=node_name, agent=agent_name,
                     event="step_failed", task_id=task_id, trace_id=trace_id,
+                    context=node_context, output={'error': str(error)},
                     state_change={"skill": skill_name, "requested_skills": requested_skills, "step": step_id, "error": str(error)},
                     keys=["skill", "requested_skills", "step", "error"], tool_name="", latency=0.0, error=str(error),
                 )
@@ -169,6 +180,7 @@ def trace_skill_node(
             trace.record(
                 type="agent_step", name=node_name, node=node_name, agent=agent_name,
                 event="step_completed", task_id=task_id, trace_id=trace_id,
+                context=node_context, output=output, elapsed_ms=(perf_counter() - started) * 1000,
                 state_change={"skill": skill_name, "requested_skills": requested_skills, "step": step_id, "mapped": bool(match), "output_keys": record["output_keys"]},
                 keys=["skill", "requested_skills", "step", "mapped", "output_keys"], tool_name="", latency=0.0, error="",
             )

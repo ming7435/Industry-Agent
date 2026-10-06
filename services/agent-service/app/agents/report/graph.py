@@ -69,7 +69,8 @@ def collect_sources(state: ReportWorkflowState) -> Dict[str, Any]:
     plan_raw = agent._safe_tool("get_maintenance_record", {"record": request.get("maintenance_plan"), "plan_id": (request.get("maintenance_plan") or {}).get("plan_id", "")})
     order = dict(request.get("workorder") or {})
     if not order and request.get("workorder_id"):
-        order = agent._safe_tool("get_workorder", {"workorder_id": request["workorder_id"]})
+        raw_order = agent._safe_tool("get_workorder", {"workorder_id": request["workorder_id"]})
+        order = {} if raw_order.get('found') is False or raw_order.get('success') is False else dict(raw_order.get('workorder') or raw_order)
     feedback = agent._mapping(request.get("repair_feedback") or order.get("repair_feedback"))
     verification = agent._mapping(request.get("repair_verification") or order.get("repair_verification"))
     quality_raw = agent._safe_tool("get_quality_record", {"record": request.get("quality"), "workorder_id": request.get("workorder_id", "")})
@@ -132,6 +133,9 @@ def persist(state: ReportWorkflowState) -> Dict[str, Any]:
     if request.get("persist", True):
         persistence = agent._safe_tool("persist_report", {"report": report.model_dump(mode="json")})
         report = report.model_copy(update={"persisted": bool(persistence.get("persisted"))})
+        if not report.persisted:
+            report = report.model_copy(update={'status': 'incomplete', 'stop_reason': 'report_persistence_failed',
+                                               'validation_findings': [*report.validation_findings, '报告持久化失败：' + str(persistence.get('error') or '未确认保存成功')]})
     return {"report": report, "persistence": persistence, "route": "final"}
 
 
@@ -153,6 +157,7 @@ def build_report_graph():
         "check_completeness": "validate_completeness",
         "compose": "compose_report",
         "validate": "validate_result",
+        'persist': 'persist_report',
         "final": "build_result",
     }
     workflow.add_node("prepare", prepare_skill_node("report", initialize, load_skill, skill_steps=node_skill_steps))

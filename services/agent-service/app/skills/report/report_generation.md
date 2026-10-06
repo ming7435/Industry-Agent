@@ -9,6 +9,7 @@ steps:
   - compose_report
   - validate_report
   - persist_report
+  - generate_report_file
   - collect_event
   - validate_completeness
   - validate_result

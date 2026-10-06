@@ -91,7 +91,9 @@ def test_registry_definitions_drive_handlers_and_schemas(monkeypatch):
     definitions = getattr(tools, "definitions", None)
     assert definitions is not None, "缺少单一工具定义"
     schemas = {item["function"]["name"]: item["function"] for item in tools.tool_schemas()}
-    assert len(definitions) == 66 and len(schemas) == 58
+    assert len(definitions) == 75 and len(schemas) == 58
+    # 录入和闭环工具只由服务器业务入口授权，不增加模型写入权限。
+    assert not {'register_production_part', 'release_quality_check', 'close_quality_check'} & set(schemas)
     assert set(definitions) == set(tools.mcp.handlers)
     assert "record_repair_verification_failed" not in schemas
     assert schemas["get_alarm_definition"]["parameters"] == {

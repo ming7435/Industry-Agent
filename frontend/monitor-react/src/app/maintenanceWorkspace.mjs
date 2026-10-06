@@ -12,17 +12,20 @@ export async function loadMaintenanceWorkspace(request, actor = null) {
     planError: plans.status === "rejected" ? plans.reason.message : "",
     orderError: orders.status === "rejected" ? orders.reason.message : "",
     history: plans.status === "fulfilled" ? object(plans.value?.history) : {},
+    deletedPlanIds: plans.status === "fulfilled" && Array.isArray(plans.value?.deleted_plan_ids) ? plans.value.deleted_plan_ids : [],
   };
 }
 
-export function buildMaintenanceWorkspaceRecords({ snapshot = {}, items = [], orders = [] } = {}) {
+export function buildMaintenanceWorkspaceRecords({ snapshot = {}, items = [], orders = [], deletedPlanIds = [] } = {}) {
   const records = new Map();
+  const deleted = new Set(deletedPlanIds);
   function add(plan, context = {}) {
     if (!Object.keys(object(plan)).length) return;
     const diagnosis = Object.keys(object(context.diagnosis)).length ? context.diagnosis : object(plan.diagnosis);
     const event = object(context.event);
     const deviceId = text(context.device_id || event.device_id || diagnosis.device_id || plan.device_id);
     const planId = text(plan.plan_id);
+    if (deleted.has(planId)) return;
     const recordId = `${deviceId}:${planId || text(context.event_id || event.event_id || context.trace_id) || "unindexed"}`;
     records.set(recordId, {
       ...object(records.get(recordId)), ...plan, diagnosis,
@@ -46,6 +49,14 @@ export function buildMaintenanceWorkspaceRecords({ snapshot = {}, items = [], or
   }
   for (const plan of items) add(plan, plan);
   return [...records.values()].sort((left, right) => (Date.parse(right.created_at) || 0) - (Date.parse(left.created_at) || 0));
+}
+
+export function deleteMaintenancePlans(request, planIds) {
+  return request("/api/maintenance/plans/delete", { method: "POST", body: JSON.stringify({ plan_ids: [...new Set(planIds)] }) });
+}
+
+export function retryMaintenancePlan(request, planId, requestId) {
+  return request(`/api/maintenance/plans/${encodeURIComponent(planId)}/retry`, {method:'POST',body:JSON.stringify({request_id:requestId})});
 }
 
 export function maintenanceDispatchView(record = {}, { hasOrder = false } = {}) {

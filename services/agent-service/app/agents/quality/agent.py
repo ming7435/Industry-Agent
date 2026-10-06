@@ -9,6 +9,10 @@ from app.contracts import QualityResult
 from app.agents.base import BaseAgent
 
 from .graph import build_quality_graph
+from app.agents.base import trace_skill_node
+
+
+QUALITY_CLOSURE_AUTHORITY = object()
 
 
 class QualityAgent(BaseAgent):
@@ -19,8 +23,19 @@ class QualityAgent(BaseAgent):
         self.tools = tools or ToolRegistry()
         self.graph = build_quality_graph()
 
-    def run(self, task: Any) -> QualityResult:
+    def run(self, task: Any) -> QualityResult | dict[str, Any]:
         payload = dict(task or {}) if isinstance(task, Mapping) else {}
+        if payload.get('_closure_authority') is QUALITY_CLOSURE_AUTHORITY:
+            operation = str(payload.get('closure_operation') or '')
+            allowed = {'create_quality_check','create_closure_task','complete_closure_task','submit_quality_appeal','resolve_quality_appeal',
+                       'reinspect_quality_check','release_quality_check','close_quality_check'}
+            if operation not in allowed:
+                raise ValueError('未知质检闭环动作')
+            def execute_closure(state):
+                return {'result': self.tools.execute(operation, state['request']['arguments'])}
+            step = trace_skill_node('quality', operation, execute_closure)
+            state = {'agent':self, 'request':payload,'active_skills':['part_quality_inspection_skill']}
+            return step(state)['result']
         output = self.graph.invoke({"agent": self, "request": payload})
         result = output.get("result")
         if result is None:
@@ -112,6 +127,11 @@ class QualityAgent(BaseAgent):
 
     @staticmethod
     def _recommendation(decision: Mapping[str, Any]) -> str:
-        if decision.get("passed"):
+        status = str(decision.get("status") or "").lower()
+        if status == "pass" and decision.get("passed") is True:
             return "零件质量检测合格，可进入入库或装配流程。"
-        return "零件质量检测未通过，请隔离不合格品并复核缺陷项。"
+        if status == "fail":
+            return "零件质量检测未通过，请隔离不合格品并复核缺陷项。"
+        if status in {"not_tested", "insufficient_data", "pending"}:
+            return "零件检测尚未完成或检测数据不足，请补充规格和真实检测记录后复核。"
+        return "零件质量结论待复核，请补充可信检测证据后重新检验。"

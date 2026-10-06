@@ -29,6 +29,10 @@ class AgentOrchestrator:
     def run_user(self, user_text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         return self._execute_graph({"entry": "user", "user_text": user_text, "context": context or {}})
 
+    def run_knowledge(self, user_text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        """服务端只读入口；上下文不能覆盖顶层执行范围。"""
+        return self._execute_graph({"entry": "knowledge", "user_text": user_text, "context": context or {}})
+
     def run_abnormal_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         return self._execute_graph({"entry": "trigger", "event": dict(event), "user_text": ""})
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Mapping
 from pathlib import Path
+from uuid import uuid4
 
 _load_dotenv: Callable[..., Any] | None
 try:
@@ -20,6 +21,7 @@ from urllib.error import HTTPError
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.schemas.agent import ApprovalRequest, AbnormalEventRequest, RejectionRequest, UserQuestionRequest
 from app.api.schemas.closure import ClosureTaskRequest, QualityCloseRequest, QualityReinspectionRequest
@@ -37,6 +39,11 @@ from app.clients.backend import BackendServiceError
 from app.clients.backend import BackendServiceClient
 from app.api.team_auth import team_actor, require_assignee, human_action
 from app.api.maintenance_plans import list_saved_maintenance_plans
+
+
+class MaintenancePlanDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_ids: list[str] = Field(min_length=1, max_length=100)
 
 
 def _load_project_env() -> None:
@@ -153,6 +160,7 @@ _TRACE_SUMMARY_FIELDS = (
     "timestamp", "type", "name", "node", "agent", "event", "task_id", "trace_id",
     "tool_name", "tool", "mcp_server", "latency", "latency_ms", "execution_time",
     "elapsed_ms", "error", "allowed", "step", "skill", "keys",
+    'agent_run_id', 'tool_call_id', 'step_run_id', 'run_type', 'event_id', 'trace_record_id',
 )
 
 
@@ -198,6 +206,13 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
         try:
             return callable_(*args, **kwargs)
+        except HTTPError as error:
+            detail = error.read().decode('utf-8',errors='replace')[:500]
+            try:
+                detail = json.loads(detail).get('detail') or detail
+            except (ValueError, AttributeError):
+                pass
+            raise HTTPException(error.code if error.code in {404,409,422} else 502, detail=detail or '后端业务操作未完成') from None
         except KeyError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (ValueError, BackendServiceError) as error:
@@ -227,6 +242,9 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         forbidden = {'user_text', 'required_capabilities', 'runtime_resume', 'target_input'}
         if forbidden.intersection(body.context):
             raise HTTPException(422, '问答上下文不能覆盖任务正文、运行计划或内部动作')
+        if body.mode == "knowledge":
+            # 只读范围由顶层执行入口固定，不能被 Router 或后续重规划升级。
+            return runtime.run_knowledge(body.user_text, body.context)
         from app.agents.router.agent import RouterAgent
         route = RouterAgent().run({'user_text': body.user_text, 'context': body.context})
         from app.runtime.coordinator import RuntimeInputParser
@@ -301,7 +319,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/v1/trace")
     def trace(trace_id: str | None = None, task_id: str | None = None, limit: int = 100, summary: bool = False) -> Dict[str, Any]:
         records = runtime.container.trace.list(trace_id=trace_id, task_id=task_id, limit=max(1, min(limit, 5000)))
-        return {"trace": compact_trace_summary(records) if summary else records}
+        return {"trace": compact_trace_summary(records) if summary else records,
+                'storage_warning':getattr(runtime.container.trace,'storage_error','')}
 
     @app.get("/api/runs", deprecated=True)
     @app.get("/api/v1/runs")
@@ -384,7 +403,26 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def maintenance_plans(device_id: str = "", limit: int = 100) -> Dict[str, Any]:
         """展示既有维修方案；个人工单授权仍由工单读取接口检查。"""
         results, history = event_results.list_plan_results()
-        return {**list_saved_maintenance_plans(results, device_id, max(1, min(limit, 500))), "history": history}
+        deleted = event_results.deleted_plan_ids()
+        return {**list_saved_maintenance_plans(results, device_id, max(1, min(limit, 500)), deleted), "history": history, "deleted_plan_ids": deleted}
+
+    def remove_maintenance_plans(ids, request):
+        actor = team_actor(request)
+        try:
+            removed = event_results.delete_plans(ids, actor["user_id"])
+        except KeyError:
+            raise HTTPException(404, "维修方案不存在，未删除任何方案") from None
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+        return {"deleted_plan_ids": removed, "count": len(removed), "mode": "soft-delete", "message": "方案已从列表移除，关联工单和审计记录保留"}
+
+    @app.delete("/api/maintenance/plans/{plan_id}", dependencies=[Depends(require_write_auth)])
+    def delete_maintenance_plan(plan_id: str, request: Request):
+        return remove_maintenance_plans([plan_id], request)
+
+    @app.post("/api/maintenance/plans/delete", dependencies=[Depends(require_write_auth)])
+    def delete_maintenance_plans(body: MaintenancePlanDeleteRequest, request: Request):
+        return remove_maintenance_plans(body.plan_ids, request)
 
     @app.get("/api/workorders")
     def workorders(request: Request) -> Dict[str, Any]:
@@ -423,7 +461,10 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def reports(workorder_id: str = "") -> Dict[str, Any]:
         """通过 Runtime 向报告工作台提供已持久化的报告。"""
 
-        return runtime.container.registry.list_reports(workorder_id=workorder_id)
+        try:
+            return runtime.container.registry.list_reports(workorder_id=workorder_id)
+        except Exception:
+            raise HTTPException(502,'报告存储暂不可用，历史报告未删除，请检查 Backend/MySQL') from None
 
     def _load_report(report_id: str) -> tuple[str, Dict[str, Any]]:
         """从当前配置的报告存储读取报告，并兼容历史外层编号。"""
@@ -457,11 +498,19 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         """根据已持久化报告生成真实 PDF 文件。"""
 
         _, report_value = _load_report(report_id)
-        result = runtime.container.registry.generate_report_file(
-            report=report_value,
-            format="pdf",
-            path=str(get_report_file_path(report_id, "pdf")),
-        )
+        arguments = {'report':report_value,'format':'pdf','path':str(get_report_file_path(report_id,'pdf'))}
+        harness = getattr(runtime.container,'harnesses',{}).get('report')
+        if harness is not None:
+            from app.agents.report.agent import REPORT_FILE_AUTHORITY
+            source = report_value.get('sections') or {}
+            trace_id = str(report_value.get('trace_id') or (source.get('quality') or {}).get('trace_id') or '')
+            if not trace_id:
+                trace_id = next((str(ref.get('id') or ref.get('reference') or '') for ref in report_value.get('source_refs',[]) if ref.get('type')=='trace'), '')
+            result = harness.execute_once({'_file_authority':REPORT_FILE_AUTHORITY,'arguments':arguments,
+                'task_id':'TASK-PDF-' + uuid4().hex[:12],'trace_id':trace_id,
+                'runtime_context':{'run_type':'quality' if report_value.get('report_type')=='quality_report' else 'fault'}})
+        else:
+            result = runtime.container.registry.generate_report_file(**arguments)
         if not result.get("success"):
             raise HTTPException(status_code=503, detail=result.get("error") or "PDF 生成失败")
         return {**result, "open_url": f"/api/reports/{report_id}/pdf", "download_url": f"/api/reports/{report_id}/pdf"}
@@ -533,6 +582,14 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def create_quality_check(request: QualityCheckRequest) -> Dict[str, Any]:
         return runtime.container.closure_service.create_quality_check(request.model_dump(mode="json"))
 
+    def quality_mutation(operation, arguments, fallback):
+        harness = getattr(runtime.container, 'harnesses', {}).get('quality')
+        operations = getattr(runtime.container, 'operations', None)
+        if harness is not None and hasattr(operations, 'execute_quality_action'):
+            # execute_once 不包重试：Backend 工具失败/超时后先对账。
+            return closure_call(operations.execute_quality_action, harness, operation, arguments)
+        return fallback()
+
     @app.get("/api/v1/quality/checks")
     def list_quality_checks(target_id: str = "", status: str = "") -> Dict[str, Any]:
         items = runtime.container.closure_service.list_quality_checks(target_id=target_id, status=status)
@@ -545,22 +602,22 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.post("/api/v1/quality/checks/{check_id}/appeal", dependencies=[Depends(require_write_auth)])
     def appeal_quality_check(check_id: str, request: QualityAppealRequest) -> Dict[str, Any]:
-        return runtime.container.closure_service.submit_appeal(check_id, request.model_dump(mode="json"))
+        return quality_mutation('submit_quality_appeal', {'check_id':check_id, **request.model_dump(mode='json')}, lambda: runtime.container.closure_service.submit_appeal(check_id, request.model_dump(mode='json')))
 
     @app.post("/api/v1/quality/checks/{check_id}/appeal/resolve", dependencies=[Depends(require_write_auth)])
     def resolve_quality_appeal(check_id: str, request: QualityAppealResolutionRequest) -> Dict[str, Any]:
-        return closure_call(
+        return quality_mutation('resolve_quality_appeal', {'check_id':check_id, **request.model_dump(mode='json')}, lambda: closure_call(
             runtime.container.closure_service.resolve_appeal,
             check_id,
             request.appeal_id,
             request.decision,
             request.reason,
             request.operator,
-        )
+        ))
 
     @app.post("/api/v1/closure-tasks", dependencies=[Depends(require_write_auth)])
     def create_closure_task(request: ClosureTaskRequest) -> Dict[str, Any]:
-        return closure_call(runtime.container.closure_service.create_closure_task, request.model_dump(mode="json"))
+        return quality_mutation('create_closure_task', request.model_dump(mode='json'), lambda: closure_call(runtime.container.closure_service.create_closure_task, request.model_dump(mode='json')))
 
     @app.get("/api/v1/closure-tasks")
     def list_closure_tasks(status: str = "") -> Dict[str, Any]:
@@ -569,19 +626,19 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.post("/api/v1/closure-tasks/{task_id}/complete", dependencies=[Depends(require_write_auth)])
     def complete_closure_task(task_id: str, note: str = "") -> Dict[str, Any]:
-        return closure_call(runtime.container.closure_service.complete_closure_task, task_id, note=note)
+        return quality_mutation('complete_closure_task', {'task_id':task_id, 'note':note}, lambda: closure_call(runtime.container.closure_service.complete_closure_task, task_id, note=note))
 
     @app.post("/api/v1/quality/checks/{check_id}/reinspect", dependencies=[Depends(require_write_auth)])
     def reinspect_quality_check(check_id: str, request: QualityReinspectionRequest) -> Dict[str, Any]:
-        return closure_call(runtime.container.closure_service.record_reinspection, check_id, request.model_dump(mode="json"), operator=request.operator)
+        return quality_mutation('reinspect_quality_check', {'check_id':check_id, **request.model_dump(mode='json')}, lambda: closure_call(runtime.container.closure_service.record_reinspection, check_id, request.model_dump(mode='json'), operator=request.operator))
 
     @app.post("/api/v1/quality/checks/{check_id}/release", dependencies=[Depends(require_write_auth)])
     def release_quality_check(check_id: str, operator: str = "") -> Dict[str, Any]:
-        return closure_call(runtime.container.closure_service.release_quality_check, check_id, operator=operator)
+        return quality_mutation('release_quality_check', {'check_id':check_id, 'operator':operator}, lambda: closure_call(runtime.container.closure_service.release_quality_check, check_id, operator=operator))
 
     @app.post("/api/v1/quality/checks/{check_id}/close", dependencies=[Depends(require_write_auth)])
     def close_quality_check(check_id: str, request: QualityCloseRequest) -> Dict[str, Any]:
-        return closure_call(runtime.container.closure_service.close_quality_check, check_id, operator=request.operator, note=request.note)
+        return quality_mutation('close_quality_check', {'check_id':check_id, **request.model_dump(mode='json')}, lambda: closure_call(runtime.container.closure_service.close_quality_check, check_id, operator=request.operator, note=request.note))
 
     @app.get("/api/v1/audit-logs")
     def audit_logs(object_id: str = "", action: str = "") -> Dict[str, Any]:
@@ -601,7 +658,9 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     # 生产建模只增加 CAD 专用路由，不替换维修定位或其他服务接口。
     from app.agents.cad.modeling_api import build_modeling_router
+    from app.api.business_returns import build_business_return_router
 
+    app.include_router(build_business_return_router(runtime, event_results, require_write_auth))
     app.include_router(build_modeling_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
     return app
 

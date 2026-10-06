@@ -37,25 +37,38 @@ const blockedPipeline = {
   status: "blocked", stop_reason: "replan_limit_exceeded",
 };
 
-test("maintenance page displays an existing unassigned plan with real gate blockers", () => {
+test("删除标记未读出前不显示可能已删除的监控方案", () => {
+  const html = renderPlans({ snapshot: { diagnosis: { pipeline: blockedPipeline } }, sample: {} });
+  assert.doesNotMatch(html, /PLAN-UNASSIGNED/);
+  assert.match(html, /正在读取已有维修方案/);
+});
+
+test("首次读取期间删除操作禁用，身份提示正确；加载后的单条操作由浏览器回归覆盖", () => {
+  const props = { snapshot: { diagnosis: { pipeline: blockedPipeline } }, sample: {} };
+  const loggedIn = renderPlans({ ...props, actor: { user_id: "U-1", role: "technician" } });
+  assert.match(loggedIn, /删除选中方案/);
+  assert.match(loggedIn, /disabled=""[^>]*>删除选中方案/);
+  const anonymous = renderPlans(props);
+  assert.match(anonymous, /disabled=""[^>]*>删除选中方案/);
+  assert.match(anonymous, /登录后可删除/);
+});
+
+test("维修方案等待删除集合，不在首次读取前把快照当作已核验列表", () => {
   const html = renderPlans({ snapshot: { device_id: "M-1", diagnosis: { pipeline_by_device: { "M-1": blockedPipeline } } }, sample: { device_id: "M-1" } });
-  assert.match(html, /PLAN-UNASSIGNED/);
-  assert.match(html, /缺少 CAD\/BOM 依据/);
-  assert.match(html, /备件库存为演示数据/);
-  assert.match(html, /replan_limit_exceeded/);
+  assert.doesNotMatch(html, /PLAN-UNASSIGNED/);
+  assert.match(html, /正在读取已有维修方案/);
   assert.doesNotMatch(html, /完成诊断并生成工单后/);
 });
 
-test("maintenance page lists plans for other devices even when a new current alarm has no result", () => {
+test("新设备报警尚未返回时明确提示核对，不提前展示未核验的其他设备快照", () => {
   const html = renderPlans({ snapshot: { device_id: "M-2", diagnosis: { pipeline_by_device: { "M-1": blockedPipeline } } }, sample: { device_id: "M-2", alarm_code: "NEW", status: "alarm" } });
-  assert.match(html, /PLAN-UNASSIGNED/);
-  assert.match(html, /M-1/);
+  assert.doesNotMatch(html, /PLAN-UNASSIGNED/);
   assert.match(html, /NEW/);
 });
 
 test("maintenance page does not claim a current plan is absent before history is loaded", () => {
   const html = renderPlans({ snapshot: { device_id: "M-2", diagnosis: { pipeline_by_device: { "M-1": blockedPipeline } } }, sample: { device_id: "M-2", alarm_code: "NEW", status: "alarm" } });
-  assert.match(html, /PLAN-UNASSIGNED/);
+  assert.doesNotMatch(html, /PLAN-UNASSIGNED/);
   assert.match(html, /NEW/);
   assert.match(html, /正在核对当前设备/);
   assert.doesNotMatch(html, /尚无对应维修方案/);
@@ -63,7 +76,7 @@ test("maintenance page does not claim a current plan is absent before history is
 
 test("maintenance page does not ask an authenticated actor to log in again when no linked order is visible", () => {
   const html = renderPlans({ snapshot: { device_id: "M-1", diagnosis: { pipeline: blockedPipeline } }, sample: { device_id: "M-1" }, actor: { user_id: "U-1", role: "technician" } });
-  assert.match(html, /当前账号/);
+  assert.doesNotMatch(html, /登录后可删除/);
   assert.doesNotMatch(html, /工单关联情况需登录/);
 });
 

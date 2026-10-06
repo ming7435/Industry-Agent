@@ -45,7 +45,7 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - Milvus 向量集合、Whoosh BM25 索引和 MySQL 文档/分块元数据。
 - CAD 图纸、BOM、部件、装配关系和部件位置查询；配置 CAD MySQL 后从工程元数据表读取，开发环境才使用显式 Demo fallback。
 - 维修计划中的 target_part、drawing_context 和 viewer_context 数据契约。
-- WorkOrder 生命周期、维修反馈、维修完成、派工和可选 SQLite 持久化幂等。
+- WorkOrder 生命周期、维修反馈、维修完成、派工和 MySQL 持久化幂等；临时上下文与登录会话使用 Redis。
 - 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。
 - TraceRecorder 记录 Agent、Node、Tool、模块和 A2A 调用轨迹。
 - React + Vite 监控工作台和内置静态前端。
@@ -457,7 +457,7 @@ API / Monitor
 - WorkOrder Agent 负责工单生命周期；Quality Agent 只负责生产零件质量检测。
 - Memory Agent 负责有效维修经验的检索和沉淀，工单关闭且存在有效维修反馈后才允许学习。
 - RAG_SERVICE_BASE_URL 配置远程 RAG；MCP_RAG_URL 是可选 MCP 风格地址，二者不是同一个配置项。
-- 配置 `WORKORDER_STORE_PATH` 后，WorkOrder 使用 SQLite 唯一键持久化幂等；生产集群仍建议使用 MySQL 唯一键或等价共享数据库。
+- 在线运行统一使用 `BACKEND_STORAGE=mysql`、`WORKORDER_BACKEND=mysql` 和 `REDIS_URL`。旧 `*_STORE_PATH` 不启用 SQLite；隔离测试仍保留显式 SQLite 适配器。旧数据迁移见 `docs/mysql-redis-maintenance-storage.md`，不删除原库。
 
 ### Runtime 最终控制流
 

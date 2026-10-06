@@ -15,7 +15,16 @@ steps:
   - identify_part
   - determine_pass_fail
   - build_result
+  - create_quality_check
+  - create_closure_task
+  - complete_closure_task
+  - submit_quality_appeal
+  - resolve_quality_appeal
+  - reinspect_quality_check
+  - release_quality_check
+  - close_quality_check
 tools:
+  - create_quality_check
   - get_production_part
   - get_part_specification
   - inspect_part_dimensions
@@ -23,6 +32,13 @@ tools:
   - inspect_part_material
   - inspect_part_function
   - inspect_part_process
+  - create_closure_task
+  - complete_closure_task
+  - submit_quality_appeal
+  - resolve_quality_appeal
+  - reinspect_quality_check
+  - release_quality_check
+  - close_quality_check
 ---
 
 # 生产零件综合质检
@@ -75,6 +91,10 @@ tools:
 ## 安全边界
 
 单个 `passed=true` 不能替代完整可信检测；synthetic/degraded 不作为生产验收。失败后的整改、复检、放行和关闭由 Backend 闭环处理。
+
+## 闭环执行
+
+服务端闭环入口让同一 Quality Agent 执行本次选择的一个真实动作，并调用同名 Backend 工具：创建整改、提交整改记录、申诉、处理申诉、引用新检测复检、再次校验放行、关闭。每一步的输入、输出、技能标识与工具调用都归入原检测轨迹。复检和放行仍以 Backend 的事务门禁为准，客户端不能通过参数自行授权闭环路径。
 
 ## 代码入口
 

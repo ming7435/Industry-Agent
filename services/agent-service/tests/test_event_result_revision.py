@@ -8,7 +8,7 @@ from app.runtime.durable_store import DurableJsonStore
 
 def test_event_endpoint_reprocesses_new_revision_but_deduplicates_same_revision(monkeypatch):
     monkeypatch.delenv("AGENT_API_TOKEN", raising=False)
-    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("APP_ENV", "testing")
     monkeypatch.delenv("EVENT_STORE_PATH", raising=False)
     calls = []
 
@@ -34,7 +34,7 @@ def test_event_endpoint_reprocesses_new_revision_but_deduplicates_same_revision(
 
 def test_same_event_revision_rejects_changed_payload_instead_of_reusing_result(monkeypatch):
     monkeypatch.delenv("AGENT_API_TOKEN", raising=False)
-    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("APP_ENV", "testing")
     monkeypatch.delenv("EVENT_STORE_PATH", raising=False)
     calls = []
 
@@ -59,7 +59,7 @@ def test_same_event_revision_rejects_changed_payload_instead_of_reusing_result(m
 
 def test_durable_uncertain_event_returns_explicit_conflict_without_retry(tmp_path, monkeypatch):
     monkeypatch.delenv("AGENT_API_TOKEN", raising=False)
-    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("APP_ENV", "testing")
     monkeypatch.setenv("EVENT_STORE_PATH", str(tmp_path / "events.sqlite3"))
     calls = []
 
@@ -81,7 +81,7 @@ def test_durable_uncertain_event_returns_explicit_conflict_without_retry(tmp_pat
 
 def test_event_endpoint_rejects_nonpositive_revision(monkeypatch):
     monkeypatch.delenv("AGENT_API_TOKEN", raising=False)
-    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("APP_ENV", "testing")
     monkeypatch.delenv("EVENT_STORE_PATH", raising=False)
 
     class Runtime:
@@ -98,7 +98,7 @@ def test_event_endpoint_rejects_nonpositive_revision(monkeypatch):
 
 def test_legacy_event_cache_requires_reconciliation_before_scoped_replay(tmp_path, monkeypatch):
     monkeypatch.delenv("AGENT_API_TOKEN", raising=False)
-    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("APP_ENV", "testing")
     path = str(tmp_path / "events.sqlite3")
     monkeypatch.setenv("EVENT_STORE_PATH", path)
     DurableJsonStore(path).set("agent_event", "EVT-LEGACY", {"task_id": "TASK-OLD"})

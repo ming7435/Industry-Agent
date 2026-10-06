@@ -7,7 +7,7 @@ function firstAlarmCode(value = {}) {
   return String(values.find((item) => String(item || "").trim()) || "").trim();
 }
 
-/** 只有选定机器存在活动报警时才构建设备检索范围。 */
+/** 只提供检索范围，不允许客户端指定内部 Agent 能力。 */
 export function buildKnowledgeContext(sample = {}, snapshot = {}) {
   const deviceId = String(sample?.device_id || snapshot?.device_id || "").trim();
   const device = (snapshot?.devices || []).find((item) => String(item?.device_id || "").trim() === deviceId) || {};
@@ -25,10 +25,9 @@ export function buildKnowledgeContext(sample = {}, snapshot = {}) {
   const alarmCode = firstAlarmCode(active);
   const activeDeviceId = String(active?.device_id || deviceId).trim();
   if (!activeDeviceId || !alarmCode) {
-    return { required_capabilities: ["document_search"], alarm_active: false };
+    return { alarm_active: false };
   }
   return {
-    required_capabilities: ["document_search"],
     alarm_active: true,
     device_id: activeDeviceId,
     alarm_code: alarmCode,

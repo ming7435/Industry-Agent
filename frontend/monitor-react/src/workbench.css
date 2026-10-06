@@ -101,7 +101,7 @@
 .platform-shell.workbench .content-shell .module-card { min-height: 106px; padding: 16px 18px; }
 .platform-shell.workbench .content-shell .module-card strong { margin-top: 6px; font-size: 24px; }
 .platform-shell.workbench .content-shell .ops-grid,
-.platform-shell.workbench .content-shell .answer-grid { margin-top: 18px; gap: 18px; }
+.platform-shell.workbench .content-shell .answer-grid { margin-top: 18px; gap: 18px; grid-template-columns: 1fr; }
 .platform-shell.workbench .content-shell .module-panel { padding: clamp(18px, 2vw, 28px); }
 .platform-shell.workbench .content-shell .technician-detail-grid { grid-template-columns: 1fr; }
 .platform-shell.workbench .content-shell .workorder-page { min-height: 0; gap: 0; }
@@ -180,7 +180,12 @@
 .rag-chat-composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 7px; }
 .rag-chat-composer-actions span { color: #82949a; font-size: 11px; }
 .platform-shell.workbench .content-shell .rag-chat-composer-actions .button { min-height: 34px; padding: 5px 14px; }
-.platform-shell.workbench .content-shell .quality-workspace .quality-primary-grid { margin-top: 0; }
+.platform-shell.workbench .content-shell .quality-workspace .quality-primary-grid { margin-top: 0; grid-template-columns: minmax(0, 1fr); }
+.platform-shell.workbench .content-shell .quality-history-card { display: grid; gap: 8px; width: 100%; text-align: left; white-space: normal; }
+.quality-history-card[aria-pressed="true"] { border-color: #63b3a2; background: #f2faf7; }
+.quality-closure-panel { margin-top: 18px; }
+.quality-task-record { padding: 14px 0; border-bottom: 1px solid #dce8e5; }
+.check-grid .warning strong { color: #97600d; }
 .platform-shell.workbench .content-shell .report-workspace .report-panel { margin-top: 18px; }
 .platform-shell.workbench .content-shell .logs-workspace .module-hero { align-items: center; }
 .logs-stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -368,3 +373,11 @@
   .rag-chat-composer-actions span { display: none; }
   .rag-chat-composer-actions { justify-content: flex-end; }
 }
+.maintenance-delete-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.maintenance-plan-queue .workorder-queue-list { grid-template-columns: 1fr; }
+.maintenance-plan-list-row { display: flex; align-items: center; gap: 12px; padding: 10px; border: 1px solid #d8e5e7; border-radius: 12px; background: #f8fbfb; }
+.maintenance-plan-list-row.is-selected { border-color: #58b89c; background: #eaf6f1; }
+.maintenance-plan-list-row .workorder-queue-item { flex: 1; min-width: 0; border: 0; background: transparent; box-shadow: none; }
+.maintenance-plan-select input { width: 18px; height: 18px; accent-color: #167f72; }
+.maintenance-plan-list-row .button.danger { flex-shrink: 0; color: #a83d36; }
+@media (max-width: 700px) { .maintenance-plan-list-row { flex-wrap: wrap; } .maintenance-plan-list-row .workorder-queue-item { flex-basis: calc(100% - 42px); } .maintenance-plan-list-row > .button { margin-left: 30px; } }

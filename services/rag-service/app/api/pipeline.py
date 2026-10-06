@@ -153,6 +153,8 @@ def _classify_route_error(exc: BaseException, default: str) -> str:
     Returns:
         One of the ``REASON_*`` constants.
     """
+    if getattr(exc, "capability", "") == "embedding":
+        return REASON_EMBEDDING_UNAVAILABLE
     haystack = f"{type(exc).__module__ or ''} {exc}".lower()
     if any(hint in haystack for hint in _EMBEDDING_HINTS):
         return REASON_EMBEDDING_UNAVAILABLE
@@ -161,6 +163,21 @@ def _classify_route_error(exc: BaseException, default: str) -> str:
     if any(hint in haystack for hint in _WHOOSH_HINTS):
         return REASON_WHOOSH_UNAVAILABLE
     return default
+
+
+def _is_transport_timeout(exc: BaseException) -> bool:
+    """兼容在线及旧离线适配器的超时包装，不通过错误正文猜测原因。"""
+    current = exc
+    seen = set()
+    for _ in range(8):
+        if not isinstance(current, BaseException) or id(current) in seen:
+            return False
+        seen.add(id(current))
+        if isinstance(current, TimeoutError) or getattr(current, "timed_out", False):
+            return True
+        reason = getattr(current, "reason", None)
+        current = current.__cause__ or (reason if isinstance(reason, BaseException) else None)
+    return False
 
 
 @dataclass
@@ -659,11 +676,13 @@ class SearchPipeline:
             )
             return fused_hits[:top_n]
         except Exception as exc:  # noqa: BLE001 - any rerank failure degrades
-            progress.mark_degraded(REASON_RERANK_TIMEOUT)
+            # 非超时的模型/账号错误不能伪装成重排超时。
+            reason = REASON_RERANK_TIMEOUT if _is_transport_timeout(exc) else REASON_RERANKER_UNAVAILABLE
+            progress.mark_degraded(reason)
             logger.warning(
                 "request_id={} stage=rerank degraded reason={} error_type={} error={!r}",
                 progress.request_id,
-                REASON_RERANK_TIMEOUT,
+                reason,
                 type(exc).__name__,
                 exc,
             )

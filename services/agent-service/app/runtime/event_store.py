@@ -10,6 +10,7 @@ import os
 from .durable_store import DurableJsonStore
 from .event_plan_reader import EventPlanReader
 from app.config.settings import allow_degraded_storage
+from shared.persistence import MySQLJsonStore
 
 
 class EventResultConflict(ValueError):
@@ -29,10 +30,10 @@ class EventResultStore:
         self._lock = Lock()
         self._key_locks: dict[str, tuple[Lock, int]] = {}
         configured_path = str(path or os.getenv("EVENT_STORE_PATH", "")).strip()
-        if not configured_path and not allow_degraded_storage():
-            raise RuntimeError("生产模式要求配置 EVENT_STORE_PATH")
-        self._durable = DurableJsonStore(configured_path) if configured_path else None
-        self._plan_reader = EventPlanReader(configured_path) if configured_path else None
+        online = os.getenv("APP_ENV", "development").lower() != "testing"
+        self._durable = DurableJsonStore(configured_path) if online or configured_path else None
+        self._plan_reader = EventPlanReader(configured_path) if configured_path and not online else None
+        self._online = online
 
     def has_unmigrated_legacy_result(self, event_id: str, scoped_key: str) -> bool:
         """旧版仅按事件 ID 保存的结果不能被新作用域静默重放。"""
@@ -60,10 +61,31 @@ class EventResultStore:
 
     def list_plan_results(self):
         """方案投影与历史日志全文分离；大历史库由单个只读任务渐进加载。"""
+        if isinstance(self._durable, MySQLJsonStore):
+            return self._durable.plan_results()
         if self._plan_reader is not None:
             return self._plan_reader.snapshot()
         results = self.list_results(limit=5000)
         return results, {"status": "ready", "loaded_records": len(results), "total_records": len(results), "error": ""}
+
+    def deleted_plan_ids(self):
+        if isinstance(self._durable, MySQLJsonStore):
+            return self._durable.deleted_plan_ids()
+        return self._durable.keys("maintenance_plan_deleted") if self._durable else []
+
+    def delete_plans(self, ids, actor_id):
+        if isinstance(self._durable, MySQLJsonStore):
+            return self._durable.delete_plans(ids, actor_id)
+        # SQLite 删除兼容只在隔离测试中启用；线上固定走 MySQL 原子批次。
+        ids = list(dict.fromkeys(ids))
+        results = self.list_results(limit=5000)
+        available = {item.get("maintenance_plan", {}).get("plan_id") for item in results}
+        if not set(ids).issubset(available):
+            raise KeyError("维修方案不存在")
+        from datetime import datetime, timezone
+        for plan_id in ids:
+            self._durable.get_or_create("maintenance_plan_deleted", plan_id, lambda: {"actor_id": actor_id, "deleted_at": datetime.now(timezone.utc).isoformat()})
+        return ids
 
     def close(self):
         if self._plan_reader is not None:
@@ -98,11 +120,12 @@ class EventResultStore:
                 result = self._durable.get_or_create("agent_event", key, produce) if self._durable is not None else produce()
                 if self._plan_reader is not None:
                     self._plan_reader.invalidate()
-                with self._lock:
-                    self._results[key] = dict(result)
-                    self._results.move_to_end(key)
-                    while len(self._results) > self.max_items:
-                        self._results.popitem(last=False)
+                if not self._online:
+                    with self._lock:
+                        self._results[key] = dict(result)
+                        self._results.move_to_end(key)
+                        while len(self._results) > self.max_items:
+                            self._results.popitem(last=False)
                 return unwrap(result)
         finally:
             with self._lock:

@@ -89,6 +89,9 @@ class BackendServiceClient:
     def submit_appeal(self, check_id: str, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         return self.call("submit_quality_appeal", {"check_id": check_id, **dict(payload), "operator": operator})
 
+    def resolve_appeal(self, check_id: str, appeal_id: str = "", decision: str = "approved", reason: str = "", operator: str = "") -> dict[str, Any]:
+        return self.call("resolve_quality_appeal", {"check_id": check_id, "appeal_id": appeal_id, "decision": decision, "reason": reason, "operator": operator})
+
     def create_closure_task(self, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         return self.call("create_closure_task", {**dict(payload), "operator": operator})
 

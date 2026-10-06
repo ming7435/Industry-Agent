@@ -82,6 +82,12 @@ def _record_text(record: Mapping[str, Any]) -> str:
 
 
 def _is_quality(record: Mapping[str, Any]) -> bool:
+    run_type = str(_first(record, ('run_type',)) or '').lower()
+    if run_type:
+        return run_type == 'quality'
+    # 报告取材并不是一次质检执行，不能因读取质检记录改变整个故障归组。
+    if (record.get('tool_name') or record.get('tool') or record.get('name')) == 'get_quality_record':
+        return False
     text = _record_text(record)
     # 不能因为报告正文包含普通质量字段就判定为质检运行；只有执行
     # 事件封装才能确定运行类型。
@@ -113,6 +119,11 @@ def _phase_for(record: Mapping[str, Any], quality: bool) -> str | None:
     source = str(state_change.get("source") or "").lower()
     if str(record.get("event") or "").lower() == "goal_parsed" and source == "trigger":
         return "monitor"
+    agent = str(record.get('agent') or (record.get('name') if record.get('type') == 'agent' else '') or '').lower()
+    agent_phase = {'report':'report','memory':'experience','maintenance':'maintenance','workorder':'workorder',
+                   'diagnosis':'diagnosis','knowledge':'diagnosis','cad':'diagnosis'}
+    if agent in agent_phase:
+        return agent_phase[agent]
     # 知识和 CAD 是诊断阶段的取证步骤，不应额外生成生命周期卡片；
     # 它们会继续显示在诊断阶段的详细 Trace 中。
     if any(token in text for token in ("diagnos", "knowledge", "cad", "alarm_knowledge", "fault_case")):
@@ -148,10 +159,21 @@ def _is_complete(record: Mapping[str, Any]) -> bool:
 def _phase_record(records: list[Mapping[str, Any]], phase_id: str, label: str) -> dict[str, Any]:
     if not records:
         return {"id": phase_id, "label": label, "status": "pending"}
+    ordered = sorted(records, key=lambda item: _timestamp(item.get("timestamp")))
+    # 调用正常返回不代表业务成功：读取最后一个 Agent 的真实结果。
+    last_output = next((_as_dict(item.get('output')) for item in reversed(ordered) if item.get('event') == 'agent_completed'), {})
+    if phase_id == 'quality':
+        quality_output = next((_as_dict(item.get('output')) for item in reversed(ordered)
+                               if item.get('event') == 'agent_completed' and (item.get('agent') or item.get('name')) == 'quality'), {})
+        if quality_output:
+            last_output = _as_dict(quality_output.get('quality_check')) or quality_output
+    business_status = str(last_output.get('status') or '').lower()
+    blocked = business_status in {'blocked','pending_approval','review','not_tested','insufficient_data','incomplete'}
+    if phase_id == 'quality' and business_status not in {'released', 'closed'}:
+        blocked = blocked or str(last_output.get('result') or '').lower() in {'review', 'not_tested', 'insufficient_data'}
     errors = any(_is_error(item) for item in records)
     completed = any(_is_complete(item) for item in records)
-    status = "error" if errors else ("completed" if completed else "running")
-    ordered = sorted(records, key=lambda item: _timestamp(item.get("timestamp")))
+    status = "blocked" if blocked else "error" if errors or last_output.get('success') is False else ("completed" if completed else "running")
     return {
         "id": phase_id,
         "label": label,
@@ -166,6 +188,8 @@ def _run_status(phases: list[Mapping[str, Any]]) -> str:
     statuses = {str(item.get("status")) for item in phases}
     if "error" in statuses:
         return "error"
+    if 'blocked' in statuses:
+        return 'blocked'
     if statuses and statuses == {"completed"}:
         return "completed"
     return "running"
@@ -184,6 +208,7 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
     # 同一 Trace 的其余事件，避免整个生命周期拆成监控卡和 Agent 卡。
     event_ids_by_identity: dict[str, str] = {}
     trigger_by_identity: set[str] = set()
+    quality_by_identity: set[str] = set()
     for item in source_records:
         event_id = _event_id(item)
         for identity in (str(item.get("task_id") or ""), str(item.get("trace_id") or "")):
@@ -191,12 +216,14 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
                 event_ids_by_identity.setdefault(identity, event_id)
             if identity and _is_trigger(item):
                 trigger_by_identity.add(identity)
+            if identity and _is_quality(item):
+                quality_by_identity.add(identity)
 
     groups: OrderedDict[str, dict[str, Any]] = OrderedDict()
     for index, item in enumerate(source_records):
-        quality = _is_quality(item)
         task_id = str(item.get("task_id") or "")
         trace_id = str(item.get("trace_id") or "")
+        quality = _is_quality(item) or task_id in quality_by_identity or trace_id in quality_by_identity
         quality_identity = str(_first(item, ("quality_check_id", "check_id", "object_id", "target_id")) or "")
         # Trace 是 RAG/质检交互的稳定边界；同一次回答内部的工具 Task
         # 可以合法变化。

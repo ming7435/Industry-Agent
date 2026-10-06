@@ -6,11 +6,30 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from threading import Lock
+from threading import RLock
+from contextlib import contextmanager, nullcontext
+from copy import deepcopy
+from functools import wraps
 from typing import Any, Mapping
 from uuid import uuid4
 
 from .store import build_closure_store
+
+
+def _quality_operation(method):
+    @wraps(method)
+    def execute(self, *args, **kwargs):
+        with self._quality_transaction():
+            return method(self, *args, **kwargs)
+    return execute
+
+
+def _contains_untrusted_flag(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return any(value.get(key) is True for key in ("synthetic", "is_synthetic", "degraded")) or any(_contains_untrusted_flag(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_untrusted_flag(item) for item in value)
+    return False
 
 
 def _quality_evidence_is_complete(values: Mapping[str, Any]) -> bool:
@@ -35,11 +54,23 @@ class ClosureService:
         self.trace = trace
         self.store = store or build_closure_store()
         self.backend = getattr(self.store, "backend", "memory")
-        self._lock = Lock()
+        self._lock = RLock()
         self._quality_checks: dict[str, dict[str, Any]] = {}
         self._appeals: dict[str, list[dict[str, Any]]] = {}
         self._closure_tasks: dict[str, dict[str, Any]] = {}
         self._audit_logs: list[dict[str, Any]] = []
+
+    @contextmanager
+    def _quality_transaction(self):
+        with self._lock:
+            snapshot = deepcopy((self._quality_checks, self._closure_tasks, self._appeals, self._audit_logs))
+            transaction = self.store.quality_transaction() if self.store else nullcontext()
+            try:
+                with transaction:
+                    yield
+            except Exception:
+                self._quality_checks, self._closure_tasks, self._appeals, self._audit_logs = snapshot
+                raise
 
     @staticmethod
     def _now() -> str:
@@ -49,6 +80,7 @@ class ClosureService:
     def _id(prefix: str) -> str:
         return "%s-%s" % (prefix, uuid4().hex[:12].upper())
 
+    @_quality_operation
     def create_quality_check(self, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         values = dict(payload)
         if values.get("target_type", "production_part") != "production_part":
@@ -57,10 +89,10 @@ class ClosureService:
             raise ValueError("Quality checks only support part_quality inspections")
         check_id = self._id("QC")
         result = str(values.get("result") or "pending").lower()
-        if result not in {"pending", "passed", "failed", "minor_issue", "major_issue", "high_risk"}:
+        if result not in {"pending", "passed", "failed", "minor_issue", "major_issue", "high_risk", "not_tested", "insufficient_data", "review"}:
             result = "pending"
         evidence = list(values.get("evidence") or values.get("inspection_evidence") or values.get("items") or [])
-        if result == "passed" and not _quality_evidence_is_complete(values):
+        if result == "passed" and (not _quality_evidence_is_complete(values) or _contains_untrusted_flag(values)):
             # 只有通用备注或任意 evidence 不能证明尺寸、外观、材料、功能和工艺均已检测。
             result = "pending"
         if result == "passed":
@@ -129,6 +161,7 @@ class ClosureService:
             item = self._quality_checks.get(check_id)
             return dict(item) if item else None
 
+    @_quality_operation
     def submit_appeal(self, check_id: str, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         check = self.get_quality_check(check_id)
         if check is None:
@@ -155,6 +188,7 @@ class ClosureService:
         self._audit("quality_appeal_submitted", check_id, operator, {"appeal_id": appeal_id})
         return dict(appeal)
 
+    @_quality_operation
     def resolve_appeal(
         self,
         check_id: str,
@@ -171,18 +205,16 @@ class ClosureService:
         decision = str(decision or "approved").lower()
         if decision not in {"approved", "rejected", "withdrawn"}:
             raise ValueError("无效申诉结论：%s" % decision)
-        appeals = list(self._appeals.get(check_id) or [])
+        # 启用持久化时以事务内的当前记录/审计为准；其他实例可能已经处理缓存中的待办申诉。
+        appeals = self.store.list_appeals(check_id) if self.store else list(self._appeals.get(check_id) or [])
         appeal = next((item for item in appeals if not appeal_id or item.get("appeal_id") == appeal_id), None)
-        if appeal is None and self.store:
-            stored = getattr(self.store, "list_appeals", lambda _check_id: [])(check_id)
-            appeal = next((item for item in stored if not appeal_id or item.get("appeal_id") == appeal_id), None)
-            if appeal is not None:
-                appeals.append(dict(appeal))
         if appeal is None:
             raise KeyError("申诉记录不存在：%s" % appeal_id)
         if appeal.get("status") != "pending":
             raise ValueError("申诉已结束，不能重复处理")
         appeal.update({"status": decision, "resolution_reason": reason, "resolved_by": operator, "resolved_at": self._now()})
+        if self.store:
+            self.store.update_appeal(check_id, str(appeal["appeal_id"]), appeal)
         with self._lock:
             self._appeals[check_id] = appeals
         if decision == "approved":
@@ -190,9 +222,10 @@ class ClosureService:
         else:
             next_status = decision
         result = self._set_quality_status(check_id, next_status, operator, {})
-        self._audit("quality_appeal_resolved", check_id, operator, {"appeal_id": appeal.get("appeal_id"), "decision": decision})
+        self._audit("quality_appeal_resolved", check_id, operator, {"appeal_id": appeal.get("appeal_id"), "decision": decision, "resolution_reason": reason, "resolved_by": operator, "resolved_at": appeal["resolved_at"]})
         return {"appeal": dict(appeal), **result}
 
+    @_quality_operation
     def create_closure_task(self, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         values = dict(payload)
         quality_check_id = str(values.get("quality_check_id") or "")
@@ -219,7 +252,7 @@ class ClosureService:
             self._closure_tasks[task_id] = record
         if self.store:
             self.store.create_closure_task(record)
-        if quality_check and quality_check.get("status") in {"failed", "rectification"}:
+        if quality_check and quality_check.get("status") in {"failed", "rectification", "passed"}:
             self._set_quality_status(quality_check_id, "rectification", operator, {"closure_task_id": task_id})
         self._audit("closure_task_created", task_id, operator, {"workorder_id": record["workorder_id"]})
         return dict(record)
@@ -231,6 +264,7 @@ class ClosureService:
             values = list(self._closure_tasks.values())
         return [dict(item) for item in values if not status or item.get("status") == status]
 
+    @_quality_operation
     def complete_closure_task(self, task_id: str, operator: str = "", note: str = "") -> dict[str, Any]:
         task = self.store.get_closure_task(task_id) if self.store else self._closure_tasks.get(task_id)
         if task is None:
@@ -259,6 +293,7 @@ class ClosureService:
         self._audit("closure_task_completed", task_id, operator, {"note": note})
         return result
 
+    @_quality_operation
     def record_reinspection(self, check_id: str, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         """记录整改后的复检，复检本身不直接放行。"""
 
@@ -268,10 +303,12 @@ class ClosureService:
         if check.get("status") != "reinspection":
             raise ValueError("只有完成整改的质检记录才能复检")
         values = dict(payload)
+        if type(values.get("passed")) is not bool:
+            raise ValueError("复检 passed 必须是布尔值")
         passed = values.get("passed") is True
         evidence = list(values.get("evidence") or values.get("inspection_evidence") or values.get("items") or [])
-        if passed and not evidence:
-            raise ValueError("复检通过必须提供检测证据")
+        reference = str(values.get("reinspection_check_id") or "")
+        source = self._validated_reinspection(check, reference) if passed else None
         reinspection = {
             "passed": passed,
             "findings": list(values.get("findings") or []),
@@ -279,23 +316,31 @@ class ClosureService:
             "operator": str(values.get("operator") or operator or ""),
             "checked_at": self._now(),
         }
+        if source is not None:
+            reinspection.update({"reinspection_check_id": reference, "quality_validation": deepcopy(source["quality_validation"])})
         status = "reinspection" if passed else "failed"
         result = self._set_quality_status(check_id, status, operator, {"reinspection": reinspection})
-        self._audit("quality_reinspection_recorded", check_id, operator, {"passed": passed, "findings": reinspection["findings"]})
+        self._audit("quality_reinspection_recorded", check_id, operator, {"passed": passed, "findings": reinspection["findings"], "reinspection_check_id": reference if passed else ""})
         return result
 
+    @_quality_operation
     def release_quality_check(self, check_id: str, operator: str = "") -> dict[str, Any]:
         check = self.get_quality_check(check_id)
         if check is None:
             raise KeyError("质检记录不存在：%s" % check_id)
-        direct_pass = check.get("status") == "passed" and bool(check.get("evidence") or check.get("items"))
-        reinspected_pass = check.get("status") == "reinspection" and (check.get("reinspection") or {}).get("passed") is True
+        self._completed_quality_tasks(check_id)
+        direct_pass = check.get("status") == "passed" and self._quality_record_is_trusted(check)
+        reinspection = check.get("reinspection") or {}
+        reinspected_pass = check.get("status") == "reinspection" and reinspection.get("passed") is True
+        if reinspected_pass:
+            self._validated_reinspection(check, str(reinspection.get("reinspection_check_id") or ""))
         if not direct_pass and not reinspected_pass:
             raise ValueError("质检未通过有效检测或复检，不能 Release")
         result = self._set_quality_status(check_id, "released", operator, {})
-        self._audit("quality_released", check_id, operator, {})
+        self._audit("quality_released", check_id, operator, {"reinspection_check_id": str(reinspection.get("reinspection_check_id") or "")})
         return result
 
+    @_quality_operation
     def close_quality_check(self, check_id: str, operator: str = "", note: str = "") -> dict[str, Any]:
         check = self.get_quality_check(check_id)
         if check is None:
@@ -306,12 +351,48 @@ class ClosureService:
         self._audit("quality_closed", check_id, operator, {"note": note})
         return result
 
+    def _completed_quality_tasks(self, check_id: str, *, required: bool = False) -> list[dict[str, Any]]:
+        tasks = [item for item in self.list_closure_tasks() if str(item.get("quality_check_id") or "") == check_id]
+        if (required and not tasks) or any(item.get("status") != "completed" or not item.get("completed_at") for item in tasks):
+            raise ValueError("所有必需整改任务必须完成整改后才能复检或放行")
+        return tasks
+
+    @staticmethod
+    def _quality_record_is_trusted(item: Mapping[str, Any]) -> bool:
+        return (
+            item.get("result") == "passed"
+            and item.get("status") in {"passed", "released", "closed"}
+            and item.get("target_type") == "production_part"
+            and item.get("inspection_type") == "part_quality"
+            and bool(str(item.get("part_id") or item.get("target_id") or "").strip())
+            and bool(str(item.get("batch_id") or "").strip())
+            and not _contains_untrusted_flag(item)
+            and _quality_evidence_is_complete(item)
+        )
+
+    def _validated_reinspection(self, item: Mapping[str, Any], reference: str) -> dict[str, Any]:
+        check_id = str(item.get("quality_check_id") or "")
+        tasks = self._completed_quality_tasks(check_id, required=True)
+        source = self.get_quality_check(reference) if reference and reference != check_id else None
+        if source is None or not self._quality_record_is_trusted(source):
+            raise ValueError("复检通过必须引用已持久化且五项检测通过的 reinspection_check_id")
+        part_id = str(item.get("part_id") or item.get("target_id") or "").strip()
+        batch_id = str(item.get("batch_id") or "").strip()
+        if not part_id or not batch_id or part_id != str(source.get("part_id") or source.get("target_id") or "").strip() or batch_id != str(source.get("batch_id") or "").strip():
+            raise ValueError("复检记录必须属于同一零件和非空生产批次")
+        try:
+            inspected_at = datetime.fromisoformat(str(source.get("created_at") or "").replace("Z", "+00:00"))
+            completed_at = [datetime.fromisoformat(str(task["completed_at"]).replace("Z", "+00:00")) for task in tasks]
+            if inspected_at.tzinfo is None or any(moment.tzinfo is None for moment in completed_at) or any(inspected_at < moment for moment in completed_at):
+                raise ValueError("复检记录必须在所有整改完成之后生成")
+        except (TypeError, ValueError) as error:
+            raise ValueError("复检记录必须在所有整改完成之后生成且有有效时间") from error
+        return source
+
     def _set_quality_status(self, check_id: str, status: str, operator: str, changes: Mapping[str, Any]) -> dict[str, Any]:
         now = self._now()
         with self._lock:
-            check = self._quality_checks.get(check_id)
-            if check is None and self.store:
-                check = self.store.get_quality_check(check_id)
+            check = self.store.get_quality_check(check_id) if self.store else self._quality_checks.get(check_id)
             if check is None:
                 raise KeyError("质检记录不存在：%s" % check_id)
             check = dict(check)

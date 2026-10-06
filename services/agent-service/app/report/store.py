@@ -11,10 +11,43 @@ from threading import Lock
 from typing import Any
 
 from app.config.settings import allow_degraded_storage
+from shared.persistence import MySQLJsonStore
+
+
+class MySQLReportStore(MutableMapping):
+    """报告正文长期保存 MySQL，PDF 文件仍由既有文件存储管理。"""
+    def __init__(self):
+        self.store = MySQLJsonStore()
+
+    def __getitem__(self, key):
+        value = self.store.get("reports", str(key))
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def __setitem__(self, key, value):
+        self.store.set("reports", str(key), value)
+
+    def __delitem__(self, key):
+        self[key]
+        self.store.delete("reports", str(key))
+
+    def __iter__(self):
+        return iter(self.store.keys("reports"))
+
+    def __len__(self):
+        return len(self.store.keys("reports"))
+
+
 class DurableReportStore(MutableMapping[str, dict[str, Any]]):
     """基于共享 JSON SQLite 存储的报告存储，支持映射接口。"""
 
     namespace = "reports"
+
+    def __new__(cls, path=""):
+        if os.getenv("APP_ENV", "development").lower() != "testing":
+            return MySQLReportStore()
+        return super().__new__(cls)
 
     def __init__(self, path: str) -> None:
         self.path = Path(path)
@@ -65,6 +98,8 @@ class DurableReportStore(MutableMapping[str, dict[str, Any]]):
 
 
 def build_report_store(path: str | None = None) -> MutableMapping[str, dict[str, Any]]:
+    if os.getenv("APP_ENV", "development").lower() != "testing":
+        return MySQLReportStore()
     configured = str(path or os.getenv("REPORT_STORE_PATH", "")).strip()
     if configured:
         return DurableReportStore(configured)

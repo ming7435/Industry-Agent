@@ -7,12 +7,14 @@ import signal
 import socket
 import subprocess
 import sys
+import secrets
 import threading
 import time
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_LOCAL_INTERNAL_TOKEN = secrets.token_urlsafe(32)
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -69,20 +71,17 @@ def _default_env() -> dict[str, str]:
         "MCP_MES_URL": "http://127.0.0.1:8030",
         "MCP_INVENTORY_URL": "http://127.0.0.1:8030",
         "MCP_QMS_URL": "http://127.0.0.1:8030",
-        "BACKEND_STORAGE": "sqlite",
-        "BACKEND_SQLITE_PATH": str(PROJECT_ROOT / ".runtime" / "backend.sqlite3"),
+        "BACKEND_STORAGE": "mysql",
+        "WORKORDER_BACKEND": "mysql",
+        "REDIS_URL": "redis://127.0.0.1:6379/0",
         # 本地运行使用已配置的远程提供方；CI/Docker 冒烟测试会在 Compose
         # 环境中显式设置 MODEL_PROVIDER=fake。
         "MODEL_PROVIDER": "remote",
         # 对话统一走 DeepSeek 官方接口；SiliconFlow 仅作为可选的向量化/重排提供方。
         "MODEL_CHAT_PROVIDER": "deepseek",
         "APP_ENV": "development",
-        "ALLOW_DEGRADED_STORAGE": "true",
+        "ALLOW_DEGRADED_STORAGE": "false",
         "RAG_ALLOW_LOCAL_FALLBACK": "true",
-        "EVENT_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "events.sqlite3"),
-        "WORKORDER_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "workorders.sqlite3"),
-        "LEARNING_RESULT_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "learning.sqlite3"),
-        "REPORT_STORE_PATH": str(PROJECT_ROOT / ".runtime" / "reports.sqlite3"),
         "RAG_UPSERT_WHOOSH_ENABLED": "true",
         "RAG_UPSERT_MILVUS_ENABLED": "true",
         "MCP_CAD_URL": "http://127.0.0.1:8050",
@@ -111,6 +110,11 @@ def _env_for_service(service_root: Path) -> dict[str, str]:
         {},
     )
     env.update({key: value for key, value in _default_env().items() if key not in env})
+    if not env.get("BACKEND_INTERNAL_TOKEN", "").strip() and env.get("APP_ENV", "development").lower() == "development":
+        # 本地六个子进程共享一次性内部身份；不写配置文件、不输出令牌。生产仍要求显式配置。
+        env["BACKEND_INTERNAL_TOKEN"] = _LOCAL_INTERNAL_TOKEN
+    paths = [str(PROJECT_ROOT), *[value for value in env.get("PYTHONPATH", "").split(os.pathsep) if value]]
+    env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(paths))
     return env
 
 
@@ -216,6 +220,14 @@ def main() -> int:
         ),
     ]
 
+    launch_env = _default_env()
+    monitor_port = int(launch_env["MONITOR_WEB_PORT"])
+    if not launch_env.get("BACKEND_INTERNAL_TOKEN", "").strip() and launch_env["APP_ENV"].lower() == "development":
+        # 一次性身份无法证明旧服务的身份一致，必须在启动任何子进程前拒绝混用。
+        occupied = [name for name, command, _, _ in services if (port := service_port(name, command, monitor_port)) is not None and _port_in_use("127.0.0.1", port)]
+        if occupied:
+            raise RuntimeError("已有服务的内部身份无法核对，请先统一停止本地应用再重新启动；不会停止工厂或基础设施。")
+
     processes: list[tuple[str, subprocess.Popen[str]]] = []
     original_sigint = signal.getsignal(signal.SIGINT)
 
@@ -230,7 +242,7 @@ def main() -> int:
     print("监控工作台：http://127.0.0.1:8001，按 Ctrl+C 统一停止。")
     try:
         for name, command, cwd, env_root in services:
-            port = service_port(name, command, monitor_port=int(os.getenv("MONITOR_WEB_PORT", "8001")))
+            port = service_port(name, command, monitor_port=monitor_port)
             if port is not None and _port_in_use("127.0.0.1", port):
                 print(f"{name} 已在 127.0.0.1:{port} 运行，复用现有服务。")
                 continue

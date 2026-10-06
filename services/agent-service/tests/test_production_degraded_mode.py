@@ -33,13 +33,14 @@ def test_memory_backends_require_external_services_in_production(monkeypatch):
         build_memory_stores()
 
 
-def test_event_store_requires_durable_path_in_production(monkeypatch):
+def test_event_store_requires_mysql_in_production_without_sqlite_fallback(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ALLOW_DEGRADED_STORAGE", "false")
     monkeypatch.delenv("EVENT_STORE_PATH", raising=False)
+    monkeypatch.delenv("MYSQL_HOST", raising=False)
     from app.runtime.event_store import EventResultStore
 
-    with pytest.raises(RuntimeError, match="EVENT_STORE_PATH"):
+    with pytest.raises(RuntimeError, match="MYSQL_HOST"):
         EventResultStore()
 
 
@@ -57,6 +58,8 @@ def test_cad_tool_does_not_fallback_to_demo_in_production(monkeypatch, tmp_path)
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ALLOW_DEGRADED_STORAGE", "false")
     monkeypatch.setenv("CAD_ALLOW_DEMO_FALLBACK", "false")
+    # CAD 门禁不依赖业务库；明确采用五服务的 Backend 边界，禁止触碰本机 MySQL。
+    monkeypatch.setenv("BACKEND_SERVICE_BASE_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("WORKORDER_STORE_PATH", str(tmp_path / "workorders.sqlite3"))
     monkeypatch.setenv("REPORT_STORE_PATH", str(tmp_path / "reports.sqlite3"))
     from app.tools.registry import ToolRegistry
@@ -77,6 +80,7 @@ def test_cad_tool_does_not_fallback_to_demo_in_production(monkeypatch, tmp_path)
 def test_cad_tool_requires_remote_service_in_production(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("ALLOW_DEGRADED_STORAGE", "false")
+    monkeypatch.setenv("BACKEND_SERVICE_BASE_URL", "http://127.0.0.1:9")
     monkeypatch.delenv("CAD_ALLOW_DEMO_FALLBACK", raising=False)
     monkeypatch.delenv("MCP_CAD_URL", raising=False)
     monkeypatch.delenv("CAD_SERVICE_BASE_URL", raising=False)

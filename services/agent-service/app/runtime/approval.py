@@ -69,7 +69,7 @@ class PendingTaskStore:
         replacement_status: str,
         values: Mapping[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        """以 SQLite CAS 抢占待处理任务状态，防止并发恢复。"""
+        """以持久存储 CAS 抢占待处理任务状态，防止并发恢复。"""
 
         updates = {"status": replacement_status, "updated_at": _now(), **dict(values or {})}
         claimed = self._store.compare_and_set(

@@ -1,11 +1,4 @@
-"""Unified online indexing for closed-work-order experiences.
-
-The standalone SQLite document store is the durable HTTP contract, but it is
-not a replacement for the production retrieval chain.  This module fans one
-experience chunk out to the same Whoosh and Milvus writers used by offline
-ingestion.  The route reports every backend independently so a partial write
-can be retried without pretending that dense/BM25 coverage is complete.
-"""
+"""经验在线入库：MySQL 保存正文，Whoosh/Milvus 各自更新检索索引并报告结果。"""
 
 from __future__ import annotations
 

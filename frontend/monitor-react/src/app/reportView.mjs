@@ -16,6 +16,16 @@ function listOf(value, keys = []) {
   return [];
 }
 
+export function reportQualityLabel(quality = {}) {
+  const reinspection = quality.reinspection || {};
+  if (['released', 'closed'].includes(quality.status) && reinspection.passed === true && reinspection.reinspection_check_id) {
+    return `${quality.passed === true ? '初检通过' : '初检未通过'}；复检通过，${quality.status === 'closed' ? '已关闭' : '已放行'}`;
+  }
+  if (['review', 'pending', 'not_tested', 'insufficient_data'].includes(quality.result || quality.status)) return '未检测或数据不足';
+  if (typeof quality.passed === 'boolean') return quality.passed ? '已通过' : '未通过';
+  return '待确认';
+}
+
 export function buildReportDisplaySections(sections) {
   const source = sections && typeof sections === "object" ? sections : {};
   const result = [];
@@ -39,7 +49,7 @@ export function buildReportDisplaySections(sections) {
 
   const quality = source.quality || source.quality_result || {};
   const qualityParts = [];
-  if (typeof quality.passed === "boolean") qualityParts.push(quality.passed ? "已通过" : "未通过");
+  if (typeof quality.passed === "boolean" || quality.result || quality.status) qualityParts.push(reportQualityLabel(quality));
   qualityParts.push(...listOf(quality, ["findings", "defects"]));
   if (qualityParts.length) result.push({ title: "质量结果", body: qualityParts.join("；") });
   return result;

@@ -71,6 +71,8 @@ def test_backend_qms_part_inspection_is_deterministic(tmp_path, monkeypatch):
     monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "qms.sqlite3"))
     import app.main as main
     main._service = None
+    from app.quality.inspection import PartInspectionService
+    main.get_service().inspection = PartInspectionService()  # 本测试显式启用隔离演示夹具。
     client = TestClient(app)
     part = client.post("/tools/call", json={"tool": "get_production_part", "arguments": {"part_id": "PART-001"}}).json()["part"]
     result = client.post("/tools/call", json={"tool": "inspect_part_dimensions", "arguments": {"part": part}}).json()
@@ -82,6 +84,8 @@ def test_backend_qms_rejects_partial_and_unknown_part_payloads(tmp_path, monkeyp
     monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "qms-identity.sqlite3"))
     import app.main as main
     main._service = None
+    from app.quality.inspection import PartInspectionService
+    main.get_service().inspection = PartInspectionService()  # 不依赖正式服务的隐式演示回退。
     client = TestClient(app)
 
     known = client.post(
@@ -206,6 +210,8 @@ def test_backend_demo_operational_records_are_explicitly_marked(tmp_path, monkey
     monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "demo-markers.sqlite3"))
     import app.main as main
     main._service = None
+    from app.quality.inspection import PartInspectionService
+    main.get_service().inspection = PartInspectionService()  # 只验证显式演示夹具标记。
     client = TestClient(app)
 
     technician = client.post("/tools/call", json={"tool": "query_technicians", "arguments": {}}).json()
@@ -288,20 +294,23 @@ def test_backend_supports_explicit_deletion_for_workorders_and_reports(tmp_path,
 
 
 def test_backend_quality_failure_requires_rectification_reinspection_release_and_close(tmp_path, monkeypatch):
+    from test_quality_release_gate import complete_validation
     monkeypatch.setenv("BACKEND_STORAGE", "sqlite")
     monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "quality-loop.sqlite3"))
     import app.main as main
     main._service = None
     client = TestClient(app)
 
-    created = client.post("/tools/call", json={"tool": "create_quality_check", "arguments": {"part_id": "PART-FAIL", "result": "failed", "findings": ["尺寸超差"]}})
+    created = client.post("/tools/call", json={"tool": "create_quality_check", "arguments": {"part_id": "PART-FAIL", "batch_id": "BATCH-FAIL", "result": "failed", "findings": ["尺寸超差"]}})
     assert created.status_code == 200
     check_id = created.json()["quality_check_id"]
     assert created.json()["quality_check"]["status"] == "failed"
     task = client.post("/tools/call", json={"tool": "create_closure_task", "arguments": {"quality_check_id": check_id, "title": "整改"}})
     assert task.status_code == 200
     assert client.post("/tools/call", json={"tool": "complete_closure_task", "arguments": {"task_id": task.json()["closure_task_id"], "note": "已调整"}}).status_code == 200
-    reinspect = client.post("/tools/call", json={"tool": "reinspect_quality_check", "arguments": {"check_id": check_id, "passed": True, "evidence": ["复检记录"]}})
+    # A label is not inspection evidence: persist the full repeat inspection first.
+    repeat = client.post("/tools/call", json={"tool": "create_quality_check", "arguments": {"part_id": "PART-FAIL", "batch_id": "BATCH-FAIL", "result": "passed", "quality_validation": complete_validation()}}).json()
+    reinspect = client.post("/tools/call", json={"tool": "reinspect_quality_check", "arguments": {"check_id": check_id, "passed": True, "reinspection_check_id": repeat["quality_check_id"]}})
     assert reinspect.status_code == 200
     assert reinspect.json()["quality_check"]["status"] == "reinspection"
     assert client.post("/tools/call", json={"tool": "release_quality_check", "arguments": {"check_id": check_id}}).json()["quality_check"]["status"] == "released"
@@ -311,13 +320,14 @@ def test_backend_quality_failure_requires_rectification_reinspection_release_and
 
 
 def test_backend_reinspection_waits_for_all_rectification_tasks(tmp_path, monkeypatch):
+    from test_quality_release_gate import complete_validation
     monkeypatch.setenv("BACKEND_STORAGE", "sqlite")
     monkeypatch.setenv("BACKEND_SQLITE_PATH", str(tmp_path / "quality-multi-loop.sqlite3"))
     import app.main as main
     main._service = None
     client = TestClient(app)
 
-    created = client.post("/tools/call", json={"tool": "create_quality_check", "arguments": {"part_id": "PART-MULTI", "result": "failed"}}).json()
+    created = client.post("/tools/call", json={"tool": "create_quality_check", "arguments": {"part_id": "PART-MULTI", "batch_id": "BATCH-MULTI", "result": "failed"}}).json()
     check_id = created["quality_check_id"]
     first = client.post("/tools/call", json={"tool": "create_closure_task", "arguments": {"quality_check_id": check_id, "title": "整改一"}}).json()
     second = client.post("/tools/call", json={"tool": "create_closure_task", "arguments": {"quality_check_id": check_id, "title": "整改二"}}).json()
@@ -325,7 +335,8 @@ def test_backend_reinspection_waits_for_all_rectification_tasks(tmp_path, monkey
 
     assert client.post("/tools/call", json={"tool": "reinspect_quality_check", "arguments": {"check_id": check_id, "passed": True, "evidence": [{"id": "E-1"}]}}).status_code == 409
     client.post("/tools/call", json={"tool": "complete_closure_task", "arguments": {"task_id": second["closure_task_id"]}})
-    assert client.post("/tools/call", json={"tool": "reinspect_quality_check", "arguments": {"check_id": check_id, "passed": True, "evidence": [{"id": "E-1"}]}}).status_code == 200
+    repeat = client.post("/tools/call", json={"tool": "create_quality_check", "arguments": {"part_id": "PART-MULTI", "batch_id": "BATCH-MULTI", "result": "passed", "quality_validation": complete_validation()}}).json()
+    assert client.post("/tools/call", json={"tool": "reinspect_quality_check", "arguments": {"check_id": check_id, "passed": True, "reinspection_check_id": repeat["quality_check_id"]}}).status_code == 200
 
 
 def test_backend_approved_quality_appeal_enters_rectification_workflow(tmp_path, monkeypatch):

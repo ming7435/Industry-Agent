@@ -22,6 +22,7 @@ class SQLiteRepository:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
+        self._record_connection = ContextVar('backend_record_connection', default=None)
         with sqlite3.connect(str(self.path)) as connection:
             connection.execute("CREATE TABLE IF NOT EXISTS workorders (workorder_id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, payload TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)")
             connection.execute("CREATE TABLE IF NOT EXISTS business_records (record_type TEXT NOT NULL, record_id TEXT NOT NULL, payload TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(record_type, record_id))")
@@ -68,7 +69,7 @@ class SQLiteRepository:
 
     def save_record(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(payload)
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+        with self._record_session() as connection:
             connection.execute(
                 "INSERT INTO business_records(record_type,record_id,payload) VALUES (?,?,?) "
                 "ON CONFLICT(record_type,record_id) DO UPDATE SET payload=excluded.payload, updated_at=CURRENT_TIMESTAMP",
@@ -77,12 +78,12 @@ class SQLiteRepository:
         return value
 
     def get_record(self, record_type: str, record_id: str) -> dict[str, Any] | None:
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+        with self._record_session() as connection:
             row = connection.execute("SELECT payload FROM business_records WHERE record_type=? AND record_id=?", (str(record_type), str(record_id))).fetchone()
         return dict(json.loads(row[0])) if row else None
 
     def list_records(self, record_type: str) -> list[dict[str, Any]]:
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+        with self._record_session() as connection:
             rows = connection.execute("SELECT payload FROM business_records WHERE record_type=? ORDER BY updated_at", (str(record_type),)).fetchall()
         return [dict(json.loads(row[0])) for row in rows]
 
@@ -90,6 +91,29 @@ class SQLiteRepository:
         with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
             cursor = connection.execute("DELETE FROM business_records WHERE record_type=? AND record_id=?", (str(record_type), str(record_id)))
             return bool(cursor.rowcount)
+
+    @contextmanager
+    def _record_session(self):
+        active = self._record_connection.get()
+        if active is not None:
+            yield active
+            return
+        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+            yield connection
+
+    @contextmanager
+    def quality_transaction(self):
+        active = self._record_connection.get()
+        if active is not None:
+            yield
+            return
+        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            token = self._record_connection.set(connection)
+            try:
+                yield
+            finally:
+                self._record_connection.reset(token)
 
 
 def _mysql_operation(method):
@@ -116,6 +140,9 @@ class MySQLRepository:
 
     @contextmanager
     def _session(self):
+        if self._active_connection.get(None) is not None:
+            yield
+            return
         # 每次业务读写独立连接，读取也结束事务；不保留跨线程的旧快照。
         connection = self._connector.connect(
             host=os.getenv('MYSQL_HOST', 'mysql'), port=int(os.getenv('MYSQL_PORT', '3306')),
@@ -132,6 +159,18 @@ class MySQLRepository:
         finally:
             self._active_connection.reset(token)
             connection.close()
+
+    @contextmanager
+    def quality_transaction(self):
+        with self._session():
+            cursor = self.connection.cursor()
+            try:
+                # Lock quality and task records through validation, mutation and audit.
+                cursor.execute("SELECT record_id FROM business_records WHERE record_type IN ('quality','closure') ORDER BY record_type, record_id FOR UPDATE")
+                cursor.fetchall()
+                yield
+            finally:
+                cursor.close()
 
     @_mysql_operation
     def _initialize(self):
@@ -225,10 +264,6 @@ class MySQLRepository:
                 "ON DUPLICATE KEY UPDATE payload=VALUES(payload), updated_at=CURRENT_TIMESTAMP",
                 (str(record_type), str(record_id), json.dumps(value, ensure_ascii=False, default=str)),
             )
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
         finally:
             cursor.close()
         return value
@@ -244,10 +279,19 @@ class MySQLRepository:
     @_mysql_operation
     def list_records(self, record_type: str) -> list[dict[str, Any]]:
         cursor = self.connection.cursor(dictionary=True)
-        cursor.execute("SELECT payload FROM business_records WHERE record_type=%s ORDER BY updated_at", (str(record_type),))
-        rows = cursor.fetchall()
-        cursor.close()
-        return [dict(json.loads(row["payload"])) for row in rows]
+        try:
+            # 只排序小编号；大型 JSON 参与 filesort 会产生 1038，并不是报告不存在。
+            cursor.execute("SELECT record_id FROM business_records WHERE record_type=%s ORDER BY updated_at, record_id", (str(record_type),))
+            identifiers = [row['record_id'] for row in cursor.fetchall()]
+            records = []
+            for identifier in identifiers:
+                cursor.execute("SELECT payload FROM business_records WHERE record_type=%s AND record_id=%s", (str(record_type), identifier))
+                row = cursor.fetchone()
+                if row:
+                    records.append(dict(json.loads(row['payload'])))
+            return records
+        finally:
+            cursor.close()
 
     @_mysql_operation
     def delete_record(self, record_type: str, record_id: str) -> bool:
@@ -267,7 +311,11 @@ class MySQLRepository:
 def build_repository() -> SQLiteRepository | MySQLRepository:
     backend = os.getenv("BACKEND_STORAGE", os.getenv("WORKORDER_BACKEND", "mysql")).lower()
     if backend == "sqlite":
+        if os.getenv("APP_ENV", "development").lower() != "testing":
+            raise BusinessStoreError("在线业务存储必须使用 MySQL，SQLite 仅用于隔离测试")
         return SQLiteRepository(os.getenv("BACKEND_SQLITE_PATH", "/tmp/backend.sqlite3"))
+    if backend != "mysql":
+        raise BusinessStoreError("业务存储类型无效，仅支持 MySQL 或隔离测试 SQLite")
     return MySQLRepository()
 
 

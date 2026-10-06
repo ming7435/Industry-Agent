@@ -16,7 +16,10 @@ from app.retrieval import Hit
 
 
 class ModelServiceError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, capability: str = "", timed_out: bool = False):
+        super().__init__(message)
+        self.capability = capability
+        self.timed_out = timed_out
 
 
 def _finite_float(value: Any) -> float:
@@ -38,6 +41,7 @@ class ModelServiceClient:
         return self._request(path, payload)
 
     def _request(self, path: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        capability = {"/v1/embeddings": "embedding", "/v1/rerank": "rerank", "/v1/chat/completions": "chat"}.get(path, "")
         data = None if payload is None else json.dumps(dict(payload), ensure_ascii=False).encode("utf-8")
         request = Request(self.base_url + path, data=data, method="GET" if payload is None else "POST", headers={"Content-Type": "application/json", "Accept": "application/json"})
         try:
@@ -46,13 +50,14 @@ class ModelServiceClient:
         except HTTPError as error:
             # 提供方错误正文可能含密钥、网关地址或原始输入，不传播到 Agent/API 日志。
             error.close()
-            raise ModelServiceError("model-service HTTP %s" % error.code) from error
+            raise ModelServiceError("model-service HTTP %s" % error.code, capability=capability) from error
         except (URLError, TimeoutError, OSError, ValueError) as error:
-            raise ModelServiceError("model-service request failed: %s" % type(error).__name__) from error
+            timed_out = isinstance(error, TimeoutError) or isinstance(getattr(error, "reason", None), TimeoutError)
+            raise ModelServiceError("model-service request failed: %s" % type(error).__name__, capability=capability, timed_out=timed_out) from error
         if not isinstance(result, dict):
-            raise ModelServiceError("model-service returned invalid JSON")
+            raise ModelServiceError("model-service returned invalid JSON", capability=capability)
         if "error" in result:
-            raise ModelServiceError("model-service returned an API error")
+            raise ModelServiceError("model-service returned an API error", capability=capability)
         return result
 
     def health(self, capability: str) -> bool:

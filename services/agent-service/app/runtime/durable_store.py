@@ -1,4 +1,4 @@
-"""用于跨重启保留幂等状态的小型 SQLite 键值存储。"""
+"""在线使用 MySQL；SQLite 实现仅供显式隔离测试与旧数据兼容。"""
 
 from __future__ import annotations
 
@@ -12,18 +12,16 @@ from threading import Lock
 from time import monotonic, sleep
 from typing import Any
 from typing import Callable
-
-
-class PendingResultError(RuntimeError):
-    """操作已领取但没有可证明的最终结果，不允许自动重复生产。"""
-
-    def __init__(self, status: str) -> None:
-        self.status = status
-        super().__init__("操作处理结果未知，需要人工对账" if status == "uncertain" else "同一操作仍在处理中")
+from shared.persistence import MySQLJsonStore, PendingResultError
 
 
 class DurableJsonStore:
     """按键持久化 JSON 值，同时保留进程内 API 的形式。"""
+
+    def __new__(cls, path: str = ""):
+        if os.getenv("APP_ENV", "development").lower() != "testing":
+            return MySQLJsonStore()
+        return super().__new__(cls)
 
     def __init__(self, path: str) -> None:
         self.path = Path(path)

@@ -113,6 +113,37 @@ _FIELD_LABELS = {
     "trigger": "触发条件",
     "reference": "参考",
     "warning": "提示",
+    "quality_check_id": "质检编号",
+    "target_type": "检测对象类型",
+    "target_id": "检测对象编号",
+    "task_id": "任务编号",
+    "trace_id": "运行日志编号",
+    "measurements": "实测数据",
+    "specifications": "检验规格",
+    "quality_validation": "五项检测明细",
+    "score": "检测评分",
+    "result": "检测结论",
+    "reviewer": "检测人员",
+    "reinspection": "复检记录",
+    "reinspection_check_id": "复检依据编号",
+    "checked_at": "检测时间",
+    "type_counts": "事件类型统计",
+    "names": "调用名称统计",
+    "dimensions": "尺寸检测",
+    "appearance": "外观检测",
+    "material": "材料检测",
+    "function": "功能检测",
+    "process": "工艺检测",
+    "diameter_mm": "直径（毫米）",
+    "length_mm": "长度（毫米）",
+    "runout_mm": "跳动（毫米）",
+    "material_grade": "材料牌号",
+    "hardness_hb": "布氏硬度",
+    "sufficient_data": "检测数据是否充分",
+    "actual": "实测值",
+    "min": "下限",
+    "max": "上限",
+    "item": "检测项目",
 }
 _VALUE_LABELS = {
     "completed": "已完成",
@@ -156,6 +187,17 @@ _VALUE_LABELS = {
     "evidence_ready": "证据已就绪",
     "validator_pass": "校验通过",
     "validation_failed": "校验未通过",
+    "not_tested": "未检测",
+    "insufficient_data": "数据不足",
+    "passed": "通过",
+    "failed": "未通过",
+    "released": "已放行",
+    "rectification": "整改中",
+    "reinspection": "复检阶段",
+    "part_quality": "生产零件质量检测",
+    "production_part": "生产零件",
+    "manual-inspection": "人工实测录入",
+    "pending": "待处理",
 }
 _PDF_SKIP_FIELDS = {
     "evidence",
@@ -350,7 +392,7 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
     add_text(f"报告编号：{report_id}", size=10, color=(0.35, 0.43, 0.46))
     report_type = _VALUE_LABELS.get(str(report.get("report_type") or ""), _SECTION_LABELS.get(str(report.get("report_type") or ""), "运维报告"))
     report_status = _VALUE_LABELS.get(str(report.get("status") or ""), str(report.get("status") or "待确认"))
-    add_text(f"报告类型：{report_type}    状态：{report_status}", size=10, color=(0.35, 0.43, 0.46))
+    add_text(f"报告类型：{report_type}    报告状态：{report_status}", size=10, color=(0.35, 0.43, 0.46))
     add_text(f"生成时间：{report.get('created_at') or report.get('updated_at') or '未记录'}", size=10, color=(0.35, 0.43, 0.46))
     y += 8
     add_text("报告摘要", size=13, color=(0.02, 0.32, 0.38), bold=True)

@@ -187,11 +187,7 @@ services:
       MCP_INVENTORY_URL: http://backend-service:8030
       MCP_QMS_URL: http://backend-service:8030
       MODEL_SERVICE_BASE_URL: http://model-service:8040
-      EVENT_STORE_PATH: /app/.runtime/events.sqlite3
-      PENDING_TASK_STORE_PATH: /app/.runtime/pending.sqlite3
-      WORKORDER_STORE_PATH: /app/.runtime/workorders.sqlite3
-      REPORT_STORE_PATH: /app/.runtime/reports.sqlite3
-      LEARNING_RESULT_STORE_PATH: /app/.runtime/learning.sqlite3
+      PENDING_TASK_STORE_PATH: runtime_pending_task
       REDIS_URL: redis://redis:6379/0
       WORKORDER_BACKEND: mysql
       MYSQL_HOST: mysql
@@ -300,6 +296,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       BACKEND_STORAGE: ${BACKEND_STORAGE:-mysql}
+      REDIS_URL: redis://redis:6379/0
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_USER: ${MYSQL_USER:-industry}
@@ -307,6 +304,8 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-industry_agent}
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8030/health', timeout=3)"]

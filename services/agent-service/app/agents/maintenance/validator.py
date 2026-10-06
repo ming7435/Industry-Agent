@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+from math import isfinite
 
 from app.workorder.policy import maintenance_decision
+from app.workorder.repair_profile import part_matches_profile, repair_profile
 
 
 class MaintenancePlanValidator:
@@ -48,6 +50,12 @@ class MaintenancePlanValidator:
         needs_cad = bool(plan.get("cad_required")) if "cad_required" in plan else any(token in steps_text for token in cls.STRUCTURAL_ACTIONS)
         if needs_cad and not plan.get("cad_components"):
             findings.append("涉及拆装或部件操作但缺少 CAD/BOM 依据")
+        elif needs_cad:
+            profile = repair_profile(diagnosis)
+            matched = [item for item in list(cad.get("components") or []) + list(cad.get("bom_items") or [])
+                       if isinstance(item, Mapping) and part_matches_profile(profile, item)]
+            if not any(str(item.get("component_id") or item.get("part_no") or "") in plan.get("cad_components", []) for item in matched):
+                findings.append("CAD/BOM 依据未匹配本次故障维修对象")
         if needs_cad and isinstance(cad, Mapping) and (cad.get("synthetic") is True or cad.get("degraded") is True or str(cad.get("source") or "").endswith("-local")):
             findings.append("CAD 为演示或降级数据，不能作为正式维修依据")
 
@@ -62,12 +70,35 @@ class MaintenancePlanValidator:
             if any(char.isdigit() for char in part_text) and not evidence_tokens:
                 findings.append("备件型号缺少工程依据：%s" % part_text)
 
-        if plan.get("required_parts") and inventory and not any(item.get("available", True) for item in inventory.get("parts") or inventory.get("stock") or []):
-            findings.append("所需备件库存不可用")
+        if plan.get("required_parts") and not inventory:
+            findings.append("所需备件缺少库存依据")
+        else:
+            stock = inventory.get("parts") or inventory.get("stock") or []
+            for required in plan.get("required_parts") or []:
+                if not any(cls._available_required_part(item, required) for item in stock if isinstance(item, Mapping)):
+                    findings.append("所需备件库存缺失或不可用：%s" % required)
         if plan.get("required_parts") and any(item.get("synthetic") is True for item in inventory.get("parts") or inventory.get("stock") or []):
             findings.append("备件库存为演示数据，不能作为正式派工依据")
 
         return cls._dedupe(findings)
+
+    @staticmethod
+    def _available_required_part(item: Mapping[str, Any], required: Any) -> bool:
+        if isinstance(required, Mapping):
+            identity = str(required.get("part_no") or required.get("part_id") or "").strip()
+        else:
+            identity = str(required or "").strip().split(" ", 1)[0]
+        if not identity or identity not in [str(item.get(key) or "").strip() for key in ("part_id", "part_no")]:
+            return False
+        if item.get("available") is False:
+            return False
+        if item.get("stock") is not None:
+            try:
+                quantity = float(item["stock"])
+                return not isinstance(item["stock"], bool) and isfinite(quantity) and quantity > 0
+            except (ValueError, TypeError):
+                return False
+        return item.get("available") is True
 
     @staticmethod
     def workorder_ready(findings: list[str], plan: Mapping[str, Any]) -> bool:

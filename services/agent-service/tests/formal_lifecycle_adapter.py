@@ -48,6 +48,7 @@ class BackendRepairBoundary(Ledger):
             input=json.dumps({"action": action, "values": values}), text=True, encoding="utf-8",
             capture_output=True, timeout=15,
             env={**os.environ, "PYTHON_DOTENV_DISABLED": "1", "APP_ENV": "testing",
+                 "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
                  "BACKEND_STORAGE": "sqlite", "BACKEND_SQLITE_PATH": str(self.order_path)},
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )

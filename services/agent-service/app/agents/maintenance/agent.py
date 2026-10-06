@@ -11,6 +11,7 @@ from app.agents.base import BaseAgent
 
 from .graph import build_maintenance_graph
 from app.workorder.policy import maintenance_decision
+from app.workorder.repair_profile import part_matches_profile, repair_profile
 
 
 class MaintenanceAgent(BaseAgent):
@@ -107,6 +108,8 @@ class MaintenanceAgent(BaseAgent):
         spare_parts = dict(inventory or {})
         availability = dict(part_availability or {})
         profile = self._profile(diagnosis, components)
+        components = [item for item in components if self._part_matches_profile(profile, item)]
+        bom_items = [item for item in bom_items if self._part_matches_profile(profile, item)]
         maintenance_required, maintenance_reason = maintenance_decision(
             diagnosis=diagnosis.model_dump(mode="json"),
             plan=payload,
@@ -133,7 +136,7 @@ class MaintenanceAgent(BaseAgent):
             "parts": parts,
             "safety": safety,
             "required_tools": tools,
-            "required_parts": parts,
+            "required_parts": self._required_parts(parts),
             "safety_requirements": safety,
             "pre_checks": pre_checks,
             "post_checks": post_checks,
@@ -178,12 +181,7 @@ class MaintenanceAgent(BaseAgent):
 
     @staticmethod
     def _profile(diagnosis: DiagnosisView, components: list[Mapping[str, Any]]) -> dict[str, Any]:
-        text = " ".join([diagnosis.fault, diagnosis.cause, " ".join(str(item.get("name", "")) for item in components)])
-        if "温度" in text or "过热" in text or "冷却" in text:
-            return {"kind": "thermal", "target": "主轴冷却系统", "estimated_minutes": 60}
-        if "振动" in text or "轴承" in text:
-            return {"kind": "vibration", "target": "主轴传动与轴承系统", "estimated_minutes": 90}
-        return {"kind": "general", "target": diagnosis.fault or "异常设备部件", "estimated_minutes": 60}
+        return repair_profile(diagnosis.model_dump(mode="json"))
 
     @staticmethod
     def _pre_checks(diagnosis: DiagnosisView, knowledge: Mapping[str, Any], components: list[Mapping[str, Any]]) -> list[str]:
@@ -203,7 +201,15 @@ class MaintenanceAgent(BaseAgent):
     @staticmethod
     def _repair_steps(profile: Mapping[str, Any], tool_plan: Mapping[str, Any], knowledge: Mapping[str, Any], components: list[Mapping[str, Any]]) -> list[str]:
         kind = profile["kind"]
-        if kind == "thermal":
+        if kind == "lubrication":
+            steps = [
+                "执行安全隔离并断电挂牌，确认设备已停止",
+                "核对润滑油液位、润滑泵运行状态及压力反馈",
+                "检查润滑油路、过滤器是否堵塞或泄漏，确认实际故障点",
+                "按检查结果及维修证据处理故障，不直接更换未经确认的部件",
+                "恢复后复测润滑压力和报警状态，记录设备恢复数据",
+            ]
+        elif kind == "thermal":
             steps = [
                 "执行 LOTO 断电挂牌并等待主轴完全停止",
                 "检查冷却液液位、流量、过滤器和冷却泵运行状态",
@@ -260,7 +266,9 @@ class MaintenanceAgent(BaseAgent):
     @staticmethod
     def _post_checks(profile: Mapping[str, Any]) -> list[str]:
         checks = ["确认原报警已清除", "确认设备状态恢复 running/idle 且无新增报警", "记录维修过程和复测数据"]
-        if profile["kind"] == "thermal":
+        if profile["kind"] == "lubrication":
+            checks.insert(1, "复测润滑压力及供油状态，与当前设备已配置的验收标准比较")
+        elif profile["kind"] == "thermal":
             checks.insert(1, "连续观察主轴温度趋势至少一个运行周期")
         elif profile["kind"] == "vibration":
             checks.insert(1, "复测振动速度 RMS 并与阈值比较")
@@ -280,26 +288,24 @@ class MaintenanceAgent(BaseAgent):
         for item in spare_parts.get("parts") or []:
             if not MaintenanceAgent._part_matches_profile(profile, item):
                 continue
-            stock = item.get("stock")
-            suffix = "（库存%s）" % stock if stock is not None else ""
-            parts.append("%s %s%s" % (item.get("part_id", ""), item.get("name", "备件"), suffix))
+            identity = item.get("part_no") or item.get("part_id") or ""
+            if not str(identity).strip():
+                continue
+            parts.append("%s %s" % (identity, item.get("name", "备件")))
         if not parts:
             for item in bom_items or components:
-                if item.get("part_no") or item.get("name"):
+                if MaintenanceAgent._part_matches_profile(profile, item) and (item.get("part_no") or item.get("name")):
                     parts.append("%s %s" % (item.get("part_no", ""), item.get("name", "")))
-        if not parts and profile["kind"] == "thermal":
-            parts = ["TS-PT100-008 主轴温度传感器", "CP-TC820-015 冷却泵（按检查结果更换）"]
         return MaintenanceAgent._dedupe([item.strip() for item in parts if item.strip()])[:6]
 
     @staticmethod
+    def _required_parts(parts: list[str]) -> list[str]:
+        """库存查询和预留使用编号；名称用于显示，库存数量保留在库存证据中。"""
+        return MaintenanceAgent._dedupe([part.split(" ", 1)[0] for part in parts if part])
+
+    @staticmethod
     def _part_matches_profile(profile: Mapping[str, Any], item: Mapping[str, Any]) -> bool:
-        text = "%s %s" % (item.get("part_id", ""), item.get("name", ""))
-        kind = profile.get("kind")
-        if kind == "thermal":
-            return any(token in text for token in ("TEMP", "温度", "PT100", "COOLANT", "冷却", "PUMP", "泵"))
-        if kind == "vibration":
-            return any(token in text for token in ("BEARING", "轴承", "VIB", "振动"))
-        return True
+        return part_matches_profile(profile, item)
 
     @staticmethod
     def _safety(profile: Mapping[str, Any], severity: str) -> list[str]:
@@ -339,12 +345,13 @@ class MaintenanceAgent(BaseAgent):
 
     @staticmethod
     def _target_part(diagnosis: DiagnosisView, profile: Mapping[str, Any], components: list[Mapping[str, Any]], bom_items: list[Mapping[str, Any]]) -> dict[str, str]:
-        item = next((value for value in bom_items + components if value.get("part_no") or value.get("name")), {})
+        candidates = [value for value in bom_items + components if MaintenanceAgent._part_matches_profile(profile, value) and (value.get("part_no") or value.get("name"))]
         raw = diagnosis.raw
+        item = next((value for value in candidates if (raw.get("part_no") and raw["part_no"] == value.get("part_no")) or (raw.get("component") and raw["component"] == value.get("component_id"))), candidates[0] if candidates else {})
         return {
-            "part_no": str(raw.get("part_no") or item.get("part_no") or ""),
-            "part_name": str(raw.get("part_name") or item.get("name") or profile.get("target") or ""),
-            "component": str(raw.get("component") or item.get("component_id") or ""),
+            "part_no": str(item.get("part_no") or ""),
+            "part_name": str(item.get("name") or profile.get("target") or ""),
+            "component": str(item.get("component_id") or ""),
         }
 
     @staticmethod

@@ -99,7 +99,7 @@ def check_parts_tools(state: MaintenanceGraphState) -> Dict[str, Any]:
     parts = agent._parts(profile, inventory, components, bom_items)
     if parts:
         plan["parts"] = parts
-        plan["required_parts"] = parts
+        plan["required_parts"] = agent._required_parts(parts)
     plan["inventory_status"] = inventory
     plan["part_availability"] = availability
     plan["evidence"] = agent._evidence(diagnosis, state.get("knowledge") or {}, state.get("cad") or {}, inventory, profile, state.get("memory") or {})

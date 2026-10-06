@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.providers.gateway import ModelGateway
+from app.providers.base import ProviderError
 
 
 @contextmanager
@@ -129,5 +130,28 @@ def test_vision_uses_dedicated_model_when_chat_and_aux_share_provider(monkeypatc
 def test_invalid_provider_selection_is_rejected_not_silently_deepseek(monkeypatch):
     monkeypatch.setenv("MODEL_PROVIDER", "remote")
     monkeypatch.setenv("MODEL_CHAT_PROVIDER", "misspelled-provider")
-    with pytest.raises(Exception, match="MODEL_CHAT_PROVIDER"):
+    with pytest.raises(ProviderError, match="MODEL_CHAT_PROVIDER"):
         ModelGateway()
+
+
+def test_other_model_success_does_not_mark_default_model_ready(monkeypatch):
+    with provider_api(monkeypatch) as (client, _, requests):
+        assert client.post("/v1/chat/completions", json={"model": "alternative-chat", "messages": [{"role": "user", "content": "测试"}]}).status_code == 200
+        assert requests[-1][1]["model"] == "alternative-chat"
+        assert client.get("/health").json()["capabilities"]["chat"]["reachable"] == "not_probed"
+
+
+def test_other_model_failure_does_not_replace_default_model_success(monkeypatch):
+    with provider_api(monkeypatch) as (client, replies, _):
+        assert client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "测试"}]}).status_code == 200
+        replies["/chat/completions"] = (404, {"error": "未启用其他模型"})
+        assert client.post("/v1/chat/completions", json={"model": "alternative-chat", "messages": [{"role": "user", "content": "测试"}]}).status_code == 503
+        assert client.get("/health").json()["capabilities"]["chat"]["ready"] is True
+
+
+def test_incomplete_rerank_set_is_not_ready(monkeypatch):
+    with provider_api(monkeypatch) as (client, replies, _):
+        replies["/rerank"] = (200, {"results": [{"index": 0, "relevance_score": 0.9}]})
+        response = client.post("/v1/rerank", json={"query": "查询", "documents": ["文档一", "文档二"], "top_n": 2})
+        assert response.status_code == 503
+        assert client.get("/health").json()["capabilities"]["rerank"]["ready"] is False

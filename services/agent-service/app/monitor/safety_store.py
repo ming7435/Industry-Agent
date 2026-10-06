@@ -1,11 +1,38 @@
-"""本地安全待办：主数据库故障时仍保留停机事件与写命令认领，不替代业务 MySQL。"""
+"""安全待办与控制认领长期存入 MySQL；不可用时不自动重试控制命令。"""
 import json
 import os
 from pathlib import Path
 import sqlite3
+from shared.persistence import MySQLJsonStore
+
+
+class MySQLSafetyStore:
+    def __init__(self):
+        self.store = MySQLJsonStore()
+
+    def add(self, event_id, device_id, device_ids, reason):
+        value = {"event_id": event_id, "device_id": device_id, "device_ids": sorted(device_ids), "reason": reason}
+        stored = self.store.get_or_create("safety_pending", event_id, lambda: value)
+        if stored["device_id"] != device_id or stored["device_ids"] != value["device_ids"]:
+            raise ValueError("停机事件已绑定不同设备")
+
+    def pending(self):
+        return self.store.values("safety_pending", limit=5000)
+
+    def clear(self, event_id):
+        self.store.delete("safety_pending", event_id)
+
+    def claim_command(self, event_id, device_id, action):
+        key = json.dumps([event_id, device_id, action], separators=(",", ":"))
+        return self.store.import_record("safety_claim", key, {"claimed": True})
 
 
 class SafetyStore:
+    def __new__(cls, path=None):
+        if os.getenv("APP_ENV", "development").lower() != "testing":
+            return MySQLSafetyStore()
+        return super().__new__(cls)
+
     def __init__(self, path=None):
         self.path = str(path or os.getenv('LINE_SAFETY_STORE_PATH', '.runtime/line_safety.sqlite3'))
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)

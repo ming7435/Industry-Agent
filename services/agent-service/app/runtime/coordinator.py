@@ -162,14 +162,22 @@ class RuntimeCoordinator:
 
     def run(self, state: Mapping[str, Any]) -> dict[str, Any]:
         initial = dict(state)
+        knowledge_only = initial.get("entry") == "knowledge"
         source_payload = dict(initial.get("event") or {}) if initial.get("entry") == "trigger" else {
             "user_text": initial.get("user_text", ""),
             **dict(initial.get("context") or {}),
         }
         goal_event: GoalEvent = self.input_parser.parse(source_payload)
+        if knowledge_only:
+            goal_event = GoalEvent(
+                goal=goal_event.goal, entities=goal_event.entities,
+                constraints={**goal_event.constraints, "execution_scope": "knowledge_read_only"},
+                required_capabilities=("document_search",), source="user",
+                raw=goal_event.raw, validation_findings=goal_event.validation_findings,
+            )
         # 自然语言请求统一先经过 RouterAgent；RuntimeInputParser 只负责规范化
         # 事件结构和作为路由不可用时的确定性兜底，不再覆盖 Router 的动作意图。
-        if goal_event.source == "user":
+        if goal_event.source == "user" and not knowledge_only:
             router = (getattr(self.container, "agents", {}) or {}).get("router")
             if router is not None and str(source_payload.get("user_text") or "").strip():
                 try:
@@ -256,6 +264,17 @@ class RuntimeCoordinator:
             if index >= len(plan.actions):
                 return {"state": current, "action": ActionModel.final(), "evidence_score": 1.0, "done": True}
             action = self._enrich_action(plan.actions[index], current)
+            # 每次派发都复核顶层只读边界，覆盖首次计划、Agent 建议和重规划。
+            if knowledge_only and not (
+                action.action_type.value == "AGENT" and action.target == "knowledge"
+                and self.capabilities.canonical_name(action.required_capability) == "document_search"
+                and not action.side_effect
+            ):
+                return {
+                    "state": {**current, "status": "blocked", "stop_reason": "knowledge_read_only_scope"},
+                    "action": action, "terminal_status": "blocked",
+                    "terminal_reason": "knowledge_read_only_scope", "evidence_score": 0.0, "done": False,
+                }
             step_started_at = datetime.now(timezone.utc).isoformat()
             current = {
                 **current,

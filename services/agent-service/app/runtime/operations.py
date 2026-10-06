@@ -29,10 +29,12 @@ class RuntimeOperations:
         trace: Any | None = None,
         factory_client: Any | None = None,
         repair_controller: Any | None = None,
+        quality_harness: Any | None = None,
     ) -> None:
         self.requests = requests
         self.closure_service = closure_service
         self.report_harness = report_harness
+        self.quality_harness = quality_harness
         self.trace = trace
         self.factory_client = factory_client
         self.repair_controller = repair_controller
@@ -41,24 +43,26 @@ class RuntimeOperations:
         from threading import Lock
         self._learning_lock = Lock()
         configured_path = str(learning_store_path or os.getenv("LEARNING_RESULT_STORE_PATH", "")).strip()
-        self._learning_store = DurableJsonStore(configured_path) if configured_path else None
+        self._learning_store = DurableJsonStore(configured_path) if configured_path or os.getenv("APP_ENV", "development").lower() != "testing" else None
 
     def _cached_learning(self, key: str) -> Dict[str, Any] | None:
-        cached = self._learning_results.get(key)
+        cached = self._learning_results.get(key) if os.getenv("APP_ENV", "development").lower() == "testing" else None
         if cached is not None:
             return dict(cached)
         if self._learning_store is not None:
             cached = self._learning_store.get("workorder_learning", key)
             if cached is not None:
-                self._learning_results[key] = dict(cached)
+                if os.getenv("APP_ENV", "development").lower() == "testing":
+                    self._learning_results[key] = dict(cached)
                 return dict(cached)
         return None
 
     def _save_learning(self, key: str, value: Mapping[str, Any]) -> None:
         payload = dict(value)
-        self._learning_results[key] = payload
         if self._learning_store is not None:
             self._learning_store.set("workorder_learning", key, payload)
+        if os.getenv("APP_ENV", "development").lower() == "testing":
+            self._learning_results[key] = payload
 
     def _run_learning_stage(
         self,
@@ -99,24 +103,52 @@ class RuntimeOperations:
         values = {**dict(state.get("context") or {}), **dict(quality_payload or {})}
         result = self.requests.inspect_quality(state, from_agent=from_agent, quality_payload=quality_payload)
         if persist and (result.get("part_id") or result.get("part_no")):
-            check = self.closure_service.record_part_quality(
-                {
+            inspection_status = str(result.get("status") or "").lower()
+            if inspection_status in {"pass", "passed"}:
+                persisted_result = "passed" if result.get("passed") is True and result.get("qualified", True) is True else "review"
+            elif inspection_status in {"fail", "failed"}:
+                persisted_result = "failed"
+            elif inspection_status in {"not_tested", "insufficient_data", "review"}:
+                persisted_result = inspection_status
+            else:
+                persisted_result = "pending"
+            record_payload = {
                     "part_id": result.get("part_id") or values.get("part_id") or "",
                     "part_no": result.get("part_no") or values.get("part_no") or "",
                     "part_name": result.get("part_name") or values.get("part_name") or "",
                     "batch_id": result.get("batch_id") or values.get("batch_id") or "",
                     "production_order_id": result.get("production_order_id") or values.get("production_order_id") or "",
-                    "result": "passed" if bool(result.get("passed") or result.get("qualified")) else "failed",
+                    "result": persisted_result,
                     "score": result.get("score") or result.get("quality_score"),
                     "findings": list(result.get("findings") or result.get("defects") or result.get("failed_checks") or []),
                     "items": list(result.get("inspection_items") or []),
                     "quality_validation": dict(result.get("quality_validation") or result.get("inspection_summary") or {}),
+                    'evidence': list(result.get('evidence') or []),
+                    'measurements': dict(result.get('measurements') or {}),
+                    'specifications': dict(result.get('specifications') or {}),
+                    'device_id': str(result.get('device_id') or values.get('device_id') or ''),
+                    'task_id': str(state.get('task_id') or ''), 'trace_id': str(state.get('trace_id') or ''),
                     "reviewer": str(values.get("reviewer") or "quality-agent"),
                     "risk_level": str(values.get("risk_level") or "R1"),
-                },
-                operator=str(values.get("reviewer") or "quality-agent"),
-            )
+                }
+            if self.quality_harness is not None:
+                from app.agents.quality.agent import QUALITY_CLOSURE_AUTHORITY
+                persisted = self.quality_harness.execute_once({**dict(state), '_closure_authority':QUALITY_CLOSURE_AUTHORITY,
+                    'closure_operation':'create_quality_check','arguments':{**record_payload,'operator':str(values.get('reviewer') or 'quality-agent')},
+                    'runtime_context':{'run_type':'quality'}})
+                check = persisted.get('quality_check') or persisted
+            else:
+                # 小型隔离测试容器没有 Harness，仍执行原存储；不伪造 Agent 事件。
+                check = self.closure_service.record_part_quality(record_payload,operator=str(values.get('reviewer') or 'quality-agent'))
             result["quality_check_id"] = check["quality_check_id"]
+            result['quality_check'] = check
+            if self.report_harness is not None:
+                try:
+                    result['report'] = _serialize_agent_result(self.report_harness.execute_agent({
+                        **dict(state), 'report_type':'quality_report', 'quality':{**result, **check, 'passed':result.get('passed')},
+                        'context':{**dict(state.get('context') or {}), 'run_type':'quality'}, 'persist':True}))
+                except Exception as error:
+                    result['report'] = {'persisted':False,'status':'incomplete','error':str(error),'stop_reason':'report_generation_failed'}
         return result
 
     def execute_workorder(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router", *, actor_id: str = "") -> Dict[str, Any]:
@@ -321,4 +353,27 @@ class RuntimeOperations:
             "diagnosis": {},
             "maintenance_plan": {},
         }
-        return self.inspect_quality(state, from_agent="router", quality_payload=values, persist=True)
+        result = self.inspect_quality(state, from_agent="router", quality_payload=values, persist=True)
+        return {**result, 'task_id':state['task_id'], 'trace_id':state['trace_id']}
+
+    def execute_quality_action(self, harness, operation: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
+        """同一质检记录的闭环动作使用真实 Quality Agent，不伪造工具完成。"""
+        from app.agents.quality.agent import QUALITY_CLOSURE_AUTHORITY
+        values = dict(arguments)
+        check_id = str(values.get('check_id') or values.get('quality_check_id') or '')
+        if operation == 'complete_closure_task':
+            task = next((item for item in self.closure_service.list_closure_tasks() if item.get('closure_task_id') == values.get('task_id')), {})
+            check_id = str(task.get('quality_check_id') or '')
+        source = self.closure_service.get_quality_check(check_id) if check_id else {}
+        state = {'_closure_authority':QUALITY_CLOSURE_AUTHORITY, 'closure_operation':operation, 'arguments':values,
+                 'task_id': 'TASK-QC-ACTION-' + uuid4().hex[:12], 'trace_id':(source or {}).get('trace_id') or 'TRACE-QC-' + check_id,
+                 'runtime_context':{'run_type':'quality','quality_check_id':check_id}}
+        result = _serialize_agent_result(harness.execute_once(state))
+        if operation == 'close_quality_check' and self.report_harness is not None:
+            saved = self.closure_service.get_quality_check(check_id) or {}
+            try:
+                result['report'] = _serialize_agent_result(self.report_harness.execute_agent({**state,'quality':{**saved,'passed':saved.get('result')=='passed'},'report_type':'quality_report','persist':True}))
+            except Exception:
+                # 关闭已提交；独立记录报告失败，不让客户端误以为关闭也失败。
+                result['report'] = {'persisted':False,'status':'incomplete','stop_reason':'report_generation_failed'}
+        return result

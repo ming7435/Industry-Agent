@@ -1,4 +1,4 @@
-"""工单仓储边界，提供内存和 SQLite 实现。"""
+"""在线工单存入 MySQL，隔离测试保留内存与 SQLite 实现。"""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping
+from contextlib import contextmanager
+from shared.persistence import mysql_configuration, mysql_session
 
 
 class MemoryWorkOrderRepository:
@@ -109,97 +111,85 @@ class MySQLWorkOrderRepository:
     """使用唯一幂等键的共享数据库仓储。"""
 
     def __init__(self) -> None:
-        try:
-            import mysql.connector
-        except ImportError as error:
-            raise RuntimeError("MySQL WorkOrder persistence requires mysql-connector-python") from error
-        try:
-            mysql_host = os.getenv("WORKORDER_MYSQL_HOST") or os.getenv("MYSQL_HOST") or "127.0.0.1"
-            mysql_port = os.getenv("WORKORDER_MYSQL_PORT") or os.getenv("MYSQL_PORT") or "3306"
-            self.connection = mysql.connector.connect(
-                host=mysql_host,
-                port=int(mysql_port),
-                user=os.getenv("WORKORDER_MYSQL_USER") or os.getenv("MYSQL_USER", "root"),
-                password=os.getenv("WORKORDER_MYSQL_PASSWORD") or os.getenv("MYSQL_PASSWORD", ""),
-                database=os.getenv("WORKORDER_MYSQL_DATABASE") or os.getenv("MYSQL_DATABASE", "industrial_maintenance"),
-                autocommit=False,
-            )
-            cursor = self.connection.cursor()
+        self._config = mysql_configuration()
+        for name in ("host", "port", "user", "password", "database"):
+            override = os.getenv("WORKORDER_MYSQL_" + name.upper())
+            if override:
+                self._config[name] = int(override) if name == "port" else override
+        with self._cursor() as cursor:
             cursor.execute(
                 "CREATE TABLE IF NOT EXISTS workorders ("
                 "workorder_id VARCHAR(64) PRIMARY KEY, idempotency_key VARCHAR(255) UNIQUE, "
                 "payload JSON NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)"
             )
-            self.connection.commit()
-            cursor.close()
-        except Exception as error:
-            raise RuntimeError("MySQL WorkOrder persistence unavailable: %s" % error) from error
+
+    @contextmanager
+    def _cursor(self):
+        with mysql_session(self._config) as connection:
+            cursor = connection.cursor(dictionary=True)
+            try:
+                yield cursor
+            finally:
+                cursor.close()
 
     def create(self, order: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(order)
         key = str(value.get("idempotency_key") or "") or None
-        cursor = self.connection.cursor(dictionary=True)
+        import mysql.connector
         try:
-            if key:
-                cursor.execute("SELECT payload FROM workorders WHERE idempotency_key=%s", (key,))
-                row = cursor.fetchone()
-                if row:
-                    return dict(json.loads(row["payload"]))
-            cursor.execute(
-                "INSERT INTO workorders(workorder_id, idempotency_key, payload) VALUES (%s, %s, %s)",
-                (str(value["workorder_id"]), key, json.dumps(value, ensure_ascii=False, default=str)),
-            )
-            self.connection.commit()
-            return value
-        except Exception:
-            self.connection.rollback()
-            if key:
-                cursor.execute("SELECT payload FROM workorders WHERE idempotency_key=%s", (key,))
+            with self._cursor() as cursor:
+                if key:
+                    cursor.execute("SELECT payload FROM workorders WHERE idempotency_key=%s", (key,))
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(json.loads(row["payload"]))
+                cursor.execute("INSERT INTO workorders(workorder_id,idempotency_key,payload) VALUES (%s,%s,%s)", (str(value["workorder_id"]), key, json.dumps(value, ensure_ascii=False, default=str)))
+                return value
+        except RuntimeError:
+            # 失败后只读对账，不重复执行 INSERT；不同错误也不得盲目重试写入。
+            with self._cursor() as cursor:
+                cursor.execute("SELECT payload FROM workorders WHERE workorder_id=%s OR idempotency_key=%s", (str(value["workorder_id"]), key))
                 row = cursor.fetchone()
                 if row:
                     return dict(json.loads(row["payload"]))
             raise
-        finally:
-            cursor.close()
 
     def get(self, workorder_id: str) -> dict[str, Any] | None:
-        cursor = self.connection.cursor(dictionary=True)
-        cursor.execute("SELECT payload FROM workorders WHERE workorder_id=%s", (str(workorder_id),))
-        row = cursor.fetchone()
-        cursor.close()
-        return dict(json.loads(row["payload"])) if row else None
+        with self._cursor() as cursor:
+            cursor.execute("SELECT payload FROM workorders WHERE workorder_id=%s", (str(workorder_id),))
+            row = cursor.fetchone()
+            return dict(json.loads(row["payload"])) if row else None
 
     def update(self, order: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(order)
-        cursor = self.connection.cursor()
-        cursor.execute("UPDATE workorders SET payload=%s WHERE workorder_id=%s", (json.dumps(value, ensure_ascii=False, default=str), str(value["workorder_id"])))
-        self.connection.commit()
-        cursor.close()
-        return value
+        with self._cursor() as cursor:
+            cursor.execute("SELECT payload FROM workorders WHERE workorder_id=%s FOR UPDATE", (str(value["workorder_id"]),))
+            row = cursor.fetchone()
+            stored = json.loads(row["payload"]) if row else None
+            if stored is None or int(stored.get("_revision", 0)) != int(value.get("_revision", 0)):
+                raise ValueError("工单已被其他操作更新，请刷新后重试")
+            value["_revision"] = int(value.get("_revision", 0)) + 1
+            cursor.execute("UPDATE workorders SET payload=%s WHERE workorder_id=%s", (json.dumps(value, ensure_ascii=False, default=str), str(value["workorder_id"])))
+            return value
 
     def list(self) -> list[dict[str, Any]]:
-        cursor = self.connection.cursor(dictionary=True)
-        cursor.execute("SELECT payload FROM workorders ORDER BY workorder_id")
-        rows = cursor.fetchall()
-        cursor.close()
-        return [dict(json.loads(row["payload"])) for row in rows]
+        with self._cursor() as cursor:
+            cursor.execute("SELECT payload FROM workorders ORDER BY workorder_id")
+            return [dict(json.loads(row["payload"])) for row in cursor.fetchall()]
 
     def delete(self, workorder_id: str) -> bool:
-        cursor = self.connection.cursor()
-        try:
+        with self._cursor() as cursor:
             cursor.execute("DELETE FROM workorders WHERE workorder_id=%s", (str(workorder_id),))
             deleted = cursor.rowcount > 0
-            self.connection.commit()
             return deleted
-        except Exception:
-            self.connection.rollback()
-            raise
-        finally:
-            cursor.close()
 
 
 def build_workorder_repository(path: str | None = None) -> MemoryWorkOrderRepository | SQLiteWorkOrderRepository | MySQLWorkOrderRepository:
     backend = os.getenv("WORKORDER_BACKEND", "").strip().lower()
+    if os.getenv("APP_ENV", "development").lower() != "testing":
+        if backend and backend != "mysql":
+            raise RuntimeError("在线工单仅支持 MySQL，SQLite/内存仅用于隔离测试")
+        return MySQLWorkOrderRepository()
     if backend == "mysql" or (backend == "" and os.getenv("APP_ENV", "development").lower() in {"prod", "production"} and os.getenv("MYSQL_HOST")):
         return MySQLWorkOrderRepository()
     if backend == "" and os.getenv("APP_ENV", "development").lower() in {"prod", "production"} and not str(path or "").strip():

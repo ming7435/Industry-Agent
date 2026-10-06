@@ -18,7 +18,7 @@ test("knowledge context forces document retrieval and scopes an active alarm mac
     },
   );
 
-  assert.deepEqual(context.required_capabilities, ["document_search"]);
+  assert.equal(context.required_capabilities, undefined);
   assert.equal(context.alarm_active, true);
   assert.equal(context.device_id, "MACHINE-001");
   assert.equal(context.alarm_code, "ALM-001");
@@ -31,7 +31,6 @@ test("knowledge context keeps all-document retrieval when no active alarm exists
   );
 
   assert.deepEqual(context, {
-    required_capabilities: ["document_search"],
     alarm_active: false,
   });
 });

@@ -6,6 +6,7 @@ COPY services/rag-service/requirements.txt /tmp/rag-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/rag-requirements.txt
 
 COPY services/rag-service /app/services/rag-service
+COPY shared /app/shared
 
 ENV PYTHONPATH=/app/services/rag-service:/app
 

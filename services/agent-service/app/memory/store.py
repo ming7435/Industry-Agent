@@ -62,16 +62,20 @@ class RedisShortMemoryStore:
     def __init__(self, url: str, key: str = "industrial:memory:short", max_items: int = 100) -> None:
         try:
             import redis
-            self.client = redis.Redis.from_url(url, decode_responses=True)
+            self.client = redis.Redis.from_url(url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
             self.client.ping()
-        except Exception as error:
-            raise MemoryBackendError("Redis 不可用：%s" % error) from error
+        except Exception:
+            raise MemoryBackendError("Redis 临时存储不可用，请检查连接和权限") from None
         self.key = key
         self.max_items = max_items
+        self.ttl_seconds = max(1, int(os.getenv("SHORT_MEMORY_TTL_SECONDS", "3600")))
 
     def add(self, item: Dict[str, Any]) -> None:
-        self.client.lpush(self.key, json.dumps(item, ensure_ascii=False, default=str))
-        self.client.ltrim(self.key, 0, self.max_items - 1)
+        with self.client.pipeline(transaction=True) as pipeline:
+            pipeline.lpush(self.key, json.dumps(item, ensure_ascii=False, default=str))
+            pipeline.ltrim(self.key, 0, self.max_items - 1)
+            pipeline.expire(self.key, self.ttl_seconds)
+            pipeline.execute()
 
     def recent(self, limit: int = 20) -> List[Dict[str, Any]]:
         return [json.loads(value) for value in self.client.lrange(self.key, 0, max(0, limit - 1))]
@@ -191,15 +195,16 @@ def build_memory_stores() -> tuple[Any, Any]:
     backend_url = os.getenv("BACKEND_SERVICE_BASE_URL", "").strip()
     if backend_url:
         long = BackendLongMemoryStore(backend_url)
+    online = os.getenv("APP_ENV", "development").lower() != "testing"
     redis_url = os.getenv("REDIS_URL", "").strip()
     if redis_url:
         try:
             short = RedisShortMemoryStore(redis_url)
         except MemoryBackendError:
-            if not allow_degraded_storage():
+            if online or not allow_degraded_storage():
                 raise
-    elif not allow_degraded_storage():
-        raise MemoryBackendError("生产模式要求配置 REDIS_URL")
+    elif online or not allow_degraded_storage():
+        raise MemoryBackendError("在线临时存储要求配置 REDIS_URL")
     mysql_host = os.getenv("MYSQL_HOST", "").strip()
     if backend_url:
         return short, long
@@ -213,8 +218,8 @@ def build_memory_stores() -> tuple[Any, Any]:
                 "database": os.getenv("MYSQL_DATABASE", "industrial_maintenance"),
             })
         except (MemoryBackendError, ValueError):
-            if not allow_degraded_storage():
+            if online or not allow_degraded_storage():
                 raise
-    elif not allow_degraded_storage():
-        raise MemoryBackendError("生产模式要求配置 MYSQL_HOST")
+    elif online or not allow_degraded_storage():
+        raise MemoryBackendError("在线长期存储要求配置 MYSQL_HOST")
     return short, long

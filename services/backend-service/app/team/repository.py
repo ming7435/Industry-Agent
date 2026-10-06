@@ -4,11 +4,15 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import time
+from shared.temporary_cache import RedisJsonCache
 
 
 class TeamRepository:
     def __init__(self, sqlite_path=None):
         self.sqlite_path = sqlite_path or (os.getenv('BACKEND_SQLITE_PATH', '.runtime/backend.sqlite3') if os.getenv('BACKEND_STORAGE') == 'sqlite' else None)
+        if self.sqlite_path and os.getenv('APP_ENV', 'development').lower() != 'testing':
+            raise RuntimeError('在线账号和产线账本必须使用 MySQL，SQLite 仅用于隔离测试')
         if self.sqlite_path:
             Path(self.sqlite_path).parent.mkdir(parents=True, exist_ok=True)
         with self.transaction() as db:
@@ -57,6 +61,30 @@ class TeamRepository:
         else:
             sql = 'INSERT INTO team_state(state_key,payload) VALUES (?,?) ON DUPLICATE KEY UPDATE payload=VALUES(payload)'
         db.execute(sql, (key, json.dumps(value, ensure_ascii=False)))
+
+    def save_session(self, token_hash, user_id, expires_at):
+        if self.sqlite_path:
+            with self.transaction() as db:
+                db.execute('DELETE FROM team_sessions WHERE expires_at<?', (time.time(),))
+                db.execute('INSERT INTO team_sessions VALUES (?,?,?)', (token_hash, user_id, expires_at))
+            return
+        remaining = max(1, int(expires_at - time.time()))
+        RedisJsonCache(prefix='industry:team:sessions', ttl_seconds=remaining).set(token_hash, {'user_id': user_id, 'expires_at': expires_at})
+
+    def session_user(self, token_hash):
+        if self.sqlite_path:
+            with self.transaction() as db:
+                row = db.execute('SELECT user_id FROM team_sessions WHERE token_hash=? AND expires_at>?', (token_hash, time.time())).fetchone()
+            return row['user_id'] if row else None
+        value = RedisJsonCache(prefix='industry:team:sessions').get(token_hash)
+        return value.get('user_id') if value and float(value.get('expires_at', 0)) > time.time() else None
+
+    def delete_session(self, token_hash):
+        if self.sqlite_path:
+            with self.transaction() as db:
+                db.execute('DELETE FROM team_sessions WHERE token_hash=?', (token_hash,))
+        else:
+            RedisJsonCache(prefix='industry:team:sessions').delete(token_hash)
 
 
 class _MySQLSession:

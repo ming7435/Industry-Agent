@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 from pydantic import BaseModel, Field
 
 
 class UserQuestionRequest(BaseModel):
     user_text: str = Field(min_length=1)
     context: Dict[str, Any] = Field(default_factory=dict)
+    mode: Literal["general", "knowledge"] = "general"
 
 
 class AbnormalEventRequest(BaseModel):

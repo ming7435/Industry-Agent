@@ -20,11 +20,11 @@ class QualityValidator:
         process_check: Mapping[str, Any],
     ) -> dict[str, Any]:
         check_definitions = [
-            ("dimension_not_qualified", "尺寸检测", dimension_check),
-            ("appearance_not_qualified", "外观检测", appearance_check),
-            ("material_not_qualified", "材料检测", material_check),
-            ("function_not_qualified", "功能检测", function_check),
-            ("process_not_qualified", "工艺追溯检测", process_check),
+            ("dimension_not_qualified", "尺寸检测", dimension_check or {}),
+            ("appearance_not_qualified", "外观检测", appearance_check or {}),
+            ("material_not_qualified", "材料检测", material_check or {}),
+            ("function_not_qualified", "功能检测", function_check or {}),
+            ("process_not_qualified", "工艺追溯检测", process_check or {}),
         ]
         failed: list[str] = []
         findings: list[str] = []
@@ -56,12 +56,31 @@ class QualityValidator:
             for item in check_definitions
             for result in [item[2]]
         ]
+        if passed:
+            status = "pass"
+        elif any(
+            result.get("passed") is False
+            and result.get("sufficient_data") is True
+            and str(result.get("status") or "").lower() == "fail"
+            and result.get("synthetic") is not True
+            and result.get("degraded") is not True
+            for _, _, result in check_definitions
+        ):
+            status = "fail"
+        elif not specification or not (part.get("part_id") or part.get("part_no")) or any(
+            result.get("sufficient_data") is not True
+            or str(result.get("status") or "").lower() in {"not_tested", "pending", "insufficient_data"}
+            for _, _, result in check_definitions
+        ):
+            status = "not_tested"
+        else:
+            status = "review"
         return {
             "inspection_type": "part_quality",
             "passed": passed,
             "qualified": passed,
-            "status": "pass" if passed else ("not_tested" if any((result or {}).get("sufficient_data") is not True or str((result or {}).get("status") or "").lower() in {"not_tested", "pending", "insufficient_data"} for _, _, result in check_definitions) else "fail"),
-            "quality_grade": "合格" if passed else ("未检测" if any(str((result or {}).get("status") or "").lower() in {"not_tested", "pending", "insufficient_data"} for _, _, result in check_definitions) else "不合格"),
+            "status": status,
+            "quality_grade": {"pass": "合格", "fail": "不合格", "not_tested": "未检测", "review": "待复核"}[status],
             "failed_checks": cls._dedupe(failed),
             "findings": cls._dedupe(findings),
             "inspection_items": inspection_items,

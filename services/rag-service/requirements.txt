@@ -27,6 +27,7 @@ Pillow>=10.0,<12
 
 # --- offline metadata store ---
 pymysql>=1.1,<2
+mysql-connector-python>=9.0
 
 # --- offline original-file storage (MinIO/S3) ---
 minio>=7.2,<8

@@ -122,10 +122,11 @@ def test_repair_verification_rejects_expired_recovery_without_inventing_health_t
 
 def test_quality_fail_rectification_reinspection_release_close():
     from app.closure import ClosureService
+    from test_quality_release_gate import complete_validation
 
     service = ClosureService()
     check = service.create_quality_check(
-        {"target_id": "PART-Q-1", "part_no": "P-Q-1", "result": "failed"}
+        {"target_id": "PART-Q-1", "part_no": "P-Q-1", "batch_id": "BATCH-Q-1", "result": "failed"}
     )
     check_id = check["quality_check_id"]
     assert check["status"] == "failed"
@@ -149,8 +150,9 @@ def test_quality_fail_rectification_reinspection_release_close():
         {"quality_check_id": check_id, "title": "再次整改尺寸偏差"}
     )
     service.complete_closure_task(second_task["closure_task_id"], note="再次整改完成")
+    repeat = service.create_quality_check({"target_id": "PART-Q-1", "batch_id": "BATCH-Q-1", "result": "passed", "quality_validation": complete_validation()})
     service.record_reinspection(
-        check_id, {"passed": True, "findings": [], "evidence": [{"id": "E-2"}]}
+        check_id, {"passed": True, "findings": [], "reinspection_check_id": repeat["quality_check_id"]}
     )
     released = service.release_quality_check(check_id)
     assert released["status"] == "released"

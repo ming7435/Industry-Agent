@@ -7,10 +7,12 @@ from uuid import uuid4
 
 from app.tools.registry import ToolRegistry
 from app.contracts import ReportResult
-from app.agents.base import BaseAgent
+from app.agents.base import BaseAgent, trace_skill_node
 
 from .graph import build_report_graph
 from .validator import ReportValidator
+
+REPORT_FILE_AUTHORITY = object()
 
 
 class ReportAgent(BaseAgent):
@@ -23,8 +25,13 @@ class ReportAgent(BaseAgent):
         self.tools = tools or ToolRegistry()
         self.graph = build_report_graph()
 
-    def run(self, task: Any) -> ReportResult:
+    def run(self, task: Any) -> ReportResult | dict[str, Any]:
         payload = dict(task or {}) if isinstance(task, Mapping) else {}
+        if payload.get('_file_authority') is REPORT_FILE_AUTHORITY:
+            def create_pdf(state):
+                return {'result':self.tools.execute('generate_report_file',state['request']['arguments'])}
+            return trace_skill_node('report','generate_report_file',create_pdf)({
+                'agent':self,'request':payload,'active_skills':['report_generation_skill']})['result']
         output = self.graph.invoke({"agent": self, "request": payload})
         result = output.get("result")
         if result is None:
@@ -40,6 +47,8 @@ class ReportAgent(BaseAgent):
     @staticmethod
     def _record(value: Mapping[str, Any] | None) -> dict[str, Any]:
         payload = dict(value or {})
+        if payload.get('success') is False or payload.get('found') is False:
+            return {}
         record = payload.get("record")
         return dict(record) if isinstance(record, Mapping) else payload
 
@@ -76,11 +85,12 @@ class ReportAgent(BaseAgent):
         quality = self._mapping(sections.get("quality"))
         event = self._mapping(sections.get("event"))
         device_id = self._device_id(payload, diagnosis, order, event)
+        part_label = str(quality.get('part_name') or quality.get('part_no') or quality.get('part_id') or quality.get('target_id') or device_id)
         status = "completed" if not findings else "incomplete"
         return ReportResult(
             report_id="RPT-" + uuid4().hex[:10].upper(),
             report_type=report_type,
-            title="%s设备运维案例报告" % device_id,
+            title=("%s质量检测报告" % part_label if report_type == 'quality_report' else "%s设备运维案例报告" % device_id),
             summary=self._summary(device_id, diagnosis, plan, repair_feedback, repair_verification, quality, status, findings),
             status=status,
             sections=dict(sections),
@@ -161,8 +171,14 @@ class ReportAgent(BaseAgent):
     def _summary(device_id: str, diagnosis: Mapping[str, Any], plan: Mapping[str, Any], repair_feedback: Mapping[str, Any], repair_verification: Mapping[str, Any], quality: Mapping[str, Any], status: str, findings: list[str]) -> str:
         fault = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or "").strip()
         if quality and "passed" in quality:
-            quality_text = "通过" if bool(quality.get("passed")) else "未通过"
-            base = "%s零件质量检测%s。" % (quality.get("part_name") or quality.get("part_no") or device_id, quality_text)
+            quality_text = ('通过' if quality.get('passed') is True else
+                            '未检测或数据不足' if str(quality.get('result') or quality.get('status') or '').lower() in {'review', 'pending', 'not_tested', 'insufficient_data'} else '未通过')
+            reinspection = quality.get('reinspection') or {}
+            if (quality.get('status') in {'released', 'closed'}
+                    and reinspection.get('passed') is True and reinspection.get('reinspection_check_id')):
+                # 保留原始失败，不把最终放行倒写为初检通过。
+                quality_text = ('初检通过' if quality.get('passed') is True else '初检未通过') + '；复检通过，' + ('已关闭' if quality['status'] == 'closed' else '已放行')
+            base = "%s零件质量检测%s。" % (quality.get("part_name") or quality.get("part_no") or quality.get('part_id') or quality.get('target_id') or device_id, quality_text)
             if fault:
                 base += "诊断记录：%s" % fault
         elif repair_feedback or repair_verification:

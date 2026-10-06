@@ -6,16 +6,18 @@ import "../styles.css";
 import machineImage from "../assets/trak-tc820-machine-transparent.png";
 import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getDeviceDisplayName, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
 import { buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLatestPipeline } from "./diagnosisView.mjs";
-import { buildReportDisplaySections } from "./reportView.mjs";
+import { buildReportDisplaySections, reportQualityLabel } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { request } from "./apiRequest.mjs";
-import { buildMaintenanceWorkspaceRecords, loadMaintenanceWorkspace, maintenanceDispatchView, maintenanceHistoryNotice } from "./maintenanceWorkspace.mjs";
+import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, loadMaintenanceWorkspace, maintenanceDispatchView, maintenanceHistoryNotice, retryMaintenancePlan } from "./maintenanceWorkspace.mjs";
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
+import { loadQualityResources, qualityChecks, qualityFromAction, qualityHistoryStatusLabel, qualityOutcome, runQualityAction } from "./qualityWorkspace.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
+import InspectionInput from './InspectionInput.jsx';
 import "../workbench.css";
 import TeamAccess from '../TeamAccess.jsx';
 import SupervisorQueue from '../SupervisorQueue.jsx';
@@ -2489,7 +2491,7 @@ function LogsWorkspace({ snapshot }) {
   const toolCount = records.filter((record) => record.type === "tool" || record.tool_name || record.tool).length;
   const errorCount = records.filter((record) => Boolean(record.error) || /error|failed|timeout/i.test(String(record.event || ""))).length;
   const agentInvocations = useMemo(() => buildAgentInvocations(records), [records]);
-  const statusText = (status) => ({ completed: "已完成", running: "进行中", error: "异常", pending: "待执行" }[status] || status || "待执行");
+  const statusText = (status) => ({ completed: "已完成", running: "进行中", error: "异常", pending: "待执行", blocked: "待补充或处理" }[status] || status || "待执行");
 
   return (
     <section className="workspace-view active module-board logs-workspace" aria-label="日志系统">
@@ -2532,7 +2534,8 @@ function LogsWorkspace({ snapshot }) {
             <div className="agent-io-stack">
               <section className="agent-io-block"><h5>输入（Input）</h5><pre className="log-json">{formatTraceValue(invocation.input)}</pre></section>
               <section className="agent-io-block"><h5>上下文（Context）</h5><pre className="log-json">{formatTraceValue(invocation.context)}</pre></section>
-              <section className="agent-io-block agent-tool-chain"><h5>工具调用链（Tool Calls） · {invocation.tool_calls.length} 次</h5>{invocation.tool_calls.length ? <div className="agent-tool-list">{invocation.tool_calls.map((tool) => <section className="agent-tool-call" key={`${invocation.id}-${tool.call_no}-${tool.tool_name}`}><div className="agent-tool-head"><strong>#{tool.call_no} {tool.tool_name}</strong><span>{tool.status}{tool.mcp_server ? ` · MCP ${tool.mcp_server}` : ""} · {tool.duration}</span></div><div className="agent-tool-meta"><span>开始：{tool.started_at ? formatTime(tool.started_at) : "--"}</span><span>结束：{tool.ended_at ? formatTime(tool.ended_at) : "--"}</span><span>事件：{tool.event_count}</span></div><div className="agent-tool-io"><div><h6>工具输入</h6><pre className="log-json">{formatTraceValue(tool.input)}</pre></div><div><h6>工具输出</h6><pre className="log-json">{formatTraceValue(tool.output)}</pre></div></div>{tool.error && <div className="log-event-error">错误：{tool.error}</div>}</section>)}</div> : <div className="agent-io-empty">本次 Agent 没有记录工具调用。</div>}</section>
+              <section className="agent-io-block"><h5>MD Skill 执行步骤 · {invocation.skill_steps.length} 步</h5>{invocation.skill_steps.map((step,index) => <details key={`${invocation.id}-skill-${index}`}><summary>#{index+1} {step.skill || "基础步骤（未绑定技能）"} → {step.step} · {step.status}</summary><h6>步骤输入</h6><pre className="log-json">{formatTraceValue(step.input)}</pre><h6>步骤输出</h6><pre className="log-json">{formatTraceValue(step.output)}</pre>{step.error && <p className="inline-error">{step.error}</p>}</details>)}</section>
+              <section className="agent-io-block agent-tool-chain"><h5>工具调用链（Tool Calls） · {invocation.tool_calls.length} 次</h5>{invocation.tool_calls.length ? <div className="agent-tool-list">{invocation.tool_calls.map((tool) => <section className="agent-tool-call" key={`${invocation.id}-${tool.call_no}-${tool.tool_name}`}><div className="agent-tool-head"><strong>#{tool.call_no} {tool.tool_name}</strong><span>{tool.status}{tool.mcp_server ? ` · MCP ${tool.mcp_server}` : ""} · {tool.duration}</span></div><div className="agent-tool-meta"><span>技能：{tool.context?.skill || "未绑定"} → {tool.context?.step || "--"}</span><span>开始：{tool.started_at ? formatTime(tool.started_at) : "--"}</span><span>结束：{tool.ended_at ? formatTime(tool.ended_at) : "--"}</span><span>事件：{tool.event_count}</span></div><div className="agent-tool-io"><div><h6>工具输入</h6><pre className="log-json">{formatTraceValue(tool.input)}</pre></div><div><h6>工具输出</h6><pre className="log-json">{formatTraceValue(tool.output)}</pre></div></div>{tool.error && <div className="log-event-error">错误：{tool.error}</div>}</section>)}</div> : <div className="agent-io-empty">本次 Agent 没有记录工具调用。</div>}</section>
               <section className="agent-io-block"><h5>输出（Output）</h5><pre className="log-json">{formatTraceValue(invocation.output)}</pre></section>
             </div>
           </article>)}</div> : <div className="empty-state logs-empty">当前运行记录没有 Agent 生命周期事件；请刷新或先执行一次监控→诊断→维修方案→工单闭环。</div>}
@@ -2564,6 +2567,19 @@ function ReportWorkspace({ snapshot }) {
   const [loadingReports, setLoadingReports] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [pdfReady, setPdfReady] = useState(false);
+  const [sourceType,setSourceType] = useState('plan_id');
+  const [sourceId,setSourceId] = useState('');
+  const [generatingReport,setGeneratingReport] = useState(false);
+  async function generateReport() {
+    setGeneratingReport(true);
+    try {
+      const result = await request('/api/reports/generate',{method:'POST',body:JSON.stringify({[sourceType]:sourceId.trim()})});
+      await loadReports();
+      setSelectedReportId(result.report_id);
+      setReportError('');
+    } catch (err) {setReportError(err.message);}
+    finally {setGeneratingReport(false);}
+  }
 
   async function loadReports() {
     setLoadingReports(true);
@@ -2625,6 +2641,7 @@ function ReportWorkspace({ snapshot }) {
   }
   return (
     <section className="workspace-view active module-board report-workspace" aria-label="报告中心">
+      <section className="panel module-panel"><h2>从已有业务记录生成报告</h2><label className="field-label">来源类型</label><select className="select-input" value={sourceType} onChange={event=>setSourceType(event.target.value)}><option value="plan_id">维修方案 PLAN</option><option value="workorder_id">工单 WO</option><option value="quality_check_id">质检 QC</option></select><label className="field-label">来源编号</label><input className="select-input" value={sourceId} onChange={event=>setSourceId(event.target.value)} placeholder="输入已保存的 PLAN、WO 或 QC 编号"/><p>Report Agent 汇总服务器保存的内容；未完成维修不会标记闭环完成。</p><button className="button primary" disabled={generatingReport || !sourceId.trim()} onClick={generateReport}>{generatingReport ? '正在生成…' : '生成报告'}</button></section>
       <ModuleHero eyebrow="Report Agent" title="报告中心" text="汇总诊断、维修方案、工单和质检结果，形成可追溯运维报告。" action={<button className="button" type="button" onClick={loadReports} disabled={loadingReports}>{loadingReports ? "刷新中…" : "刷新报告"}</button>} />
       {reportError && <div className="inline-error" role="status">报告服务暂不可用：{reportError}</div>}
       <section className="panel module-panel report-list-panel" aria-label="已持久化报告列表">
@@ -2636,7 +2653,7 @@ function ReportWorkspace({ snapshot }) {
       </section>
       {hasReport ? (
         <>
-          <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text={report.report_type || "运维报告"} /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质量状态" value={sections.quality?.passed == null ? "待确认" : sections.quality.passed ? "通过" : "未通过"} text="质量协同结果" /></div>
+          <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text={report.report_type || "运维报告"} /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质量状态" value={reportQualityLabel(sections.quality)} text="质量协同结果" /></div>
           <section className="panel module-panel report-panel"><div className="panel-heading"><div><span className="eyebrow">报告摘要</span><h2>{report.title || "运维报告"}</h2></div><div className="report-file-actions"><button className="button" type="button" onClick={generatePdf} disabled={!report.report_id || generatingPdf}>{generatingPdf ? "生成中…" : "生成 PDF"}</button>{pdfReady && <><a className="button" href={pdfUrl} target="_blank" rel="noreferrer">打开 PDF</a><a className="button" href={`${pdfUrl}?download=1`} download={`report-${report.report_id}.pdf`}>下载 PDF</a></>}</div></div><FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</section>
         </>
       ) : <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="完成异常诊断、维修与质检闭环后，报告会自动汇总在这里。" />}
@@ -2653,10 +2670,19 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
   const [error, setError] = useState("");
   const [orderError, setOrderError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [deletedPlanIds, setDeletedPlanIds] = useState([]);
+  const [checkedIds, setCheckedIds] = useState([]);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [deletionsLoaded, setDeletionsLoaded] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryMessage, setRetryMessage] = useState('');
+  const retryCommands = useRef({});
   const refreshRef = useRef(null);
   const currentAlarm = String(sample?.alarm_code || "").trim();
   const currentDevice = String(sample?.device_id || snapshot?.device_id || "").trim();
-  const records = buildMaintenanceWorkspaceRecords({ snapshot, items: planItems, orders });
+  // 删除集合未知时不能信任旧监控/工单快照，避免页面切换时已删除方案复活。
+  const records = deletionsLoaded ? buildMaintenanceWorkspaceRecords({ snapshot, items: planItems, orders, deletedPlanIds }) : [];
   const currentRecord = records.find(record => record.device_id === currentDevice && (!currentAlarm || record.alarm_code === currentAlarm));
   const selectedRecord = records.find(record => record.recordId === selectedId) || currentRecord || records[0];
   const linkedOrders = selectedRecord?.plan_id ? orders.filter(order => (order.plan_id || order.maintenance_plan_snapshot?.plan_id) === selectedRecord.plan_id) : [];
@@ -2668,6 +2694,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
     let refreshing = false;
     setOrders([]);
     setOrderError("");
+    setDeletionsLoaded(false);
     async function refresh() {
       if (refreshing) return;
       refreshing = true;
@@ -2675,8 +2702,12 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
       const result = await loadMaintenanceWorkspace(request, actor);
       refreshing = false;
       if (cancelled) return;
-      if (!result.planError) setPlanItems(result.items);
-      setHistory(result.history);
+      if (!result.planError) {
+        setPlanItems(result.items);
+        setDeletedPlanIds(previous => [...new Set([...previous, ...result.deletedPlanIds])]);
+        setDeletionsLoaded(true);
+      }
+      setHistory(result.planError ? { status: "failed", error: result.planError } : result.history);
       setOrders(result.orders.map(normalizeWorkorderResponse));
       setError(result.planError);
       setOrderError(result.orderError);
@@ -2695,15 +2726,61 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 
+  async function retryPlan() {
+    if (!selectedRecord?.plan_id || retrying || !actor?.user_id) return;
+    const planId = selectedRecord.plan_id;
+    retryCommands.current[planId] ||= crypto.randomUUID();
+    setRetrying(true);
+    setRetryMessage('');
+    try {
+      const result = await retryMaintenancePlan(request,planId,retryCommands.current[planId]);
+      const orderId = result.workorder?.workorder_id || '';
+      setRetryMessage(orderId ? `系统已处理派工，工单：${orderId}；具体状态以工单和日志为准。` : `校验已返回：${result.status || '待核对'}；${(result.maintenance_plan?.validation_findings || []).join('；') || result.stop_reason || '请在日志中查看执行结果'}`);
+      delete retryCommands.current[planId];
+      await refreshRef.current?.();
+    } catch (err) {
+      if (err.detail?.execution_started === false) {
+        delete retryCommands.current[planId];
+        setRetryMessage(`未启动重新派工：${err.message}。补齐数据后可以重新校验。`);
+      } else {
+        setRetryMessage(`重新校验未确认成功：${err.message}。请先核对日志和工单；本页保留原命令编号，避免重复派工。`);
+      }
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  async function removePlans(ids) {
+    if (!actor?.user_id || deleting || !ids.length) return;
+    if (ids.length > 100) { setDeleteError("每批最多删除 100 条方案，请减少选择后重试。"); return; }
+    if (!window.confirm(`确定从方案列表移除这 ${ids.length} 条方案吗？关联工单、执行日志和审计记录仍保留。`)) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const result = await deleteMaintenancePlans(request, ids);
+      const removed = result.deleted_plan_ids || [];
+      setDeletedPlanIds(previous => [...new Set([...previous, ...removed])]);
+      setCheckedIds(previous => previous.filter(id => !removed.includes(id)));
+      await refreshRef.current?.();
+    } catch (err) {
+      setDeleteError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <section className="workspace-view active maintenance-workspace" aria-label="维修方案">
       <ModuleHero eyebrow="Maintenance Agent" title="维修方案" text="查看已有诊断生成的方案、维修依据与派发条件；工单负责执行反馈。" action={<><button className="button" type="button" disabled={loading} onClick={() => refreshRef.current?.()}>{loading ? "刷新中…" : "刷新方案"}</button><button className="button primary" type="button" onClick={openWorkorder}>进入工单执行</button></>} />
       {error && <div className="inline-error" role="status">方案列表刷新失败：{error}{records.length > 0 ? "；仍可查看已读取的方案。" : ""}</div>}
       {orderError && <div className="workspace-notice" role="status">关联工单读取失败：{orderError}；维修方案仍可独立查看。</div>}
       {maintenanceHistoryNotice(history) && <div className="workspace-notice" role="status">{maintenanceHistoryNotice(history)}</div>}
+      {deleteError && <div className="inline-error" role="alert">删除失败：{deleteError}，方案仍保留。</div>}
+      {selectedRecord && <section className="panel module-panel"><h2>重新校验与自动派工</h2><p>重新读取当前设备并执行诊断、检索和维修方案。通过门禁后系统自动派工；不停止或启动机器，不由用户指定负责人。</p><button className="button primary" onClick={retryPlan} disabled={!actor?.user_id || retrying || !selectedRecord.event_id || linkedOrders.length > 0}>{retrying ? '正在重新校验…' : '重新校验并自动派工'}</button>{!actor?.user_id && <p>请先登录维修小组账号。</p>}{retryMessage && <p role="status">{retryMessage}</p>}</section>}
       <section className="workorder-queue maintenance-plan-queue" aria-label="维修方案列表">
-        <div className="workorder-queue-heading"><div><span className="eyebrow">已有方案</span><h2>选择维修方案</h2></div><span>{records.length} 条记录</span></div>
-        {records.length ? <div className="workorder-queue-list">{records.map(record => <button key={record.recordId} type="button" className={`workorder-queue-item ${selectedRecord?.recordId === record.recordId ? "is-selected" : ""}`} onClick={() => setSelectedId(record.recordId)}><span><strong>{getDeviceDisplayName(record.device_id, { snapshot })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong><small>{record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · ${formatTime(record.created_at)}` : ""}</small></span><em>{maintenanceDispatchView(record).label}</em></button>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title={history?.status === "loading" ? "正在读取已有维修方案" : history?.status === "failed" ? "历史方案暂未读出" : "暂无已生成的维修方案"} text={history?.status === "loading" ? "后台只读加载较大的历史记录，请稍候；这里不会将尚未读出的方案判断为不存在。" : "诊断生成方案后会自动显示；未满足派发条件的方案也可查看。"} />}
+        <div className="workorder-queue-heading"><div><span className="eyebrow">已有方案</span><h2>选择维修方案</h2></div><div className="maintenance-delete-actions"><span>{records.length} 条记录</span><button className="button" type="button" disabled={!actor?.user_id || deleting || !records.some(record => record.plan_id)} onClick={() => setCheckedIds(records.filter(record => record.plan_id).slice(0, 100).map(record => record.plan_id))}>{records.length > 100 ? "选择前 100 条" : "全选方案"}</button><button className="button danger" type="button" disabled={!actor?.user_id || deleting || !checkedIds.length} onClick={() => removePlans(checkedIds)}>{deleting ? "删除中…" : `删除选中方案（${checkedIds.length}）`}</button></div></div>
+        <p className="maintenance-plan-muted">{actor?.user_id ? "删除仅移除方案列表展示，不删除关联工单和审计日志。" : "登录后可删除方案；关联工单和审计日志将保留。"}</p>
+        {records.length ? <div className="workorder-queue-list">{records.map(record => <div key={record.recordId} className={`maintenance-plan-list-row ${selectedRecord?.recordId === record.recordId ? "is-selected" : ""}`}><label className="maintenance-plan-select"><input type="checkbox" aria-label={`选择方案 ${record.plan_id || record.recordId}`} disabled={!actor?.user_id || deleting || !record.plan_id} checked={checkedIds.includes(record.plan_id)} onChange={event => setCheckedIds(previous => event.target.checked ? [...new Set([...previous, record.plan_id])] : previous.filter(id => id !== record.plan_id))} /></label><button type="button" className="workorder-queue-item" onClick={() => setSelectedId(record.recordId)}><span><strong>{getDeviceDisplayName(record.device_id, { snapshot })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong><small>{record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · ${formatTime(record.created_at)}` : ""}</small></span><em>{maintenanceDispatchView(record).label}</em></button><button className="button danger" type="button" disabled={!actor?.user_id || deleting || !record.plan_id} onClick={() => removePlans([record.plan_id])}>删除此方案</button></div>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title={history?.status === "loading" ? "正在读取已有维修方案" : history?.status === "failed" ? "历史方案暂未读出" : "暂无已生成的维修方案"} text={history?.status === "loading" ? "后台只读加载较大的历史记录，请稍候；这里不会将尚未读出的方案判断为不存在。" : "诊断生成方案后会自动显示；未满足派发条件的方案也可查看。"} />}
       </section>
       {currentAlarm && !currentRecord && <div className="workspace-notice" role="status">{history?.status === "ready" && !error ? `当前设备 ${currentDevice} 的报警 ${currentAlarm} 尚无对应维修方案；列表中保留的是已有方案。` : `正在核对当前设备 ${currentDevice} 的报警 ${currentAlarm} 对应方案；历史记录尚未完整读出，不能判定方案不存在。`}</div>}
       {selectedRecord && <><div className="workspace-notice" role="status">{hasCurrentDiagnosis ? "当前设备方案" : "历史 / 其他设备方案"} · {selectedRecord.device_id} · 报警 {selectedRecord.alarm_code || "待确认"}{selectedRecord.event_id ? ` · ${selectedRecord.event_id}` : ""}{linkedOrders.length ? ` · 已关联工单 ${linkedOrders.map(order => order.workorder_id).join("、")}` : actor?.user_id ? " · 当前账号未读取到关联工单，派发情况以授权工单列表为准" : " · 工单关联情况需登录后在工单系统查看"}</div><MaintenanceDispatchStatus record={selectedRecord} hasOrder={linkedOrders.length > 0} /><MaintenancePlanPanel plan={plan} hasCurrentDiagnosis={hasCurrentDiagnosis} /></>}
@@ -3114,6 +3191,7 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
         method: "POST",
         body: JSON.stringify({
           user_text: question,
+          mode: "knowledge",
           context: {
             ...buildKnowledgeContext(sample, snapshot),
             conversation_history: buildConversationHistory(),
@@ -3199,24 +3277,34 @@ function QualityWorkspace({ snapshot, sample }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [qualityHistory, setQualityHistory] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskOwner, setTaskOwner] = useState("");
+  const [note, setNote] = useState("");
+  const [reinspectionId, setReinspectionId] = useState("");
+  const resourceGeneration = useRef(0);
+  const selected = qualityHistory.find(item => item.quality_check_id === selectedId);
+  const relatedTasks = tasks.filter(item => item.quality_check_id === selectedId);
+  const outcome = qualityOutcome(quality || {});
   async function loadQualityData() {
-    try {
-      const experienceBody = await request("/api/experience/search", {
-          method: "POST",
-          body: JSON.stringify({ device_id: sample?.device_id || snapshot?.device_id || "", limit: 8 }),
-        });
-      setExperiences(experienceBody.items || []);
-      const history = await request(`/api/v1/quality/checks?target_id=${encodeURIComponent(partId.trim())}`);
-      setQualityHistory(history.items || []);
-      setError("");
-    } catch (err) {
-      setError(err.message);
-    }
+    const generation = ++resourceGeneration.current;
+    const result = await loadQualityResources(request, partId, sample?.device_id || snapshot?.device_id);
+    if (generation !== resourceGeneration.current) return;
+    setExperiences(result.experiences);
+    setQualityHistory(result.history);
+    setTasks(result.tasks);
+    setError(result.errors.join("；"));
+    return result;
   }
 
   useEffect(() => {
+    setQuality(null);
+    setSelectedId("");
+    setReinspectionId("");
     loadQualityData();
-  }, []);
+    return () => { resourceGeneration.current++; };
+  }, [partId]);
 
   async function verifyQuality() {
     if (!partId.trim()) return;
@@ -3224,16 +3312,28 @@ function QualityWorkspace({ snapshot, sample }) {
     try {
       const body = await request(`/api/quality/parts/${encodeURIComponent(partId.trim())}`, { method: "POST", body: "{}" });
       setQuality(body);
+      setSelectedId(body.quality_check_id || "");
       setQualityHistory((items) => body.quality_check_id && !items.some((item) => item.quality_check_id === body.quality_check_id)
         ? [{ quality_check_id: body.quality_check_id, target_id: partId.trim(), result: body.status, score: body.score, created_at: body.checked_at }, ...items]
         : items);
       await loadQualityData();
-      setError("");
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  async function executeAction(action, extras = {}) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await runQualityAction(request, action, { checkId: selectedId, title: taskTitle, owner: taskOwner, note, reinspectionCheckId: reinspectionId, ...extras });
+      const updated = qualityFromAction(result);
+      if (updated) setQuality(updated);
+      await loadQualityData();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -3244,18 +3344,45 @@ function QualityWorkspace({ snapshot, sample }) {
           <div className="panel-heading"><div><span className="eyebrow">检测任务</span><h2>输入零件编号</h2></div></div>
           <label className="field-label" htmlFor="quality-part-id">生产零件编号</label>
           <input id="quality-part-id" className="select-input" value={partId} onChange={(event) => setPartId(event.target.value)} placeholder="例如 PART-001" />
+          <InspectionInput key={partId} partId={partId} onSaved={() => setError('')} />
           <div className="action-row"><button className="button primary" type="button" disabled={busy || !partId.trim()} onClick={verifyQuality}>{busy ? "检测中" : "执行质量检测"}</button></div>
           {error && <div className="inline-error">{error}</div>}
         </section>
         <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">最近结果</span><h2>{quality ? (quality.qualified ? "零件合格" : "零件不合格") : "等待检测"}</h2></div>{quality && <span className={`severity-pill ${quality.qualified ? "normal" : "fault"}`}>{quality.qualified ? "合格" : "不合格"}</span>}</div>
+          <div className="panel-heading"><div><span className="eyebrow">最近结果</span><h2>{quality ? `检测结果：${outcome.label}` : "等待检测"}</h2></div>{quality && <span className={`severity-pill ${outcome.tone}`}>{outcome.label}</span>}</div>
           {quality ? <QualityResultView quality={quality} /> : <div className="empty-state">输入生产零件编号后，系统会返回尺寸、外观、材料、功能和工艺检测结果。</div>}
+          {quality?.recommendation && <FormattedText value={quality.recommendation} />}
+          {quality?.trace_id && <p>本轮日志：{quality.trace_id}（日志系统中查看 Quality Agent 和五项工具调用）</p>}
+          {quality?.report?.report_id && <p>已生成质检报告：{quality.report.report_id}，请在报告中心查看和导出 PDF。</p>}
         </section>
       </div>
       <section className="answer-grid quality-experience-grid">
         <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">经验库 · {experiences.length} 条</span><h2>相关维修经验</h2></div><button className="button" type="button" onClick={loadQualityData}>刷新经验</button></div><ExperienceList items={experiences} /></div>
-        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">真实记录 · {qualityHistory.length} 条</span><h2>质检历史</h2></div></div>{qualityHistory.length ? <div className="document-list">{qualityHistory.map((item) => <article key={item.quality_check_id}><strong>{item.quality_check_id}</strong><span>{item.target_id || partId} · {item.result || "待确认"} · {formatTime(item.created_at)}</span></article>)}</div> : <div className="empty-state">完成检测后，质检记录会写入后端并显示在这里。</div>}</div>
+        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">真实记录 · {qualityHistory.length} 条</span><h2>质检历史 · 选择记录查看闭环</h2></div></div>{qualityHistory.length ? <div className="document-list">{qualityHistory.map((item) => <button className="button quality-history-card" type="button" aria-pressed={selectedId === item.quality_check_id} key={item.quality_check_id} onClick={() => { setSelectedId(item.quality_check_id); setQuality(item); setReinspectionId(""); }}><strong>{item.quality_check_id}</strong><span>{item.target_id || item.part_id || partId} · {qualityHistoryStatusLabel(item)} · {formatTime(item.created_at)}</span></button>)}</div> : <div className="empty-state">完成检测后，质检记录会写入后端并显示在这里。</div>}</div>
       </section>
+      {selected && <section className="panel module-panel quality-closure-panel">
+        <div className="panel-heading"><div><span className="eyebrow">同一质检任务的闭环操作</span><h2>{qualityHistoryStatusLabel(selected)}</h2><p>{selected.quality_check_id} · 批次 {selected.batch_id || "未提供"}</p></div></div>
+        <p>检测失败后创建整改任务；全部整改完成后，重新执行质量检测并引用新记录复检。服务端再次校验通过才能放行和关闭。</p>
+        {["failed", "rectification"].includes(selected.status) && <div>
+          <label className="field-label" htmlFor="quality-task-title">整改内容</label><input className="select-input" id="quality-task-title" value={taskTitle} onChange={event => setTaskTitle(event.target.value)} />
+          <label className="field-label" htmlFor="quality-task-owner">整改负责人</label><input className="select-input" id="quality-task-owner" value={taskOwner} onChange={event => setTaskOwner(event.target.value)} />
+          <div className="action-row"><button className="button primary" disabled={busy || !taskTitle.trim()} onClick={() => executeAction("create_task")}>创建整改任务</button></div>
+        </div>}
+        <label className="field-label" htmlFor="quality-closure-note">执行记录／申诉原因</label><textarea className="qa-input" id="quality-closure-note" value={note} onChange={event => setNote(event.target.value)} placeholder="记录真实整改操作、检测数据或申诉原因" />
+        {relatedTasks.map(task => <div className="quality-task-record" key={task.closure_task_id}><strong>{task.title}</strong><p>{task.closure_task_id} · {task.owner || "负责人未设置"} · {task.status === "completed" ? "已整改" : "待整改"}</p>{task.status === "open" && <button className="button" disabled={busy || !note.trim()} onClick={() => executeAction("complete_task", { taskId: task.closure_task_id })}>提交该任务整改记录</button>}</div>)}
+        {selected.status === "reinspection" && <div>
+          <label className="field-label" htmlFor="quality-reinspection-id">选择新生成的合格检测记录</label>
+          <select className="select-input" id="quality-reinspection-id" value={reinspectionId} onChange={event => setReinspectionId(event.target.value)}><option value="">完成整改后，请先重新执行质量检测</option>{qualityHistory.filter(item => item.quality_check_id !== selectedId && item.result === "passed" && item.batch_id && item.batch_id === selected.batch_id).map(item => <option value={item.quality_check_id} key={item.quality_check_id}>{item.quality_check_id} · {formatTime(item.created_at)}</option>)}</select>
+          <div className="action-row"><button className="button" disabled={busy || !reinspectionId} onClick={() => executeAction("reinspect")}>引用该记录复检</button></div>
+        </div>}
+        <div className="action-row">
+          {["failed", "rectification"].includes(selected.status) && <button className="button" disabled={busy || !note.trim()} onClick={() => executeAction("appeal")}>提交申诉</button>}
+          {selected.status === "appealed" && <><button className="button" disabled={busy} onClick={() => executeAction("resolve_appeal", { decision: "approved" })}>批准申诉并重新整改</button><button className="button" disabled={busy} onClick={() => executeAction("resolve_appeal", { decision: "rejected" })}>驳回申诉</button></>}
+          {(selected.status === "passed" || (selected.status === "reinspection" && selected.reinspection?.passed === true)) && <button className="button primary" disabled={busy || relatedTasks.some(task => task.status !== "completed")} onClick={() => executeAction("release")}>校验并放行</button>}
+          {selected.status === "released" && <button className="button primary" disabled={busy} onClick={() => executeAction("close")}>关闭质检任务</button>}
+        </div>
+        {error && <div className="inline-error" role="alert">{error}</div>}
+      </section>}
     </section>
   );
 }
@@ -3302,9 +3429,9 @@ function StepList({ steps = [] }) {
 }
 
 function QualityResultView({ quality }) {
-  const checks = quality.inspection_items || [];
+  const checks = qualityChecks(quality);
   const defects = (quality.defects || []).map((item) => typeof item === "string" ? item : item?.description || item?.message || item?.name || "").filter(Boolean);
-  return <div className="quality-result"><div className="check-grid">{checks.map((item) => <div key={item.name} className={item.passed ? "normal" : "fault"}><span>{item.name}</span><strong>{item.passed ? "通过" : "未通过"}</strong></div>)}</div><StepList steps={[...defects, ...(quality.findings || [])]} /></div>;
+  return <div className="quality-result"><div className="check-grid">{checks.map((item, index) => { const status = qualityOutcome(item); return <div key={`${item.name}-${index}`} className={status.tone}><span>{item.name}</span><strong>{status.label}</strong></div>; })}</div><StepList steps={[...defects, ...(quality.findings || [])]} /></div>;
 }
 
 function ExperienceList({ items }) {

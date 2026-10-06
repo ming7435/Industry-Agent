@@ -102,20 +102,26 @@ class _OpenAICompatibleProvider:
             raise ProviderError("%s provider returned invalid JSON" % self.name)
         return value
 
-    def chat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def resolved_model(self, payload: Mapping[str, Any], capability: str) -> str:
         requested_model = str(payload.get("model") or "").strip()
         # Agent/RAG 客户端使用 ``deepseek-chat`` 作为通用契约默认值。
         # 当对话提供方是 SiliconFlow 时，该名称可能不是有效的模型名，
         # 因此改写为提供方配置的模型，不把其他提供方的名称直接转发。
+        defaults = {"embedding": self.embedding_model, "rerank": self.reranker_model}
+        if capability in defaults:
+            return requested_model or defaults[capability]
         if not requested_model or (self.name == "siliconflow" and requested_model == "deepseek-chat"):
-            requested_model = self.model
-        return self._post("/chat/completions", {**dict(payload), "model": requested_model})
+            return self.model
+        return requested_model
+
+    def chat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return self._post("/chat/completions", {**dict(payload), "model": self.resolved_model(payload, "chat")})
 
     def embeddings(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return self._post("/embeddings", {**dict(payload), "model": payload.get("model") or self.embedding_model})
+        return self._post("/embeddings", {**dict(payload), "model": self.resolved_model(payload, "embedding")})
 
     def rerank(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return self._post("/rerank", {**dict(payload), "model": payload.get("model") or self.reranker_model})
+        return self._post("/rerank", {**dict(payload), "model": self.resolved_model(payload, "rerank")})
 
 
 class ModelGateway:
@@ -157,7 +163,7 @@ class ModelGateway:
             raise ProviderError("unsupported MODEL_PROVIDER: %s" % mode)
         self.vision_model = "fake-chat" if self.aux_provider.name == "fake" else (os.getenv("SILICONFLOW_VISION_MODEL", "").strip() or "Qwen/Qwen2.5-VL-72B-Instruct")
         self._observation_lock = Lock()
-        self._observations: dict[str, dict[str, Any]] = {}
+        self._observations: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     @property
     def name(self) -> str:
@@ -190,25 +196,26 @@ class ModelGateway:
         return self._invoke(self.aux_provider.chat, {**dict(payload), "model": self.vision_model}, "vision", self.aux_provider)
 
     def _invoke(self, function: Any, payload: Mapping[str, Any], capability: str, provider: Any) -> dict[str, Any]:
+        model = provider.resolved_model(payload, capability) if hasattr(provider, "resolved_model") else str(payload.get("model") or "fake-" + capability)
         try:
             response = function(payload)
             self._validate_response(response, payload, capability)
         except ProviderError as error:
-            self._observe(capability, False, type(error).__name__)
+            self._observe(provider.name, capability, model, False, type(error).__name__)
             raise
-        self._observe(capability, True)
+        self._observe(provider.name, capability, model, True)
         return self._with_metadata(response, payload, capability, provider)
 
-    def _observe(self, capability: str, success: bool, error: str = "") -> None:
+    def _observe(self, provider: str, capability: str, model: str, success: bool, error: str = "") -> None:
         with self._observation_lock:
-            self._observations[capability] = {"reachable": success, "last_error": error,
+            self._observations[(provider, capability, model)] = {"reachable": success, "last_error": error,
                 "checked_at": datetime.now(timezone.utc).isoformat(), "monotonic": time.monotonic()}
 
     def capability_status(self, provider: Any, capability: str, model: str) -> dict[str, Any]:
         synthetic = provider.name == "fake"
         configured = not synthetic and bool(getattr(provider, "api_key", "")) and bool(model)
         with self._observation_lock:
-            observation = dict(self._observations.get(capability) or {})
+            observation = dict(self._observations.get((provider.name, capability, model)) or {})
         fresh = bool(observation) and time.monotonic() - observation["monotonic"] <= 300
         reachable = "synthetic" if synthetic else "unavailable" if not configured else observation["reachable"] if fresh else "stale" if observation else "not_probed"
         return {"ready": not synthetic and configured and reachable is True, "configured": configured,
@@ -247,7 +254,8 @@ class ModelGateway:
         elif valid and capability == "rerank":
             data = response.get("results")
             count = len(payload.get("documents") or [])
-            valid = isinstance(data, list) and (bool(data) or count == 0)
+            top_n = payload.get("top_n", 5)
+            valid = type(top_n) is int and top_n > 0 and isinstance(data, list) and min(top_n, count) <= len(data) <= count
             indices = set()
             for item in data if valid else []:
                 if not isinstance(item, Mapping) or type(item.get("index")) is not int or item["index"] in indices or not 0 <= item["index"] < count or type(item.get("relevance_score")) not in (int, float) or not math.isfinite(item["relevance_score"]):

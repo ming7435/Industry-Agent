@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
-import json
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from .trace import TraceRecorder
+from .trace import TraceRecorder, safe_trace_value
 
 
 class AgentExecutionError(RuntimeError):
@@ -58,14 +57,9 @@ class AgentHarness:
     def _trace_payload(value: Any) -> Any:
         """在轨迹存储中明确记录 Agent 输入和输出，并确保可序列化为 JSON。"""
 
-        if hasattr(value, "model_dump"):
-            value = value.model_dump(mode="json")
-        elif hasattr(value, "to_dict"):
+        if not hasattr(value, 'model_dump') and hasattr(value, "to_dict"):
             value = value.to_dict()
-        try:
-            return json.loads(json.dumps(value, ensure_ascii=False, default=str))
-        except (TypeError, ValueError):
-            return str(value)
+        return safe_trace_value(value)
 
     def _agent_trace_context(self, task: Any, task_id: str, trace_id: str, agent_run_id: str, attempt: int) -> dict[str, Any]:
         context = self._tool_context(task, task_id, trace_id)
@@ -122,7 +116,7 @@ class AgentHarness:
         agent_name_for_policy = str(getattr(self.agent, "name", type(self.agent).__name__)).lower()
         # 超时的 Python 线程无法被强制停止。如果重试带副作用的 Agent，
         # 可能会并发执行两次写入；这类 Agent 必须依赖幂等边界并只执行一次。
-        max_retries = 0 if agent_name_for_policy in {"workorder", "memory", "quality"} else self.config.max_retries
+        max_retries = 0 if agent_name_for_policy in {"workorder", "memory", "quality", "report"} else self.config.max_retries
         for attempt in range(max_retries + 1):
             record, started = self._begin_attempt(abnormal_event, attempt + 1)
             # 每次尝试使用独立线程池，使单次超时不会阻塞后续重试。

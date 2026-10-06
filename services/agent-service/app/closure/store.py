@@ -4,12 +4,30 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from app.config.settings import allow_degraded_storage
 from typing import Any, Mapping
 
 
 class ClosureBackendError(RuntimeError):
     """质检闭环外部存储不可用。"""
+
+
+class _TransactionConnection:
+    """让既有存储操作共享外层质检事务。"""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def cursor(self, *args, **kwargs):
+        return self.connection.cursor(*args, **kwargs)
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
 
 
 class MySQLClosureStore:
@@ -19,6 +37,7 @@ class MySQLClosureStore:
 
     def __init__(self, config: Mapping[str, Any]) -> None:
         self.config = dict(config)
+        self._active_connection = ContextVar('closure_quality_connection', default=None)
         try:
             import mysql.connector
 
@@ -28,7 +47,34 @@ class MySQLClosureStore:
             raise ClosureBackendError("MySQL 质检闭环存储不可用：%s" % error) from error
 
     def _connect(self):
+        active = self._active_connection.get()
+        if active is not None:
+            return _TransactionConnection(active)
         return self._connector.connect(**self.config)
+
+    @contextmanager
+    def quality_transaction(self):
+        if self._active_connection.get() is not None:
+            yield
+            return
+        connection = self._connector.connect(**{**self.config, "autocommit": False})
+        token = self._active_connection.set(connection)
+        cursor = connection.cursor()
+        try:
+            cursor.execute("START TRANSACTION")
+            cursor.execute("SELECT quality_check_id FROM quality_checks ORDER BY quality_check_id FOR UPDATE")
+            cursor.fetchall()
+            cursor.execute("SELECT closure_task_id FROM closure_tasks ORDER BY closure_task_id FOR UPDATE")
+            cursor.fetchall()
+            yield
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            self._active_connection.reset(token)
+            cursor.close()
+            connection.close()
 
     def _initialize_schema(self) -> None:
         statements = (
@@ -261,7 +307,34 @@ class MySQLClosureStore:
                 cursor.execute("SELECT * FROM quality_appeals WHERE quality_check_id = %s ORDER BY created_at DESC", (check_id,))
             else:
                 cursor.execute("SELECT * FROM quality_appeals ORDER BY created_at DESC")
-            return [self._appeal_row(row) for row in cursor.fetchall()]
+            appeals = [self._appeal_row(row) for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+            connection.close()
+        # 处理元数据沿用现有审计表，不增加表结构；审计也可识别旧代码遗留的待办行。
+        resolutions = {}
+        for event in self.list_audit_logs(object_id=check_id, action="quality_appeal_resolved"):
+            changes = event.get("changes") or {}
+            if changes.get("decision") in {"approved", "rejected", "withdrawn"}:
+                resolutions.setdefault((event.get("object_id"), changes.get("appeal_id")), (event, changes))
+        for appeal in appeals:
+            resolution = resolutions.get((appeal.get("quality_check_id"), appeal.get("appeal_id")))
+            if resolution is not None:
+                event, changes = resolution
+                appeal.update({"status": changes["decision"], "resolution_reason": str(changes.get("resolution_reason") or ""), "resolved_by": str(changes.get("resolved_by") or event.get("operator") or ""), "resolved_at": str(changes.get("resolved_at") or event.get("created_at") or "")})
+        return appeals
+
+    def update_appeal(self, check_id: str, appeal_id: str, values: Mapping[str, Any]) -> None:
+        decision = str(values.get("status") or "")
+        if decision not in {"approved", "rejected", "withdrawn"}:
+            raise ValueError("无效申诉结论：%s" % decision)
+        connection = self._connect()
+        cursor = connection.cursor()
+        try:
+            cursor.execute("UPDATE quality_appeals SET status = %s WHERE appeal_id = %s AND quality_check_id = %s AND status = 'pending'", (decision, appeal_id, check_id))
+            if cursor.rowcount != 1:
+                raise ValueError("申诉已结束或不存在，不能重复处理")
+            connection.commit()
         finally:
             cursor.close()
             connection.close()

@@ -17,12 +17,15 @@ _DIAGNOSIS_FIELDS = (
 )
 
 
-def list_saved_maintenance_plans(results: list[dict[str, Any]], device_id: str = "", limit: int = 100) -> dict[str, Any]:
+def list_saved_maintenance_plans(results: list[dict[str, Any]], device_id: str = "", limit: int = 100, deleted_plan_ids=None) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
+    deleted = set(deleted_plan_ids or [])
     for result in results:
         plan = result.get("maintenance_plan")
         if not isinstance(plan, Mapping) or not plan:
+            continue
+        if plan.get("plan_id") in deleted:
             continue
         event = result.get("event") if isinstance(result.get("event"), Mapping) else {}
         plan_diagnosis = plan.get("diagnosis") if isinstance(plan.get("diagnosis"), Mapping) else {}

@@ -35,6 +35,7 @@ BUSINESS_TOOLS = {
     "list_audit_logs",
 }
 QMS_TOOLS = {
+    "register_production_part",
     "get_production_part", "get_part_specification", "inspect_part_dimensions",
     "inspect_part_appearance", "inspect_part_material", "inspect_part_function", "inspect_part_process",
 }

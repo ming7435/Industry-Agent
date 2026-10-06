@@ -3,6 +3,27 @@ import assert from "node:assert/strict";
 
 const workspace = await import("./maintenanceWorkspace.mjs").catch(error => error.code === "ERR_MODULE_NOT_FOUND" ? {} : Promise.reject(error));
 
+test("已删除方案不从工单快照、监控或历史接口重新出现", () => {
+  const plan = { plan_id: "PLAN-DELETED", device_id: "M-1" };
+  const records = workspace.buildMaintenanceWorkspaceRecords({ items: [plan],
+    orders: [{ maintenance_plan_snapshot: plan }], snapshot: { diagnosis: { pipeline: { maintenance_plan: plan } } },
+    deletedPlanIds: ["PLAN-DELETED"] });
+  assert.deepEqual(records, []);
+});
+
+test("历史接口保留删除标记，批量删除请求明确携带方案编号", async () => {
+  const result = await workspace.loadMaintenanceWorkspace(async () => ({ items: [], deleted_plan_ids: ["PLAN-DELETED"] }));
+  assert.deepEqual(result.deletedPlanIds, ["PLAN-DELETED"]);
+  assert.equal(typeof workspace.deleteMaintenancePlans, "function");
+  const response = await workspace.deleteMaintenancePlans(async (path, options) => {
+    assert.equal(path, "/api/maintenance/plans/delete");
+    assert.equal(options.method, "POST");
+    assert.deepEqual(JSON.parse(options.body), { plan_ids: ["PLAN-1", "PLAN-2"] });
+    return { deleted_plan_ids: ["PLAN-1", "PLAN-2"] };
+  }, ["PLAN-1", "PLAN-2"]);
+  assert.deepEqual(response.deleted_plan_ids, ["PLAN-1", "PLAN-2"]);
+});
+
 test("plan loading preserves readable plans when personal workorders are unauthorized", async () => {
   assert.equal(typeof workspace.loadMaintenanceWorkspace, "function", "Independent plan loading is missing");
   const result = await workspace.loadMaintenanceWorkspace(async path => {

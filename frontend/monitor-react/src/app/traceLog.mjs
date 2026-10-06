@@ -15,6 +15,9 @@ export function normalizeRunResponse(body) {
 }
 
 function qualityEvent(record) {
+  const runType = record?.run_type || record?.context?.run_type;
+  if (runType) return runType === 'quality';
+  if ((record?.tool_name || record?.tool || record?.name) === 'get_quality_record') return false;
   const text = [
     record?.type, record?.event, record?.name, record?.node, record?.agent,
     record?.tool, record?.tool_name, record?.step,
@@ -39,7 +42,7 @@ export function runEventMatches(run, record) {
     || taskIds.filter(Boolean).includes(record.task_id);
   const sameEvent = eventIds.filter(Boolean).includes(record.event_id);
   if (!sameIdentity && !sameEvent && (traceIds.some(Boolean) || taskIds.some(Boolean) || eventIds.some(Boolean))) return false;
-  if (run.run_type === "quality") return qualityEvent(record);
+  if (run.run_type === "quality") return sameIdentity || qualityEvent(record);
   if (run.run_type === "rag") return ragEvent(record);
   if (run.run_type === "fault") return !qualityEvent(record);
   return true;
@@ -226,12 +229,12 @@ function buildToolCalls(records) {
     const toolRecords = toolGroup.records;
     const first = toolRecords[0] || {};
     const last = toolRecords[toolRecords.length - 1] || first;
-    const completed = [...toolRecords].reverse().find((record) => firstPresent(record, ["output", "result", "return_body", "response", "body", "data"]));
+    const completed = [...toolRecords].reverse().find((record) => firstPresent(record, ["output", "result", "return_body", "response", "body", "data"]) !== null);
     return {
       call_no: index + 1,
       tool_name: String(first.tool_name || first.tool || first.name || "工具调用"),
       mcp_server: String(first.mcp_server || first.server || ""),
-      status: eventIsError(toolRecords) ? "异常" : toolRecords.some(eventIsComplete) ? "已完成" : "执行中",
+      status: toolRecords.some(eventIsError) ? "异常" : toolRecords.some(eventIsComplete) ? "已完成" : "执行中",
       started_at: first.timestamp || "",
       ended_at: last.timestamp || "",
       duration: durationText(last),
@@ -276,7 +279,7 @@ export function buildAgentInvocations(records = []) {
 
   const invocationGroups = [...groups.values()];
   source.forEach((record) => {
-    if (isAgentLifecycle(record) || !isToolRecord(record)) return;
+    if (isAgentLifecycle(record) || (!isToolRecord(record) && record.type !== 'agent_step')) return;
     const group = nearestGroup(record, invocationGroups);
     if (group) group.records.push(record);
   });
@@ -314,6 +317,13 @@ export function buildAgentInvocations(records = []) {
         output: firstPresent(outputRecord, ["output", "result", "return_body", "response", "body", "data", "state_change"]),
         error: groupedRecords.find((record) => record?.error)?.error || "",
         tool_calls: buildToolCalls(groupedRecords),
+        skill_steps: groupedRecords.filter(record => record.type === 'agent_step' && record.event !== 'step_started').map(record => ({
+          name: record.name, skill: record.skill || record.state_change?.skill || '',
+          step: record.step || record.state_change?.step || record.name, status: eventStatus(record),
+          input: groupedRecords.find(item => item.type === 'agent_step' && item.name === record.name && item.event === 'step_started' &&
+            (!(record.step_run_id || record.context?.step_run_id) || (item.step_run_id || item.context?.step_run_id) === (record.step_run_id || record.context?.step_run_id)))?.input,
+          output: record.output, context: recordContext(record), error: record.error || '',
+        })),
         event_count: groupedRecords.length,
         records: groupedRecords,
       };

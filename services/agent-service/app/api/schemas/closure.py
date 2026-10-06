@@ -14,6 +14,7 @@ class ClosureTaskRequest(BaseModel):
 
 class QualityReinspectionRequest(BaseModel):
     passed: bool
+    reinspection_check_id: str = ""
     findings: list[str] = Field(default_factory=list)
     evidence: list[dict] = Field(default_factory=list)
     operator: str = ""

@@ -49,12 +49,12 @@ def test_write_endpoint_accepts_configured_token_and_uses_authenticated_actor(tm
 
 
 def test_production_write_endpoint_fails_closed_without_token(tmp_path, monkeypatch):
+    # 先构造真实隔离存储，再对实际请求启用生产鉴权；不连接现场 MySQL。
+    client, manager = _client(tmp_path)
+    pending = _pending(manager)
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("AGENT_API_TOKEN", raising=False)
     monkeypatch.setenv("EVENT_STORE_PATH", str(tmp_path / "events.sqlite3"))
-    client, manager = _client(tmp_path)
-    pending = _pending(manager)
-
     response = client.post(
         f"/api/v1/runtime/approvals/{pending['pending_id']}/reject",
         json={"rejected_by": "operator-1", "reason": "unsafe"},

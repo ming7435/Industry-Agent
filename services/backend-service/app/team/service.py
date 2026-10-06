@@ -54,19 +54,19 @@ class TeamService:
         if not hmac.compare_digest(actual, expected):
             raise ValueError('用户名或密码错误')
         token = secrets.token_urlsafe(32)
-        with self.repository.transaction() as db:
-            db.execute('DELETE FROM team_sessions WHERE expires_at<?', (time.time(),))
-            db.execute('INSERT INTO team_sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), row['user_id'], time.time() + 28800))
+        self.repository.save_session(hashlib.sha256(token.encode()).hexdigest(), row['user_id'], time.time() + 28800)
         return public(row), token
 
     def resolve_session(self, token):
+        user_id = self.repository.session_user(hashlib.sha256(token.encode()).hexdigest())
+        if not user_id:
+            return None
         with self.repository.transaction() as db:
-            row = db.execute('SELECT a.* FROM team_accounts a JOIN team_sessions s ON a.user_id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND a.enabled=1', (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()
+            row = db.execute('SELECT * FROM team_accounts WHERE user_id=? AND enabled=1', (user_id,)).fetchone()
         return public(row) if row else None
 
     def logout(self, token):
-        with self.repository.transaction() as db:
-            db.execute('DELETE FROM team_sessions WHERE token_hash=?', (hashlib.sha256(token.encode()).hexdigest(),))
+        self.repository.delete_session(hashlib.sha256(token.encode()).hexdigest())
 
     def technicians(self):
         with self.repository.transaction() as db:

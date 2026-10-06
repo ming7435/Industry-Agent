@@ -13,6 +13,7 @@ steps:
   - compose_report
   - validate_result
   - persist
+  - persist_report
   - build_result
   - fallback
 tools:

@@ -9,6 +9,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from time import perf_counter
+from uuid import uuid4
 from typing import Any, Callable, Dict, Iterable, Iterator, Mapping
 
 from pydantic import BaseModel
@@ -166,6 +167,11 @@ class ToolRegistry:
         """集中定义所有工具；副作用名称和模型暴露范围保持独立。"""
         generic_parameters = {"type": "object", "additionalProperties": True}
         definitions = [
+            *[ToolDefinition(name, self._formal_quality_action, '执行正式质检闭环操作', 'mes', name, generic_parameters, False) for name in (
+                'create_closure_task','complete_closure_task','submit_quality_appeal','resolve_quality_appeal',
+                'reinspect_quality_check','release_quality_check','close_quality_check')],
+            ToolDefinition('register_production_part', self._register_production_part, '保存登录人员录入的实测数据和设计规格', 'qms', 'register_production_part', generic_parameters, False),
+            ToolDefinition('create_quality_check', self._create_quality_check, '保存 Agent 的真实质检证据和数据结果', 'mes', 'create_quality_check', generic_parameters, False),
             ToolDefinition("get_alarm_definition", get_alarm_definition, "查询报警定义", "knowledge", "get_alarm_definition", {"type":"object","properties":{"alarm_code":{"type":"string","description":"报警代码"}},"required":["alarm_code"],"additionalProperties":False}, True),
             ToolDefinition("get_device_status", self.get_device_status, "查询设备状态", "plc", "get_device_status", generic_parameters, True),
             ToolDefinition("get_active_alarms", self.get_active_alarms, "查询设备当前活动报警", "plc", "get_active_alarms", generic_parameters, True),
@@ -241,6 +247,22 @@ class ToolRegistry:
             result[definition.name] = definition
         return result
 
+    @staticmethod
+    def _register_production_part(**arguments: Any) -> Dict[str, Any]:
+        raise RuntimeError('质检数据录入需要已配置的 Backend MySQL 服务，不使用演示适配器')
+
+    @staticmethod
+    def _formal_quality_action(**arguments: Any) -> Dict[str, Any]:
+        raise RuntimeError('正式质检闭环需要 Backend 服务，不使用演示状态')
+
+    def _create_quality_check(self, **arguments: Any) -> Dict[str, Any]:
+        service = getattr(self, 'closure_service', None)
+        if service is None:
+            raise RuntimeError('质检记录服务未配置')
+        values = dict(arguments)
+        operator = str(values.pop('operator', 'quality-agent'))
+        return service.record_part_quality(values, operator=operator)
+
     @contextmanager
     def trace_context(
         self,
@@ -253,7 +275,7 @@ class ToolRegistry:
 
         token = _TOOL_TRACE_CONTEXT.set((str(task_id or ""), str(trace_id or "")))
         base_context = context.as_dict() if isinstance(context, ToolExecutionContext) else dict(context or {})
-        execution_context = {**base_context, **metadata}
+        execution_context = {**_TOOL_EXECUTION_CONTEXT.get(), **base_context, **metadata}
         execution_context.setdefault("task_id", str(task_id or ""))
         execution_context.setdefault("trace_id", str(trace_id or ""))
         context_token = _TOOL_EXECUTION_CONTEXT.set(execution_context)
@@ -262,6 +284,10 @@ class ToolRegistry:
         finally:
             _TOOL_EXECUTION_CONTEXT.reset(context_token)
             _TOOL_TRACE_CONTEXT.reset(token)
+
+    def current_trace_context(self) -> Dict[str, Any]:
+        """返回当前真实调用边界；不从请求正文读取权限或审批状态。"""
+        return dict(_TOOL_EXECUTION_CONTEXT.get())
 
     def _get_device_history(self, **arguments: Any) -> Dict[str, Any]:
         """读取设备历史趋势，并把当前工厂地址注入工具调用。"""
@@ -560,6 +586,8 @@ class ToolRegistry:
         # 将生效的 Runtime 上下文写入每条工具事件，使日志页面不仅能展示
         # 调用了什么，还能展示调用原因以及设备、Agent、步骤范围。
         trace_context = dict(execution_context)
+        call_id = 'TOOL-CALL-' + uuid4().hex
+        trace_context['tool_call_id'] = call_id
         allowed_tools = execution_context.get("allowed_tools")
         allowed = {str(item) for item in allowed_tools or [] if str(item).strip()}
         guard_error = self._guard_error(name, input_payload, execution_context, allowed)
