@@ -189,21 +189,42 @@ class LineController:
         if not self.enabled() or self._unpersisted or pending:
             return {'state': 'blocked', 'reason': '控制模式或停机账本未对账'}
         line = self.ledger.status()
-        if line['state'] == 'running':
-            if any(not all(repair_checks(str(d.get('device_id') or d.get('id') or ''), self.sample(str(d.get('device_id') or d.get('id') or ''))).values()) for d in self.factory.devices()):
-                return {'state': 'blocked', 'reason': '最近复机账本与当前设备状态不一致'}
-            return {'state': 'running', 'already_running': True}
         faults = [f for f in line['faults'] if not f.get('resolved')]
         orders = self.ledger.call('list_workorders', {})['items']
         current = next((o for o in orders if o['workorder_id'] == workorder_id), {})
-        if current.get('assignee') != actor_id or current.get('maintenance_confirmed_by') != actor_id:
+        if not actor_id or current.get('status') not in {'completed', 'closed'} or current.get('assignee') != actor_id or current.get('maintenance_confirmed_by') != actor_id:
             return {'state': 'blocked', 'reason': '当前工单没有可信维修确认'}
+        from app.workorder.review import execution_review
+        current_review = execution_review(current)
+        if current_review['required'] and not current_review['human_confirmed']:
+            return {'state': 'blocked', 'reason': '；'.join(current_review['findings']), 'workorder_ids': [workorder_id]}
         for fault in faults:
             matching = [o for o in orders if o.get('event_id') == fault['event_id'] and o.get('device_id') == fault['device_id']]
             if not matching or any(o.get('status') not in {'completed', 'closed'} or not o.get('maintenance_confirmed_by') or o.get('maintenance_confirmed_by') != o.get('assignee') for o in matching):
                 return {'state': 'blocked', 'reason': '还有未确认完成的故障工单', 'event_id': fault['event_id']}
+            reviews = [(o, execution_review(o)) for o in matching]
+            blocked = [(o, review) for o, review in reviews if review['required'] and not review['human_confirmed']]
+            if blocked:
+                return {'state': 'blocked', 'reason': '；'.join(dict.fromkeys(
+                    finding for _, review in blocked for finding in review['findings'])),
+                    'event_id': fault['event_id'], 'workorder_ids': [o['workorder_id'] for o, _ in blocked]}
         ids = sorted({d for f in faults for d in f['device_ids']})
         actual_ids = sorted({str(d.get('device_id') or d.get('id') or '') for d in self.factory.devices()} - {''})
+        if line['state'] == 'running':
+            if not actual_ids or current.get('device_id') not in actual_ids:
+                return {'state': 'blocked', 'reason': '当前工单设备不在整线设备目录中'}
+            unfinished = [o for o in orders if o.get('device_id') in actual_ids and (o.get('event_id') or o.get('alarm_code')) and o.get('status') not in {'completed', 'closed'}]
+            if unfinished:
+                return {'state': 'blocked', 'reason': '整线还有其他未完成故障工单', 'workorder_ids': [o['workorder_id'] for o in unfinished]}
+            samples = {device_id: self.sample(device_id) for device_id in actual_ids}
+            if any(not all(repair_checks(device_id, sample, 'poststart').values()) for device_id, sample in samples.items()):
+                return {'state': 'blocked', 'reason': '最近复机账本与当前设备状态不一致'}
+            latest = self.ledger.status()
+            if latest['state'] != 'running' or latest['generation'] != line['generation']:
+                return {'state': 'blocked', 'reason': '运行复核期间整线状态发生变化，请重新确认'}
+            if current.get('status') == 'completed':
+                self.ledger.request('/internal/team/repair/poststart', {'workorder_id': workorder_id, 'snapshot': samples[current['device_id']]})
+            return {'state': 'running', 'already_running': True}
         if not ids or ids != actual_ids:
             return {'state': 'blocked', 'reason': '设备目录变化或没有受控停机事件'}
         unfinished = [o for o in orders if o.get('device_id') in ids and (o.get('event_id') or o.get('alarm_code')) and o.get('status') not in {'completed', 'closed'}]

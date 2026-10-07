@@ -29,25 +29,46 @@ def human_action(workorder_id, action, payload, request, operations=None):
     actor = team_actor(request)
     backend = BackendServiceClient()
     order = require_assignee(workorder_id, actor, backend)
-    from app.monitor.line_control import LineController
-    from app.monitor.factory_api import FactoryApiClient
+    if action == 'close':
+        from app.workorder.review import execution_review
+        review = execution_review(order)
+        if review['required'] and not review['human_confirmed']:
+            raise HTTPException(409, '；'.join(review['findings']))
+    from app.monitor.line_control import LineController, recovery_snapshot
+    from app.monitor.factory_api import FactoryApiClient, FactoryApiError
     import os
     if action == 'mark_repair_completed':
+        from app.workorder.review import reviewed_workorder
         if (order.get('maintenance_plan_snapshot') or {}).get('plan_kind') == 'inspection':
             raise HTTPException(409, '现场检查工单请提交检查记录；具体维修需另建维修方案，不能申请复机')
         if operations is not None:
-            return operations.execute_workorder(action, {**payload, 'workorder_id': workorder_id}, actor_id=actor['user_id'])
+            return reviewed_workorder(operations.execute_workorder(action, {**payload, 'workorder_id': workorder_id}, actor_id=actor['user_id']))
         feedback = payload.get('repair_feedback') or payload.get('feedback') or ''
         if isinstance(feedback, dict):
             feedback = feedback.get('feedback') or feedback.get('result') or ''
-        return LineController(FactoryApiClient(os.getenv('FACTORY_API_BASE_URL', 'http://127.0.0.1:4529')), backend).confirm_and_restart(workorder_id, actor['user_id'], feedback)
+        return reviewed_workorder(LineController(FactoryApiClient(os.getenv('FACTORY_API_BASE_URL', 'http://127.0.0.1:4529')), backend).confirm_and_restart(workorder_id, actor['user_id'], feedback))
     if action == 'submit_feedback':
         feedback = payload.get('repair_feedback') or payload.get('feedback') or ''
         if isinstance(feedback, dict):
             feedback = feedback.get('feedback') or feedback.get('result') or ''
-        return backend.call('submit_repair_feedback', {'workorder_id': workorder_id, 'feedback': {'feedback': str(feedback), 'operator': actor['user_id']}})
+        if (order.get('maintenance_plan_snapshot') or {}).get('plan_kind') == 'inspection':
+            device_id = str(order.get('device_id') or '').strip()
+            if not device_id:
+                raise HTTPException(409, '检查工单缺少设备身份，不能核验结束')
+            try:
+                factory = FactoryApiClient(os.getenv('FACTORY_API_BASE_URL', 'http://127.0.0.1:4529'))
+                snapshot = recovery_snapshot(factory.snapshot(device_id), device_id)
+            except FactoryApiError:
+                snapshot = {}
+            return backend.request('/internal/team/inspection/record', {
+                'workorder_id': workorder_id, 'actor_id': actor['user_id'],
+                'feedback': str(feedback), 'snapshot': snapshot,
+            })
+        from app.workorder.review import reviewed_workorder
+        return reviewed_workorder(backend.call('submit_repair_feedback', {'workorder_id': workorder_id, 'feedback': {'feedback': str(feedback), 'operator': actor['user_id']}}))
     if action == 'update' and payload.get('status') == 'in_progress':
-        return backend.call('update_workorder', {'workorder_id': workorder_id, 'status': 'in_progress', 'accepted_by': actor['user_id']})
+        from app.workorder.review import reviewed_workorder
+        return reviewed_workorder(backend.call('update_workorder', {'workorder_id': workorder_id, 'status': 'in_progress', 'accepted_by': actor['user_id']}))
     if action == 'close':
         if operations is not None:
             return operations.execute_workorder('close', {'workorder_id': workorder_id}, from_agent='router')

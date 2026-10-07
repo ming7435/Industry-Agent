@@ -152,6 +152,26 @@ def test_other_unconfirmed_fault_blocks_line(setup):
     assert controller.confirm_and_restart('WO2', 'U2', 'fixed')['machine_control']['state'] == 'running'
 
 
+@pytest.mark.parametrize('status', ['completed', 'closed'])
+def test_other_completed_fault_with_wrong_template_blocks_line_before_restart(setup, status):
+    factory, ledger, controller = setup
+    controller.handle_fault('E1', 'M1', 'fault')
+    controller.handle_fault('E2', 'M2', 'fault')
+    repaired_order(ledger)
+    repaired_order(ledger, 'E2', 'M2', 'WO2', 'U2')
+    ledger.orders[1].update(
+        status=status, maintenance_confirmed_by='U2',
+        diagnosis_snapshot={'device_id': 'M2', 'fault': '刀塔旋转超时'},
+        maintenance_plan_snapshot={'repair_target': '安全门与接料器互锁系统'},
+    )
+    result = controller.confirm_and_restart('WO1', 'U1', 'fixed')['machine_control']
+    assert result['state'] == 'blocked'
+    assert result['workorder_ids'] == ['WO2']
+    assert '不匹配' in result['reason']
+    assert ledger.line['state'] == 'stopped'
+    assert not any(action == 'start' for _, action in factory.calls)
+
+
 def test_unfinished_fault_order_outside_current_ledger_also_blocks(setup):
     factory, ledger, controller = setup
     controller.handle_fault('E1', 'M1', 'fault')

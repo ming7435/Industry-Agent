@@ -6,6 +6,9 @@ function sessionStorage() {
   try { return window.sessionStorage; } catch { return null; }
 }
 
+const isModelRun = (run) => ["preview", "save"].includes(run?.action);
+const operationLabels = { preview: "生成预览", save: "保存设计", list_designs: "读取我的设计", get_design_code: "读取设计代码" };
+
 function ResultImage({ src, label }) {
   const [failed, setFailed] = useState(false);
   return failed ? <p>BuildCAD 返回的图片暂时无法加载，请查看下方原始返回。</p> : <img src={src} alt={label} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
@@ -13,12 +16,16 @@ function ResultImage({ src, label }) {
 
 export default function ProductionCadWorkspace() {
   const [saved] = useState(() => readCadSession(sessionStorage()));
+  const [savedModel] = useState(() => readCadSession(sessionStorage(), "model") || (isModelRun(saved) ? saved : null));
+  const [lastModel, setLastModel] = useState(null);
+  const modelIdentity = useRef(savedModel?.run_id);
+  const modelReadVersion = useRef(0);
   const [prompt, setPrompt] = useState(saved?.draft_prompt ?? (["preview", "save"].includes(saved?.action) ? saved?.prompt : "") ?? "");
   const [action, setAction] = useState(saved?.action === "save" ? "save" : "preview");
   const [designId, setDesignId] = useState(saved?.design_id || "");
   const [designs, setDesigns] = useState(null);
   const [health, setHealth] = useState(null);
-  const [run, setRun] = useState(saved ? { run_id: saved.run_id, action: saved.action, design_id: saved.design_id, status: saved.run_id ? "running" : "outcome_unknown", calls: [] } : null);
+  const [run, setRun] = useState(saved ? { run_id: saved.run_id, action: saved.action, prompt: saved.prompt, design_id: saved.design_id, status: saved.run_id ? "running" : "outcome_unknown", calls: [] } : null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [pollVersion, setPollVersion] = useState(0);
@@ -35,6 +42,17 @@ export default function ProductionCadWorkspace() {
       setDesignId((selected) => current.designs.some((design) => design.id === selected) ? selected : "");
     }
   }, [run]);
+
+  useEffect(() => {
+    if (!isModelRun(savedModel) || !validRunId(savedModel.run_id) || savedModel.run_id === saved?.run_id) return undefined;
+    const abort = new AbortController();
+    const version = ++modelReadVersion.current;
+    // 读取设计后回到页面，只回查上次建模，不重放任何写操作。
+    cadRequest(`/runs/${encodeURIComponent(savedModel.run_id)}`, { signal: abort.signal }).then((record) => {
+      if (!abort.signal.aborted && version === modelReadVersion.current && modelIdentity.current === savedModel.run_id && isModelRun(record)) setLastModel(record);
+    }).catch((failure) => { if (!abort.signal.aborted && version === modelReadVersion.current && modelIdentity.current === savedModel.run_id) setError(`上次建模记录读取失败：${failure.message}`); });
+    return () => abort.abort();
+  }, [savedModel, saved]);
 
   useEffect(() => {
     let active = true;
@@ -79,6 +97,8 @@ export default function ProductionCadWorkspace() {
   }, [run?.run_id, run?.status, pollVersion, health === null]);
 
   async function refresh() {
+    // 主动刷新优先，忽略同一运行较早回查的迟到结果。
+    modelReadVersion.current += 1;
     setError(""); setBusy("refresh");
     try {
       const nextHealth = await cadRequest("/status");
@@ -86,6 +106,10 @@ export default function ProductionCadWorkspace() {
       if (validRunId(run?.run_id)) {
         setRun(await cadRequest(`/runs/${encodeURIComponent(run.run_id)}`));
         setPollVersion((value) => value + 1);
+      }
+      if (validRunId(modelIdentity.current) && modelIdentity.current !== run?.run_id) {
+        const record = await cadRequest(`/runs/${encodeURIComponent(modelIdentity.current)}`);
+        if (isModelRun(record)) setLastModel(record);
       }
     } catch (failure) { setError(failure.message); }
     finally { setBusy(""); }
@@ -116,10 +140,10 @@ export default function ProductionCadWorkspace() {
     await execute(action);
   }
 
-  async function execute(requestAction) {
+  async function execute(requestAction, retryRun) {
     if (busy || cadPending(run?.status) || run?.status === "outcome_unknown") return;
-    const requestPrompt = requestAction === "list_designs" ? "读取我的BuildCAD设计" : requestAction === "get_design_code" ? "读取选中设计代码" : prompt.trim();
-    const target = requestAction === "list_designs" ? "" : designId;
+    const requestPrompt = requestAction === "list_designs" ? "读取我的BuildCAD设计" : requestAction === "get_design_code" ? "读取选中设计代码" : (retryRun?.prompt ?? prompt).trim();
+    const target = requestAction === "list_designs" ? "" : retryRun ? (retryRun.design_id || "") : designId;
     if (!connected || !supported[requestAction]) { setError("当前连接未提供此操作所需的工具，请刷新连接状态。"); return; }
     if (["preview", "save"].includes(requestAction) && !requestPrompt) { setError("请输入建模需求。"); return; }
     if (["save", "get_design_code"].includes(requestAction) && !target) { setError("请先读取并选择一个 BuildCAD 设计。"); return; }
@@ -127,32 +151,51 @@ export default function ProductionCadWorkspace() {
     if (["completed", "failed", "needs_input"].includes(run?.status)) commands.current.reset();
     const payload = { prompt: requestPrompt, action: requestAction, design_id: target, command_id: commands.current.keyFor(requestPrompt, requestAction, target) };
     const session = { ...payload, draft_prompt: prompt };
+    const previousSession = readCadSession(sessionStorage());
     saveCadSession(sessionStorage(), session);
+    if (isModelRun(payload)) {
+      modelIdentity.current = null; setLastModel(null);
+      saveCadSession(sessionStorage(), session, "model");
+    } else if (isModelRun(run)) {
+      setLastModel(run);
+      if (previousSession?.run_id === run.run_id && isModelRun(previousSession)) {
+        modelIdentity.current = run.run_id;
+        saveCadSession(sessionStorage(), previousSession, "model");
+      }
+    }
     setRun(null);
     try {
       const next = await cadRequest("/runs", { method: "POST", body: payload });
       if (!validRunId(next?.run_id) || !["running", "completed", "failed", "needs_input", "outcome_unknown"].includes(next.status)) throw Object.assign(new Error("提交后未收到有效运行编号，请先在 BuildCAD 核对结果。"), { outcomeUnknown: true });
       saveCadSession(sessionStorage(), { ...session, run_id: next.run_id });
+      if (isModelRun(payload)) {
+        modelIdentity.current = next.run_id;
+        saveCadSession(sessionStorage(), { ...session, run_id: next.run_id }, "model");
+      }
       setRun({ ...next, action: next.action || requestAction, design_id: next.design_id ?? target });
     } catch (failure) {
       setError(failure.message);
-      if (failure.outcomeUnknown) setRun({ status: "outcome_unknown", action: requestAction, design_id: target, calls: [], error: failure.message });
-      else saveCadSession(sessionStorage(), null);
+      if (failure.outcomeUnknown) setRun({ status: "outcome_unknown", action: requestAction, prompt: requestPrompt, design_id: target, calls: [], error: failure.message });
+      else {
+        saveCadSession(sessionStorage(), null);
+        if (isModelRun(payload)) saveCadSession(sessionStorage(), null, "model");
+      }
     } finally { setBusy(""); }
   }
 
   function startAfterCheck() {
     commands.current.reset(); saveCadSession(sessionStorage(), null); setRun(null); setError("");
+    if (isModelRun(run)) { modelIdentity.current = null; setLastModel(null); saveCadSession(sessionStorage(), null, "model"); }
   }
 
-  const result = buildCadResult(run);
   const connected = health?.connected === true;
   const pending = cadPending(run?.status);
   const unknown = run?.status === "outcome_unknown";
   const tools = new Set((health?.tools || []).map((tool) => tool.name));
   const supported = { preview: tools.has("render_preview"), save: tools.has("save_design") && tools.has("render_preview") && tools.has("get_design_code"), list_designs: tools.has("list_designs"), get_design_code: tools.has("get_design_code") };
   const locked = Boolean(busy) || pending || unknown;
-  const operationLabels = { preview: "生成预览", save: "保存设计", list_designs: "读取我的设计", get_design_code: "读取设计代码" };
+  const modelRun = isModelRun(run) ? run : lastModel;
+  const displayedRuns = [modelRun, !isModelRun(run) ? run : null].filter(Boolean);
   const selectableDesigns = designs || (designId ? [{ id: designId, name: `${designId}（上次选择）` }] : []);
   return <section className="production-cad">
     <header><span className="cad-eyebrow">CAD Agent</span><h1>BuildCAD 建模</h1><p>描述零件需求，读取设计、生成静态预览，或将修改保存到已选设计。</p></header>
@@ -161,18 +204,20 @@ export default function ProductionCadWorkspace() {
       {health?.error && <p className="cad-connection-error">{String(health.error)}</p>}
       <div className="cad-actions">{!connected && <button type="button" className="cad-primary" disabled={Boolean(busy) || pending || health === null} onClick={connect}>{busy === "connect" ? "正在打开授权…" : "连接 BuildCAD"}</button>}<button type="button" disabled={Boolean(busy) || pending || !connected} onClick={disconnect}>断开连接</button><button type="button" disabled={Boolean(busy)} onClick={refresh}>{busy === "refresh" ? "正在刷新…" : "刷新状态"}</button><a href="https://buildcad.ai" target="_blank" rel="noopener noreferrer">BuildCAD 官网</a></div>
       {connected && <details className="cad-connection-details"><summary>可用工具 · {health.tools?.length || 0} 个</summary><p>{health.endpoint} {health.transport && `· ${health.transport}`}</p><ul>{(health.tools || []).map((tool) => <li key={tool.name}><strong>{tool.name}</strong>{tool.description && <p>{tool.description}</p>}</li>)}</ul></details>}
+      <p className="cad-storage-note">连接成功仅表示已取得工具列表，不表示建模或图片生成成功。</p>
     </section>
     {error && <div className="cad-alert" role="alert">{error}</div>}
     {connected && (supported.list_designs || supported.get_design_code) && <section className="cad-card" aria-labelledby="buildcad-designs-title">
       <div className="cad-card-heading"><h2 id="buildcad-designs-title">远端设计</h2>{supported.list_designs && <button type="button" disabled={locked} onClick={() => execute("list_designs")}>读取我的设计</button>}</div>
       <label htmlFor="buildcad-design">我的 BuildCAD 设计</label>
       <select id="buildcad-design" value={designId} disabled={locked || !selectableDesigns.length} onChange={(event) => setDesignId(event.target.value)}><option value="">请选择设计</option>{selectableDesigns.map((design) => <option key={design.id} value={design.id}>{design.name} · {design.id}</option>)}</select>
-      {designs?.length === 0 && <p className="cad-design-empty">BuildCAD 账号中暂无设计。你仍可描述需求并生成预览。</p>}
+      {designs?.length === 0 && <p className="cad-design-empty">BuildCAD 账号中暂无设计。{supported.preview ? "生成预览无需先有设计，请在下方提交需求。" : "当前连接未提供 render_preview，暂不能生成预览。"}</p>}
       {!designId && <p className="cad-design-help">保存前，请先在 BuildCAD 官网创建一个空设计，再读取并选择它。当前 MCP 工具不提供创建设计操作。</p>}
       {supported.get_design_code && <div className="cad-actions"><button type="button" disabled={locked || !designId} onClick={() => execute("get_design_code")}>读取设计代码</button></div>}
     </section>}
     <section className="cad-card">
       <h2>建模需求</h2>
+      <p className="cad-input-flow">输入需求 → CAD 节点调用 Skill → 模型转换为 llmcad 代码 → MCP 调用 BuildCAD render_preview → 展示实际返回的图片。</p>
       <form onSubmit={submit}>
         <label htmlFor="buildcad-action">操作方式</label>
         <select id="buildcad-action" value={action} disabled={!connected || locked} onChange={(event) => setAction(event.target.value)}>
@@ -187,10 +232,16 @@ export default function ProductionCadWorkspace() {
         <p className="cad-storage-note">设计保存在 BuildCAD；本地仅在 Redis 临时保留执行记录，刷新页面可继续查询当前运行。</p>
       </form>
     </section>
-    {run && <section className="cad-card" aria-labelledby="buildcad-result-title">
-      <div className="cad-card-heading"><h2 id="buildcad-result-title">BuildCAD 返回</h2><span className={`cad-badge ${run.status}`} role="status">{cadStatus(run.status)}</span></div>
+    {!modelRun && <section className="cad-card cad-preview-empty" aria-labelledby="buildcad-preview-title"><h2 id="buildcad-preview-title">建模预览</h2><p>{busy === "submit" ? "正在提交本次操作，请等待返回。" : "尚未生成预览。填写需求并点击“提交给 BuildCAD”；“读取我的设计”只查询已有设计，不会建模。"}</p></section>}
+    {displayedRuns.map((record) => {
+      const run = record, result = buildCadResult(record), modeling = isModelRun(record);
+      const pending = cadPending(record.status), unknown = record.status === "outcome_unknown";
+      const titleId = modeling ? "buildcad-result-title" : "buildcad-read-result-title";
+      return <section key={titleId} className="cad-card" aria-labelledby={titleId}>
+      <div className="cad-card-heading"><h2 id={titleId}>{modeling ? "BuildCAD 建模结果" : "设计读取结果"}</h2><span className={`cad-badge ${run.status}`} role="status">{cadStatus(run.status)}</span></div>
       {run.action && <p className="cad-result-operation">本次操作：{operationLabels[run.action] || run.action}{run.design_id && ` · 设计 ${run.design_id}`}</p>}
       {run.run_id && <p className="cad-identifier">运行编号：{run.run_id}</p>}
+      {modeling ? <div className="cad-submitted-input"><h3>本轮已提交的需求</h3>{typeof run.prompt === "string" ? <p className="cad-submitted-prompt">{run.prompt}</p> : <p>旧记录未保存原始需求；下方仅展示该记录实际保存的工具调用。</p>}</div> : <p className="cad-read-notice">本次仅读取设计，未提交建模需求，不会生成图片。</p>}
       {pending && <p>正在等待真实工具返回。你可以刷新状态或稍后回到此页查询。</p>}
       {unknown && <div className="cad-alert"><p>结果尚不确定。请先前往 BuildCAD 核对设计，再决定是否提交新需求。</p><button type="button" disabled={Boolean(busy)} onClick={startAfterCheck}>已在 BuildCAD 核对，开始新需求</button></div>}
       {run.error && <p className="cad-run-error" role="alert">{run.error_tool && `${cadToolLabel(run.error_tool)}（${run.error_tool}）：`}{String(run.error)}</p>}
@@ -199,9 +250,10 @@ export default function ProductionCadWorkspace() {
       {result.designs !== null && run.action === "list_designs" && <p>{result.designs.length ? `已读取 ${result.designs.length} 个设计，请在上方选择。` : "读取完成：当前账号没有设计。"}</p>}
       {result.codeSource && <details className="cad-design-code" open><summary>{{ read: "读取的设计代码 · get_design_code", preview: "本轮预览代码 · render_preview", saved: "已保存代码 · save_design" }[result.codeSource]}</summary>{result.code === "" ? <p>该设计暂为空代码</p> : <pre>{result.code}</pre>}</details>}
       {!!result.images.length && <div className="cad-result-images">{result.images.map((item) => <figure key={item.src}><ResultImage {...item} /><figcaption>BuildCAD 返回的静态预览</figcaption></figure>)}</div>}
+      {modeling && run.status === "failed" && !result.images.length && <div className="cad-alert"><strong>本轮没有生成可展示的图片。</strong><p>请查看下方实际工具调用和错误。刷新状态只查询记录，不会重新生成。</p>{run.action === "preview" && typeof run.prompt === "string" && run.prompt.trim() && <button type="button" disabled={locked || !connected || !supported.preview} onClick={() => execute("preview", run)}>重试本次预览</button>}</div>}
       {!!result.links.length && <div className="cad-result-links"><h3>工具返回的链接</h3><ul>{result.links.map((url) => <li key={url}><a href={url} target="_blank" rel="noopener noreferrer">{url}</a></li>)}</ul></div>}
       {run.status === "completed" && !result.texts.length && !result.images.length && !result.links.length && !result.codeSource && result.designs === null && <p>本次调用已结束，工具未返回可展示的文本、图片或链接。请查看实际调用记录。</p>}
       {!!run.calls?.length && <details className="cad-call-details"><summary>实际工具调用 · {run.calls.length} 次</summary><ol>{run.calls.map((call, index) => <li key={index}><details><summary>{index + 1}. {cadToolLabel(call.tool)} · {call.tool} · {cadCallStatus(call, run.status)}</summary><h3>参数</h3><pre>{JSON.stringify(call.arguments, null, 2)}</pre><h3>{call.error ? "调用错误" : "返回"}</h3><pre>{JSON.stringify(call.error ? { error: call.error, ...(call.result ? { result: call.result } : {}) } : call.result ?? { error: "未收到工具返回" }, null, 2)}</pre></details></li>)}</ol></details>}
-    </section>}
+    </section>; })}
   </section>;
 }

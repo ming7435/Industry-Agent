@@ -1,5 +1,6 @@
 export const BUILD_CAD_API = "/api/cad/buildcad";
 const SESSION_KEY = "buildcad.active-run";
+const MODEL_SESSION_KEY = "buildcad.model-run";
 const statuses = { running: "BuildCAD 正在处理", completed: "BuildCAD 已返回结果", failed: "BuildCAD 请求失败", needs_input: "待补充需求（尚未建模）", outcome_unknown: "结果待核对" };
 const actions = ["preview", "save", "list_designs", "get_design_code"];
 const toolLabels = { render_preview: "生成预览", save_design: "保存设计", list_designs: "读取我的设计", get_design_code: "读取设计代码" };
@@ -187,9 +188,9 @@ export function oauthCallback(href) {
   return { body: { code, state, redirect_uri: `${url.origin}/?view=cad` }, cleanUrl: url.pathname + url.search + url.hash };
 }
 
-export function readCadSession(storage) {
+export function readCadSession(storage, channel = "active") {
   try {
-    const value = JSON.parse(storage?.getItem(SESSION_KEY) || "null");
+    const value = JSON.parse(storage?.getItem(channel === "model" ? MODEL_SESSION_KEY : SESSION_KEY) || "null");
     if (!value || (value.run_id && !validRunId(value.run_id)) || typeof value.prompt !== "string" || typeof value.command_id !== "string") return null;
     const action = value.action === undefined ? "preview" : value.action;
     const designId = value.design_id === undefined ? "" : value.design_id;
@@ -198,6 +199,7 @@ export function readCadSession(storage) {
   } catch { return null; }
 }
 
-export function saveCadSession(storage, value) {
-  try { if (value) storage?.setItem(SESSION_KEY, JSON.stringify(value)); else storage?.removeItem(SESSION_KEY); } catch { /* 浏览器会话保存可选，失败不影响当前结果展示。 */ }
+export function saveCadSession(storage, value, channel = "active") {
+  const key = channel === "model" ? MODEL_SESSION_KEY : SESSION_KEY;
+  try { if (value) storage?.setItem(key, JSON.stringify(value)); else storage?.removeItem(key); } catch { /* 浏览器会话保存可选，失败不影响当前结果展示。 */ }
 }

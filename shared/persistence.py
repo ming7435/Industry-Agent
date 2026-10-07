@@ -5,6 +5,7 @@ import json
 import os
 from time import monotonic, sleep
 import zlib
+from shared.dispatch_projection import compact_workorder_result, plan_execution_identity, reconcile_plan_workorders, ORDER_FIELDS
 
 
 class StorageUnavailable(RuntimeError):
@@ -162,6 +163,8 @@ class MySQLJsonStore:
             if plan.get("plan_id"):
                 # 禁止把工具全文、模型上下文复制到列表查询投影。
                 projection = {name: result[name] for name in ("maintenance_plan", "diagnosis", "event", "task_id", "trace_id", "status", "stop_reason", "created_at") if name in result}
+                if isinstance(result.get('workorder'), dict):
+                    projection['workorder'] = compact_workorder_result(result['workorder'])
                 cursor.execute("INSERT INTO maintenance_plan_projection(event_key_hash,plan_id,payload) VALUES (%s,%s,%s) ON DUPLICATE KEY UPDATE plan_id=VALUES(plan_id),payload=VALUES(payload),updated_at=CURRENT_TIMESTAMP(6)", (digest, str(plan["plan_id"]), _encode(projection)))
             else:
                 cursor.execute("DELETE FROM maintenance_plan_projection WHERE event_key_hash=%s", (digest,))
@@ -251,6 +254,20 @@ class MySQLJsonStore:
             values = [_decode(row["payload"]) for row in cursor.fetchall()]
             cursor.execute("SELECT COUNT(*) AS total FROM maintenance_plan_projection")
             total = cursor.fetchone()["total"]
+            plan_ids = sorted({identity[0] for value in values if (identity := plan_execution_identity(value))})
+            if plan_ids:
+                # One bounded read of current authority also serves old projections.
+                # Neither event bodies nor workorder snapshots are loaded or rewritten.
+                fields = ["'workorder_id'", 'workorder_id']
+                for name in ORDER_FIELDS:
+                    if name == 'workorder_id':
+                        continue
+                    path = "JSON_EXTRACT(payload,'$.%s')" % name
+                    fields.extend(("'%s'" % name, "CASE WHEN JSON_TYPE(%s)='STRING' THEN LEFT(JSON_UNQUOTE(%s),1024) ELSE NULL END" % (path, path)))
+                placeholders = ','.join(['%s'] * len(plan_ids))
+                cursor.execute("SELECT JSON_OBJECT(" + ','.join(fields) + ") AS payload FROM workorders WHERE JSON_UNQUOTE(JSON_EXTRACT(payload,'$.plan_id')) IN (" + placeholders + ") ORDER BY workorder_id LIMIT %s", (*plan_ids, 10000))
+                orders = [json.loads(row['payload']) for row in cursor.fetchall()]
+                values = reconcile_plan_workorders(values, orders)
         return values, {"status": "ready", "loaded_records": len(values), "total_records": total, "error": "", "storage": "mysql"}
 
     def deleted_plan_ids(self):

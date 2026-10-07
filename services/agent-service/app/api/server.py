@@ -15,7 +15,9 @@ except ImportError:  # pragma: no cover - 仅在库模式缺少可选依赖时�
 import hmac
 from hashlib import sha256
 import json
+import logging
 import os
+from time import perf_counter
 from urllib.error import HTTPError
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -458,10 +460,25 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/workorders")
     def workorders(request: Request) -> Dict[str, Any]:
+        started = perf_counter()
         actor = team_actor(request)
-        result = runtime.container.operations.execute_workorder("query", {}, from_agent="router")
+        # 列表读取不执行 Agent；权威工单仍来自同一个 Backend 数据源。
+        try:
+            result = BackendServiceClient().call('list_workorders', {})
+        except BackendServiceError:
+            raise HTTPException(502, '工单读取失败，请稍后重试；已有工单未删除') from None
+        if (not isinstance(result, Mapping) or result.get('success') is False
+                or not isinstance(result.get('items'), list)
+                or any(not isinstance(order, Mapping) for order in result['items'])):
+            raise HTTPException(502, '工单读取失败，请稍后重试；已有工单未删除')
+        from app.workorder.review import reviewed_workorder
         items = [o for o in result.get('items', []) if actor['role'] == 'supervisor' or o.get('assignee') == actor['user_id']]
-        return {'items': items, 'count': len(items), 'backend': 'workorder-agent'}
+        visible = [reviewed_workorder(o) for o in items]
+        logging.getLogger('uvicorn.error').info(
+            'workorder_list_read role=%s visible_count=%d source_count=%d elapsed_ms=%.3f',
+            actor['role'], len(visible), len(result['items']), (perf_counter() - started) * 1000,
+        )
+        return {'items': visible, 'count': len(visible), 'backend': 'backend-service'}
 
     @app.post("/api/workorders", dependencies=[Depends(require_write_auth)])
     def workorder_create(body: WorkOrderCreateRequest, request: Request) -> Dict[str, Any]:
@@ -473,7 +490,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         actor = team_actor(request)
         if actor['role'] != 'supervisor':
             require_assignee(workorder_id, actor)
-        return runtime.container.operations.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router")
+        from app.workorder.review import reviewed_workorder
+        return reviewed_workorder(runtime.container.operations.execute_workorder("query", {"workorder_id": workorder_id}, from_agent="router"))
 
     @app.delete("/api/workorders/{workorder_id}", dependencies=[Depends(require_write_auth)])
     def delete_workorder(workorder_id: str, request: Request) -> Dict[str, Any]:

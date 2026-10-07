@@ -248,3 +248,17 @@ test("embedded image signatures must match PNG, JPEG or WebP rather than merely 
     "data:image/webp;base64,UklGRjAwMDBXRUJQMTIzNDU2Nzg5MA==",
   ]);
 });
+
+test("读取设计与建模记录分别保存，清理当前读取不能覆盖建模会话", () => {
+  const data = new Map();
+  const storage = { getItem: (key) => data.get(key), setItem: (key, value) => data.set(key, value), removeItem: (key) => data.delete(key) };
+  const model = { run_id: "model-1", prompt: "外径30mm的销轴", command_id: "model-command", action: "preview", design_id: "" };
+  const reading = { run_id: "read-1", prompt: "读取我的BuildCAD设计", command_id: "read-command", action: "list_designs", design_id: "" };
+  cad.saveCadSession(storage, model, "model");
+  cad.saveCadSession(storage, reading);
+  assert.deepEqual(cad.readCadSession(storage, "model"), model);
+  assert.deepEqual(cad.readCadSession(storage), reading);
+  cad.saveCadSession(storage, null);
+  assert.deepEqual(cad.readCadSession(storage, "model"), model);
+  assert.equal(cad.readCadSession(storage), null);
+});

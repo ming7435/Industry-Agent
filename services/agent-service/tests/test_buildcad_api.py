@@ -156,6 +156,44 @@ def test_same_command_is_atomic_and_different_prompt_conflicts(api):
     assert len(api.state.calls) == 1
 
 
+def test_run_record_preserves_validated_prompt_for_acceptance_lookup_and_duplicates(api):
+    created = submit(api, prompt=" \n外径30mm、长50mm的销轴\n保留孔径  8mm。\t ")
+    assert created.status_code == 202, created.text
+    accepted = created.json()
+    assert accepted["prompt"] == "外径30mm、长50mm的销轴\n保留孔径  8mm。"
+    assert "input_digest" not in accepted
+    run_id = accepted["run_id"]
+    assert api.store.get(run_id)["prompt"] == "外径30mm、长50mm的销轴\n保留孔径  8mm。"
+
+    result = api.client.get(PREFIX + "/runs/" + run_id).json()
+    duplicate = submit(api, prompt="外径30mm、长50mm的销轴\n保留孔径  8mm。")
+    assert result["prompt"] == "外径30mm、长50mm的销轴\n保留孔径  8mm。"
+    assert duplicate.status_code == 202 and duplicate.json() == result
+    assert submit(api, prompt="外径60mm的新需求").status_code == 409
+    next_run = submit(api, command="command-two", prompt="外径60mm的新需求")
+    assert next_run.json()["prompt"] == "外径60mm的新需求"
+    assert api.client.get(PREFIX + "/runs/" + run_id).json() == result
+    assert len(api.state.calls) == 2
+
+
+def test_legacy_record_omits_missing_prompt_and_internal_fields_on_lookup_and_duplicate(api):
+    created = submit(api)
+    run_id = created.json()["run_id"]
+    record = api.store.get(run_id)
+    record.pop("prompt", None)
+    record.update(access_token="never-expose-access", refresh_token="never-expose-refresh", internal_state="private-state")
+    api.store.set(run_id, record)
+
+    for response in (api.client.get(PREFIX + "/runs/" + run_id), submit(api)):
+        assert response.status_code in {200, 202}
+        value = response.json()
+        assert "prompt" not in value
+        assert not {"input_digest", "access_token", "refresh_token", "internal_state"}.intersection(value)
+        assert all(secret not in response.text for secret in ("never-expose-access", "never-expose-refresh", "private-state"))
+    assert "prompt" not in api.store.get(run_id)
+    assert len(api.state.calls) == 1
+
+
 @pytest.mark.parametrize("body", [
     {"prompt": "   ", "command_id": "one"},
     {"prompt": "x" * 10001, "command_id": "one"},
@@ -245,9 +283,28 @@ def test_remote_error_and_unknown_outcome_are_never_success_or_replayed(api, out
     created = submit(api)
     value = api.client.get(PREFIX + "/runs/" + created.json()["run_id"]).json()
     assert value["status"] == expected
+    assert value["prompt"] == "外径30mm、长50mm的销轴"
     assert value["error"] and value["calls"][0]["tool"] == "render_preview"
-    assert submit(api).json()["status"] == expected
+    duplicate = submit(api).json()
+    assert duplicate["status"] == expected
+    assert duplicate["prompt"] == "外径30mm、长50mm的销轴"
     assert len(api.state.calls) == 1 and api.state.closed == 1
+
+
+def test_node_setup_failure_keeps_original_prompt_in_record(api):
+    def unavailable_client():
+        raise RuntimeError("private-client-error")
+
+    api.app.state.buildcad_client_factory = unavailable_client
+    created = submit(api, prompt="  制作带孔的安装座  ")
+    assert created.status_code == 202
+    result = api.client.get(PREFIX + "/runs/" + created.json()["run_id"]).json()
+    assert result["status"] == "failed"
+    assert result["prompt"] == "制作带孔的安装座"
+    duplicate = submit(api, prompt="制作带孔的安装座")
+    assert duplicate.json() == result
+    assert "private-client-error" not in duplicate.text
+    assert api.state.calls == []
 
 
 def test_abandoned_running_record_becomes_unknown_without_reexecution(api):

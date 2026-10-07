@@ -80,17 +80,17 @@ test("maintenance page does not ask an authenticated actor to log in again when 
   assert.doesNotMatch(html, /工单关联情况需登录/);
 });
 
-test("workorder empty state explains automatic dispatch rather than offering forbidden manual creation", () => {
+test("workorder initial read shows loading instead of claiming there are no dispatched orders", () => {
   const html = renderOrders({ snapshot: {}, sample: {}, actor: { role: "technician", user_id: "U-1" } });
-  assert.match(html, /自动派发/);
+  assert.match(html, /正在读取已派发工单/);
+  assert.doesNotMatch(html, /暂无可见工单|当前没有待处理工单|0 条记录/);
   assert.doesNotMatch(html, /从当前故障创建工单/);
 });
 
-test("workorder page displays the real plan blockers when a current fault has not been dispatched", () => {
+test("workorder page waits for the authorized list before using plan blockers to explain missing orders", () => {
   const html = renderOrders({ snapshot: { device_id: "M-1", diagnosis: { latest: blockedPipeline.diagnosis, pipeline_by_device: { "M-1": blockedPipeline } } }, sample: { device_id: "M-1", alarm_code: "700001", status: "alarm" }, actor: { role: "technician", user_id: "U-1" } });
-  assert.match(html, /缺少 CAD\/BOM 依据/);
-  assert.match(html, /备件库存为演示数据/);
-  assert.match(html, /replan_limit_exceeded/);
+  assert.match(html, /正在读取已派发工单/);
+  assert.doesNotMatch(html, /当前账号尚无报警|暂不能自动派发|replan_limit_exceeded/);
   assert.doesNotMatch(html, /请先完成工单派发/);
 });
 

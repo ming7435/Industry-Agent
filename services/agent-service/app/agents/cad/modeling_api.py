@@ -103,7 +103,7 @@ def _validate_redirect(redirect_uri):
 
 def _public_record(record):
     keys = ("run_id", "status", "answer", "calls", "error", "error_code", "error_tool", "error_stage",
-        "action", "design_id", "designs", "code", "execution", "created_at", "updated_at")
+        "prompt", "action", "design_id", "designs", "code", "execution", "created_at", "updated_at")
     value = {key: record[key] for key in keys if key in record}
     if value.get("status") == "running" and time.time() - record.get("created_at", 0) > RUN_DEADLINE_SECONDS:
         value.update(status="outcome_unknown", error="此运行长时间未返回结果。请先在 BuildCAD 核对设计，不会自动重新提交。")
@@ -246,7 +246,7 @@ def build_modeling_router(require_auth, trace=None):
         handed_off = False
         try:
             now = time.time()
-            record = {"run_id": run_id, "input_digest": digest, "action": body.action,
+            record = {"run_id": run_id, "input_digest": digest, "prompt": body.prompt, "action": body.action,
                 "design_id": body.design_id, "status": "running", "answer": "", "calls": [], "created_at": now, "updated_at": now}
             try:
                 created = storage.create(run_id, record)

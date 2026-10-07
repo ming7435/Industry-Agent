@@ -4,14 +4,14 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { createEquator300 } from "./equator300.js";
 import "../styles.css";
 import machineImage from "../assets/trak-tc820-machine-transparent.png";
-import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getDeviceDisplayName, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
+import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getDeviceDisplayName, getWorkorderAlarmCode, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
 import { buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLatestPipeline } from "./diagnosisView.mjs";
 import { buildReportDisplaySections, reportCompleteness, reportQualityLabel } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { request } from "./apiRequest.mjs";
-import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, loadMaintenanceWorkspace, maintenanceDispatchView, maintenanceHistoryNotice, maintenanceReferenceDrawings, maintenanceWorkType, retryMaintenancePlan } from "./maintenanceWorkspace.mjs";
+import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, executionReviewView, inspectionWorkorderView, loadMaintenancePlans, loadMaintenanceOrders, maintenanceDispatchView, maintenanceHistoryNotice, maintenanceReferenceDrawings, maintenanceWorkType, retryMaintenancePlan } from "./maintenanceWorkspace.mjs";
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { loadQualityResources, pendingQualityAppealId, qualityChecks, qualityFromAction, qualityHistoryStatusLabel, qualityOutcome, runQualityAction } from "./qualityWorkspace.mjs";
@@ -632,6 +632,12 @@ function App() {
     const requested = new URLSearchParams(window.location.search).get("view");
     return ["cad", "monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested) ? requested : "monitor";
   });
+  const [maintenanceVisited, setMaintenanceVisited] = useState(activeView === "maintenance");
+  const [logsVisited, setLogsVisited] = useState(activeView === "logs");
+  useEffect(() => {
+    if (activeView === "maintenance") setMaintenanceVisited(true);
+    if (activeView === "logs") setLogsVisited(true);
+  }, [activeView]);
   const [ragMessages, setRagMessages] = useState(() => {
     if (typeof window === "undefined") return [];
     const storage = getRagStorage(window);
@@ -720,10 +726,10 @@ function App() {
         )}
         {!bigScreen && activeView === "cad" && <ProductionCadWorkspace />}
         {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} sample={sample} />}
-        {!bigScreen && activeView === "maintenance" && <MaintenancePlanWorkspace snapshot={snapshot} sample={sample} actor={teamActor} />}
-        {!bigScreen && activeView === "workorder" && (teamActor ? <><SupervisorQueue actor={teamActor} /><WorkorderView key={teamActor.user_id} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} /></> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单，监督人查看全部并催办。</p></section>)}
+        {(maintenanceVisited || activeView === "maintenance") && <MaintenancePlanWorkspace active={!bigScreen && activeView === "maintenance"} snapshot={snapshot} sample={sample} actor={teamActor} />}
+        {!bigScreen && activeView === "workorder" && (teamActor ? <><SupervisorQueue actor={teamActor} /><WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} /></> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单，监督人查看全部并催办。</p></section>)}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
-        {!bigScreen && activeView === "logs" && <LogsWorkspace snapshot={snapshot} />}
+        {(logsVisited || activeView === "logs") && <LogsWorkspace active={!bigScreen && activeView === "logs"} snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
         {!bigScreen && activeView === "report" && <ReportWorkspace snapshot={snapshot} />}
         {toast && <div className="toast-message" role="status">{toast}</div>}
@@ -2404,103 +2410,132 @@ function preferredWorkorderId(items, sample, snapshot) {
       || snapshot?.diagnosis?.latest?.alarm_code
       || "",
   ).trim();
-  const exact = items.find((item) => String(item.device_id || "") === deviceId && alarmCode && String(item.alarm_code || "") === alarmCode);
+  const exact = items.find((item) => String(item.device_id || "") === deviceId && alarmCode && getWorkorderAlarmCode(item) === alarmCode);
   const sameDevice = items.find((item) => String(item.device_id || "") === deviceId);
   // 存在报警时，绝不能静默回退到其他报警的工单，否则历史工单会被误显示为当前事件。
   if (alarmCode) return exact?.workorder_id || "";
   return sameDevice?.workorder_id || items[0]?.workorder_id || "";
 }
 
-function LogsWorkspace({ snapshot }) {
+function LogsWorkspace({ snapshot, active = true }) {
   const [runRecords, setRunRecords] = useState([]);
   const [details, setDetails] = useState({ runId: "", records: [] });
   const [filter, setFilter] = useState("all");
   const [selectedRunId, setSelectedRunId] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [indexError, setIndexError] = useState("");
   const [detailError, setDetailError] = useState("");
-  const indexInFlight = useRef(false);
-  const indexGeneration = useRef(0);
+  const indexRequest = useRef(null);
+  const indexLoaded = useRef(false);
+  const lastIndexRead = useRef(0);
   const detailGeneration = useRef(0);
+  const detailRequest = useRef(null);
+  const [detailRevision, setDetailRevision] = useState(0);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const selectedRunRef = useRef(selectedRunId);
   selectedRunRef.current = selectedRunId;
 
-  async function loadTraceIndex() {
-    if (indexInFlight.current) return;
-    indexInFlight.current = true;
-    const generation = ++indexGeneration.current;
-    setLoading(true);
-    try {
-      const body = await request("/api/runs?limit=5000");
-      if (generation !== indexGeneration.current) return;
+  function loadTraceIndex(manual = false) {
+    if (!activeRef.current) return Promise.resolve(null);
+    if (manual || !indexLoaded.current) setLoading(true);
+    if (indexRequest.current) return indexRequest.current.promise;
+    const entry = { controller: new AbortController() };
+    const isCurrent = () => indexRequest.current === entry && activeRef.current;
+    entry.promise = request("/api/runs?limit=5000", { signal: entry.controller.signal }).then(body => {
+      if (!isCurrent()) return null;
       const nextRuns = normalizeRunResponse(body);
+      indexLoaded.current = true;
+      lastIndexRead.current = Date.now();
       setRunRecords(nextRuns);
       setSelectedRunId((current) => current && nextRuns.some((run) => run.run_id === current)
         ? current
         : nextRuns[0]?.run_id || "");
       setIndexError(body.storage_warning || "");
-    } catch (requestError) {
-      if (generation === indexGeneration.current) setIndexError(requestError.message || "日志服务暂不可用");
-    } finally {
-      indexInFlight.current = false;
-      if (generation === indexGeneration.current) setLoading(false);
-    }
+      return nextRuns;
+    }).catch(requestError => {
+      if (isCurrent()) setIndexError(requestError.message || "日志服务暂不可用");
+      return null;
+    }).finally(() => {
+      if (indexRequest.current === entry) {
+        indexRequest.current = null;
+        setLoading(false);
+      }
+    });
+    indexRequest.current = entry;
+    return entry.promise;
   }
 
-  async function loadTraceDetails(traceId, run = null) {
-    const generation = ++detailGeneration.current;
-    const runId = run?.run_id || "";
-    const isCurrent = () => generation === detailGeneration.current && selectedRunRef.current === runId;
-    setDetails({ runId, records: [] });
-    setDetailError("");
-    const traceIds = Array.isArray(run?.trace_ids) && run.trace_ids.length ? run.trace_ids : [traceId];
-    if (!traceIds.some((value) => value && !String(value).startsWith("event-"))) {
-      setLoadingDetails(false);
-      return;
-    }
-    setLoadingDetails(true);
-    try {
-      const bodies = await Promise.all(traceIds
-        .filter((value) => value && !String(value).startsWith("event-"))
-        .map((value) => request(`/api/trace?trace_id=${encodeURIComponent(value)}&limit=5000`)));
-      if (!isCurrent()) return;
-      setDetails({ runId, records: bodies.flatMap((body) => normalizeTraceResponse(body)) });
-      setDetailError(bodies.map((body) => body.storage_warning || "").filter(Boolean).join("；"));
-    } catch (requestError) {
-      if (isCurrent()) setDetailError(requestError.message || "完整日志读取失败");
-    } finally {
-      if (isCurrent()) setLoadingDetails(false);
-    }
+  async function refreshLogs() {
+    const nextRuns = await loadTraceIndex(true);
+    if (nextRuns && activeRef.current) setDetailRevision(current => current + 1);
   }
 
   useEffect(() => {
+    if (!active) return;
     let disposed = false;
     let timer;
     async function poll() {
       await loadTraceIndex();
       if (!disposed) timer = window.setTimeout(poll, 5000);
     }
-    poll();
+    // 最近读取过的索引无需因切页重复请求；旧内容始终可见。
+    const delay = indexLoaded.current ? Math.max(0, 5000 - (Date.now() - lastIndexRead.current)) : 0;
+    if (delay) timer = window.setTimeout(poll, delay);
+    else poll();
     return () => {
       disposed = true;
       window.clearTimeout(timer);
-      indexGeneration.current++;
-      detailGeneration.current++;
+      indexRequest.current?.controller.abort();
+      indexRequest.current = null;
+      setLoading(false);
     };
-  }, []);
+  }, [active]);
 
   const selectedRun = runRecords.find((run) => run.run_id === selectedRunId) || null;
-  const selectedTraceIdsKey = (Array.isArray(selectedRun?.trace_ids) ? selectedRun.trace_ids.join("|") : selectedRun?.trace_id) || "";
-  const selectedRunEventCount = selectedRun?.event_count || 0;
+  const detailVersion = JSON.stringify([selectedRunId, selectedRun?.trace_ids, selectedRun?.trace_id,
+    selectedRun?.event_count, selectedRun?.ended_at, selectedRun?.status, selectedRun?.error_count, detailRevision]);
 
   useEffect(() => {
-    const traceId = selectedRun?.trace_id || "";
-    loadTraceDetails(traceId, selectedRun);
-    return () => { detailGeneration.current++; };
-  }, [selectedRunId, selectedTraceIdsKey, selectedRunEventCount]);
+    return () => {
+      detailGeneration.current++;
+      detailRequest.current?.controller.abort();
+      detailRequest.current = null;
+      setLoadingDetails(false);
+    };
+  }, [active, selectedRunId]);
 
-  const records = details.runId === selectedRunId ? details.records.filter((record) => selectedRun && runEventMatches(selectedRun, record)) : [];
+  useEffect(() => {
+    if (!active || !selectedRun || detailRequest.current || (details.runId === selectedRunId && details.version === detailVersion)) return;
+    const generation = ++detailGeneration.current;
+    const controller = new AbortController();
+    const entry = { controller };
+    detailRequest.current = entry;
+    const runId = selectedRunId;
+    const isCurrent = () => activeRef.current && generation === detailGeneration.current && selectedRunRef.current === runId;
+    const traceIds = (Array.isArray(selectedRun.trace_ids) && selectedRun.trace_ids.length ? selectedRun.trace_ids : [selectedRun.trace_id])
+      .filter(value => value && !String(value).startsWith("event-"));
+    setDetailError("");
+    setLoadingDetails(true);
+    Promise.all(traceIds.map(value => request(`/api/trace?trace_id=${encodeURIComponent(value)}&limit=5000`, { signal: controller.signal })))
+      .then(bodies => {
+        if (!isCurrent()) return;
+        setDetails({ runId, version: detailVersion, records: bodies.flatMap(body => normalizeTraceResponse(body)) });
+        setDetailError(bodies.map(body => body.storage_warning || "").filter(Boolean).join("；"));
+      }).catch(requestError => {
+        if (isCurrent()) setDetailError(requestError.message || "完整日志读取失败");
+      }).finally(() => {
+        if (detailRequest.current === entry) {
+          detailRequest.current = null;
+          setLoadingDetails(false);
+        }
+      });
+    // 同一运行先完成在途读取；若期间版本增长，已读版本更新后再补取。
+  }, [active, selectedRunId, detailVersion, details.version]);
+
+  const records = useMemo(() => details.runId === selectedRunId ? details.records.filter(record => selectedRun && runEventMatches(selectedRun, record)) : [], [details, selectedRunId, selectedRun]);
+  const initialDetailsLoading = loadingDetails && !(details.runId === selectedRunId && details.version);
   const filteredRecords = records.filter((record) => {
     if (filter === "all") return true;
     if (filter === "error") return Boolean(record.error) || /error|failed|timeout/i.test(String(record.event || ""));
@@ -2515,8 +2550,8 @@ function LogsWorkspace({ snapshot }) {
   const statusText = (status) => ({ completed: "已完成", running: "进行中", error: "异常", pending: "待执行", blocked: "待补充或处理" }[status] || status || "待执行");
 
   return (
-    <section className="workspace-view active module-board logs-workspace" aria-label="日志系统">
-      <ModuleHero eyebrow="Runtime Logs" title="日志系统" text="一次完整故障闭环只形成一条运行记录：监控 → 诊断 → 维修方案 → 工单派发 → 报告中心 → 经验总结；质检始终独立成单。" action={<button className="button" type="button" onClick={loadTraceIndex} disabled={loading}>{loading ? "刷新中…" : "刷新运行记录"}</button>} />
+    <section className="workspace-view active module-board logs-workspace" aria-label="日志系统" hidden={!active} style={active ? undefined : { display: "none" }}>
+      <ModuleHero eyebrow="Runtime Logs" title="日志系统" text="一次完整故障闭环只形成一条运行记录：监控 → 诊断 → 维修方案 → 工单派发 → 报告中心 → 经验总结；质检始终独立成单。" action={<button className="button" type="button" onClick={refreshLogs} disabled={loading}>{loading ? "刷新中…" : "刷新运行记录"}</button>} />
       {error && <div className="workspace-notice logs-notice" role="status">日志读取提示：{error}</div>}
       <div className="module-grid logs-stat-grid">
         <ModuleStat label="事件总数" value={records.length} text="Trace Recorder 保留记录" />
@@ -2543,7 +2578,7 @@ function LogsWorkspace({ snapshot }) {
             {[['all', '全部'], ['agent', 'Agent'], ['tool', '工具'], ['runtime', '运行时'], ['error', '异常']].map(([value, label]) => <button key={value} type="button" className={`logs-filter-button ${filter === value ? "is-active" : ""}`} onClick={() => setFilter(value)}>{label}</button>)}
           </div>
         </div>
-        {!loadingDetails && <section className="agent-invocations" aria-label="Agent调用明细">
+        {!initialDetailsLoading && <section className="agent-invocations" aria-label="Agent调用明细">
           <div className="agent-invocations-heading"><div><span className="eyebrow">Agent Invocation I/O</span><h3>Agent 调用明细</h3></div><span className="logs-run-hint">每次调用独立编号，完整展示输入 → 上下文 → 工具 → 输出</span></div>
           {agentInvocations.length ? <div className="agent-invocation-list">{agentInvocations.map((invocation) => <article className={`agent-invocation-card agent-invocation-${invocation.status === "异常" ? "error" : invocation.status === "执行中" ? "running" : "done"}`} key={invocation.id}>
             <div className="agent-invocation-head">
@@ -2562,10 +2597,10 @@ function LogsWorkspace({ snapshot }) {
           </article>)}</div> : <div className="empty-state logs-empty">当前运行记录没有 Agent 生命周期事件；请刷新或先执行一次监控→诊断→维修方案→工单闭环。</div>}
         </section>}
         <div className="logs-subsection-heading"><span className="eyebrow">Raw Events</span><h3>底层事件明细</h3><span>保留每条原始记录，便于核对调用顺序与返回体</span></div>
-        {loadingDetails ? <div className="empty-state logs-empty">正在加载所选执行链路的完整返回体…</div> : filteredRecords.length ? <div className="logs-list">{filteredRecords.map((record, index) => {
+        {initialDetailsLoading ? <div className="empty-state logs-empty">正在加载所选执行链路的完整返回体…</div> : filteredRecords.length ? <div className="logs-list">{filteredRecords.map((record, index) => {
           const summary = traceEventSummary(record);
           const identity = traceIdentity(record, index);
-          return <article className={`log-event log-event-${summary.status === "异常" ? "error" : summary.status === "执行中" ? "running" : "done"}`} key={`${identity}-${index}`}>
+          return <article className={`log-event log-event-${summary.status === "异常" ? "error" : summary.status === "执行中" ? "running" : "done"}`} key={record.trace_record_id || `${identity}-${record.timestamp || index}-${record.event || ""}-${record.name || ""}`}>
             <div className="log-event-head">
               <div className="log-event-title"><span className="log-event-index">{filteredRecords.length - index}</span><div><strong>{summary.label}</strong><h3>{summary.operation}</h3></div></div>
               <span className="log-event-status">{summary.status}</span>
@@ -2692,13 +2727,16 @@ function ReportWorkspace({ snapshot }) {
 }
 
 
-function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
+function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
   const [planItems, setPlanItems] = useState([]);
   const [history, setHistory] = useState({ status: "loading" });
-  const [orders, setOrders] = useState([]);
+  const actorKey = JSON.stringify([actor?.user_id || "", actor?.role || ""]);
+  const [orderState, setOrderState] = useState({ actorKey, items: [], error: "" });
+  // 私有工单与读取它的身份绑定，身份变化的首帧也不能带出旧关联。
+  const orders = orderState.actorKey === actorKey ? orderState.items : [];
+  const orderError = orderState.actorKey === actorKey ? orderState.error : "";
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
-  const [orderError, setOrderError] = useState("");
   const [loading, setLoading] = useState(false);
   const [deletedPlanIds, setDeletedPlanIds] = useState([]);
   const [checkedIds, setCheckedIds] = useState([]);
@@ -2720,34 +2758,52 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
   const plan = selectedRecord ? buildMaintenancePlanView({ plan: selectedRecord, diagnosis: selectedRecord.diagnosis }) : null;
 
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
-    let refreshing = false;
-    setOrders([]);
-    setOrderError("");
-    setDeletionsLoaded(false);
-    async function refresh() {
-      if (refreshing) return;
-      refreshing = true;
-      setLoading(true);
-      const result = await loadMaintenanceWorkspace(request, actor);
-      refreshing = false;
-      if (cancelled) return;
-      if (!result.planError) {
+    let plansPending = null;
+    let ordersPending = null;
+    const controller = new AbortController();
+    function refreshPlans(manual = false) {
+      if (plansPending) return plansPending;
+      if (manual) setLoading(true);
+      plansPending = loadMaintenancePlans(request, { signal: controller.signal }).then(result => {
+        if (cancelled) return;
         setPlanItems(result.items);
         setDeletedPlanIds(previous => [...new Set([...previous, ...result.deletedPlanIds])]);
         setDeletionsLoaded(true);
-      }
-      setHistory(result.planError ? { status: "failed", error: result.planError } : result.history);
-      setOrders(result.orders.map(normalizeWorkorderResponse));
-      setError(result.planError);
-      setOrderError(result.orderError);
-      setLoading(false);
+        setHistory(result.history);
+        setError("");
+      }).catch(err => {
+        if (cancelled) return;
+        setHistory({ status: "failed", error: err.message });
+        setError(err.message);
+      }).finally(() => {
+        plansPending = null;
+        if (!cancelled) setLoading(false);
+      });
+      return plansPending;
     }
+    function refreshOrders() {
+      if (ordersPending) return ordersPending;
+      ordersPending = loadMaintenanceOrders(request, actor, { signal: controller.signal }).then(items => {
+        if (!cancelled) setOrderState({ actorKey, items: items.map(normalizeWorkorderResponse), error: "" });
+      }).catch(err => {
+        if (!cancelled) setOrderState({ actorKey, items: [], error: err.message });
+      }).finally(() => { ordersPending = null; });
+      return ordersPending;
+    }
+    const refresh = (manual = false) => Promise.all([refreshPlans(manual), refreshOrders()]);
+    setLoading(false);
     refreshRef.current = refresh;
     refresh();
     const timer = window.setInterval(refresh, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [actor?.user_id, actor?.role]);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      refreshRef.current = null;
+      window.clearInterval(timer);
+    };
+  }, [actorKey, active]);
 
   function openWorkorder() {
     const params = new URLSearchParams(window.location.search);
@@ -2799,9 +2855,11 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
     }
   }
 
+  // 离开时卸载页面内容与图纸，暂停请求；仅保留已读数据和选择状态。
+  if (!active) return null;
   return (
     <section className="workspace-view active maintenance-workspace" aria-label="维修方案">
-      <ModuleHero eyebrow="Maintenance Agent" title="维修方案" text="查看已有诊断生成的方案、维修依据与派发条件；工单负责执行反馈。" action={<><button className="button" type="button" disabled={loading} onClick={() => refreshRef.current?.()}>{loading ? "刷新中…" : "刷新方案"}</button><button className="button primary" type="button" onClick={openWorkorder}>进入工单执行</button></>} />
+      <ModuleHero eyebrow="Maintenance Agent" title="维修方案" text="查看已有诊断生成的方案、维修依据与派发条件；工单负责执行反馈。" action={<><button className="button" type="button" disabled={loading} onClick={() => refreshRef.current?.(true)}>{loading ? "刷新中…" : "刷新方案"}</button><button className="button primary" type="button" onClick={openWorkorder}>进入工单执行</button></>} />
       {error && <div className="inline-error" role="status">方案列表刷新失败：{error}{records.length > 0 ? "；仍可查看已读取的方案。" : ""}</div>}
       {orderError && <div className="workspace-notice" role="status">关联工单读取失败：{orderError}；维修方案仍可独立查看。</div>}
       {maintenanceHistoryNotice(history) && <div className="workspace-notice" role="status">{maintenanceHistoryNotice(history)}</div>}
@@ -2818,7 +2876,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
             <button type="button" className="workorder-queue-item" onClick={() => setSelectedId(record.recordId)}><span>
               <strong>{getDeviceDisplayName(record.device_id, { snapshot })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong>
               <small>{maintenanceWorkType(record).label} · {record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · ${formatTime(record.created_at)}` : ""}</small>
-              {!hasOrder && dispatch.reason && <small style={{ whiteSpace: "normal" }} title={dispatch.reason}>派发校验：{dispatch.reason}</small>}
+              {dispatch.reason && <small style={{ whiteSpace: "normal" }} title={dispatch.reason}>派发与执行校验：{dispatch.reason}</small>}
             </span><em>{dispatch.label}</em></button>
             <button className="button danger" type="button" disabled={!actor?.user_id || deleting || !record.plan_id} onClick={() => removePlans([record.plan_id])}>删除此方案</button>
           </div>;
@@ -2830,11 +2888,23 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
   );
 }
 
+// Keep an unconfirmed command across workspace navigation, scoped to its actor and order.
+const workorderPlanCommands = new Map();
+
 function WorkorderView({ snapshot, sample, onClosed, actor }) {
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadState, setLoadState] = useState("loading");
+  const reloadRef = useRef(null);
+  const orderRevisionRef = useRef(0);
+  const mountedRef = useRef(false);
+  const [revalidationResults, setRevalidationResults] = useState({});
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const candidateDiagnosis = getLatestDiagnosis(snapshot, sample);
   const latestDiagnosis = diagnosisMatchesCurrent(snapshot, sample, candidateDiagnosis) ? candidateDiagnosis : {};
   const liveSample = sample
@@ -2848,31 +2918,106 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
   const hasCurrentIncident = Boolean(currentIncidentCode);
   const currentDevice = String(liveSample?.device_id || snapshot?.device_id || "");
   const currentPlanRecord = buildMaintenanceWorkspaceRecords({ snapshot }).find(record => record.device_id === currentDevice && record.alarm_code === currentIncidentCode);
-  const hasVisibleIncidentOrder = orders.some(order => String(order.device_id || "") === currentDevice && String(order.alarm_code || "") === currentIncidentCode);
+  const hasVisibleIncidentOrder = orders.some(order => String(order.device_id || "") === currentDevice && getWorkorderAlarmCode(order) === currentIncidentCode);
   const selectedOrder = orders.find((order) => order.workorder_id === selectedId)
     || (!hasCurrentIncident ? orders[0] : undefined);
 
-  async function loadOrders() {
-    try {
-      const body = await request("/api/workorders");
-      const items = (body.items || []).map(normalizeWorkorderResponse);
-      setOrders(previous => items.map(item => ({...item, machine_control: previous.find(old => old.workorder_id === item.workorder_id)?.machine_control || item.machine_control})));
-      setSelectedId(previous => items.some(item => item.workorder_id === previous) ? previous : preferredWorkorderId(items, sample, snapshot));
-      setError("");
-      return items;
-    } catch (err) {
-      setError(err.message);
-      return [];
-    }
-  }
-
   useEffect(() => {
     // 报警触发的创建由运行时负责；查看队列不能创建或重新创建操作员明确删除的工单。
+    let cancelled = false;
+    let pending = null;
+    const controller = new AbortController();
+    setLoadState("loading");
+    function loadOrders() {
+      if (pending) return pending;
+      const revision = orderRevisionRef.current;
+      pending = request("/api/workorders", { signal: controller.signal }).then(body => {
+        if (cancelled || revision !== orderRevisionRef.current) return;
+        if (!Array.isArray(body.items)) throw new Error("工单列表返回异常，请重试");
+        const items = body.items.map(normalizeWorkorderResponse);
+        setOrders(previous => items.map(item => ({...item, machine_control: previous.find(old => old.workorder_id === item.workorder_id)?.machine_control || item.machine_control})));
+        setSelectedId(previous => items.some(item => item.workorder_id === previous) ? previous : preferredWorkorderId(items, sample, snapshot));
+        setError("");
+        setLoadState("ready");
+      }).catch(err => {
+        if (cancelled || revision !== orderRevisionRef.current) return;
+        if ([401, 403].includes(err.status)) {
+          setOrders([]);
+          setSelectedId("");
+        }
+        setError(err.message);
+        setLoadState("failed");
+      }).finally(() => { pending = null; });
+      return pending;
+    }
+    reloadRef.current = loadOrders;
     loadOrders();
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     const timer = window.setInterval(loadOrders, 5000);
-    return () => window.clearInterval(timer);
-  }, [actor?.user_id, currentDevice, currentIncidentCode]);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      reloadRef.current = null;
+      window.clearInterval(timer);
+    };
+  }, [actor?.user_id, actor?.role, currentDevice, currentIncidentCode]);
+
+  const revalidationKey = orderId => JSON.stringify([actor?.user_id, actor?.role, orderId]);
+  const revalidation = revalidationResults[revalidationKey(selectedOrder?.workorder_id)]
+    || workorderPlanCommands.get(revalidationKey(selectedOrder?.workorder_id));
+  const canRevalidate = Boolean(actor?.user_id) && actor?.role === 'technician' && selectedOrder?.assignee === actor.user_id;
+
+  async function revalidatePlan() {
+    if (!selectedOrder?.workorder_id || !canRevalidate || busy) return;
+    const originalOrder = selectedOrder;
+    const orderId = originalOrder.workorder_id;
+    const key = revalidationKey(orderId);
+    const previous = workorderPlanCommands.get(key);
+    if (previous?.pending || (!executionReviewView(originalOrder).required && !previous?.requestId)) return;
+    const requestId = previous?.requestId || crypto.randomUUID();
+    const publish = result => {
+      workorderPlanCommands.set(key, result);
+      if (mountedRef.current) setRevalidationResults(values => ({ ...values, [key]: result }));
+    };
+    const revision = previous?.revision || 0;
+    publish({ requestId, pending: true, phase: 'running', revision, findings: [], message: '正在基于原工单重新生成并校验方案…' });
+    orderRevisionRef.current += 1;
+    setBusy(true);
+    try {
+      const result = await request(`/api/workorders/${encodeURIComponent(orderId)}/revalidate-plan`, {
+        method: 'POST', body: JSON.stringify({ request_id: requestId }),
+      });
+      const order = result.workorder;
+      if (result.request_id !== requestId || !['applied', 'blocked'].includes(result.status)
+          || order?.workorder_id !== orderId || order.device_id !== originalOrder.device_id
+          || order.assignee !== originalOrder.assignee
+          || (result.status === 'applied' && order.execution_review?.required !== false)) {
+        throw new Error('方案更新回包尚不能确认，请核对原请求结果');
+      }
+      const findings = Array.isArray(result.validation_findings)
+        ? result.validation_findings.filter(item => typeof item === 'string' && item.trim()) : [];
+      orderRevisionRef.current += 1;
+      if (result.status === 'applied') {
+        if (mountedRef.current) {
+          setOrders(items => items.map(item => item.workorder_id === orderId ? order : item));
+          setError('');
+        }
+        publish({ requestId: null, pending: false, phase: 'applied', revision: revision + 1, findings,
+          message: '新方案已更新至原工单，负责人保持不变。仍需实际执行并复测；此次校验不代表完成维修或复机。' });
+      } else {
+        publish({ requestId: null, pending: false, phase: 'blocked', revision, findings,
+          message: `${typeof result.message === 'string' ? result.message : '候选方案未通过校验'}。原工单与原方案保留，维修完成和复机仍受原复核条件限制。` });
+      }
+    } catch (err) {
+      const notStarted = err.detail?.execution_started === false;
+      publish({ requestId: notStarted ? null : requestId, pending: false,
+        phase: notStarted ? 'not_started' : 'unknown', revision, findings: [],
+        message: notStarted ? `未启动方案重新校验：${err.message}。补齐依据后可再次生成。`
+          : `方案更新结果尚未确认：${err.message}。保留原请求编号；请显式核对同一请求结果，勿重复生成。` });
+    } finally {
+      if (mountedRef.current) setBusy(false);
+    }
+  }
 
   async function updateOrder(status, fields = {}) {
     if (!selectedOrder) return;
@@ -2889,7 +3034,14 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
       });
       const order = normalizeWorkorderResponse(response);
       if (response.machine_control) order.machine_control = response.machine_control;
-      setOrders((items) => items.map((item) => item.workorder_id === order.workorder_id ? order : item));
+      setOrders((items) => items.map((item) => {
+        if (item.workorder_id !== order.workorder_id) return item;
+        const hasReviewDecision = order.execution_review?.required === true || order.execution_review?.required === false;
+        if (!hasReviewDecision && executionReviewView(item).required) {
+          return { ...order, execution_review: item.execution_review };
+        }
+        return order;
+      }));
       setError("");
       if (status === "closed") onClosed?.();
       return true;
@@ -2923,19 +3075,20 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
       <section className="workorder-queue" aria-label="工单队列">
         <div className="workorder-queue-heading">
           <div><span className="eyebrow">工单队列</span><h2>维修任务</h2></div>
-          <span>{orders.length} 条记录</span>
+          <div className="maintenance-delete-actions"><span>{orders.length ? `${orders.length} 条记录` : loadState === "ready" ? "0 条记录" : loadState === "failed" ? "读取未完成" : "正在读取…"}</span><button className="button" type="button" disabled={busy || loadState === "loading"} onClick={() => reloadRef.current?.()}>刷新工单</button></div>
         </div>
         {orders.length ? (
           <div className="workorder-queue-list">
             {orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => setSelectedId(order.workorder_id)}>
               <span><strong>{getWorkorderDisplayTitle(order, order.repair_target, { snapshot })}</strong><small>{maintenanceWorkType(order).label} · {order.workorder_id} · {order.device_id}</small></span>
-              <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{labelFor(workorderStatusLabels, order.status)}</em>
+              <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{inspectionWorkorderView(order).statusLabel || labelFor(workorderStatusLabels, order.status)}</em>
             </button>)}
           </div>
-        ) : <div className="workorder-queue-empty">暂无可见工单；系统仅在诊断证据、维修方案和派发条件通过后自动派发。可在维修方案页查看未满足条件的具体原因。</div>}
+        ) : <div className="workorder-queue-empty" role="status">{loadState === "loading" ? "正在读取已派发工单及任务内容，请稍候…" : loadState === "failed" ? "工单暂未读出，请查看错误提示或点击刷新工单重试。" : "暂无可见工单；系统仅在诊断证据、维修方案和派发条件通过后自动派发。可在维修方案页查看未满足条件的具体原因。"}</div>}
+        {!selectedOrder && error && <div className="inline-error" role="alert">工单读取失败：{error}</div>}
       </section>
-      {hasCurrentIncident && !hasVisibleIncidentOrder && <><div className="workspace-notice" role="status">当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统按派发条件处理，可在维修方案页查看已有方案和依据。</div>{currentPlanRecord && <MaintenanceDispatchStatus record={currentPlanRecord} />}</>}
-      <WorkorderDetail
+      {loadState === "ready" && hasCurrentIncident && !hasVisibleIncidentOrder && <><div className="workspace-notice" role="status">当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统按派发条件处理，可在维修方案页查看已有方案和依据。</div>{currentPlanRecord && <MaintenanceDispatchStatus record={currentPlanRecord} />}</>}
+      {(selectedOrder || loadState === "ready") && <WorkorderDetail
         order={selectedOrder || null}
         sample={sample}
         snapshot={snapshot}
@@ -2944,13 +3097,16 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
         error={error}
         onUpdate={updateOrder}
         onDelete={deleteOrder}
+        onRevalidate={revalidatePlan}
+        revalidation={revalidation}
+        canRevalidate={canRevalidate}
         readOnly={actor?.role !== 'technician'}
-      />
+      />}
     </section>
   );
 }
 
-function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error, onUpdate, onDelete, readOnly = false }) {
+function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error, onUpdate, onDelete, onRevalidate, revalidation, canRevalidate = false, readOnly = false }) {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [order?.workorder_id]);
@@ -2968,11 +3124,11 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
     );
   }
   const sameDevice = String(diagnosis?.device_id || "") === String(order.device_id || "");
-  const sameAlarm = String(diagnosis?.alarm_code || "") === String(order.alarm_code || "");
+  const sameAlarm = String(diagnosis?.alarm_code || "") === getWorkorderAlarmCode(order);
   const hasCurrentDiagnosis = sameDevice && sameAlarm;
   const orderDiagnosis = order.diagnosis_context && typeof order.diagnosis_context === "object" ? order.diagnosis_context : {};
   const matchedDiagnosis = hasCurrentDiagnosis ? diagnosis : orderDiagnosis;
-  const matchedSample = String(sample?.device_id || "") === String(order.device_id || "") && String(sample?.alarm_code || "") === String(order.alarm_code || "") ? sample : {};
+  const matchedSample = String(sample?.device_id || "") === String(order.device_id || "") && String(sample?.alarm_code || "") === getWorkorderAlarmCode(order) ? sample : {};
   const liveDevice = Array.isArray(snapshot?.devices)
     ? snapshot.devices.find((device) => String(device?.device_id || "") === String(order.device_id || ""))
     : null;
@@ -2982,7 +3138,9 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
   const target = resolveRepairTarget(order, matchedSample);
   const sheet = buildWorkorderSheet({ order, target, diagnosis: matchedDiagnosis, context: { snapshot, sample: matchedSample, recoverySample } });
   const workType = maintenanceWorkType(order);
-  const statusLabel = labelFor(workorderStatusLabels, order.status);
+  const inspectionResult = inspectionWorkorderView(order);
+  const review = executionReviewView(order);
+  const statusLabel = inspectionResult.statusLabel || labelFor(workorderStatusLabels, order.status);
   return (
     <section className="workorder-detail-page">
       <header className="workorder-titlebar">
@@ -2994,17 +3152,25 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
         <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy || readOnly || !['open', 'rejected', 'timeout'].includes(order.status)} onClick={() => onDelete?.(order)}>删除工单</button></div>
       </header>
 
+      {(review.required || revalidation?.message) && <section className="maintenance-plan-panel" aria-label="方案执行复核">
+        <h2>{review.required ? review.label : '方案校验结果'}</h2>
+        {review.required && <><PlanList title="原方案校验记录" items={review.findings} /><p>原方案的问题保留记录。完成实际维修后，在处理说明中填写结果并确认，系统将自动核验设备状态并申请复机。</p></>}
+        {!readOnly && canRevalidate && (review.required || revalidation?.requestId) && <><p>基于原工单的故障依据重新生成并校验方案；保留原工单和负责人，不重新派单，不控制设备。</p><button className="button" type="button" disabled={busy || revalidation?.pending} onClick={onRevalidate}>{revalidation?.phase === 'unknown' ? '核对方案更新结果' : '重新生成并校验方案'}</button></>}
+        {revalidation?.message && <p role="status">{revalidation.message}</p>}
+        {revalidation?.findings?.length > 0 && <PlanList title="新方案未满足的条件" items={revalidation.findings} />}
+      </section>}
+
       <div className="workorder-bigscreen-grid cad-only">
         <RepairCadPanel order={order} target={target} />
       </div>
-      <WorkorderSheet sheet={sheet} workType={workType} busy={busy} error={error} onUpdate={onUpdate} readOnly={readOnly} />
+      <WorkorderSheet sheet={sheet} workType={workType} inspectionResult={inspectionResult} review={review} confirmationRevision={revalidation?.revision || 0} busy={busy} error={error} onUpdate={onUpdate} readOnly={readOnly} />
     </section>
   );
 }
 
 function MaintenanceDispatchStatus({ record, hasOrder = false }) {
   const status = maintenanceDispatchView(record, { hasOrder });
-  return <section className="maintenance-plan-panel" aria-label="自动派发条件"><div className="maintenance-plan-heading"><h2>{status.label}</h2><span>工单就绪：{status.ready}</span></div>{status.reason && <p>{status.reason}</p>}{status.assigneeName && <p>维修负责人：{status.assigneeName} · 对应设备：{status.assignmentDeviceId || "未提供"}</p>}{status.findings.length > 0 && <PlanList title="未满足的条件" items={status.findings} />}{status.stopReason && <p>流程停止原因：{status.stopReason}</p>}<p>系统按证据校验、明确审批要求及登录人员负责设备匹配后派发；方案存在不代表已创建工单。</p></section>;
+  return <section className="maintenance-plan-panel" aria-label="自动派发条件"><div className="maintenance-plan-heading"><h2>{status.label}</h2><span>工单就绪：{status.ready}</span></div>{status.reviewRequired && <div role="status"><strong>{status.reviewLabel}</strong><PlanList title="需重新校验的原因" items={status.reviewFindings} /><p>派发记录保留；重新校验前不可按此方案确认维修完成或复机。</p></div>}{status.reason && <p>{status.reason}</p>}{status.assigneeName && <p>维修负责人：{status.assigneeName} · 对应设备：{status.assignmentDeviceId || "未提供"}</p>}{status.findings.length > 0 && <PlanList title="未满足的条件" items={status.findings} />}{status.stopReason && <p>流程停止原因：{status.stopReason}</p>}<p>系统按证据校验、明确审批要求及登录人员负责设备匹配后派发；方案存在不代表已创建工单。</p></section>;
 }
 
 function MaintenancePlanPanel({ plan, record, hasCurrentDiagnosis }) {
@@ -3067,25 +3233,27 @@ function resolveWorkorderDrawing(order = {}, target = {}) {
   return "";
 }
 
-function WorkorderSheet({ sheet, workType = maintenanceWorkType(), busy, error, onUpdate, readOnly = false }) {
+function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionResult = inspectionWorkorderView(), review = executionReviewView(), confirmationRevision = 0, busy, error, onUpdate, readOnly = false }) {
   const [repairFeedback, setRepairFeedback] = useState("");
-  const [maintenanceConfirmed, setMaintenanceConfirmed] = useState(false);
   const [feedbackSavedId, setFeedbackSavedId] = useState("");
   useEffect(() => {
-    setMaintenanceConfirmed(false);
     setFeedbackSavedId("");
-  }, [sheet.workorderId]);
+  }, [sheet.workorderId, confirmationRevision]);
   const isDone = ["completed", "closed"].includes(sheet.status);
-  const isStarted = ["in_progress", "completed", "closed"].includes(sheet.status);
+  const completionVerified = isDone && sheet.verificationPhase === 'poststart' && (!review.required || review.humanConfirmed);
+  async function saveRecord() {
+    setFeedbackSavedId("");
+    if (await onUpdate("feedback", { repair_feedback: { feedback: repairFeedback.trim() } })) setFeedbackSavedId(sheet.workorderId);
+  }
   return (
     <section className="maintenance-sheet" aria-label={workType.inspection ? "自动派发检查工单" : "自动派发维修工单"}>
       <div className="sheet-heading">
         <div>
           <span className="eyebrow">自动派发工单</span>
           <h2>{workType.inspection ? "检查工单" : "维修工单"}</h2>
-          <p className="sheet-subtitle">{workType.inspection ? `${workType.description} 保存核查结果；需要维修时另建维修方案。` : "故障确认后由系统自动派出，维修人员按维修方案执行并提交反馈。"}</p>
+          <p className="sheet-subtitle">{workType.inspection ? `${workType.description} 报警解除并核验通过后结束检查；仍有异常保留待处理。` : "故障确认后由系统自动派出，维修人员按维修方案执行并提交反馈。"}</p>
         </div>
-        <span className={isDone ? "sheet-status done" : "sheet-status"}>{labelFor(workorderStatusLabels, sheet.status)}</span>
+        <span className={isDone ? "sheet-status done" : "sheet-status"}>{inspectionResult.statusLabel || labelFor(workorderStatusLabels, sheet.status)}</span>
       </div>
 
       <div className="basic-grid">
@@ -3108,11 +3276,13 @@ function WorkorderSheet({ sheet, workType = maintenanceWorkType(), busy, error, 
           <FormattedText value={`故障表现：${sheet.faultSymptom}`} className="fault-symptom" />
         </section>
         <section className="sheet-section feedback-card">
-          <div className="sheet-subhead"><div><span className="section-kicker">WorkOrder 执行反馈</span><h3>{workType.inspection ? "保存检查记录" : "完成后提交结果"}</h3></div></div>
+          <div className="sheet-subhead"><div><span className="section-kicker">WorkOrder 执行反馈</span><h3>{workType.inspection ? "检查结果与核验" : "完成后提交结果"}</h3></div></div>
           <label htmlFor="repair-feedback">处理说明</label>
-          <textarea id="repair-feedback" value={repairFeedback} onChange={(event) => setRepairFeedback(event.target.value)} placeholder="填写处理结果、复测数据或未解决原因" disabled={readOnly || sheet.status === 'closed'} />
+          <textarea id="repair-feedback" value={repairFeedback} onChange={(event) => setRepairFeedback(event.target.value)} placeholder={workType.inspection ? "填写检查结果或未解决原因" : "填写实际完成的维修处理和结果"} disabled={busy || readOnly || sheet.status === 'closed'} />
           {error && <div className="inline-error">{error}</div>}
-          {workType.inspection && feedbackSavedId === sheet.workorderId && <p role="status">检查记录已保存；需要维修时另建维修方案。</p>}
+          {workType.inspection && (feedbackSavedId === sheet.workorderId || inspectionResult.completed) && <p role="status">{inspectionResult.completed ? "检查已完成。" : "检查结果已保存；仍有异常或核验条件未满足，保留待处理。"}</p>}
+          {!workType.inspection && review.required && feedbackSavedId === sheet.workorderId && <p role="status">处理记录已保存。完成实际维修后可直接确认并申请复机。</p>}
+          {workType.inspection && inspectionResult.findings.length > 0 && <PlanList title="检查未满足的条件" items={inspectionResult.findings} />}
           {!workType.inspection && sheet.machineControl && (
             <div className={`machine-control-result ${sheet.machineControl.state === 'running' ? "is-ok" : "is-error"}`} role="status">
               {sheet.machineControl.state === 'running'
@@ -3120,27 +3290,17 @@ function WorkorderSheet({ sheet, workType = maintenanceWorkType(), busy, error, 
                 : `整线尚未恢复运行：${sheet.machineControl.reason || sheet.machineControl.error || sheet.machineControl.state}`}
             </div>
           )}
-          {!workType.inspection && <label className="maintenance-confirmation">
-            <input
-              type="checkbox"
-              checked={maintenanceConfirmed}
-              onChange={(event) => setMaintenanceConfirmed(event.target.checked)}
-              disabled={busy || readOnly || sheet.status === 'closed'}
-            />
-            <span>我确认已完成维修并依据当前设备恢复数据复测，允许申请恢复运行</span>
-          </label>}
+          {!workType.inspection && <p>填写实际处理结果后，点击下方按钮确认完成；系统自动检查设备状态并申请复机。</p>}
           <div className="sheet-actions">
             <button className="button" type="button" disabled={busy || readOnly || isDone || sheet.accepted} onClick={() => onUpdate("in_progress")}>{busy ? "处理中" : sheet.accepted ? '已确认接单' : "确认接单"}</button>
-            {workType.inspection ? <button className="button primary" type="button" disabled={busy || readOnly || isDone || !repairFeedback.trim()} onClick={async () => {
-              setFeedbackSavedId("");
-              if (await onUpdate("feedback", { repair_feedback: { feedback: repairFeedback.trim() } })) setFeedbackSavedId(sheet.workorderId);
-            }}>提交检查记录</button> : <button
+            {!workType.inspection && review.required && <button className="button" type="button" disabled={busy || readOnly || sheet.status === 'closed' || !repairFeedback.trim()} onClick={saveRecord}>提交处理记录</button>}
+            {workType.inspection ? <button className="button primary" type="button" disabled={busy || readOnly || isDone || !repairFeedback.trim()} onClick={saveRecord}>提交检查结果</button> : <button
               className="button primary"
               type="button"
-              disabled={busy || readOnly || sheet.status === 'closed' || (isDone && sheet.verificationPhase === 'poststart') || !repairFeedback.trim() || !maintenanceConfirmed}
-              onClick={() => onUpdate("completed", buildRepairCompletionPayload({ feedback: repairFeedback, operator: sheet.assignee, deviceId: sheet.deviceId, recoverySample: sheet.recoverySample, maintenanceConfirmedBy: sheet.assignee }))}
+              disabled={busy || readOnly || sheet.status === 'closed' || completionVerified || !repairFeedback.trim()}
+              onClick={() => onUpdate("completed", buildRepairCompletionPayload({ feedback: repairFeedback }))}
             >{isDone ? '再次确认并申请复机' : '确认维修完成并申请复机'}</button>}
-            {!workType.inspection && sheet.status === 'completed' && sheet.verificationPhase === 'poststart' && <button className="button" disabled={busy || readOnly} onClick={() => onUpdate('closed')}>关闭工单并生成总结</button>}
+            {!workType.inspection && sheet.status === 'completed' && sheet.verificationPhase === 'poststart' && <button className="button" disabled={busy || readOnly || (review.required && !review.humanConfirmed)} onClick={() => onUpdate('closed')}>关闭工单并生成总结</button>}
           </div>
         </section>
       </div>

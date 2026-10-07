@@ -16,6 +16,7 @@ from .repository import build_repository
 from ..quality import PartInspectionService
 from ..team.service import TeamService
 from shared.repair_recovery import repair_checks
+from shared.technician_confirmation import confirmation_digest, trusted_technician_confirmation
 
 
 def _quality_operation(method):
@@ -247,8 +248,165 @@ class BackendBusinessService:
         value = self.repository.update(order)
         return self._order_result(value)
 
+    def replace_team_workorder_plan(self, workorder_id, actor_id, expected_plan_id,
+                                   expected_updated_at, request_id, maintenance_plan):
+        """Apply a server-generated revision without granting repair/restart authority.
+
+        Revision, audit event and retry receipt share the one atomic order update.
+        The repository's row lock/revision check also rejects concurrent repair writes.
+        """
+        if not all(isinstance(value, str) and value.strip() for value in
+                   (workorder_id, actor_id, expected_plan_id, expected_updated_at, request_id)):
+            raise ValueError('方案替换缺少工单、人员、原方案版本或请求身份')
+        fingerprint = hashlib.sha256(json.dumps(
+            [workorder_id, actor_id, expected_plan_id, expected_updated_at, request_id, maintenance_plan],
+            ensure_ascii=False, sort_keys=True, separators=(',', ':'), default=str).encode('utf-8')).hexdigest()
+        inventory_snapshot = None
+        try:
+            with self.team.repository.transaction() as db:
+                self.team.repository.lock(db)
+                borrower = getattr(self.repository, 'borrow_transaction', None)
+                team_path = self.team.repository.sqlite_path
+                transaction = borrower(db, team_path) if borrower and team_path else nullcontext()
+                with transaction:
+                    order = self._require(workorder_id)
+                    technician = next((item for item in self.team.technicians(device_id=order.get('device_id'))
+                                       if item['user_id'] == actor_id), None)
+                    if not technician or order.get('assignee') != actor_id:
+                        raise PermissionError('仅该设备当前被派工的维修人员可以更新方案')
+                    for revision in order.get('plan_revisions') or []:
+                        if revision.get('request_id') == request_id:
+                            if revision.get('request_fingerprint') != fingerprint:
+                                raise ValueError('该请求已绑定不同的方案替换参数')
+                            return self._order_result(order, plan_replaced=True, replayed=True,
+                                                      plan_revision_id=revision['plan_revision_id'], request_id=request_id)
+                    if order.get('status') not in {'open', 'in_progress'}:
+                        raise ValueError('只有尚未提交维修完成的工单可以替换方案')
+                    if order.get('plan_id') != expected_plan_id or order.get('updated_at') != expected_updated_at:
+                        raise ValueError('工单或方案已被更新，请刷新后重新生成方案')
+                    plan = self._validated_replacement_plan(order, maintenance_plan)
+                    inventory_snapshot = deepcopy(self._inventory)
+                    reservations = self._replacement_reservations(order, plan.get('required_parts') or [])
+                    revision_id = 'PLAN-REV-' + uuid4().hex[:12].upper()
+                    revision = {'plan_revision_id': revision_id, 'request_id': request_id,
+                                'request_fingerprint': fingerprint, 'actor_id': actor_id,
+                                'previous_plan_id': order['plan_id'], 'plan_id': plan['plan_id'],
+                                'previous_plan_snapshot': deepcopy(order.get('maintenance_plan_snapshot') or {}),
+                                'previous_repair_verification': deepcopy(order.get('repair_verification') or {}),
+                                'previous_updated_at': order['updated_at'], 'created_at': self._now()}
+                    engineering = dict(plan.get('engineering_context') or {})
+                    viewer = engineering.get('viewer_context') or {}
+                    refs = engineering.get('drawing_ref_details') or engineering.get('drawing_refs') or []
+                    first_ref = refs[0] if refs and isinstance(refs[0], Mapping) else {}
+                    drawing = {'drawing_url': str(engineering.get('drawing_url') or first_ref.get('drawing_url') or ''),
+                               'model_url': str(engineering.get('model_url') or viewer.get('model_url') or ''),
+                               'mesh_name': str(engineering.get('mesh_name') or viewer.get('mesh_name') or ''),
+                               'location': str(engineering.get('location') or viewer.get('location') or '')}
+                    updated = {**order, 'plan_id': plan['plan_id'], 'maintenance_plan_snapshot': plan,
+                               'steps': list(plan['repair_steps']), 'required_parts': list(plan.get('required_parts') or []),
+                               'repair_target': dict(plan.get('target_part') or plan.get('repair_target_detail') or {}),
+                               'drawing_context': drawing, 'inventory_reservations': reservations,
+                               'repair_verification': {}, 'updated_at': self._now(),
+                               'plan_revisions': [*deepcopy(order.get('plan_revisions') or []), revision]}
+                    self._record_event(updated, 'maintenance_plan_replaced', order['status'], order['status'],
+                                       {key: revision[key] for key in ('plan_revision_id', 'actor_id', 'request_id', 'previous_plan_id', 'plan_id')})
+                    stored = self.repository.update(updated)
+                    return self._order_result(stored, plan_replaced=True, replayed=False,
+                                              plan_revision_id=revision_id, request_id=request_id)
+        except Exception:
+            if inventory_snapshot is not None:
+                self._inventory = inventory_snapshot
+            raise
+
+    @classmethod
+    def _validated_replacement_plan(cls, order, candidate):
+        old = order.get('maintenance_plan_snapshot') or {}
+        diagnosis = order.get('diagnosis_snapshot')
+        if not isinstance(diagnosis, Mapping) or not diagnosis:
+            raise ValueError('原工单缺少可靠诊断身份，不能补造来源替换方案')
+        if not isinstance(candidate, Mapping):
+            raise ValueError('新维修方案数据无效')
+        plan = deepcopy(dict(candidate))
+        new_diagnosis = plan.get('diagnosis')
+        if not isinstance(new_diagnosis, Mapping):
+            raise ValueError('新维修方案缺少原诊断归属')
+        original_sources = list(cls._plan_contract_sources(diagnosis))
+        revised_sources = list(cls._plan_contract_sources(new_diagnosis))
+        device = str(order.get('device_id') or '')
+        alarm = str(order.get('alarm_code') or next((source.get('alarm_code') for source in original_sources if source.get('alarm_code')), ''))
+        fault = str(next((source.get('fault') for source in original_sources if source.get('fault')), ''))
+        original_device = next((source.get('device_id') for source in original_sources if source.get('device_id')), '')
+        revised_device = next((source.get('device_id') for source in revised_sources if source.get('device_id')), '')
+        revised_fault = str(next((source.get('fault') for source in revised_sources if source.get('fault')), ''))
+        if not device or original_device != device or not alarm or not fault or not order.get('event_id'):
+            raise ValueError('原工单缺少可靠设备或故障身份')
+        if revised_device != device or revised_fault != fault:
+            raise ValueError('新方案与原工单设备或主故障不一致')
+        if not any(source.get('alarm_code') for source in revised_sources):
+            raise ValueError('新方案诊断缺少原报警身份，不能从原单补造')
+        sources = list(cls._plan_contract_sources(order, old, diagnosis, plan, new_diagnosis, old.get('diagnosis') or {}))
+        for source in sources:
+            if any(source.get(key) and str(source[key]) != expected for key, expected in
+                   (('device_id', device), ('event_id', str(order['event_id'])), ('alarm_code', alarm))):
+                raise ValueError('新方案与原工单设备、事件或报警归属不一致')
+        if old.get('plan_id') and old['plan_id'] != order.get('plan_id'):
+            raise ValueError('原工单方案身份不一致')
+        if not isinstance(plan.get('plan_id'), str) or not plan['plan_id'].strip() or plan['plan_id'] == order.get('plan_id'):
+            raise ValueError('新方案必须具有不同于原方案的有效编号')
+        if any(source.get('requires_approval') for source in sources):
+            raise ValueError('原方案或新方案明确要求审批，请通过审批流程处理')
+        if plan.get('plan_kind', 'repair') != old.get('plan_kind', 'repair'):
+            raise ValueError('方案替换不能改变维修或检查工单用途')
+        steps = plan.get('repair_steps')
+        if (plan.get('workorder_ready') is not True or plan.get('validation_findings') or plan.get('validation_errors')
+                or not isinstance(steps, list) or not steps or any(not isinstance(step, str) or not step.strip() for step in steps)
+                or cls._contains_untrusted_flag(plan)):
+            raise ValueError('新方案未通过校验就绪或包含不可信工程证据')
+        if not isinstance(plan.get('required_parts', []), list):
+            raise ValueError('新方案备件数据无效')
+        return plan
+
+    @staticmethod
+    def _plan_contract_sources(*values):
+        """Inspect known input wrappers; outer values cannot hide inner identity/approval."""
+        pending, seen = list(reversed(values)), set()
+        while pending:
+            source = pending.pop()
+            if not isinstance(source, Mapping) or id(source) in seen:
+                continue
+            seen.add(id(source))
+            yield source
+            pending.extend(source.get(key) for key in ('raw', 'target_input', 'maintenance_plan', 'plan', 'event'))
+
+    def _replacement_reservations(self, order, required_parts):
+        requested = {}
+        for raw in required_parts:
+            part = raw if isinstance(raw, Mapping) else {'part_no': str(raw)}
+            number = str(part.get('part_no') or part.get('part_id') or '').strip()
+            quantity = part.get('quantity', 1)
+            if not number or isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
+                raise ValueError('新方案备件必须提供有效编号及正整数数量')
+            requested[number] = requested.get(number, 0) + quantity
+        existing = dict(order.get('inventory_reservations') or {})
+        reservations = {}
+        for number in set(existing) | set(requested):
+            record = existing.get(number) or {}
+            reserved = int(record.get('quantity') or 0)
+            desired = requested.get(number, 0)
+            if reserved > desired:
+                self.release_inventory(part_no=number, quantity=reserved - desired)
+            if desired > reserved:
+                result = self.reserve_inventory(part_no=number, quantity=desired - reserved,
+                                                workorder_id=order['workorder_id'])
+                record = {'reservation_id': result['reservation']['reservation_id']}
+            if desired:
+                reservations[number] = {**record, 'quantity': desired}
+        return reservations
+
     def mark_repair_completed(self, workorder_id: str, repair_feedback: Any = None, feedback: Any = None, repair_verification: Mapping[str, Any] | None = None, **_: Any) -> dict[str, Any]:
         current = self._require(workorder_id)
+        if (current.get('maintenance_plan_snapshot') or {}).get('plan_kind') == 'inspection':
+            raise ValueError('现场检查工单不能提供维修完成证明')
         if str(current.get("status") or "") != "in_progress":
             raise ValueError("维修提交前工单必须处于 in_progress，不能跳过派工")
         if not str(current.get("assignee") or "").strip() or not current.get("started_at"):
@@ -304,18 +462,102 @@ class BackendBusinessService:
         order = self._require(workorder_id)
         return self.team.create_reminder(workorder_id, actor['user_id'], str(order.get('assignee') or ''), text)
 
+    def record_team_inspection(self, workorder_id, actor_id, feedback, snapshot):
+        """Save an assignee's inspection; close only after current safe-state evidence.
+
+        Inspection closure is independent of repair confirmation and never grants
+        restart or repair-learning authority.
+        """
+        with self.team.repository.transaction() as db:
+            self.team.repository.lock(db)
+            borrower = getattr(self.repository, 'borrow_transaction', None)
+            team_path = self.team.repository.sqlite_path
+            transaction = borrower(db, team_path) if borrower and team_path else nullcontext()
+            with transaction:
+                order = self._require(workorder_id)
+                if not order.get('assignee'):
+                    raise ValueError('检查工单必须先完成派工')
+                technician = next((item for item in self.team.technicians(device_id=order.get('device_id'))
+                                   if item['user_id'] == actor_id), None)
+                if not technician or order.get('assignee') != actor_id:
+                    raise PermissionError('仅该设备被派工的维修人员可以提交检查记录')
+                if (order.get('maintenance_plan_snapshot') or {}).get('plan_kind') != 'inspection':
+                    raise ValueError('该接口仅用于现场检查工单，不能替代维修确认')
+                previous = str(order.get('status') or '')
+                verification = order.get('repair_verification') or {}
+                if previous == 'closed' and verification.get('source') == 'inspection' and verification.get('passed') is True:
+                    return {**self._order_result(order), 'already_recorded': True,
+                            'inspection_result': {key: verification[key] for key in ('passed', 'checks', 'validation_findings')}}
+                if previous != 'in_progress' or not order.get('started_at'):
+                    raise ValueError('检查工单必须已派工且尚未关闭')
+                if not isinstance(feedback, str) or not feedback.strip():
+                    raise ValueError('请提交实际现场检查记录')
+                sample = dict(snapshot) if isinstance(snapshot, Mapping) else {}
+                # Safe stopped states are allowed: another fault may still hold
+                # the line stopped while this warning inspection is resolved.
+                checks = repair_checks(order.get('device_id'), sample, 'prestart')
+                checks['alarm_state_available'] = any(key in sample for key in ('alarm_code', 'active_alarms', 'alarm_codes', 'alarms'))
+                checks['snapshot_trusted'] = not any(sample.get(key) is True for key in ('synthetic', 'degraded')) \
+                    and sample.get('found') is not False and sample.get('success') is not False and not sample.get('error')
+                if sample.get('alarm_active') is True:
+                    checks['alarms_clear'] = False
+                # Inspection submission reads a current sample, so a day-old
+                # repair recovery record is not sufficient to close it.
+                try:
+                    stamp = sample.get('checked_at') or sample.get('timestamp') or sample.get('updated_at')
+                    checked = datetime.fromisoformat(str(stamp).replace('Z', '+00:00'))
+                    checked = checked if checked.tzinfo else checked.replace(tzinfo=timezone.utc)
+                    age = (datetime.now(timezone.utc) - checked).total_seconds()
+                    checks['recovery_fresh'] = checks['recovery_fresh'] and -30 <= age <= 300
+                except (TypeError, ValueError, OverflowError):
+                    checks['recovery_fresh'] = False
+                labels = {'device_identity': '当前样本与工单设备不一致',
+                          'ready_to_start': '设备当前状态不适合结束检查',
+                          'alarms_clear': '设备仍有报警或异常指标，需要继续处理',
+                          'metrics_available': '缺少有效设备指标', 'interlocks_clear': '设备安全互锁未解除',
+                          'recovery_fresh': '设备样本已过期或时间无效',
+                          'alarm_state_available': '缺少设备当前报警状态',
+                          'snapshot_trusted': '当前设备样本不可用或为演示数据'}
+                findings = [labels[key] for key, passed in checks.items() if not passed]
+                passed = not findings
+                verification = {'source': 'inspection', 'phase': 'inspection', 'passed': passed,
+                                'checks': checks, 'inspection_snapshot': sample,
+                                'validation_findings': findings, 'verified_at': self._now()}
+                order.update(repair_feedback={'feedback': feedback.strip(), 'operator': actor_id},
+                             repair_verification=verification, updated_at=self._now())
+                if passed:
+                    order.update(status='closed', completed_at=order['updated_at'], closed_at=order['updated_at'])
+                self._record_event(order, 'inspection_completed' if passed else 'inspection_recorded',
+                                   previous, order['status'], {'feedback': order['repair_feedback'], 'verification': verification})
+                stored = self.repository.update(order)
+                return {**self._order_result(stored), 'inspection_result': {
+                    'passed': passed, 'checks': checks, 'validation_findings': findings}}
+
     def confirm_team_repair(self, workorder_id, actor_id, feedback, snapshot):
         order = self._require(workorder_id)
+        if (order.get('maintenance_plan_snapshot') or {}).get('plan_kind') == 'inspection':
+            raise ValueError('现场检查工单不能提供维修确认或复机授权')
         tech = next((t for t in self.team.technicians() if t['user_id'] == actor_id), None)
         if not tech or order.get('assignee') != actor_id:
             raise PermissionError('仅被派工维修人员可以确认')
         checks = repair_checks(order.get('device_id'), snapshot, 'prestart')
-        if not str(feedback).strip() or not all(checks.values()):
+        if not str(feedback).strip() or not all(checks.values()) or self._contains_untrusted_flag(snapshot):
             raise ValueError('维修反馈或设备恢复数据不满足预启动验证')
-        if order.get('status') == 'completed' and (order.get('repair_verification') or {}).get('phase') == 'poststart':
+        if (order.get('status') == 'completed' and (order.get('repair_verification') or {}).get('phase') == 'poststart'
+                and trusted_technician_confirmation(order)):
             return self._order_result(order, already_confirmed=True)
         verification = {'source': 'device_recovery', 'phase': 'prestart', 'passed': True, 'checks': checks, 'device_recovery': dict(snapshot), 'verified_at': self._now()}
-        fields = {'repair_feedback': {'feedback': feedback, 'operator': actor_id}, 'maintenance_confirmed_by': actor_id, 'repair_verification': verification}
+        actual_feedback = {'feedback': str(feedback).strip(), 'operator': actor_id}
+        receipt = {'schema_version': 1, 'receipt_id': 'TCF-' + uuid4().hex[:16].upper(),
+                   'source': 'backend_team_repair_confirmation', 'confirmation_method': 'technician_feedback',
+                   **{key: str(order.get(key) or '') for key in ('workorder_id', 'device_id', 'event_id', 'plan_id')},
+                   'actor_id': actor_id, 'confirmed_at': self._now(),
+                   'plan_snapshot_digest': confirmation_digest(order.get('maintenance_plan_snapshot') or {}),
+                   'diagnosis_snapshot_digest': confirmation_digest(order.get('diagnosis_snapshot') or {}),
+                   'feedback_digest': confirmation_digest(actual_feedback),
+                   'prestart_checks': dict(checks), 'prestart_snapshot_digest': confirmation_digest(snapshot)}
+        fields = {'repair_feedback': actual_feedback, 'maintenance_confirmed_by': actor_id,
+                  'repair_verification': verification, 'technician_confirmation': receipt}
         if order.get('status') == 'in_progress':
             self.update_workorder(workorder_id, 'awaiting_verification', **fields)
         elif order.get('status') not in {'awaiting_verification', 'completed'}:
@@ -763,6 +1005,8 @@ class BackendBusinessService:
 
     @classmethod
     def _verification_is_valid(cls, verification: Any, order: Mapping[str, Any], *, enforce_freshness: bool = True) -> bool:
+        if (order.get('maintenance_plan_snapshot') or {}).get('plan_kind') == 'inspection':
+            return False
         if not isinstance(verification, Mapping) or verification.get("passed") is not True:
             return False
         if verification.get("source") != "device_recovery":

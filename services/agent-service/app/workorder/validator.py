@@ -51,6 +51,10 @@ class WorkOrderValidator:
             raise TypeError("维修计划必须是对象")
         if not (plan.get("device_id") or (plan.get("diagnosis") or {}).get("device_id")):
             raise ValueError("维修计划缺少 device_id")
+        from .repair_profile import plan_profile_findings
+        findings = plan_profile_findings(plan)
+        if findings:
+            raise ValueError('；'.join(findings))
 
     @staticmethod
     def verification_passed(order: Mapping[str, Any], repair_feedback: Any = None, *, enforce_freshness: bool = True) -> bool:
@@ -122,6 +126,11 @@ class WorkOrderValidator:
     @staticmethod
     def can_learn(order: Mapping[str, Any], repair_feedback: Any) -> bool:
         """写入 Memory/RAG 前须确认工单已关闭、反馈有效且验证通过。"""
+        from .repair_profile import plan_profile_findings
+        plan = order.get('maintenance_plan_snapshot') or order.get('maintenance_plan') or {}
+        if plan_profile_findings(plan, order.get('diagnosis_snapshot') or plan.get('diagnosis') or {}):
+            # Human recovery confirms the actual repair, not the incorrect AI template.
+            return False
         feedback = repair_feedback or order.get("repair_feedback")
         if isinstance(feedback, Mapping):
             valid = any(

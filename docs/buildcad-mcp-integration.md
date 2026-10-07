@@ -2,7 +2,136 @@
 
 更新日期：2026-10-07。以本地实际代码为准，没有访问 GitHub、覆盖远程提交或修改生产配置。
 
-## 唯一生成链核对与残留清理（2026-10-07，最新）
+## 再次真实出图验收（2026-10-07 18:47，中国标准时间）
+
+用户再次要求完成真实出图。本轮重新查证公开官方协议，并使用既有 OAuth 进行了两次不同代码入口的有界真实预览调用；**两次均失败，图片数量均为 0，实际出图目标仍未完成**。未继续堆叠无关本地改动，未将供应商错误改写成成功。
+
+- 初始化当前协商版本为 `2025-06-18`，没有额外服务端 instructions；实际工具列表仍为四个工具。`render_preview` 必需字段只有 `code`，`views` 可选，描述要求完整 llmcad Python 代码并返回 PNG。
+- 对照一：`from llmcad import Box`，`result = Box(10, 10, 10)`，`views=["iso"]`。实际工具返回耗时 5.73 秒，`isError: true`、文本 `fetch failed`、无图片。
+- 对照二：补齐 llmcad 文档中的显式快照调用：`from llmcad import Box, snapshot`，`result = Box(10, 20, 30)`，`snapshot(result, "mcp_probe", views=["iso"])`，工具参数仍为同一 `views`。包括建立会话的本次耗时 7.27 秒，仍为 `isError: true / fetch failed`、无图片。因此补上显式 `snapshot()` 没有解决错误。
+- 两次请求直接使用当前 MCP 客户端，不经过模型、Agent 节点或前端；没有调用收费模型、保存设计、创建设计、控制机器，也没有输出凭据。诊断命令能正常执行不代表预览成功；业务验收明确判为失败。
+- 重新核对 [BuildCAD 官方 MCP 页面](https://buildcad.ai/mcp)、[llmcad 几何文档](https://llmcad.org/shapes/) 和 [快照文档](https://llmcad.org/debugging/)：没有找到要求先保存、先建项目、付费或额外渲染密钥的公开条件。公开页面不能证明供应商内部配置正常，也不能据此猜测某个未公布接口。
+
+定位边界：认证和工具发现可用；远端预览工具返回执行错误。此前独立 JSON-RPC 与错误语法对照也同错。现有证据不能细分供应商内部的网络、渲染进程或账户策略问题；需要 BuildCAD 官方的执行日志或修复后可用服务才能继续验证。不授权访问供应商内部系统，也不以另一个本地引擎或图片生成器绕过用户限定的 MCP 路径。
+
+本轮只更新此记录；没有生产代码修改，因此未重复宣称整套本地回归。未发送外部支持邮件。备份位于 `.runtime/backups/buildcad-render-recheck-20261007-1847/docs/buildcad-mcp-integration.md`，备份与修改前原文 SHA-256 一致。恢复前先核对后续改动，再逐文件 `Copy-Item -LiteralPath`，不整体覆盖工作区。
+
+## 页面结果分离与原始输入修复（2026-10-07，本次修改）
+
+本次按用户“改”的要求实际修改本地源码，不再把设计列表读取与建模结果混在一起。**本地展示和记录问题已修复；真实出图尚未验收通过。** 下文 16:22 的独立请求仍是最近一次远端渲染验证，结果为 `fetch failed`。本次未再次调用收费模型或预览，不把页面连通、隔离测试通过当作远端已恢复。
+
+### 实际行为与文件
+
+- `frontend/monitor-react/src/app/production-cad/ProductionCadWorkspace.jsx`：分开展示“建模结果”与“设计读取结果”；读取设计列表/代码不会覆盖上一轮建模。增加固定的建模预览空状态，明确读取不等于生成、连接不等于渲染成功。
+- 同一组件展示服务端本轮 `prompt`，不将用户正在编辑的新需求冒充旧任务输入。旧记录没有原始需求时明确说明，不填造。
+- 只有已明确失败的 `preview` 才提供“重试本次预览”；点击后保持原始需求和设计编号，并使用新命令编号。不会自动重试、不会重试保存设计，也不会在结果不确定时解除核对门禁。用户编辑的草稿不会被重试覆盖。
+- `productionCad.mjs`：保留原 `buildcad.active-run`，增加独立 `buildcad.model-run` 会话元数据。图片仍从服务端实际运行记录读取，不把图片写入浏览器会话。兼容旧版仅有 active 的会话，读取操作前迁移元数据，不修改旧服务端记录。
+- 页面刷新/返回通过 GET 回查。手动刷新也可恢复暂时读取失败的保留记录；较早查询的迟到响应不能覆盖更新结果。`productionCad.css` 补充输入来源、读取说明与空态样式，保持上下排版。
+- `services/agent-service/app/agents/cad/modeling_api.py`：创建运行时保存已校验的原始需求，公开返回白名单增加 `prompt`。POST、GET、相同命令查询及失败记录保持一致；摘要、内部状态和授权凭据仍不公开。
+- 回归文件：`frontend/monitor-react/src/app/production-cad/buildcad.test.mjs`、`tests/browser/buildcad-workspace.test.mjs`、`services/agent-service/tests/test_buildcad_api.py`。
+- 构建产物由 `npm run build` 从当前源码生成到 `frontend/monitor/`，未手工编辑打包文件。保留一个 CAD 节点 → 一个 Skill → 一个 MCP Tool 的现有链路，没有添加第二套生成器。
+
+### 本次验证
+
+先补测试再修改：后端首先出现 4 个缺失 `prompt` 的失败；前端单元出现 1 个模型会话被列表覆盖的失败；浏览器先复现图片消失、原需求缺失，再复现旧会话迁移、重试带错设计、迟到错误覆盖新状态。修复后保留这些断言，未删除失败用例或扩大跳过范围。
+
+| 实际命令 | 结果 |
+| --- | --- |
+| `L:/anaconda/python.exe -m pytest -c pytest-agent.ini services/agent-service/tests/test_buildcad_alignment.py services/agent-service/tests/test_buildcad_node.py services/agent-service/tests/test_buildcad_api.py services/agent-service/tests/test_buildcad_http_contract.py services/agent-service/tests/test_buildcad_client.py -q` | 153 通过，0 失败，0 跳过。 |
+| `L:/anaconda/python.exe -m pytest -c pytest-agent.ini -q --tb=short` | 1226 通过，0 失败，0 跳过；包含上述用例及当前共享工作区其他业务回归。 |
+| `$cadFrontendTests = @(rg --files frontend/monitor-react/src -g '*.test.mjs'); node --test @cadFrontendTests` | 136 通过，0 失败，0 跳过；其中 BuildCAD 单元 22 项。 |
+| `node --test tests/browser/buildcad-workspace.test.mjs` | 最终 20 通过，0 失败，0 跳过；真实 React/浏览器，远端边界为隔离 HTTP 响应。 |
+| `npm run build`（目录 `frontend/monitor-react`） | 成功；保留现有大于 500 kB 的包体警告，没有放宽构建阈值。 |
+| `node .runtime/verify-buildcad-ui-flow.mjs` | 首次等待连接标识 30 秒超时，退出 1；随后相同脚本原样重跑两次均通过：最新页面、连接标识和预览区域存在，0 次 CAD 写请求、0 个页面 JS 错误。不能据此确定首次超时的根因。 |
+| 通过 8001 只读查询 `/api/cad/buildcad/status` | 已连接，实际返回四个工具：`list_designs/get_design_code/render_preview/save_design`。这不是渲染成功探测。 |
+| 限定修改文件的 `git diff --check` | 通过，仅 Git 换行符转换提示。 |
+
+浏览器环境：`PLAYWRIGHT_MODULE_PATH=C:/Users/12587/AppData/Local/npm-cache/_npx/e41f203b7505f1fb/node_modules/playwright-core/index.mjs`；`CHROME_EXECUTABLE=C:/Program Files/Google/Chrome/Application/chrome.exe`。本地只读页面截图：`.runtime/buildcad-ui-flow-20261007.png`。
+
+独立审查提出的旧会话、刷新恢复、重试设计编号及迟到响应问题均已加行为回归并修复。本轮没有部署、操作机器、保存远端设计、修改配置/密钥或删除业务数据；没有主动重启服务。检查时 Agent 进程启动时间晚于本次后端源码修改时间，8001 已返回本次源码构建的资源。未执行五服务生产验收或供应商实际出图验收。
+
+### 备份与恢复
+
+修改前源码备份均核对了 SHA-256：
+
+- `.runtime/backups/buildcad-ui-flow-20261007/frontend/`：按原相对路径保存前端三个源码、两个测试文件及本报告。
+- `.runtime/backups/buildcad-ui-flow-20261007/backend/`：按原相对路径保存 `modeling_api.py` 与 `test_buildcad_api.py`。
+
+恢复时先对比当前文件与备份，确认没有后续用户修改，再用 PowerShell `Copy-Item -LiteralPath` **逐文件**恢复；不要整体覆盖共享工作区。恢复前端后，在 `frontend/monitor-react` 重新执行 `npm run build`。本次没有数据表或配置迁移，Redis 运行记录仍按原 TTL 保存，旧记录自然兼容；不需要清空 Redis/MySQL/Milvus。备份不含 `.env` 或授权数据。
+
+## 渲染阻塞独立复核（2026-10-07 16:22，中国标准时间，前次）
+
+用户要求继续打通实际出图。本轮完成三次有界远端对照，**仍未取得预览图片，生成目标未完成**。没有修改生产源码或重启服务来掩盖供应商工具失败，也没有启用第二套生成路径。
+
+### 已核对的真实协议
+
+官方 `tools/list` 中 `render_preview` 的必需字段只有字符串 `code`；`views` 可选，允许 `front/back/right/left/top/bottom/iso`。无需传入 `designId`；该字段属于 `get_design_code` 和 `save_design`。初始化没有返回额外代码包装说明。
+
+依据 [BuildCAD 官方 MCP 说明](https://buildcad.ai/mcp) 和 [llmcad 调试/渲染文档](https://llmcad.org/debugging/)，当前请求使用已公布的预览工具及合法视角。本轮没有臆造会话初始化、设计创建、导出或其他未公布的工具。
+
+### 三次实测，不等同于本地回归测试
+
+| 对照请求 | 请求路径 | 真实响应 |
+| --- | --- | --- |
+| `from llmcad import Box` 后执行 `result = Box(10, 10, 10)`，单个 `iso` 视角 | 当前 MCP 客户端；不经过模型、节点、Skill 或页面 | 5.83 秒；HTTP 200；SSE；工具 `isError: true`，文本 `fetch failed`，0 张图片。 |
+| 同一会话，代码为 `from llmcad import Box` 后接 `result = (`，语法错误对照 | 直接 MCP 客户端；本地业务校验不参与这个隔离诊断 | 6.62 秒；HTTP 200；SSE；仍是 `fetch failed`，不是 Python 语法诊断，0 张图片。 |
+| 同样的 10 mm 方块及 `iso` 视角 | 独立 `httpx` 原始 JSON-RPC：初始化、initialized 通知、tools/call；不调用项目的 `_rpc`、`call_tool`、图节点或前端 | 协商协议 `2025-03-26`；5.36 秒；HTTP 200；回执 ID 102 正确；仍是 `isError: true / fetch failed`，0 张图片。 |
+
+第一组使用 HTTP 响应钩子记录状态、类型与可用关联号，未记录认证头。响应没有提供 `x-request-id` 或 `x-vercel-id`。独立协议对照只复用既有授权凭据，不复用项目的协议封装；凭据只在进程内存中使用，未输出。
+
+这些结果确认：当前失败不是由中文需求解析、React 图片展示或项目的 Agent/Skill 封装才触发的；对最小合法几何，BuildCAD 远端工具本身也明确返回失败。**通用 `fetch failed` 不足以断言其内部是 DNS、渲染进程、账户权限还是其他依赖出错，需要服务端进一步诊断。**没有证据证明全站所有用户均不可用。
+
+本轮只进行了工具发现和上述三次预览请求；没有调用聊天模型、保存设计、删除数据或控制机器。所有请求均有超时上限；没有自动重试。没有新实现代码，因此没有声称新增 TDD 修复或重跑全部单元测试。
+
+### 可直接发给 BuildCAD 官方的脱敏故障说明
+
+> 2026-10-07 16:22（UTC+8）前后，我们以已授权 OAuth 会话访问 `https://buildcad.ai/api/mcp`。初始化、工具列表及设计列表正常。`render_preview` 的参数见下方；既有客户端与独立 JSON-RPC 请求均在约 5–7 秒后收到 HTTP 200/SSE，但工具返回 `{"content":[{"type":"text","text":"fetch failed"}],"isError":true}`，没有图片。故意带语法错误的对照代码也返回相同错误。请检查 MCP 渲染工具的服务端执行日志、账户渲染权限及其依赖连接；并确认是否有工具 schema 未体现的前置条件。此材料不包含令牌、密钥、用户资料或已有设计代码。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 102,
+  "method": "tools/call",
+  "params": {
+    "name": "render_preview",
+    "arguments": {
+      "code": "from llmcad import Box\nresult = Box(10, 10, 10)",
+      "views": ["iso"]
+    }
+  }
+}
+```
+
+[官方页面](https://buildcad.ai/mcp) 公布的支持联系方式为 `hello@buildcad.ai`。本轮未代用户发送邮件或创建外部工单。在继续只使用此 BuildCAD MCP 的限制下，下一步需要供应商确认/修复远端执行，或提供经验证的接口前置要求，再重新运行真实出图验证；不能通过本地假图、降低成功条件或静默换引擎来完成。
+
+本轮仅更新此报告。修改前备份位于 `.runtime/backups/buildcad-render-probe-20261007-1622/docs/buildcad-mcp-integration.md`，已验证 SHA-256 一致；可以逐文件恢复，不覆盖其他任务改动。
+
+## 密钥核验与实际生成（2026-10-07，前次）
+
+用户要求使用提供的密钥，并只保留 BuildCAD MCP。核验结论：**当前已经只有一套生成链；本轮真实预览仍未成功，不能把本地测试通过写成生成成功。**
+
+- 向官方 `https://buildcad.ai/api/mcp` 提交只读初始化请求，以用户提供的密钥作为 Bearer 凭据，返回 HTTP 401、`Unauthorized`。这只证明该凭据未被此认证方式接受，不猜测它的来源或其他用途。官方公开 MCP 说明没有提供这种密钥的另一种用法，因此未新增猜测性的 API-key 接入分支。
+- 测试期间临时加入根 `.env` 的该键已移除，未留下无效配置；既有配置和 Redis 中的 OAuth 授权未覆盖。源码、测试、报告和运行记录均未写入该密钥，也未备份密钥配置。
+- 既有 OAuth 连接实际可用：通过本地 8001 的 `/api/cad/buildcad/status` 返回 `connected: true`，实际发现四个工具 `list_designs/get_design_code/render_preview/save_design`。OAuth 是同一 MCP 客户端的认证，不是另一套建模方式。
+- 从实际前端页面提交一次“外径 30 mm、长度 50 mm、中心轴向通孔 10 mm 的销轴，仅预览”。生成的代码为 `from llmcad import Cylinder` 和 `result = Cylinder(30, 50) - Cylinder(10, 50)`，未经本地执行，直接送往远端 `render_preview`。
+- 实际链路记录为 `model_3d → production_modeling_skill → buildcad_mcp`。远端返回 `isError: true`、文本 `fetch failed`、图片数 0；页面没有 JavaScript 错误。未自动重试、未调用 `save_design`、未执行机器控制。
+- 运行编号：`BC-18e00a61e61d6a1e117f8295b5d75973b311aaad2789d1a41d78e7a3b8f3c808`。临时运行记录按现有 Redis 到期策略保留；不存在已生成或已保存的图纸。
+
+### 本次执行的验证
+
+| 命令或检查 | 实际结果 |
+| --- | --- |
+| `L:/anaconda/python.exe -m pytest -c pytest-agent.ini services/agent-service/tests/test_buildcad_alignment.py services/agent-service/tests/test_buildcad_node.py services/agent-service/tests/test_buildcad_api.py services/agent-service/tests/test_buildcad_http_contract.py services/agent-service/tests/test_buildcad_client.py -q` | 150 通过，0 失败，0 跳过；隔离协议/API/节点回归。 |
+| `node .runtime/verify-buildcad-preview-live.mjs` | 真实浏览器提交一次预览；最后的“生成成功”断言失败，退出码 1。失败原因是远端工具 `fetch failed`，不是前端展示遗漏。保留失败断言，没有降低标准。 |
+| 源码 import、工具注册、路由及前端入口复核 | 只有 BuildCAD MCP 生成路径；旧本地 CadQuery、worker、制造下发、STL 自绘前端已经移除，本次未发现其他可执行生成器。 |
+
+本轮只新增本地联调脚本、更新本报告；没有为清单制造生产源码改动。没有扩大到删除仍被维修查询、BOM、报告、监控或离线图纸入库使用的模块，也未删除业务数据。没有重跑五服务全套或重建前端：本轮未改生产源码，先前全套结果列在下一节，不冒充本轮结果。
+
+报告修改前备份：`.runtime/backups/buildcad-key-verification-20261007/docs/buildcad-mcp-integration.md`，已校验 SHA-256 相同；可用 `Copy-Item -LiteralPath` 逐文件恢复。实际页面截图：`.runtime/buildcad-preview-live-20261007.png`。没有备份或输出密钥。
+
+后续生成的必要条件是 BuildCAD 远端渲染恢复可用；若要以新密钥替代已有 OAuth，还需要该密钥确实支持官方 MCP 的认证方式。不能以重启本地服务、删掉审批或重新启用本地建模冒充解决远端错误。凭据已出现在聊天中，建议在其签发平台轮换。
+
+## 唯一生成链核对与残留清理（2026-10-07，前次）
 
 按用户“只保留通过 MCP 调用 BuildCAD”要求再次检查：**当前只有一套可运行的 CAD 生成逻辑**。
 

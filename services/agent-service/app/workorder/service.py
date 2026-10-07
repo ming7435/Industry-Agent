@@ -20,9 +20,13 @@ class WorkOrderService:
         payload = plan.model_dump() if isinstance(plan, MaintenancePlan) else dict(plan or {})
         WorkOrderValidator.validate_plan(payload)
         diagnosis = payload.get("diagnosis") or {}
+        raw_diagnosis = diagnosis.get('raw') or {}
+        device_id = str(diagnosis.get('device_id') or payload.get('device_id') or '')
         alarm_code = str(
             diagnosis.get("alarm_code")
             or payload.get("alarm_code")
+            or (raw_diagnosis.get('alarm_code') if not raw_diagnosis.get('device_id')
+                or raw_diagnosis.get('device_id') == device_id else '')
             or ""
         )
         raw = self.tools.execute("create_workorder", {

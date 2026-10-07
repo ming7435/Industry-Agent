@@ -263,3 +263,74 @@ test("检查展示保留服务端原失败与未就绪，不在前端放行旧�
   assert.equal(status.stopReason, "validation_failed");
   assert.deepEqual(record, before);
 });
+
+test("检查结束只依据真实closed状态，不根据记录保存成功或核验passed推断关闭", () => {
+  assert.equal(typeof workspace.inspectionWorkorderView, "function");
+  const pending = { status: "in_progress", maintenance_plan_snapshot: { plan_kind: "inspection" },
+    repair_verification: { source: "inspection", passed: true, validation_findings: [] } };
+  assert.equal(workspace.inspectionWorkorderView(pending).completed, false);
+  assert.equal(workspace.inspectionWorkorderView(pending).statusLabel, "");
+  assert.equal(workspace.inspectionWorkorderView({ ...pending, status: "closed" }).completed, true);
+  assert.equal(workspace.inspectionWorkorderView({ ...pending, status: "closed" }).statusLabel, "检查已完成");
+});
+
+test("未通过的检查工单展示真实服务端validation_findings并保留记录状态", () => {
+  assert.equal(typeof workspace.inspectionWorkorderView, "function");
+  const record = { status: "in_progress", maintenance_plan_snapshot: { plan_kind: "inspection" },
+    repair_verification: { source: "inspection", phase: "inspection", passed: false,
+      validation_findings: ["设备仍有报警 A-1", "设备样本时间过期"] } };
+  const before = structuredClone(record);
+  assert.deepEqual(workspace.inspectionWorkorderView(record).findings, ["设备仍有报警 A-1", "设备样本时间过期"]);
+  assert.equal(workspace.inspectionWorkorderView(record).completed, false);
+  assert.deepEqual(record, before);
+});
+
+test("维修验证和异常检查验证结构不被当作检查结束依据", () => {
+  assert.equal(typeof workspace.inspectionWorkorderView, "function");
+  assert.deepEqual(workspace.inspectionWorkorderView({ status: "closed", repair_verification: {
+    source: "device_recovery", validation_findings: ["维修验证"] } }), { completed: false, statusLabel: "", findings: [] });
+  assert.deepEqual(workspace.inspectionWorkorderView({ plan_kind: "inspection", status: "in_progress",
+    repair_verification: { source: "device_recovery", validation_findings: ["其他流程缺项"] } }).findings, []);
+  assert.deepEqual(workspace.inspectionWorkorderView({ plan_kind: "inspection", repair_verification: {
+    source: "inspection", validation_findings: "bad" } }).findings, []);
+});
+
+test("已派工但执行需复核保留真实派发事实与负责人，不把allowed=false当未派单", () => {
+  const view = workspace.maintenanceDispatchView({ workorder_ready: true, validation_findings: [],
+    dispatch: { status: "dispatched", allowed: false, workorder_id: "WO-REAL", assignee: "U-REAL", assignee_name: "lmy", device_id: "D-1", reason: "当前方案不可执行" },
+    execution_review: { required: true, findings: ["刀塔报警使用了门互锁模板"] } });
+  assert.equal(view.label, "已自动派单");
+  assert.equal(view.assigneeName, "lmy");
+  assert.equal(view.assignmentDeviceId, "D-1");
+  assert.equal(view.reviewRequired, true);
+  assert.equal(view.reviewLabel, "方案需重新校验");
+  assert.deepEqual(view.reviewFindings, ["刀塔报警使用了门互锁模板"]);
+  assert.match(view.reason, /当前方案不可执行/);
+  assert.match(view.reason, /刀塔报警使用了门互锁模板/);
+});
+
+test("已关联工单仍保留方案执行校验原因", () => {
+  const view = workspace.maintenanceDispatchView({ workorder_ready: true, dispatch: { allowed: false, reason: "旧模板不匹配" },
+    execution_review: { required: true, findings: ["报警与步骤不匹配"] } }, { hasOrder: true });
+  assert.equal(view.label, "已关联工单");
+  assert.equal(view.reviewRequired, true);
+  assert.match(view.reason, /旧模板不匹配/);
+  assert.match(view.reason, /报警与步骤不匹配/);
+});
+
+test("执行复核助手仅信任明确required标记与中文字符串缺项，旧合法单不受影响", () => {
+  assert.equal(typeof workspace.executionReviewView, "function");
+  assert.deepEqual(workspace.executionReviewView({ execution_review: { required: true, findings: [" 报警错配 ", "", { detail: "无效类型" }] } }),
+    { required: true, humanConfirmed: false, label: "方案需重新校验", findings: ["报警错配"] });
+  for (const record of [{}, { execution_review: null }, { execution_review: { required: "true", findings: ["旧字段"] } }]) {
+    assert.deepEqual(workspace.executionReviewView(record), { required: false, humanConfirmed: false, label: "", findings: [] });
+  }
+});
+
+test("维修确认只读取服务端明确human_confirmed布尔值，不从旧完成状态或负责人推断", () => {
+  assert.equal(workspace.executionReviewView({ execution_review: { required: true, human_confirmed: true } }).humanConfirmed, true);
+  for (const human_confirmed of [undefined, false, "true", 1, {}]) {
+    assert.equal(workspace.executionReviewView({ status: "completed", maintenance_confirmed_by: "U-OWNER",
+      repair_verification: { phase: "poststart", passed: true }, execution_review: { required: true, human_confirmed } }).humanConfirmed, false);
+  }
+});

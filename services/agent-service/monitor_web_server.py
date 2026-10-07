@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
+from shared.dispatch_projection import compact_workorder_result
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent
@@ -122,6 +123,8 @@ def compact_public_pipeline(pipeline: Mapping[str, Any] | None) -> Dict[str, Any
         "runtime_actions",
     )
     result = {key: pipeline[key] for key in keys if key in pipeline}
+    if isinstance(pipeline.get('workorder'), Mapping):
+        result['workorder'] = compact_workorder_result(pipeline['workorder'])
     if isinstance(pipeline.get("knowledge"), Mapping):
         result["knowledge"] = _compact_stage(
             pipeline["knowledge"],

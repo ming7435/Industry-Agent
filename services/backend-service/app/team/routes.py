@@ -3,7 +3,7 @@ import hmac
 import os
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def internal_auth(request: Request):
@@ -31,6 +31,16 @@ class Credentials(BaseModel):
 class Registration(Credentials):
     role: str
     primary_device_id: str = ''
+
+
+class WorkorderPlanReplacement(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    workorder_id: str = Field(min_length=1, max_length=128)
+    actor_id: str = Field(min_length=1, max_length=128)
+    expected_plan_id: str = Field(min_length=1, max_length=128)
+    expected_updated_at: str = Field(min_length=1, max_length=128)
+    request_id: str = Field(min_length=1, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
+    maintenance_plan: dict
 
 
 def create_router(get_service):
@@ -115,6 +125,28 @@ def create_router(get_service):
         internal_auth(request)
         try:
             return get_service().confirm_team_repair(str(body.get('workorder_id') or ''), str(body.get('actor_id') or ''), str(body.get('feedback') or ''), body.get('snapshot') or {})
+        except PermissionError as error:
+            raise HTTPException(403, str(error))
+        except (ValueError, KeyError) as error:
+            raise HTTPException(409, str(error))
+
+    @router.post('/internal/team/workorder/replace-plan')
+    def replace_plan(body: WorkorderPlanReplacement, request: Request):
+        internal_auth(request)
+        try:
+            return get_service().replace_team_workorder_plan(**body.model_dump())
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except (ValueError, KeyError) as error:
+            raise HTTPException(409, str(error)) from error
+
+    @router.post('/internal/team/inspection/record')
+    def record_inspection(body: dict, request: Request):
+        internal_auth(request)
+        try:
+            return get_service().record_team_inspection(
+                str(body.get('workorder_id') or ''), str(body.get('actor_id') or ''),
+                body.get('feedback'), body.get('snapshot'))
         except PermissionError as error:
             raise HTTPException(403, str(error))
         except (ValueError, KeyError) as error:

@@ -103,19 +103,25 @@ def test_warning_waits_for_its_owner_then_dispatches_original_check_order(tmp_pa
 
 def test_human_inspection_cannot_enter_repair_restart_but_can_save_feedback(monkeypatch):
     calls = []
-    order = {'workorder_id': 'WO-CHECK', 'assignee': 'U-CHECK',
+    order = {'workorder_id': 'WO-CHECK', 'assignee': 'U-CHECK', 'device_id': 'M-CHECK',
              'maintenance_plan_snapshot': {'plan_kind': 'inspection'}}
     monkeypatch.setattr(team_auth, 'team_actor', lambda request: {'user_id': 'U-CHECK', 'role': 'technician'})
     monkeypatch.setattr(team_auth, 'require_assignee', lambda *args: order)
-    backend = SimpleNamespace(call=lambda name, args: calls.append((name, args)) or {'workorder': order})
+    backend = SimpleNamespace(
+        call=lambda name, args: calls.append((name, args)) or {'workorder': order},
+        request=lambda path, args: calls.append((path, args)) or {'workorder': order})
     monkeypatch.setattr(team_auth, 'BackendServiceClient', lambda: backend)
     operations = SimpleNamespace(execute_workorder=lambda *args, **kwargs: calls.append(('restart', args)))
     with pytest.raises(HTTPException) as error:
         team_auth.human_action('WO-CHECK', 'mark_repair_completed', {'feedback': '已核查'}, None, operations)
     assert error.value.status_code == 409 and calls == []
+    sample = {'device_id': 'M-CHECK', 'status': 'warning', 'alarm_code': '700001'}
+    monkeypatch.setattr('app.monitor.factory_api.FactoryApiClient',
+                        lambda *args: SimpleNamespace(snapshot=lambda device_id: sample))
     team_auth.human_action('WO-CHECK', 'submit_feedback', {'feedback': '已读取报警，待进一步处理'}, None)
-    assert [name for name, _ in calls] == ['submit_repair_feedback']
-    assert calls[0][1]['feedback']['operator'] == 'U-CHECK'
+    assert [name for name, _ in calls] == ['/internal/team/inspection/record']
+    assert calls[0][1]['actor_id'] == 'U-CHECK'
+    assert calls[0][1]['snapshot'] == sample
 
 
 def test_line_controller_rejects_inspection_before_device_or_ledger_writes(monkeypatch):
@@ -128,3 +134,19 @@ def test_line_controller_rejects_inspection_before_device_or_ledger_writes(monke
         controller.confirm_and_restart('WO1', 'U1', '已核查')
     assert factory.calls == [] and ledger.line['generation'] == 0
     assert ledger.orders[0]['status'] == 'in_progress'
+
+
+@pytest.mark.parametrize('inspection_status,expected', [('closed', 'running'), ('in_progress', 'blocked')])
+def test_later_formal_repair_waits_only_for_unfinished_inspections(monkeypatch, inspection_status, expected):
+    monkeypatch.setenv('FACTORY_CONTROL_MODE', 'virtual')
+    factory, ledger = Factory(), Ledger()
+    controller = LineController(factory, ledger)
+    ledger.orders.append({'workorder_id': 'WO-CHECK', 'device_id': 'M1', 'event_id': 'EARLIER-WARNING',
+        'status': inspection_status, 'assignee': 'U1', 'maintenance_plan_snapshot': {'plan_kind': 'inspection'},
+        'repair_verification': {'source': 'inspection', 'passed': inspection_status == 'closed'}})
+    controller.handle_fault('CURRENT-FAULT', 'M1', 'confirmed fault')
+    repaired_order(ledger, event='CURRENT-FAULT')
+    result = controller.confirm_and_restart('WO1', 'U1', '本次正式维修已完成并确认恢复')
+    assert result['machine_control']['state'] == expected
+    starts = [call for call in factory.calls if call[1] == 'start']
+    assert bool(starts) is (inspection_status == 'closed')

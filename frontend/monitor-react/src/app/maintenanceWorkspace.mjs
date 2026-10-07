@@ -1,18 +1,33 @@
 const object = value => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 const text = value => String(value ?? "").trim();
 
+export async function loadMaintenancePlans(request, options = {}) {
+  const plans = await request("/api/maintenance/plans", options);
+  return {
+    items: Array.isArray(plans?.items) ? plans.items : [],
+    history: object(plans?.history),
+    deletedPlanIds: Array.isArray(plans?.deleted_plan_ids) ? plans.deleted_plan_ids : [],
+  };
+}
+
+export async function loadMaintenanceOrders(request, actor = null, options = {}) {
+  if (!actor?.user_id) return [];
+  const orders = await request("/api/workorders", options);
+  return Array.isArray(orders?.items) ? orders.items : [];
+}
+
 export async function loadMaintenanceWorkspace(request, actor = null) {
   const [plans, orders] = await Promise.allSettled([
-    request("/api/maintenance/plans"),
-    actor?.user_id ? request("/api/workorders") : Promise.resolve({ items: [] }),
+    loadMaintenancePlans(request),
+    loadMaintenanceOrders(request, actor),
   ]);
   return {
-    items: plans.status === "fulfilled" && Array.isArray(plans.value?.items) ? plans.value.items : [],
-    orders: orders.status === "fulfilled" && Array.isArray(orders.value?.items) ? orders.value.items : [],
+    items: plans.status === "fulfilled" ? plans.value.items : [],
+    orders: orders.status === "fulfilled" ? orders.value : [],
     planError: plans.status === "rejected" ? plans.reason.message : "",
     orderError: orders.status === "rejected" ? orders.reason.message : "",
-    history: plans.status === "fulfilled" ? object(plans.value?.history) : {},
-    deletedPlanIds: plans.status === "fulfilled" && Array.isArray(plans.value?.deleted_plan_ids) ? plans.value.deleted_plan_ids : [],
+    history: plans.status === "fulfilled" ? plans.value.history : {},
+    deletedPlanIds: plans.status === "fulfilled" ? plans.value.deletedPlanIds : [],
   };
 }
 
@@ -43,7 +58,7 @@ export function buildMaintenanceWorkspaceRecords({ snapshot = {}, items = [], or
     const source = object(order.workorder || order);
     add(source.maintenance_plan_snapshot || source.maintenance_plan, { ...source, diagnosis: object(source.diagnosis_snapshot || source.diagnosis_context) });
   }
-  const diagnosis = object(snapshot.diagnosis);
+  const diagnosis = object(object(snapshot).diagnosis);
   for (const pipeline of [...Object.values(object(diagnosis.pipeline_by_device)), diagnosis.pipeline]) {
     if (pipeline) add(pipeline.maintenance_plan, pipeline);
   }
@@ -59,23 +74,39 @@ export function retryMaintenancePlan(request, planId, requestId) {
   return request(`/api/maintenance/plans/${encodeURIComponent(planId)}/retry`, {method:'POST',body:JSON.stringify({request_id:requestId})});
 }
 
+export function executionReviewView(record = {}) {
+  const review = object(object(record).execution_review);
+  const required = review.required === true;
+  return {
+    required,
+    humanConfirmed: review.human_confirmed === true,
+    label: required ? "方案需重新校验" : "",
+    findings: required && Array.isArray(review.findings) ? review.findings.filter(item => typeof item === "string").map(text).filter(Boolean) : [],
+  };
+}
+
 export function maintenanceDispatchView(record = {}, { hasOrder = false } = {}) {
   const findings = Array.isArray(record.validation_findings) ? record.validation_findings.map(text).filter(Boolean) : [];
   const dispatch = object(record.dispatch);
+  const review = executionReviewView(record);
   const allowed = dispatch.allowed;
   const businessBlocked = record.workorder_ready === false || findings.length > 0;
   const blocked = allowed === false || businessBlocked;
   const waitingApproval = dispatch.status === "waiting_approval" && record.workorder_ready === true && findings.length === 0;
   const waitingPersonnel = dispatch.status === "waiting_for_personnel" && record.workorder_ready === true && findings.length === 0;
-  const dispatched = dispatch.status === "dispatched" && allowed === true && Boolean(text(dispatch.assignee)) && !businessBlocked;
+  const dispatched = dispatch.status === "dispatched" && Boolean(text(dispatch.assignee))
+    && ((allowed === true && !businessBlocked) || (review.required && Boolean(text(dispatch.workorder_id))));
   const reason = text(dispatch.reason) || (record.workorder_ready === false ? "维修方案尚未达到工单就绪条件" : "");
   return {
     label: hasOrder ? "已关联工单" : waitingApproval ? "等待审批后派发"
       : waitingPersonnel ? "等待负责人员登录" : dispatched ? "已自动派单" : blocked ? "暂不能自动派发"
       : allowed === true ? "方案就绪，等待系统派发"
       : record.workorder_ready === true ? "方案已就绪，派发条件以系统校验为准" : "派发条件待校验",
-    reason: [...new Set([reason, ...findings].filter(Boolean))].join("；"),
+    reason: [...new Set([reason, ...findings, ...review.findings].filter(Boolean))].join("；"),
     findings,
+    reviewRequired: review.required,
+    reviewLabel: review.label,
+    reviewFindings: review.findings,
     stopReason: text(record.stop_reason),
     ready: record.workorder_ready === true ? "是" : record.workorder_ready === false ? "否" : "待校验",
     assigneeName: dispatched ? text(dispatch.assignee_name || dispatch.assignee) : "",
@@ -94,6 +125,18 @@ export function maintenanceWorkType(record = {}) {
     label: inspection ? "现场检查" : "设备维修",
     description: inspection ? "仅核查与记录；具体维修另建方案。" : "",
     reason: inspection ? text(source.inspection_reason || snapshot.inspection_reason) : "",
+  };
+}
+
+export function inspectionWorkorderView(record = {}) {
+  const inspection = maintenanceWorkType(record).inspection;
+  const verification = object(record.repair_verification);
+  const completed = inspection && record.status === "closed";
+  return {
+    completed,
+    statusLabel: completed ? "检查已完成" : "",
+    findings: inspection && verification.source === "inspection" && Array.isArray(verification.validation_findings)
+      ? verification.validation_findings.map(text).filter(Boolean) : [],
   };
 }
 

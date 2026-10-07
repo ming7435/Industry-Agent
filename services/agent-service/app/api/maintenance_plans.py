@@ -3,6 +3,7 @@ from typing import Any, Mapping
 
 from app.workorder.policy import auto_workorder_decision
 from app.runtime.policy import RuntimePolicy
+from app.workorder.repair_profile import plan_profile_findings
 from shared.local_drawings import device_reference_drawings
 
 
@@ -48,20 +49,29 @@ def list_saved_maintenance_plans(results: list[dict[str, Any]], device_id: str =
             continue
         seen.add(identity)
         allowed, reason = auto_workorder_decision(diagnosis, plan, event)
+        profile_findings = plan_profile_findings(plan, diagnosis)
+        if profile_findings:
+            allowed, reason = False, '；'.join(profile_findings)
         findings = plan.get('validation_findings') or plan.get('validation_errors')
         if allowed and findings:
             allowed, reason = False, '维修方案校验未通过：%s' % '；'.join(str(item) for item in findings)
         dispatch = {"allowed": allowed, "reason": reason}
+        workorder_result = result.get('workorder') if isinstance(result.get('workorder'), Mapping) else {}
+        nested = workorder_result.get('workorder')
+        workorder = nested if isinstance(nested, Mapping) else workorder_result
+        assigned = (workorder.get('workorder_id') and workorder.get('assignee')
+                    and workorder.get('device_id') == plan_device
+                    and (not workorder.get('plan_id') or workorder.get('plan_id') == plan.get('plan_id'))
+                    and (not workorder.get('event_id') or workorder.get('event_id') == event_id))
+        if assigned:
+            # Historical assignment remains a fact even when a saved template now needs review.
+            dispatch = {'allowed': allowed, 'status': 'dispatched', 'reason': reason if profile_findings else '',
+                        'workorder_id': str(workorder['workorder_id']),
+                        'assignee': str(workorder['assignee']), 'assignee_name': str(workorder.get('assignee_name') or ''),
+                        'device_id': plan_device}
         # 高风险工单允许自动派发，但明确要求审批的动作仍保留原门禁。
-        if allowed:
-            workorder_result = result.get('workorder') if isinstance(result.get('workorder'), Mapping) else {}
-            nested = workorder_result.get('workorder')
-            workorder = nested if isinstance(nested, Mapping) else workorder_result
-            if workorder.get('assignee') and workorder.get('device_id') == plan_device:
-                dispatch = {'allowed': True, 'status': 'dispatched', 'reason': '',
-                            'assignee': str(workorder['assignee']), 'assignee_name': str(workorder.get('assignee_name') or ''),
-                            'device_id': plan_device}
-            elif RuntimePolicy._explicit_approval_required({}, result) or result.get('requires_approval') is True:
+        if allowed and not assigned:
+            if RuntimePolicy._explicit_approval_required({}, result) or result.get('requires_approval') is True:
                 dispatch = {"allowed": False, "status": "waiting_approval",
                             "reason": "该动作明确要求服务端审批，审批通过后继续派发"}
             elif workorder_result.get('status') == 'waiting_for_personnel' or result.get('status') == 'waiting_for_personnel':
@@ -85,6 +95,7 @@ def list_saved_maintenance_plans(results: list[dict[str, Any]], device_id: str =
                 tenant_id=str(event.get("tenant_id") or ""), project_id=str(event.get("project_id") or ""),
             ) if plan_device.strip() else [],
             "dispatch": dispatch,
+            "execution_review": {"required": bool(profile_findings), "findings": profile_findings},
         })
         if len(items) >= limit:
             break

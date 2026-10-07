@@ -90,7 +90,8 @@ test('已派检查工单按保存的方案快照显示类型和真实负责人',
     assert.equal(await sheet.getByRole('checkbox').count(), 0);
     assert.equal(await sheet.getByRole('button', { name: /复机|关闭工单/ }).count(), 0);
     assert.equal(await sheet.getByRole('button', { name: '确认接单', exact: true }).count(), 1);
-    assert.equal(await sheet.getByRole('button', { name: '提交检查记录', exact: true }).count(), 1);
+    assert.equal(await sheet.getByRole('button', { name: '提交检查结果', exact: true }).count(), 1);
+    assert.ok((await sheet.innerText()).includes('报警解除并核验通过后结束检查；仍有异常保留待处理'));
     assert.ok((await page.locator('.workorder-titlebar').innerText()).includes('设备负责人员甲'));
     assert.ok((await sheet.locator('.basic-grid').innerText()).includes('设备负责人员甲'));
     assert.deepEqual(mutations, []);
@@ -98,7 +99,7 @@ test('已派检查工单按保存的方案快照显示类型和真实负责人',
   } finally { await context.close(); }
 });
 
-test('检查单提交真实核查记录使用submit_feedback且保留工单状态，不申请维修复机', async () => {
+test('检查结果仍有异常时保留待处理并显示服务端核验缺项，不申请维修复机', async () => {
   const order = { workorder_id: 'WO-CHECK-RECORD', device_id: 'M-1', alarm_code: 'A-1', assignee: 'U-TECH',
     assignee_name: '设备负责人员甲', status: 'in_progress', accepted_by: 'U-TECH', title: '核查报警信号',
     source: 'agent', maintenance_plan_snapshot: inspection, steps: inspection.repair_steps };
@@ -107,23 +108,33 @@ test('检查单提交真实核查记录使用submit_feedback且保留工单状�
   try {
     await page.route('**/api/workorders/WO-CHECK-RECORD/action', route => {
       writes.push({ method: route.request().method(), body: route.request().postDataJSON() });
-      return respond(route, { workorder: { ...order, repair_feedback: route.request().postDataJSON().repair_feedback } });
+      return respond(route, { workorder: { ...order, repair_feedback: route.request().postDataJSON().repair_feedback,
+        repair_verification: { source: 'inspection', phase: 'inspection', passed: false,
+          checks: { alarm_clear: false, normal: false }, validation_findings: ['当前设备仍有报警 A-1', '设备仍处于 alarm 状态'] },
+      }, inspection_result: { passed: false, checks: { alarm_clear: false, normal: false },
+        validation_findings: ['当前设备仍有报警 A-1', '设备仍处于 alarm 状态'] } });
     });
     await page.goto(`${fixture.base}/?view=workorder`);
     await page.getByRole('button', { name: /WO-CHECK-RECORD/ }).click();
     await page.getByLabel('处理说明', { exact: true }).fill('已核查接线与报警信号，记录压力读数；未拆卸部件。');
-    await page.getByRole('button', { name: '提交检查记录', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: '检查记录已保存' }).waitFor();
+    await page.getByRole('button', { name: '提交检查结果', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: '检查结果已保存' }).waitFor();
     assert.deepEqual(writes, [{ method: 'POST', body: { action: 'submit_feedback', status: 'in_progress',
       repair_feedback: { feedback: '已核查接线与报警信号，记录压力读数；未拆卸部件。' } } }]);
     assert.equal(await page.getByRole('button', { name: /复机|关闭工单/ }).count(), 0);
     assert.equal(await page.locator('.maintenance-sheet .sheet-status').innerText(), '处理中');
+    const text = await page.locator('.maintenance-sheet').innerText();
+    assert.ok(text.includes('保留待处理'));
+    assert.ok(text.includes('当前设备仍有报警 A-1'));
+    assert.ok(text.includes('设备仍处于 alarm 状态'));
+    assert.equal(await page.getByText('检查已完成', { exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: '提交检查结果', exact: true }).isEnabled(), true);
     assert.deepEqual(mutations, []);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
 
-test('旧维修工单保留原维修确认与复机动作', async () => {
+test('旧维修工单显示维修申请按钮且不再要求额外勾选，不混用检查结果动作', async () => {
   const order = { workorder_id: 'WO-REPAIR', device_id: 'M-1', alarm_code: 'A-1', assignee: 'U-TECH',
     assignee_name: '维修人员甲', status: 'open', title: '设备维修', source: 'agent', steps: ['更换故障部件'] };
   const { context, page, mutations, errors } = await pageFor([], [order]);
@@ -132,9 +143,40 @@ test('旧维修工单保留原维修确认与复机动作', async () => {
     await page.getByRole('button', { name: /WO-REPAIR/ }).click();
     const sheet = page.locator('.maintenance-sheet');
     assert.equal(await sheet.getByRole('heading', { name: '维修工单', exact: true }).count(), 1);
-    assert.equal(await sheet.getByRole('checkbox').count(), 1);
+    assert.equal(await sheet.getByRole('checkbox').count(), 0);
     assert.equal(await sheet.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).count(), 1);
-    assert.equal(await sheet.getByRole('button', { name: '提交检查记录', exact: true }).count(), 0);
+    assert.equal(await sheet.getByRole('button', { name: '提交检查结果', exact: true }).count(), 0);
+    assert.deepEqual(mutations, []);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('报警已清且服务端核验通过返回closed时完成检查，禁止再次提交或维修复机', async () => {
+  const order = { workorder_id: 'WO-CHECK-CLOSE', device_id: 'M-1', alarm_code: 'A-1', assignee: 'U-TECH',
+    assignee_name: '设备负责人员甲', status: 'in_progress', accepted_by: 'U-TECH', title: '核查报警信号',
+    source: 'agent', maintenance_plan_snapshot: inspection, steps: inspection.repair_steps };
+  const { context, page, mutations, errors } = await pageFor([inspection], [order]);
+  const writes = [];
+  try {
+    await page.route('**/api/workorders/WO-CHECK-CLOSE/action', route => {
+      writes.push(route.request().postDataJSON());
+      return respond(route, { workorder: { ...order, status: 'closed', repair_feedback: route.request().postDataJSON().repair_feedback,
+        repair_verification: { source: 'inspection', phase: 'inspection', passed: true,
+          checks: { alarm_clear: true, normal: true }, validation_findings: [] },
+      }, inspection_result: { passed: true, checks: { alarm_clear: true, normal: true }, validation_findings: [] } });
+    });
+    await page.goto(`${fixture.base}/?view=workorder`);
+    await page.getByRole('button', { name: /WO-CHECK-CLOSE/ }).click();
+    await page.getByLabel('处理说明', { exact: true }).fill('报警已解除，现场检查和数据读回正常。');
+    await page.getByRole('button', { name: '提交检查结果', exact: true }).click();
+    await page.locator('.maintenance-sheet .sheet-status').filter({ hasText: '检查已完成' }).waitFor();
+    assert.ok((await page.locator('.workorder-titlebar').innerText()).includes('检查已完成'));
+    assert.ok((await page.getByRole('button', { name: /WO-CHECK-CLOSE/ }).innerText()).includes('检查已完成'));
+    assert.equal(await page.getByRole('button', { name: '提交检查结果', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByLabel('处理说明', { exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: /复机|关闭工单/ }).count(), 0);
+    assert.deepEqual(writes, [{ action: 'submit_feedback', status: 'in_progress',
+      repair_feedback: { feedback: '报警已解除，现场检查和数据读回正常。' } }]);
     assert.deepEqual(mutations, []);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }

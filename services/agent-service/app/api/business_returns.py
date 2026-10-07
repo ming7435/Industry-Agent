@@ -32,6 +32,8 @@ class PlanRetryRequest(BaseModel):
 
 def build_business_return_router(runtime, event_results, require_write_auth):
     router = APIRouter()
+    from app.api.workorder_plan_revalidation import build_workorder_plan_revalidation_router
+    router.include_router(build_workorder_plan_revalidation_router(runtime, event_results, require_write_auth))
 
     @router.post('/api/maintenance/plans/{plan_id}/retry', dependencies=[Depends(require_write_auth)])
     def retry_saved_plan(plan_id: str, body: PlanRetryRequest, request: Request):

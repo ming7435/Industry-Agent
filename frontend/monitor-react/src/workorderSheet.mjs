@@ -15,6 +15,28 @@ function deviceIdOf(order = {}, context = {}) {
   return text(order.device_id || order.machine_id || context.device_id || context.sample?.device_id);
 }
 
+export function getWorkorderAlarmCode(order = {}) {
+  const record = value => value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const scalar = value => typeof value === "string" ? value.trim()
+    : typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+  const source = record(order);
+  const direct = scalar(source.alarm_code);
+  if (direct) return direct;
+  const deviceId = scalar(source.device_id);
+  const matchesDevice = value => !deviceId || !scalar(value.device_id) || scalar(value.device_id) === deviceId;
+  const snapshots = [source.diagnosis_snapshot, source.diagnosis_context,
+    record(source.maintenance_plan_snapshot).diagnosis, record(source.maintenance_plan).diagnosis];
+  for (const value of snapshots) {
+    const diagnosis = record(value);
+    if (!matchesDevice(diagnosis)) continue;
+    const code = scalar(diagnosis.alarm_code);
+    if (code) return code;
+    const raw = record(diagnosis.raw);
+    if (matchesDevice(raw) && scalar(raw.alarm_code)) return scalar(raw.alarm_code);
+  }
+  return "";
+}
+
 export function getDeviceDisplayName(deviceId, context = {}) {
   const id = text(deviceId);
   const devices = Array.isArray(context?.snapshot?.devices)

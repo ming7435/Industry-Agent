@@ -117,9 +117,7 @@ def _match(query: str, **filters: Any) -> list[Dict[str, Any]]:
 def _bom(item: Mapping[str, Any]) -> Dict[str, Any]:
     if not item.get("bom_items"):
         return {"component_id": item.get("component_id", ""), "part_no": item.get("part_no", ""), "part_identity_status": item.get("part_identity_status", "unknown"), "name": item.get("name", ""), "quantity": item.get("quantity", 0), "material": item.get("material", ""), "drawing_ref": item.get("drawing_ref", ""), "status": "insufficient_engineering_data"}
-    if item.get("bom_items"):
-        return {"component_id": item["component_id"], "part_no": item["part_no"], "name": item["name"], "quantity": item["quantity"], "material": item["material"], "drawing_ref": item["drawing_ref"], "items": list(item["bom_items"])}
-    return {"component_id": item["component_id"], "part_no": item["part_no"], "name": item["name"], "quantity": item["quantity"], "material": item["material"], "drawing_ref": item["drawing_ref"]}
+    return {"component_id": item["component_id"], "part_no": item["part_no"], "name": item["name"], "quantity": item["quantity"], "material": item["material"], "drawing_ref": item["drawing_ref"], "items": list(item["bom_items"])}
 
 
 def _drawing(item: Mapping[str, Any]) -> Dict[str, Any]:
@@ -133,10 +131,6 @@ def _response_meta() -> Dict[str, Any]:
     repository = get_repository()
     synthetic = getattr(repository, "backend", "") == "demo-catalog"
     return {"source": "document-cad-service", "backend": getattr(repository, "backend", "unknown"), "synthetic": synthetic, "degraded": synthetic}
-
-
-def _relation(item: Mapping[str, Any]) -> Dict[str, Any]:
-    return {"component_id": item.get("component_id", ""), "part_no": item.get("part_no", ""), "relation": item.get("assembly_relation", ""), "location": item.get("installation_location") or item.get("position") or "", "drawing_ref": item.get("drawing_ref", "")}
 
 
 def _location(item: Mapping[str, Any]) -> Dict[str, Any]:

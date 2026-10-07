@@ -84,6 +84,10 @@ class RuntimePolicy:
             return PolicyDecision(PolicyStatus.DENY, "idempotency_key_required", risk_level)
 
         if canonical_capability == "workorder_create":
+            from app.workorder.repair_profile import plan_profile_findings
+            profile_findings = plan_profile_findings(maintenance, current.get('diagnosis') or {})
+            if profile_findings:
+                return PolicyDecision(PolicyStatus.DENY, 'invalid_plan_profile: ' + '；'.join(profile_findings), risk_level)
             required = ("diagnosis", "knowledge", "cad", "maintenance_plan")
             if maintenance.get("plan_kind") == "inspection":
                 from app.workorder.policy import auto_workorder_decision

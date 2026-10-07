@@ -10,6 +10,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.test-basetemp*/
 .venv/
 venv/
 env/
@@ -27,6 +28,7 @@ services/document-cad-service/data/.ingestion_cache/
 services/document-cad-service/data/index/
 *.log
 .runtime/
+runtime_pending_task
 runtime_pending_tasks.sqlite3
 evaluation-results/
 

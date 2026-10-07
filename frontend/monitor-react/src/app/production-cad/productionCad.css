@@ -36,6 +36,10 @@
 .cad-connection-details li p { margin: 5px 0; }
 .cad-call-details pre, .cad-design-code pre { font: 13px/1.65 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; background: #f4f8f8; padding: 16px; border-radius: 8px; }
 .cad-result-text { white-space: pre-wrap; }
+.cad-input-flow, .cad-read-notice { font-size: 14px; padding: 12px 16px; background: #f3f8f8; border-radius: 8px; }
+.cad-submitted-input { margin: 18px 0; padding: 1px 18px 12px; border-left: 3px solid #63bdb0; background: #f5faf9; }
+.cad-submitted-prompt { white-space: pre-wrap; }
+.cad-preview-empty { border-style: dashed; }
 .cad-result-images { display: flex; flex-direction: column; gap: 16px; margin: 22px 0; }
 .cad-result-images figure { margin: 0; padding: 12px; border: 1px solid #e2ecec; border-radius: 10px; background: #f7fafb; }
 .cad-result-images img { display: block; max-width: 100%; max-height: 620px; object-fit: contain; margin: auto; }

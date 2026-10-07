@@ -34,6 +34,150 @@ before(async () => {
 });
 after(async () => { await browser?.close(); if (server) await new Promise((done) => server.close(done)); });
 
+test("读取设计不会覆盖建模图片和原始需求，刷新仅回查两条记录", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const posts = [];
+  const records = {
+    preview: { run_id: "retained-model", action: "preview", prompt: "外径30mm、长50mm、通孔10mm", status: "completed", calls: [{ tool: "render_preview", arguments: { code: "from llmcad import Cylinder\nresult = Cylinder(30, 50) - Cylinder(10, 50)" }, result: { content: [{ type: "image", mimeType: "image/png", data: imageData }] } }] },
+    list_designs: { run_id: "read-empty", action: "list_designs", status: "completed", calls: [{ tool: "list_designs", arguments: {}, result: { content: [{ type: "text", text: "[]" }] } }] },
+  };
+  try {
+    await page.route("**/api/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/status")) return respond(route, connected);
+      if (route.request().method() === "POST") { const body = route.request().postDataJSON(); posts.push(body); return respond(route, records[body.action], 202); }
+      return respond(route, Object.values(records).find((record) => path.endsWith(record.run_id)));
+    });
+    await page.goto(`${base}/?view=cad`);
+    await page.getByText("已连接 · 工具列表已验证", { exact: true }).waitFor();
+    await page.getByLabel("描述零件、尺寸和设计要求").fill(records.preview.prompt);
+    await page.getByRole("button", { name: "提交给 BuildCAD", exact: true }).click();
+    await page.locator(".cad-result-images img").waitFor();
+    await page.getByRole("button", { name: "读取我的设计", exact: true }).click();
+    await page.getByText("读取完成：当前账号没有设计。", { exact: true }).waitFor();
+    assert.equal(await page.locator(".cad-result-images img").count(), 1);
+    assert.equal(await page.locator(".cad-submitted-prompt").innerText(), records.preview.prompt);
+    assert.match(await page.locator('[aria-labelledby="buildcad-read-result-title"]').innerText(), /仅读取设计.*未提交建模需求/);
+    await page.reload();
+    await page.locator(".cad-result-images img").waitFor();
+    await page.getByText("读取完成：当前账号没有设计。", { exact: true }).waitFor();
+    assert.equal(posts.length, 2);
+    assert.equal(await page.locator(".cad-submitted-prompt").innerText(), records.preview.prompt);
+  } finally { await context.close(); }
+});
+
+test("失败预览保留本轮输入，重试只在点击后提交原需求且不保存设计", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const posts = [];
+  const original = "生成外径30mm、长度50mm、通孔10mm的销轴";
+  const failed = { run_id: "failed-original", action: "preview", design_id: "", prompt: original, status: "failed", error_tool: "render_preview", error: "fetch failed", calls: [{ tool: "render_preview", arguments: { code: "from llmcad import Cylinder\nresult = Cylinder(30, 50) - Cylinder(10, 50)" }, result: { isError: true, content: [{ type: "text", text: "fetch failed" }] } }] };
+  const read = { run_id: "retry-read", action: "list_designs", status: "completed", designs: [{ id: "other-design", name: "另一个设计" }], calls: [] };
+  try {
+    await page.route("**/api/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/status")) return respond(route, connected);
+      if (route.request().method() === "POST") { const body = route.request().postDataJSON(); posts.push(body); return respond(route, body.action === "list_designs" ? read : failed, 202); }
+      return respond(route, path.endsWith(read.run_id) ? read : failed);
+    });
+    await page.goto(`${base}/?view=cad`);
+    await page.getByText("已连接 · 工具列表已验证", { exact: true }).waitFor();
+    await page.getByLabel("描述零件、尺寸和设计要求").fill(original);
+    await page.getByRole("button", { name: "提交给 BuildCAD", exact: true }).click();
+    await page.getByText("BuildCAD 请求失败", { exact: true }).waitFor();
+    assert.equal(await page.locator(".cad-submitted-prompt").innerText(), original);
+    assert.equal(await page.locator(".cad-result-images img").count(), 0);
+    await page.getByLabel("描述零件、尺寸和设计要求").fill("尚未提交的新需求");
+    await page.getByRole("button", { name: "刷新状态", exact: true }).click();
+    assert.equal(posts.length, 1);
+    assert.equal(await page.locator(".cad-submitted-prompt").innerText(), original);
+    await page.getByRole("button", { name: "读取我的设计", exact: true }).click();
+    await page.getByLabel("我的 BuildCAD 设计").selectOption("other-design");
+    await page.getByRole("button", { name: "重试本次预览", exact: true }).click();
+    await page.getByText("BuildCAD 请求失败", { exact: true }).waitFor();
+    assert.equal(posts.length, 3);
+    assert.equal(posts[2].prompt, original);
+    assert.equal(posts[2].action, "preview");
+    assert.equal(posts[2].design_id, "", "重试不能带入刚切换的其他设计");
+    assert.notEqual(posts[2].command_id, posts[0].command_id);
+    assert.equal(await page.getByLabel("描述零件、尺寸和设计要求").inputValue(), "尚未提交的新需求");
+  } finally { await context.close(); }
+});
+
+test("旧版仅有当前会话时，读取设计后迁移建模记录并能在回查失败后刷新恢复", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let modelUnavailable = false, posts = 0;
+  const model = { run_id: "legacy-model", status: "completed", action: "preview", prompt: "直径10mm圆柱", calls: [{ tool: "render_preview", arguments: { code: "from llmcad import Cylinder\nresult = Cylinder(10, 10)" }, result: { content: [{ type: "image", mimeType: "image/png", data: imageData }] } }] };
+  const read = { run_id: "legacy-read", status: "completed", action: "list_designs", designs: [], calls: [] };
+  try {
+    await context.addInitScript(() => {
+      if (!sessionStorage.getItem("legacy-seeded")) {
+        sessionStorage.setItem("legacy-seeded", "true");
+        sessionStorage.setItem("buildcad.active-run", JSON.stringify({ run_id: "legacy-model", prompt: "直径10mm圆柱", action: "preview", command_id: "legacy-command", design_id: "" }));
+      }
+    });
+    await page.route("**/api/**", (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/status")) return respond(route, connected);
+      if (route.request().method() === "POST") { posts += 1; return respond(route, read, 202); }
+      if (path.endsWith(model.run_id)) return modelUnavailable ? respond(route, { detail: "暂时无法读取" }, 503) : respond(route, model);
+      return respond(route, read);
+    });
+    await page.goto(`${base}/?view=cad`);
+    await page.locator(".cad-result-images img").waitFor();
+    await page.getByRole("button", { name: "读取我的设计", exact: true }).click();
+    await page.getByText("读取完成：当前账号没有设计。", { exact: true }).waitFor();
+    const metadata = await page.evaluate(() => JSON.parse(sessionStorage.getItem("buildcad.model-run") || "null"));
+    assert.equal(metadata?.run_id, model.run_id);
+    modelUnavailable = true;
+    await page.reload();
+    await page.getByText(/上次建模记录读取失败/).waitFor();
+    modelUnavailable = false;
+    await page.getByRole("button", { name: "刷新状态", exact: true }).click();
+    await page.locator(".cad-result-images img").waitFor();
+    assert.equal(posts, 1, "恢复旧记录及刷新均不得重新提交");
+  } finally { await context.close(); }
+});
+
+test("手动刷新已恢复模型后，较早的读取失败不能覆盖当前成功状态", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const held = [];
+  let refreshing = false, seen;
+  const requested = new Promise((resolve) => { seen = resolve; });
+  const model = { run_id: "race-model", action: "preview", status: "completed", prompt: "圆柱", calls: [{ tool: "render_preview", result: { content: [{ type: "image", mimeType: "image/png", data: imageData }] } }] };
+  const read = { run_id: "race-read", action: "list_designs", status: "completed", designs: [], calls: [] };
+  try {
+    await context.addInitScript(() => {
+      sessionStorage.setItem("buildcad.active-run", JSON.stringify({ run_id: "race-read", action: "list_designs", prompt: "读取设计", command_id: "read-cmd" }));
+      sessionStorage.setItem("buildcad.model-run", JSON.stringify({ run_id: "race-model", action: "preview", prompt: "圆柱", command_id: "model-cmd" }));
+    });
+    await page.route("**/api/**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/status")) return respond(route, connected);
+      if (path.endsWith(model.run_id)) {
+        if (!refreshing) { await new Promise((release) => { held.push(release); seen(); }); return respond(route, { detail: "较早查询失败" }, 503); }
+        return respond(route, model);
+      }
+      return respond(route, read);
+    });
+    await page.goto(`${base}/?view=cad`);
+    await requested;
+    await page.getByText("已连接 · 工具列表已验证", { exact: true }).waitFor();
+    refreshing = true;
+    await page.getByRole("button", { name: "刷新状态", exact: true }).click();
+    await page.locator(".cad-result-images img").waitFor();
+    const lateResponse = page.waitForResponse((response) => response.url().endsWith(model.run_id) && response.status() === 503);
+    held.forEach((release) => release());
+    await lateResponse;
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.getByText(/上次建模记录读取失败/).count(), 0);
+    assert.equal(await page.locator(".cad-result-images img").count(), 1);
+  } finally { held.forEach((release) => release()); await context.close(); }
+});
+
 test("disconnected workspace has one prompt, real connection status and no local modeling or manufacturing controls", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
