@@ -32,6 +32,7 @@ from app.tools.cad import (
     query_relation as query_relation_tool,
 )
 from app.tools.diagnosis import get_active_alarms as get_active_alarms_tool
+from app.tools.cad.generate_3d_model import generate_3d_model as generate_3d_model_tool
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
 from app.tools.diagnosis import get_production_status as get_production_status_tool
 from app.tools.maintenance import (
@@ -139,6 +140,7 @@ class ToolDefinition:
     exposed_to_model: bool
     compatibility_for: str = ''
     argument_model: type[BaseModel] | None = None
+    local_only: bool = False
 
 
 class ToolRegistry:
@@ -172,7 +174,7 @@ class ToolRegistry:
                 'reinspect_quality_check','release_quality_check','close_quality_check')],
             ToolDefinition('register_production_part', self._register_production_part, '保存登录人员录入的实测数据和设计规格', 'qms', 'register_production_part', generic_parameters, False),
             ToolDefinition('create_quality_check', self._create_quality_check, '保存 Agent 的真实质检证据和数据结果', 'mes', 'create_quality_check', generic_parameters, False),
-            ToolDefinition("get_alarm_definition", get_alarm_definition, "查询报警定义", "knowledge", "get_alarm_definition", {"type":"object","properties":{"alarm_code":{"type":"string","description":"报警代码"}},"required":["alarm_code"],"additionalProperties":False}, True),
+            ToolDefinition("get_alarm_definition", self._get_alarm_definition, "查询设备所属报警定义", "knowledge", "get_alarm_definition", {"type":"object","properties":{"alarm_code":{"type":"string","description":"报警代码"}},"required":["alarm_code"],"additionalProperties":False}, True),
             ToolDefinition("get_device_status", self.get_device_status, "查询设备状态", "plc", "get_device_status", generic_parameters, True),
             ToolDefinition("get_active_alarms", self.get_active_alarms, "查询设备当前活动报警", "plc", "get_active_alarms", generic_parameters, True),
             ToolDefinition("get_production_status", get_production_status_tool, "查询MES生产状态", "mes", "get_production_status", generic_parameters, True),
@@ -198,6 +200,7 @@ class ToolRegistry:
             ToolDefinition("query_drawing", self.query_drawing, "从 CAD 服务查询图纸引用和定位元数据", "cad", "query_drawing", generic_parameters, True),
             ToolDefinition("query_relation", self.query_relation, "从 CAD 服务查询装配关系", "cad", "query_relation", generic_parameters, True),
             ToolDefinition("fetch_engineering_record", self.fetch_engineering_record, "从 CAD 服务获取完整工程记录", "cad", "fetch_engineering_record", generic_parameters, True),
+            ToolDefinition("generate_3d_model", generate_3d_model_tool, "为当前可信 CAD 任务生成并校验三维实体", "local", "generate_3d_model", {"type": "object", "properties": {"design_id": {"type": "string", "pattern": "^CAD-[A-F0-9]{20}$"}}, "required": ["design_id"], "additionalProperties": False}, False, local_only=True),
             ToolDefinition("generate_repair_plan", self.generate_repair_plan, "生成维修计划草案", "local", "generate_repair_plan", generic_parameters, True),
             ToolDefinition("query_spare_part", self.query_spare_part, "查询备件库存", "inventory", "query_spare_part", generic_parameters, True),
             ToolDefinition("query_inventory", self.query_inventory, "查询库存", "inventory", "query_inventory", generic_parameters, True),
@@ -293,6 +296,9 @@ class ToolRegistry:
         """读取设备历史趋势，并把当前工厂地址注入工具调用。"""
 
         return get_device_history(base_url=self.base_url, **arguments)
+
+    def _get_alarm_definition(self, alarm_code: str, device_id: str = '') -> Dict[str, Any]:
+        return get_alarm_definition(alarm_code, device_id=device_id, base_url=self.base_url)
 
     @staticmethod
     def normalize_tool_arguments(name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
@@ -629,7 +635,12 @@ class ToolRegistry:
         try:
             if server == "cad" and not self.cad_base_url and not self._cad_fallback_allowed():
                 raise RuntimeError("生产模式要求配置 MCP_CAD_URL 或 CAD_SERVICE_BASE_URL")
-            result = self.mcp.call(server, operation, input_payload)
+            call_arguments = dict(input_payload)
+            if name == 'get_alarm_definition':
+                # 设备范围来自 Agent 的真实事件上下文，不接受模型改写的设备参数。
+                call_arguments['device_id'] = str(execution_context.get('device_id') or '')
+            # 内部任务工具必须在本地校验可信上下文，不允许环境变量将其改为远程调用。
+            result = definition.handler(**call_arguments) if definition and definition.local_only else self.mcp.call(server, operation, call_arguments)
         except Exception as error:
             if server == "cad" and operation in {"query_drawing", "query_bom", "query_part", "query_relation", "fetch_engineering_record"} and self._cad_fallback_allowed():
                 fallback = self.mcp.handlers.get(operation)

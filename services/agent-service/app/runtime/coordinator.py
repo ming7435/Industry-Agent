@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import os
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -369,6 +370,17 @@ class RuntimeCoordinator:
             outputs = dict(current.get("runtime_outputs") or {})
             result_key = self.capabilities.result_key_for(capability)
             outputs[result_key] = result.output
+            if result_key == "diagnosis" and initial.get("entry") == "trigger":
+                stage_store = getattr(self.container, "event_results", None)
+                if stage_store is not None:
+                    try:
+                        stage_store.record_stage(dict(initial.get("event") or {}), {
+                            "event": dict(initial.get("event") or {}), "task_id": initial.get("task_id"),
+                            "trace_id": initial.get("trace_id"), "status": "running", "diagnosis": result.output,
+                        })
+                    except Exception as error:
+                        # 不记录异常正文，避免缓存地址或凭据泄漏；主业务仍继续执行。
+                        logging.getLogger(__name__).warning("诊断阶段缓存写入失败：%s", type(error).__name__)
             result_tool_calls = result.output.get("tool_calls") if isinstance(result.output, Mapping) else []
             if not isinstance(result_tool_calls, list):
                 result_tool_calls = []

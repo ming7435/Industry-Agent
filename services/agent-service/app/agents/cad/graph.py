@@ -1,4 +1,4 @@
-"""CAD Agent 的 LangGraph 工程查询流程。"""
+"""CAD Agent 的 LangGraph 工程查询与三维建模流程。"""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ CAD_TOOLS = ("query_drawing", "query_bom", "query_part", "query_relation", "fetc
 
 class CADGraphState(AgentExecutionState, total=False):
     agent: Any
+    operation: str
     request: Dict[str, Any]
     active_skill: str
     allowed_tools: List[str]
@@ -42,19 +43,45 @@ class CADGraphState(AgentExecutionState, total=False):
     degraded: bool
     synthetic: bool
     route: str
-    result: CADResult
+    modeling_result: Dict[str, Any]
+    modeling_execution: Dict[str, Any]
+    result: CADResult | Dict[str, Any]
 
 
 def initialize(state: CADGraphState) -> Dict[str, Any]:
+    if state.get("operation") == "production_modeling":
+        request = dict(state.get("request") or {})
+        if not request.get("design_id"):
+            raise ValueError("三维建模节点缺少已登记任务编号")
+        return {"request": request, "route": "load_skill", "observations": [], "errors": []}
     request = CADQuery.from_payload(state.get("request") or {}).model_dump(mode="json")
     return {"request": request, "step_count": 0, "max_steps": request["max_steps"], "observations": [], "components": [], "drawings": [], "bom_items": [], "assembly_relations": [], "locations": [], "sources": [], "errors": [], "backend_status": "unknown", "degraded": False, "synthetic": False, "route": "load_skill"}
 
 
 def load_skill(state: CADGraphState) -> Dict[str, Any]:
-    skills = get_skill_registry().select("cad", state.get("request") or {})
+    modeling = state.get("operation") == "production_modeling"
+    skills = get_skill_registry().select("cad", state.get("request") or {},
+        names=["production_modeling_skill"] if modeling else None)
+    if modeling and not skills:
+        raise ValueError("三维建模 Skill 未注册，不能绕过技能执行工具")
     names = [skill.name for skill in skills] or ["cad_master_skill"]
     allowed_tools = get_skill_registry().merge_tools(skills)
-    return {"active_skill": "+".join(names), "active_skills": names, "allowed_tools": allowed_tools or list(CAD_TOOLS), "route": "resolve_component"}
+    return {"active_skill": "+".join(names), "active_skills": names,
+        "allowed_tools": allowed_tools if modeling else (allowed_tools or list(CAD_TOOLS)),
+        "route": "model_3d" if modeling else "resolve_component"}
+
+
+def model_3d(state: CADGraphState) -> Dict[str, Any]:
+    """节点选择 Skill；实际工具名称与权限由 Markdown 步骤决定。"""
+    selected = get_skill_registry().select("cad", names=state.get("active_skills") or [])
+    if len(selected) != 1:
+        raise ValueError("三维建模节点必须选择唯一建模 Skill")
+    skill = selected[0]
+    result = skill.execute_tool_step("build_model", state["agent"].tools,
+        {"design_id": state["request"]["design_id"]}, context={"node": "model_3d"})
+    step = next(item for item in skill.normalized_steps() if item.id == "build_model")
+    return {"modeling_result": result, "modeling_execution": {"agent": "cad", "node": "model_3d",
+        "skill": skill.name, "step": step.id, "tool": step.tool}, "route": "final"}
 
 
 def resolve_component(state: CADGraphState) -> Dict[str, Any]:
@@ -148,6 +175,8 @@ def validate_relation(state: CADGraphState) -> Dict[str, Any]:
 
 
 def final(state: CADGraphState) -> Dict[str, Any]:
+    if state.get("operation") == "production_modeling":
+        return {"result": dict(state["modeling_result"])}
     return {"result": _result(state, "completed")}
 
 
@@ -161,6 +190,7 @@ def build_cad_graph():
         "initialize": "normalize_query",
         "load_skill": "classify_engineering_request",
         "resolve_component": "resolve_part",
+        "model_3d": "build_model",
         "query": "resolve_bom",
         "observe": "merge_engineering_context",
         "validate_relation": "validate_engineering_context",
@@ -168,16 +198,18 @@ def build_cad_graph():
     }
     prepare = prepare_skill_node("cad", initialize, load_skill, skill_steps=node_skill_steps)
     steps = {}
-    for name, node in (("resolve_component", resolve_component), ("plan_engineering_query", plan_engineering_query), ("query", query), ("observe", observe), ("validate_relation", validate_relation), ("final", final), ("fallback", fallback)):
+    for name, node in (("resolve_component", resolve_component), ("model_3d", model_3d), ("plan_engineering_query", plan_engineering_query), ("query", query), ("observe", observe), ("validate_relation", validate_relation), ("final", final), ("fallback", fallback)):
         steps[name] = trace_skill_node("cad", name, node, skill_step=node_skill_steps.get(name, name))
-    workflow.add_node("prepare", chain_nodes(prepare, steps["resolve_component"], stop_routes=("fallback",)))
+    workflow.add_node("prepare", chain_nodes(prepare, steps["resolve_component"], stop_routes=("model_3d", "fallback")))
+    workflow.add_node("model_3d", steps["model_3d"])
     workflow.add_node("plan_engineering_query", steps["plan_engineering_query"])
     # 队列耗尽或达到预算时 query 不产生新观测，不能再次处理上一轮结果。
     workflow.add_node("query", chain_nodes(steps["query"], steps["observe"], stop_routes=("validate_relation", "fallback")))
     workflow.add_node("validate_relation", steps["validate_relation"])
     workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
     workflow.add_edge(START, "prepare")
-    workflow.add_edge("prepare", "plan_engineering_query")
+    workflow.add_conditional_edges("prepare", _route, {"model_3d": "model_3d", "plan_engineering_query": "plan_engineering_query"})
+    workflow.add_edge("model_3d", "finish")
     workflow.add_conditional_edges("plan_engineering_query", _route, {"query": "query", "validate_relation": "validate_relation"})
     workflow.add_conditional_edges("query", _route, {"plan_engineering_query": "plan_engineering_query", "validate_relation": "validate_relation", "fallback": "finish"})
     workflow.add_edge("validate_relation", "finish")

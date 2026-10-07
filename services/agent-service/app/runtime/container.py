@@ -46,7 +46,7 @@ class AgentContainer:
         settings: Settings | None = None,
     ) -> None:
         settings = settings or get_settings()
-        registry = tools or ToolRegistry(rag_base_url=settings.rag_service_base_url)
+        registry = tools or ToolRegistry(base_url=settings.factory_api_base_url, rag_base_url=settings.rag_service_base_url)
         get_skill_registry().validate_tools(registry.mcp.handlers)
         self.registry = registry
         self.tools = registry

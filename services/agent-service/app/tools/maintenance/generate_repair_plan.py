@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping
-from app.workorder.repair_profile import repair_profile
+from app.workorder.repair_profile import interlock_inspection_steps, repair_profile
 
 
 def generate_repair_plan(diagnosis: Mapping[str, Any], **_: Any) -> Dict[str, Any]:
     fault = str(diagnosis.get("fault") or diagnosis.get("summary") or diagnosis.get("diagnosis") or "设备异常")
     kind = repair_profile(diagnosis)["kind"]
-    if kind == "lubrication":
+    if kind == "safety_interlock":
+        steps = interlock_inspection_steps()
+    elif kind == "lubrication":
         steps = ["执行安全隔离和断电挂牌", "检查润滑油液位、润滑泵及油路压力反馈", "检查油路过滤器及泄漏，确认故障后处理", "复测润滑压力与报警状态并记录恢复数据"]
     elif kind == "thermal":
         steps = ["执行断电和挂牌上锁", "检查冷却液、冷却泵和散热回路", "复测温度并空载试运行"]

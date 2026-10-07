@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from app.clients.model import ModelServiceClient, ModelServiceError
-from .modeling_schemas import ModelSpec
+from .schemas import ModelSpec
 
 
 class MissingDesignInformation(ValueError):

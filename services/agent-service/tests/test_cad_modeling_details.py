@@ -12,7 +12,7 @@ import pytest
 
 from app.agents.cad.modeling_analysis import analyze_design, explicit_cylinder, MissingDesignInformation, UnconfirmedDesignParameters
 from app.agents.cad.modeling_engine import CADKernel, CADKernelError
-from app.agents.cad.modeling_schemas import DesignRequest, ModelSpec
+from app.agents.cad.schemas import DesignRequest, ModelSpec
 from app.agents.cad.modeling_service import CADModelingService, CADDesignConflict
 from test_cad_modeling_api import client, finished, request_spec
 

@@ -1,12 +1,9 @@
-"""Diagnosis Agent 的本地 MCP 兼容工具。
-
-今天先用进程内 Mock 字典代替真实 MCP Server。工具的名称、参数和返回结构保持稳定，
-后续可把它替换成真实 MCP Server，而不用改 Agent State。
-"""
+"""按设备查询工厂报警目录；旧字典仅保留给显式隔离测试。"""
 
 from __future__ import annotations
 
 from typing import Any, Dict
+import os
 
 from app.common import AlarmCodeParser
 
@@ -113,11 +110,47 @@ ALARM_DEFINITIONS: Dict[str, Dict[str, Any]] = {
 }
 
 
-def get_alarm_definition(alarm_code: str) -> Dict[str, Any]:
-    """查询 Mock 报警字典，返回稳定的工具结果。"""
+def get_alarm_definition(alarm_code: str, device_id: str = '', base_url: str | None = None) -> Dict[str, Any]:
+    """在线读取设备所属工厂定义，不以其他设备或演示字典填充空结果。"""
 
     parsed = AlarmCodeParser.parse(alarm_code)
     normalized = parsed.code or str(alarm_code or "").strip().upper()
+    online = os.getenv('APP_ENV', 'development').lower() != 'testing'
+    address = base_url or (os.getenv('FACTORY_API_BASE_URL', '') if online else '')
+    if address or online:
+        result = {'found': False, 'success': True, 'alarm_code': normalized, 'device_id': device_id,
+                  'name': '未知报警', 'severity': 'unknown', 'severity_label': '未知',
+                  'description': '当前设备报警目录未找到该编号的定义。',
+                  'source': 'factory_scenario_catalog', 'raw_alarm_text': parsed.raw_text}
+        if not address or not device_id:
+            return {**result, 'success': False, 'evidence_status': 'unavailable',
+                    'description': '报警查询需要工厂地址和明确的设备编号。'}
+        from app.monitor.factory_api import FactoryApiClient, FactoryApiError
+        try:
+            snapshot = FactoryApiClient(address).snapshot(device_id)
+        except FactoryApiError:
+            return {**result, 'success': False, 'evidence_status': 'unavailable',
+                    'description': '设备报警目录服务暂不可用，未使用演示定义代替。'}
+        catalog = snapshot.get('scenarios')
+        if not isinstance(catalog, dict) or not isinstance(catalog.get('scenarios'), list):
+            return {**result, 'success': False, 'evidence_status': 'unavailable',
+                    'description': '设备报警目录格式不完整，未使用演示定义代替。'}
+        for item in catalog['scenarios']:
+            if not isinstance(item, dict):
+                continue
+            owner = str(item.get('default_device_id') or item.get('device_id') or catalog.get('device_id') or '')
+            if owner != device_id or str(item.get('alarm_code') or '').strip().upper() != normalized:
+                continue
+            name = str(item.get('name') or '').strip()
+            if not name:
+                continue
+            severity = str(item.get('severity') or 'unknown').lower()
+            return {**result, 'found': True, 'name': name, 'severity': severity,
+                    'severity_label': {'critical':'严重故障','high':'高级故障','warning':'初级预警'}.get(severity, '未知'),
+                    'description': str(item.get('summary') or item.get('manual_basis') or name),
+                    'recommended_action': str(item.get('recommended_action') or ''),
+                    'scenario_id': item.get('scenario_id'), 'evidence_status': 'ready'}
+        return result
     definition = ALARM_DEFINITIONS.get(normalized)
     if definition is None:
         return {

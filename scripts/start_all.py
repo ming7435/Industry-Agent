@@ -11,6 +11,8 @@ import secrets
 import threading
 import time
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -140,6 +142,34 @@ def _port_in_use(host: str, port: int) -> bool:
         return False
 
 
+def _wait_for_service_startup(
+    name: str,
+    process: subprocess.Popen[str] | None,
+    port: int,
+    *,
+    timeout_seconds: float = 60,
+    poll_seconds: float = 0.25,
+) -> None:
+    """等待应用能够接收请求；不将模型收费能力探测作为启动条件。"""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if process is not None and (exit_code := process.poll()) is not None:
+            raise RuntimeError(f"{name} 在启动期间退出，退出码：{exit_code}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"{name} 健康接口在 {timeout_seconds:g} 秒内未可用")
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/health", timeout=min(1, remaining)) as response:
+                if response.status == 200:
+                    return
+        except (HTTPError, URLError, OSError):
+            pass
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(poll_seconds, remaining))
+
+
 def _stream_logs(name: str, process: subprocess.Popen[str]) -> None:
     """把子进程输出加服务名前缀后转发到当前终端。"""
 
@@ -244,6 +274,8 @@ def main() -> int:
         for name, command, cwd, env_root in services:
             port = service_port(name, command, monitor_port=monitor_port)
             if port is not None and _port_in_use("127.0.0.1", port):
+                if name != "monitor-web":
+                    _wait_for_service_startup(name, None, port)
                 print(f"{name} 已在 127.0.0.1:{port} 运行，复用现有服务。")
                 continue
             print(f"启动 {name} ...")
@@ -258,7 +290,9 @@ def main() -> int:
             )
             processes.append((name, process))
             threading.Thread(target=_stream_logs, args=(name, process), daemon=True).start()
-            time.sleep(0.8)
+            if port is not None and name != "monitor-web":
+                _wait_for_service_startup(name, process, port)
+                print(f"{name} 健康接口已可用。")
 
         while True:
             for name, process in processes:
@@ -271,6 +305,10 @@ def main() -> int:
     except KeyboardInterrupt:
         _terminate(processes)
         return 130
+    except (RuntimeError, TimeoutError) as error:
+        print(f"服务启动失败：{error}")
+        _terminate(processes)
+        return 1
 
 
 if __name__ == "__main__":

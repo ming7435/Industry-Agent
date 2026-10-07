@@ -6,14 +6,35 @@ import hashlib
 import json
 import math
 import os
+import socket
+import ssl
 import time
 from datetime import datetime, timezone
 from threading import Lock
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener
 
 from .base import ProviderError
+
+
+def urlopen(request: Request, timeout: float):
+    """每次使用当前系统/环境代理，避免长运行进程持有已失效的全局代理。"""
+    return build_opener().open(request, timeout=timeout)
+
+
+def _network_category(error: BaseException) -> str:
+    """仅输出白名单错误类别，不回显可能包含凭据的底层异常正文。"""
+    reason = getattr(error, 'reason', error)
+    if isinstance(reason, ConnectionRefusedError):
+        return 'connection_refused'
+    if isinstance(reason, TimeoutError):
+        return 'timeout'
+    if isinstance(reason, socket.gaierror):
+        return 'dns_failure'
+    if isinstance(reason, ssl.SSLError):
+        return 'tls_failure'
+    return 'network_error'
 
 
 class _FakeProvider:
@@ -94,7 +115,8 @@ class _OpenAICompatibleProvider:
                     raise ProviderError("%s provider HTTP %s" % (self.name, error.code)) from None
             except (URLError, TimeoutError, OSError) as error:
                 if attempt + 1 >= attempts:
-                    raise ProviderError("%s provider request failed (%s)" % (self.name, type(error).__name__)) from None
+                    raise ProviderError("%s provider request failed (%s: %s)" %
+                                        (self.name, type(error).__name__, _network_category(error))) from None
             except ValueError as error:
                 raise ProviderError("%s provider returned invalid JSON" % self.name) from None
             time.sleep(min(0.5, 0.05 * (2 ** attempt)))

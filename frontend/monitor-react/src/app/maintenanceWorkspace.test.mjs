@@ -78,6 +78,14 @@ test("ready plans remain waiting for system dispatch until an authorized linked 
   assert.equal(workspace.maintenanceDispatchView({ workorder_ready: true }, { hasOrder: true }).label, "已关联工单");
 });
 
+test("方案被阻止时明确显示具体资料缺项，而不是只说尚未就绪", () => {
+  const status = workspace.maintenanceDispatchView({ workorder_ready: false,
+    dispatch: { allowed: false, reason: "维修方案尚未达到工单就绪条件" },
+    validation_findings: ["涉及拆装或部件操作但缺少 CAD/BOM 依据", "所需备件库存缺失或不可用：LUB-REAL"] });
+  assert.match(status.reason, /CAD\/BOM/);
+  assert.match(status.reason, /LUB-REAL/);
+});
+
 test("plan collection prioritizes a newer saved event over an old snapshot of the same alarm", () => {
   const records = workspace.buildMaintenanceWorkspaceRecords({
     snapshot: { diagnosis: { pipeline: { event: { device_id: "M-1", alarm_code: "A-1", timestamp: "2026-10-04T12:00:00Z" }, maintenance_plan: { plan_id: "PLAN-OLD" } } } },

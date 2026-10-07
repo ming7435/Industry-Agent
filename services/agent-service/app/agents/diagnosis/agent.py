@@ -263,6 +263,7 @@ class DiagnosisAgent(BaseAgent):
                         "alarm_code":
                         alarm_code
                     },
+                    context={"device_id": device_id},
                 )
             )
 
@@ -412,6 +413,7 @@ class DiagnosisAgent(BaseAgent):
                             "alarm_code":
                             alarm_code
                         },
+                        context={"device_id": device_id},
                     )
                 )
 

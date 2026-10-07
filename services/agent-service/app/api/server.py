@@ -18,7 +18,7 @@ import json
 import os
 from urllib.error import HTTPError
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
@@ -31,7 +31,7 @@ from app.api.schemas.rag import RAGIngestRequest
 from app.api.schemas.workorder import RepairFeedbackRequest, WorkOrderActionRequest, WorkOrderCreateRequest
 from app.graph import AgentOrchestrator, build_orchestrator
 from app.harness.runs import build_run_records
-from app.runtime.event_store import EventResultConflict, EventResultStore
+from app.runtime.event_store import EventResultConflict, EventResultStore, scoped_event_key
 from app.runtime.durable_store import PendingResultError
 from app.tools.report.generate_report_file import get_report_file_path
 from app.tools.query_contracts import QueryArgumentError
@@ -176,6 +176,29 @@ def compact_trace_summary(records: Any) -> list[Dict[str, Any]]:
     ]
 
 
+def event_result_key(event: Mapping[str, Any]) -> str:
+    """提交和回查使用完全相同的租户、设备、事件、修订作用域。"""
+
+    try:
+        return scoped_event_key(event)
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=422, detail="event_revision 必须是正整数") from error
+
+
+def compact_event_result(value: Mapping[str, Any]) -> Dict[str, Any]:
+    """回查保留业务结果，不复制完整轨迹和递归 Runtime 上下文。"""
+
+    fields = ("task_id", "trace_id", "entry", "event", "route", "route_result", "diagnosis",
+              "knowledge", "cad", "maintenance_plan", "workorder", "report", "status", "errors",
+              "evidence_status", "stop_reason", "goal_event")
+    result = {key: value[key] for key in fields if key in value}
+    runtime_result = value.get("runtime_result")
+    if isinstance(runtime_result, Mapping):
+        result["runtime_result"] = {key: runtime_result[key] for key in
+                                    ("status", "stop_reason", "iterations", "evidence_score") if key in runtime_result}
+    return result
+
+
 def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     app = FastAPI(title="Industrial Maintenance Agent Service", version="1.0.0")
 
@@ -199,6 +222,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     )
     runtime = orchestrator or build_orchestrator()
     event_results = EventResultStore()
+    runtime.container.event_results = event_results
     app.add_event_handler("shutdown", event_results.close)
 
     def closure_call(callable_: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
@@ -269,22 +293,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def abnormal_event(request: AbnormalEventRequest) -> Dict[str, Any]:
         event = dict(request.event or {})
         event_id = str(event.get("event_id") or "")
-        event_key = ""
+        event_key = event_result_key(event)
         if event_id:
-            try:
-                raw_revision = event.get("event_revision", 1)
-                if isinstance(raw_revision, bool):
-                    raise ValueError("bool is not a revision")
-                revision = int(raw_revision)
-                if revision < 1:
-                    raise ValueError("revision must be positive")
-            except (TypeError, ValueError) as error:
-                raise HTTPException(status_code=422, detail="event_revision 必须是正整数") from error
-            event_key = json.dumps(
-                [str(event.get("tenant_id") or ""), str(event.get("device_id") or ""), event_id, revision],
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
             if event_results.has_unmigrated_legacy_result(event_id, event_key):
                 raise HTTPException(status_code=409, detail="旧版事件结果需先核对归属和工单，不能自动重放")
         fingerprint = sha256(json.dumps(event, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
@@ -296,6 +306,26 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except TimeoutError as error:
             raise HTTPException(status_code=504, detail="事件处理超时，结果未知，需要对账") from error
+
+    @app.get("/api/v1/agent/event/{event_id}/result")
+    def abnormal_event_result(event_id: str, device_id: str = Query(min_length=1),
+                              event_revision: int = Query(ge=1), tenant_id: str = "") -> Any:
+        """只读取既有结果；查不到不等于执行失败，禁止自动重放异常。"""
+
+        key = event_result_key({"event_id": event_id, "device_id": device_id,
+                                "event_revision": event_revision, "tenant_id": tenant_id})
+        result = event_results.get_result(key)
+        if result is None:
+            try:
+                stage = event_results.get_stage(key)
+            except Exception:
+                # 临时缓存故障不能冒充业务完成；最终结果查询仍然可用。
+                stage = None
+            if stage is not None:
+                return {"status": "in_progress", "result": compact_event_result(stage)}
+            return JSONResponse(status_code=202, content={"status": "pending_or_unknown",
+                                "event_id": event_id, "device_id": device_id, "event_revision": event_revision})
+        return {"status": "available", "result": compact_event_result(result)}
 
     @app.get("/api/rag/status", deprecated=True)
     @app.get("/api/v1/rag/status")

@@ -8,14 +8,15 @@ import os
 import sys
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock
-from time import monotonic
-from typing import Any, Dict, List, Mapping, Optional
+from time import monotonic, sleep
+from typing import Any, Callable, Dict, List, Mapping, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -32,6 +33,9 @@ AGENT_EVENT_TIMEOUT_SECONDS = float(
 MONITOR_PROXY_TIMEOUT_SECONDS = float(
     os.getenv("MONITOR_PROXY_TIMEOUT_SECONDS", str(max(AGENT_EVENT_TIMEOUT_SECONDS, 90.0)))
 )
+# HTTP 超时只表明没有收到响应。此窗口内只读回查，绝不再次提交事件。
+AGENT_RESULT_RECOVERY_SECONDS = max(0.0, float(os.getenv("AGENT_RESULT_RECOVERY_SECONDS", "180")))
+AGENT_RESULT_POLL_SECONDS = max(0.1, float(os.getenv("AGENT_RESULT_POLL_SECONDS", "2")))
 CAD_PRODUCTION_BODY_TIMEOUT_SECONDS = 5.0
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
@@ -193,8 +197,16 @@ def _compact_trigger_history(items: Any) -> List[Dict[str, Any]]:
     return compacted
 
 
-def dispatch_agent_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    """把原始异常事件交给唯一的 Agent Service Runtime。"""
+def _event_identity(event: Mapping[str, Any]) -> Dict[str, Any]:
+    """所有进行中、成功和失败结果都携带原始事件归属。"""
+
+    return {key: event[key] for key in
+            ("tenant_id", "device_id", "event_id", "event_revision", "alarm_code", "task_id") if key in event}
+
+
+def dispatch_agent_event(event: Dict[str, Any], *, on_recovery: Callable | None = None,
+                         should_continue: Callable[[], bool] | None = None) -> Dict[str, Any]:
+    """只提交一次；并行读取阶段诊断，超时后有界对账，不重放工单写操作。"""
 
     body = json.dumps({"event": dict(event or {})}, ensure_ascii=False).encode("utf-8")
     request = Request(
@@ -203,11 +215,117 @@ def dispatch_agent_event(event: Dict[str, Any]) -> Dict[str, Any]:
         headers=agent_request_headers(),
         method="POST",
     )
-    with urlopen(request, timeout=AGENT_EVENT_TIMEOUT_SECONDS) as response:
-        result = json.loads(response.read().decode("utf-8"))
-    if not isinstance(result, dict):
-        raise RuntimeError("Agent Service 返回的工单结果不是对象")
-    return result
+    def submit_once():
+        with urlopen(request, timeout=AGENT_EVENT_TIMEOUT_SECONDS) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        if not isinstance(result, dict):
+            raise RuntimeError("Agent Service 返回的诊断结果不是对象")
+        return result
+
+    lookup = None
+    if event.get("event_id") and event.get("device_id"):
+        query = urlencode({"device_id": event["device_id"], "event_revision": event.get("event_revision", 1),
+                           "tenant_id": event.get("tenant_id") or ""})
+        lookup = Request(AGENT_SERVICE_BASE_URL.rstrip("/") + "/api/v1/agent/event/"
+                         + quote(str(event["event_id"]), safe="") + "/result?" + query,
+                         headers=agent_request_headers(), method="GET")
+
+    worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-event-http")
+    submitted = worker.submit(submit_once)
+    diagnosis: Dict[str, Any] = {}
+    uncertain = False
+    post_finished = False
+    deadline = monotonic() + AGENT_EVENT_TIMEOUT_SECONDS
+    interval = max(0.01, AGENT_RESULT_POLL_SECONDS)
+
+    def wait_for_response(wait_seconds):
+        try:
+            return True, submitted.result(timeout=wait_seconds)
+        except TimeoutError:
+            # 等待超时与 POST 自己抛出网络超时不同。完成竞态中必须消费真实响应。
+            if submitted.done():
+                return True, submitted.result()
+            return False, None
+
+    def publish(value):
+        nonlocal diagnosis
+        if value != diagnosis:
+            diagnosis = value
+            if on_recovery:
+                on_recovery(dict(value))
+
+    def start_recovery():
+        nonlocal uncertain, deadline
+        if uncertain:
+            return
+        uncertain = True
+        deadline = monotonic() + AGENT_RESULT_RECOVERY_SECONDS
+        if diagnosis.get("summary"):
+            publish({**diagnosis, "workflow_status": "recovering"})
+        else:
+            publish({**_event_identity(event), "status": "recovering",
+                     "summary": "诊断响应超时，正在回查后台结果", "diagnosis": "",
+                     "error": "HTTP 等待超时；尚不能判定后台执行失败。"})
+
+    try:
+        while should_continue is None or should_continue():
+            if not post_finished:
+                try:
+                    received, value = wait_for_response(max(0.001, min(interval, deadline - monotonic())))
+                    if received:
+                        return value
+                except TimeoutError:
+                    post_finished = True
+                    start_recovery()
+                except HTTPError as error:
+                    if error.code != 504:
+                        raise
+                    error.close()
+                    post_finished = True
+                    start_recovery()
+                except URLError as error:
+                    if not isinstance(error.reason, TimeoutError):
+                        raise
+                    post_finished = True
+                    start_recovery()
+            else:
+                sleep(max(0.0, min(interval, deadline - monotonic())))
+            if not uncertain and monotonic() >= deadline:
+                start_recovery()
+            if uncertain and (monotonic() >= deadline or lookup is None):
+                break
+            if lookup is None:
+                continue
+            try:
+                with urlopen(lookup, timeout=max(0.01, min(5.0, deadline - monotonic()))) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("回查响应必须是对象")
+                if payload.get("status") == "available" and isinstance(payload.get("result"), dict):
+                    return payload["result"]
+                if payload.get("status") == "in_progress" and isinstance(payload.get("result"), dict):
+                    stage = payload["result"].get("diagnosis")
+                    if isinstance(stage, dict):
+                        publish({**stage, **_event_identity(event),
+                                 "workflow_status": "recovering" if uncertain else "running"})
+            except (OSError, ValueError) as error:
+                # 只读 GET 可重试；服务拒绝或版本不兼容时停止回查，不触发写重试。
+                if isinstance(error, HTTPError):
+                    error.close()
+                    if error.code < 500:
+                        lookup = None
+                        if uncertain:
+                            diagnosis["error"] = "结果回查被拒绝（HTTP %s），未重新提交事件。" % error.code
+                            break
+    finally:
+        # 原 POST 仍受 HTTP 超时约束。停止回查不取消或重复已提交的写动作。
+        worker.shutdown(wait=False)
+    if diagnosis.get("status") in {"completed", "fallback"}:
+        diagnosis["workflow_status"] = "unknown"
+    else:
+        diagnosis.update(**_event_identity(event), status="unknown", summary="诊断结果暂未确认",
+                         diagnosis="后台可能仍在处理或等待对账；未重新提交异常，未确认执行成功。")
+    return {"event": dict(event), "status": "unknown", "diagnosis": diagnosis}
 
 from app.monitor import (  # noqa: E402，路径注入后再导入本地应用包。
     DeviceMonitor,
@@ -262,6 +380,8 @@ class MonitorWebState:
         self.latest_pipeline: Optional[Dict[str, Any]] = None
         self.latest_diagnoses_by_device: Dict[str, Dict[str, Any]] = {}
         self.latest_pipelines_by_device: Dict[str, Dict[str, Any]] = {}
+        self._diagnosis_events_by_device: Dict[str, Dict[str, Any]] = {}
+        self._latest_diagnosis_event: Dict[str, Any] = {}
         self._last_device_discovery = 0.0
         self._device_discovery_interval = max(
             1.0,
@@ -388,7 +508,19 @@ class MonitorWebState:
         with self.lock:
             generation = self._diagnosis_generation
             self.diagnosis_pending += 1
-        future = self.diagnosis_executor.submit(dispatch_agent_event, event)
+            device_id = str(event.get("device_id") or "")
+            self._diagnosis_events_by_device = {**getattr(self, "_diagnosis_events_by_device", {}), device_id: event}
+            self._latest_diagnosis_event = event
+            diagnosis = {**_event_identity(event), "status": "running", "summary": "当前故障正在诊断"}
+            self.latest_diagnosis = diagnosis
+            self.latest_pipeline = {}
+            self.latest_diagnoses_by_device = {**getattr(self, "latest_diagnoses_by_device", {}), device_id: diagnosis}
+            self.latest_pipelines_by_device = {**getattr(self, "latest_pipelines_by_device", {}), device_id: {}}
+        future = self.diagnosis_executor.submit(partial(
+            dispatch_agent_event, event,
+            on_recovery=lambda diagnosis: self._on_diagnosis_progress(diagnosis, generation, event),
+            should_continue=lambda: self._diagnosis_is_current(generation, event),
+        ))
         future.add_done_callback(
             lambda completed: self._on_diagnosis_done(completed, generation, event)
         )
@@ -401,6 +533,21 @@ class MonitorWebState:
         with self.lock:
             self.line_state = result
             self.machine_controls = dict(result.get('devices') or {})
+
+    def _diagnosis_is_current(self, generation: int, event: Dict[str, Any]) -> bool:
+        with self.lock:
+            return generation == self._diagnosis_generation and self._diagnosis_events_by_device.get(str(event.get("device_id") or "")) == event
+
+    def _on_diagnosis_progress(self, diagnosis: Dict[str, Any], generation: int, event: Dict[str, Any]) -> None:
+        """回查期间立即显示真实状态；旧事件不能覆盖当前故障。"""
+
+        with self.lock:
+            device_id = str(event.get("device_id") or "")
+            if generation != self._diagnosis_generation or self._diagnosis_events_by_device.get(device_id) != event:
+                return
+            self.latest_diagnoses_by_device[device_id] = diagnosis
+            if self._latest_diagnosis_event == event:
+                self.latest_diagnosis = diagnosis
 
     def _on_diagnosis_done(self, future: Future, generation: int, event: Dict[str, Any] | None = None) -> None:
         """保存异步诊断结果；统计归零后完成的旧任务不会污染新会话。"""
@@ -423,16 +570,27 @@ class MonitorWebState:
                 "error": "%s: %s" % (type(error).__name__, error),
             }
         with self.lock:
-            self.diagnosis_pending = max(0, self.diagnosis_pending - 1)
             if generation != self._diagnosis_generation:
                 return
-            self.latest_diagnosis = diagnosis
-            self.latest_pipeline = pipeline
+            self.diagnosis_pending = max(0, self.diagnosis_pending - 1)
             device_id = str(
                 (event or {}).get("device_id")
                 or diagnosis.get("device_id")
                 or ""
             ).strip()
+            if event and self._diagnosis_events_by_device.get(device_id) != event:
+                return
+            previous = self.latest_diagnoses_by_device.get(device_id) or {}
+            if diagnosis.get("status") == "failed" and previous.get("status") in {"completed", "fallback"}:
+                # 诊断已完成与整流程 HTTP 失败是两件事，后者不能擦掉前者的正文。
+                diagnosis = {**previous, "workflow_status": "unknown", "error": diagnosis.get("error", "后续流程结果未返回")}
+                pipeline = {"event": dict(event or {}), "status": "unknown", "diagnosis": diagnosis,
+                            "stop_reason": "agent_response_unavailable"}
+            # 原始事件是可信归属；不依赖模型是否在正文中返回报警编号。
+            diagnosis.update(_event_identity(event or {}))
+            if not getattr(self, "_latest_diagnosis_event", {}) or self._latest_diagnosis_event == event:
+                self.latest_diagnosis = diagnosis
+                self.latest_pipeline = pipeline
             if device_id:
                 self.latest_diagnoses_by_device[device_id] = diagnosis
                 self.latest_pipelines_by_device[device_id] = pipeline
@@ -549,6 +707,8 @@ class MonitorWebState:
             self.latest_pipeline = None
             self.latest_diagnoses_by_device.clear()
             self.latest_pipelines_by_device.clear()
+            self._diagnosis_events_by_device.clear()
+            self._latest_diagnosis_event = {}
             self.diagnosis_history.clear()
             self.diagnosis_pending = 0
             self.machine_controls.clear()

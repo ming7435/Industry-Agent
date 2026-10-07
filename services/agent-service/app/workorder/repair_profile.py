@@ -14,6 +14,8 @@ def repair_profile(diagnosis: Mapping[str, Any]) -> dict[str, Any]:
     # 当前报警定义优先，其次是主要故障，再使用原因；不按跨机型复用的报警码猜含义。
     sources = [definition.get("name"), definition.get("description"), fault, value.get("cause")]
     profiles = [
+        ("safety_interlock", "安全门与接料器互锁系统", 60,
+         ("开门被禁止", "开门禁止", "安全门", "门锁", "互锁", "接料器未下降")),
         ("lubrication", "润滑系统", 60, ("润滑", "供油", "油路", "注油")),
         ("thermal", "主轴冷却系统", 60, ("温度", "过热", "过温", "冷却")),
         ("vibration", "主轴传动与轴承系统", 90, ("振动", "轴承")),
@@ -44,9 +46,22 @@ def repair_profile(diagnosis: Mapping[str, Any]) -> dict[str, Any]:
     return {"kind": "general", "target": str(fault or "异常设备部件"), "estimated_minutes": 60}
 
 
+def interlock_inspection_steps() -> list[str]:
+    """仅核查互锁输入输出；具体部件维修必须另行准备工程证据。"""
+    return [
+        "保持安全互锁有效，不得短接或旁路互锁，不强制开门",
+        "由维修人员读取程序、轴、主轴停止状态及接料器位置反馈，与本机配置的互锁条件比较",
+        "核对 PLC 门锁、接料器到位及下降指令状态，记录不一致的输入输出，不执行运动指令",
+        "在确认安全停机后观察接料器外观及可见障碍，不改动安全回路",
+        "记录报警和互锁核查结果；涉及部件维修时，先补齐 CAD/BOM 及相应审批再另行处理",
+        "处理后复核原报警及互锁状态，验收使用设备恢复数据，不自动启动机器",
+    ]
+
+
 def part_matches_profile(profile: Mapping[str, Any], item: Mapping[str, Any]) -> bool:
     text = " ".join(str(item.get(key) or "") for key in ("part_id", "part_no", "component_id", "name")).upper()
     terms = {
+        "safety_interlock": ("DOOR", "INTERLOCK", "CATCHER", "安全门", "门锁", "互锁", "接料器"),
         "lubrication": ("LUB", "润滑", "供油", "注油", "油路"),
         "thermal": ("TEMP", "温度", "PT100", "COOLANT", "COOLING", "冷却", "散热"),
         "vibration": ("BEARING", "轴承", "VIB", "振动"),

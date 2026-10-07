@@ -72,6 +72,9 @@ class MaintenanceAgent(BaseAgent):
 
     @staticmethod
     def _requires_cad(diagnosis: DiagnosisView) -> bool:
+        # 互锁核查只读取状态，不拆修部件；不能因为报警正文提到主轴就要求主轴图纸。
+        if repair_profile(diagnosis.model_dump(mode="json"))["kind"] == "safety_interlock":
+            return False
         text = "%s %s" % (diagnosis.fault, diagnosis.cause)
         return any(token in text for token in ("轴承", "主轴", "冷却", "泵", "振动", "温度", "传感器", "零件", "部件", "拆装", "BOM"))
 
@@ -201,6 +204,10 @@ class MaintenanceAgent(BaseAgent):
     @staticmethod
     def _repair_steps(profile: Mapping[str, Any], tool_plan: Mapping[str, Any], knowledge: Mapping[str, Any], components: list[Mapping[str, Any]]) -> list[str]:
         kind = profile["kind"]
+        if kind == "safety_interlock":
+            from app.workorder.repair_profile import interlock_inspection_steps
+            # 不把检索到的跨设备拆修步骤混入只读互锁核查，也不自动操作设备。
+            return interlock_inspection_steps()
         if kind == "lubrication":
             steps = [
                 "执行安全隔离并断电挂牌，确认设备已停止",
@@ -284,6 +291,9 @@ class MaintenanceAgent(BaseAgent):
 
     @staticmethod
     def _parts(profile: Mapping[str, Any], spare_parts: Mapping[str, Any], components: list[Mapping[str, Any]], bom_items: list[Mapping[str, Any]]) -> list[str]:
+        if profile["kind"] == "safety_interlock":
+            # 核查工单没有更换动作；库存里存在备件不等于本次需要预留它。
+            return []
         parts: list[str] = []
         for item in spare_parts.get("parts") or []:
             if not MaintenanceAgent._part_matches_profile(profile, item):

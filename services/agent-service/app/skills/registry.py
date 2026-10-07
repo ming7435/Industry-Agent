@@ -112,6 +112,38 @@ class SkillDefinition:
             normalized.append(step)
         return normalized
 
+    def execute_tool_step(
+        self,
+        step_id: str,
+        tools: Any,
+        arguments: Mapping[str, Any],
+        *,
+        context: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """按 Markdown 的结构化步骤调度工具，不在节点中硬编码工具名称。
+
+        步骤必须是工具步骤，工具必须属于本技能权限；失败向调用方返回，
+        不自动重试可能已经产生文件或其他副作用的操作。
+        """
+        matches = [step for step in self.normalized_steps() if step.id == step_id]
+        if len(matches) != 1 or matches[0].type != "tool":
+            raise ValueError("Skill %s 缺少唯一的工具步骤：%s" % (self.name, step_id))
+        step = matches[0]
+        if not step.tool or step.tool not in self.tools:
+            raise PermissionError("Skill %s 未授权工具：%s" % (self.name, step.tool))
+        values = dict(arguments)
+        missing = [key for key in step.required_inputs if key not in values or values[key] is None or values[key] == ""]
+        if missing:
+            raise ValueError("Skill 工具步骤缺少必需输入：%s" % ", ".join(missing))
+        execution_context = {
+            **dict(context or {}), "agent": self.agent, "skill": self.name,
+            "skills": [self.name], "step": step.id, "allowed_tools": [step.tool],
+        }
+        result = tools.execute(step.tool, values, context=execution_context)
+        if not isinstance(result, Mapping):
+            raise ValueError("Skill 工具返回体必须是结构化对象")
+        return dict(result)
+
 
 class SkillRegistry:
     """加载、查询和组合所有 Agent Skills。"""
@@ -266,6 +298,9 @@ def _trigger_matches(trigger: str, context: Mapping[str, Any], text: str) -> boo
     normalized = trigger.strip().lower()
     if normalized in {"", "default", "always"}:
         return True
+    if normalized == "production_modeling":
+        # 查询文字不能自行激活建模工具；建模分支必须有明确操作类型。
+        return context.get("operation") == "production_modeling"
     if normalized in {'learn', 'search', 'recent'} and context.get('action'):
         # 检索文本可描述“学习”，不能因此选择写入路径的 Skill。
         return str(context['action']).strip().lower() == normalized

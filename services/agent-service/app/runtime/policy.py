@@ -85,6 +85,8 @@ class RuntimePolicy:
 
         if canonical_capability == "workorder_create":
             required = ("diagnosis", "knowledge", "cad", "maintenance_plan")
+            if self._non_invasive_interlock_plan(current):
+                required = ("diagnosis", "knowledge", "maintenance_plan")
             missing = tuple(name for name in required if not self._workorder_evidence_ready(name, current))
             if missing:
                 return PolicyDecision(
@@ -161,6 +163,26 @@ class RuntimePolicy:
             return False
         # 指纹覆盖动作类型、目标、全部业务参数和幂等键；任何参数变化都重新审批。
         return approved_action.fingerprint == action.fingerprint
+
+    @staticmethod
+    def _non_invasive_interlock_plan(state: Mapping[str, Any]) -> bool:
+        """仅允许已校验的只读互锁核查不依赖 CAD，高风险审批判断保持独立。"""
+        from app.agents.maintenance.validator import MaintenancePlanValidator
+        from app.workorder.repair_profile import repair_profile
+
+        plan = state.get("maintenance_plan")
+        diagnosis = state.get("diagnosis")
+        if not isinstance(plan, Mapping) or not isinstance(diagnosis, Mapping):
+            return False
+        return (
+            plan.get("cad_required") is False
+            and plan.get("workorder_ready") is True
+            and bool(plan.get("repair_steps"))
+            and not (plan.get("validation_findings") or plan.get("validation_errors"))
+            and not (plan.get("required_parts") or plan.get("parts"))
+            and not MaintenancePlanValidator.requires_cad(plan)
+            and repair_profile(diagnosis)["kind"] == "safety_interlock"
+        )
 
     @staticmethod
     def _workorder_evidence_ready(name: str, state: Mapping[str, Any]) -> bool:

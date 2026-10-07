@@ -2,15 +2,48 @@
 
 from hashlib import sha256
 import json
-from pathlib import Path
+import os
 import re
 from threading import RLock
 from uuid import uuid4
 
 from .manufacturing_client import FactoryProductionClient, FactoryProductionError
-from .manufacturing_owner import ManufacturingOwner
 from .modeling_service import CADDesignConflict, canonical_digest, utc_now
 from .turning_program import build_turning_program
+
+
+class ManufacturingOwner:
+    """加工目录的单执行器锁，随加工服务创建与关闭，不单独拆分模块。"""
+
+    def __init__(self, root):
+        path = root / ".manufacturing-owner.lock"
+        self.handle = path.open("a+b")
+        if path.stat().st_size == 0:
+            self.handle.write(b"0")
+            self.handle.flush()
+        self.handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.handle.close()
+            raise CADDesignConflict("该目录已有加工服务持有执行权，请使用单实例加工服务") from None
+
+    def close(self):
+        if self.handle.closed:
+            return
+        if os.name == "nt":
+            import msvcrt
+            self.handle.seek(0)
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        self.handle.close()
 
 
 class CADManufacturingService:

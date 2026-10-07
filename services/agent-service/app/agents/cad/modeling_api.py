@@ -7,9 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from .agent import CADAgent
-from .modeling_schemas import ConfirmRequest, DesignRequest, ImportRequest, RevisionRequest
+from .schemas import ConfirmRequest, DesignRequest, DispatchRequest, ImportRequest, ManufacturingRequest, RevisionRequest
 from .modeling_service import CADDesignConflict
-from .manufacturing_schemas import DispatchRequest, ManufacturingRequest
 from .manufacturing_service import CADManufacturingService
 
 

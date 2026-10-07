@@ -13,7 +13,7 @@ from copy import deepcopy
 from math import ceil, hypot, isfinite, pi
 from numbers import Real
 
-from .modeling_schemas import ModelSpec
+from .schemas import ModelSpec
 
 
 _DEVICE = "TRAK-TC820LTYSI-001"

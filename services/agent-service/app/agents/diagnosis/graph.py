@@ -255,6 +255,7 @@ def execute_tool_calls(state: DiagnosisGraphState) -> Dict[str, Any]:
         try:
             result = agent.tools.execute(name, arguments, context={
                 "agent": "diagnosis",
+                "device_id": state.get("device_id") or (state.get("event") or {}).get("device_id", ""),
                 "skills": list(runtime.active_skills or []),
                 "step": "act",
                 "allowed_tools": list(runtime.allowed_tools or []),

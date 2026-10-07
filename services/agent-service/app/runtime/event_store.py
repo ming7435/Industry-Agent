@@ -5,12 +5,30 @@ from __future__ import annotations
 from collections import OrderedDict
 from threading import Lock
 from typing import Any, Callable, Dict
+from time import monotonic
+import json
 import os
 
 from .durable_store import DurableJsonStore
 from .event_plan_reader import EventPlanReader
 from app.config.settings import allow_degraded_storage
 from shared.persistence import MySQLJsonStore
+from shared.temporary_cache import RedisJsonCache
+
+
+def scoped_event_key(event: dict) -> str:
+    """诊断进度与最终结果共用完整事件作用域，不混用设备或修订。"""
+    event_id = str(event.get("event_id") or "")
+    if not event_id:
+        return ""
+    raw_revision = event.get("event_revision", 1)
+    if isinstance(raw_revision, bool):
+        raise ValueError("修订不能是布尔值")
+    revision = int(raw_revision)
+    if revision < 1:
+        raise ValueError("修订必须为正数")
+    return json.dumps([str(event.get("tenant_id") or ""), str(event.get("device_id") or ""),
+                       event_id, revision], ensure_ascii=False, separators=(",", ":"))
 
 
 class EventResultConflict(ValueError):
@@ -34,6 +52,40 @@ class EventResultStore:
         self._durable = DurableJsonStore(configured_path) if online or configured_path else None
         self._plan_reader = EventPlanReader(configured_path) if configured_path and not online else None
         self._online = online
+        # 正式结果仍进入 MySQL；阶段进度只进入 Redis，隔离测试使用有界内存。
+        self._stage_cache = RedisJsonCache(prefix="agent:event-progress", ttl_seconds=900) if online else None
+        self._stages: OrderedDict[str, tuple[float, Dict[str, Any]]] = OrderedDict()
+
+    def record_stage(self, event: dict, result: Dict[str, Any]) -> None:
+        """仅由服务端执行器发布已产生的阶段输出，不认领或重放任何业务动作。"""
+        key = scoped_event_key(event)
+        if not key:
+            return
+        if self._stage_cache is not None:
+            self._stage_cache.set(key, result)
+            return
+        with self._lock:
+            self._stages[key] = (monotonic() + 900, dict(result))
+            self._stages.move_to_end(key)
+            while len(self._stages) > self.max_items:
+                self._stages.popitem(last=False)
+
+    def get_stage(self, scoped_key: str) -> Dict[str, Any] | None:
+        """只读临时进度；过期或缺失不表示整个事件已失败。"""
+        if not scoped_key:
+            return None
+        if self._stage_cache is not None:
+            value = self._stage_cache.get(scoped_key)
+            return dict(value) if isinstance(value, dict) else None
+        with self._lock:
+            stage = self._stages.get(scoped_key)
+            if stage is None:
+                return None
+            expires, value = stage
+            if expires <= monotonic():
+                del self._stages[scoped_key]
+                return None
+            return dict(value)
 
     def has_unmigrated_legacy_result(self, event_id: str, scoped_key: str) -> bool:
         """旧版仅按事件 ID 保存的结果不能被新作用域静默重放。"""
@@ -58,6 +110,22 @@ class EventResultStore:
             dict(value.get("result") or {}) if value.get("_event_result_store_version") == 2 else dict(value)
             for value in stored
         ]
+
+    def get_result(self, scoped_key: str) -> Dict[str, Any] | None:
+        """按事件作用域只读回查；不认领任务，不等待生产锁，也不重放写操作。"""
+
+        if not scoped_key:
+            return None
+        if self._durable is not None:
+            stored = self._durable.get("agent_event", scoped_key)
+        else:
+            with self._lock:
+                stored = self._results.get(scoped_key)
+        if stored is None:
+            return None
+        if stored.get("_event_result_store_version") == 2:
+            return dict(stored.get("result") or {})
+        return dict(stored)
 
     def list_plan_results(self):
         """方案投影与历史日志全文分离；大历史库由单个只读任务渐进加载。"""
@@ -90,6 +158,8 @@ class EventResultStore:
     def close(self):
         if self._plan_reader is not None:
             self._plan_reader.close()
+        if self._stage_cache is not None:
+            self._stage_cache.client.close()
 
     def get_or_create(self, event_id: str, producer: Callable[[], Dict[str, Any]], *, fingerprint: str = "") -> Dict[str, Any]:
         key = str(event_id or "").strip()

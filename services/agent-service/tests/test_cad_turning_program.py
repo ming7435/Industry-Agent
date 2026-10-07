@@ -8,7 +8,7 @@ import re
 import pytest
 
 from app.agents.cad.modeling_engine import CADKernel
-from app.agents.cad.modeling_schemas import ModelSpec
+from app.agents.cad.schemas import ModelSpec
 
 
 def build(design, setup):

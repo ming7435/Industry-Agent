@@ -2345,9 +2345,10 @@ function PipelineData({ snapshot }) {
 
 function DiagnosisWorkspace({ snapshot, sample }) {
   const view = buildDiagnosisView(snapshot, sample);
-  const pipeline = PipelineData({ snapshot });
+  const pipeline = view.isCurrent ? getLatestPipeline(snapshot, sample) : {};
   const runtime = pipeline.runtime_result || {};
-  const status = view.status === "completed" ? "已完成" : view.status === "waiting" ? "等待诊断" : view.status;
+  const status = ({ completed: "诊断已返回", waiting: "等待诊断", running: "正在诊断", recovering: "正在回查结果",
+    blocked: "证据不足，待核实", failed: "诊断调用失败", unknown: "结果待确认", idle: "等待异常事件" })[view.status] || view.status;
   const confidence = view.confidence == null ? "--" : `${Math.round(view.confidence * 100)}%`;
   const alarm = sample?.alarm_label || sample?.alarm_code || "当前无活动报警";
   return (
@@ -2362,6 +2363,8 @@ function DiagnosisWorkspace({ snapshot, sample }) {
         <section className="panel module-panel">
           <div className="panel-heading"><div><span className="eyebrow">诊断结论</span><h2>当前判断</h2></div></div>
           <FormattedText value={view.summary} className="diagnosis-summary" />
+          {view.statusHint && <div className="notice-banner" role="status">{view.statusHint}</div>}
+          {view.error && <div className="inline-error" role="alert">{view.error}</div>}
           {view.cause && <div className="diagnosis-recommendation"><span className="section-kicker">根因判断</span><FormattedText value={view.cause} /></div>}
           {view.recommendation && <div className="diagnosis-recommendation"><span className="section-kicker">处置建议</span><FormattedText value={view.recommendation} /></div>}
           {view.nextAction && <div className="diagnosis-recommendation"><span className="section-kicker">下一步</span><FormattedText value={view.nextAction} /></div>}
@@ -2780,7 +2783,19 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor }) {
       <section className="workorder-queue maintenance-plan-queue" aria-label="维修方案列表">
         <div className="workorder-queue-heading"><div><span className="eyebrow">已有方案</span><h2>选择维修方案</h2></div><div className="maintenance-delete-actions"><span>{records.length} 条记录</span><button className="button" type="button" disabled={!actor?.user_id || deleting || !records.some(record => record.plan_id)} onClick={() => setCheckedIds(records.filter(record => record.plan_id).slice(0, 100).map(record => record.plan_id))}>{records.length > 100 ? "选择前 100 条" : "全选方案"}</button><button className="button danger" type="button" disabled={!actor?.user_id || deleting || !checkedIds.length} onClick={() => removePlans(checkedIds)}>{deleting ? "删除中…" : `删除选中方案（${checkedIds.length}）`}</button></div></div>
         <p className="maintenance-plan-muted">{actor?.user_id ? "删除仅移除方案列表展示，不删除关联工单和审计日志。" : "登录后可删除方案；关联工单和审计日志将保留。"}</p>
-        {records.length ? <div className="workorder-queue-list">{records.map(record => <div key={record.recordId} className={`maintenance-plan-list-row ${selectedRecord?.recordId === record.recordId ? "is-selected" : ""}`}><label className="maintenance-plan-select"><input type="checkbox" aria-label={`选择方案 ${record.plan_id || record.recordId}`} disabled={!actor?.user_id || deleting || !record.plan_id} checked={checkedIds.includes(record.plan_id)} onChange={event => setCheckedIds(previous => event.target.checked ? [...new Set([...previous, record.plan_id])] : previous.filter(id => id !== record.plan_id))} /></label><button type="button" className="workorder-queue-item" onClick={() => setSelectedId(record.recordId)}><span><strong>{getDeviceDisplayName(record.device_id, { snapshot })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong><small>{record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · ${formatTime(record.created_at)}` : ""}</small></span><em>{maintenanceDispatchView(record).label}</em></button><button className="button danger" type="button" disabled={!actor?.user_id || deleting || !record.plan_id} onClick={() => removePlans([record.plan_id])}>删除此方案</button></div>)}</div> : <WorkspaceEmpty eyebrow="维修方案" title={history?.status === "loading" ? "正在读取已有维修方案" : history?.status === "failed" ? "历史方案暂未读出" : "暂无已生成的维修方案"} text={history?.status === "loading" ? "后台只读加载较大的历史记录，请稍候；这里不会将尚未读出的方案判断为不存在。" : "诊断生成方案后会自动显示；未满足派发条件的方案也可查看。"} />}
+        {records.length ? <div className="workorder-queue-list">{records.map(record => {
+          const hasOrder = orders.some(order => (order.plan_id || order.maintenance_plan_snapshot?.plan_id) === record.plan_id);
+          const dispatch = maintenanceDispatchView(record, { hasOrder });
+          return <div key={record.recordId} className={`maintenance-plan-list-row ${selectedRecord?.recordId === record.recordId ? "is-selected" : ""}`}>
+            <label className="maintenance-plan-select"><input type="checkbox" aria-label={`选择方案 ${record.plan_id || record.recordId}`} disabled={!actor?.user_id || deleting || !record.plan_id} checked={checkedIds.includes(record.plan_id)} onChange={event => setCheckedIds(previous => event.target.checked ? [...new Set([...previous, record.plan_id])] : previous.filter(id => id !== record.plan_id))} /></label>
+            <button type="button" className="workorder-queue-item" onClick={() => setSelectedId(record.recordId)}><span>
+              <strong>{getDeviceDisplayName(record.device_id, { snapshot })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong>
+              <small>{record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · ${formatTime(record.created_at)}` : ""}</small>
+              {!hasOrder && dispatch.reason && <small style={{ whiteSpace: "normal" }} title={dispatch.reason}>派发校验：{dispatch.reason}</small>}
+            </span><em>{dispatch.label}</em></button>
+            <button className="button danger" type="button" disabled={!actor?.user_id || deleting || !record.plan_id} onClick={() => removePlans([record.plan_id])}>删除此方案</button>
+          </div>;
+        })}</div> : <WorkspaceEmpty eyebrow="维修方案" title={history?.status === "loading" ? "正在读取已有维修方案" : history?.status === "failed" ? "历史方案暂未读出" : "暂无已生成的维修方案"} text={history?.status === "loading" ? "后台只读加载较大的历史记录，请稍候；这里不会将尚未读出的方案判断为不存在。" : "诊断生成方案后会自动显示；未满足派发条件的方案也可查看。"} />}
       </section>
       {currentAlarm && !currentRecord && <div className="workspace-notice" role="status">{history?.status === "ready" && !error ? `当前设备 ${currentDevice} 的报警 ${currentAlarm} 尚无对应维修方案；列表中保留的是已有方案。` : `正在核对当前设备 ${currentDevice} 的报警 ${currentAlarm} 对应方案；历史记录尚未完整读出，不能判定方案不存在。`}</div>}
       {selectedRecord && <><div className="workspace-notice" role="status">{hasCurrentDiagnosis ? "当前设备方案" : "历史 / 其他设备方案"} · {selectedRecord.device_id} · 报警 {selectedRecord.alarm_code || "待确认"}{selectedRecord.event_id ? ` · ${selectedRecord.event_id}` : ""}{linkedOrders.length ? ` · 已关联工单 ${linkedOrders.map(order => order.workorder_id).join("、")}` : actor?.user_id ? " · 当前账号未读取到关联工单，派发情况以授权工单列表为准" : " · 工单关联情况需登录后在工单系统查看"}</div><MaintenanceDispatchStatus record={selectedRecord} hasOrder={linkedOrders.length > 0} /><MaintenancePlanPanel plan={plan} hasCurrentDiagnosis={hasCurrentDiagnosis} /></>}

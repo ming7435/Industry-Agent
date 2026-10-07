@@ -11,7 +11,7 @@ import pytest
 
 from app.agents.cad.modeling_analysis import analyze_design, MissingDesignInformation
 from app.agents.cad.modeling_engine import CADKernel, CADKernelError
-from app.agents.cad.modeling_schemas import DesignRequest
+from app.agents.cad.schemas import DesignRequest
 from test_cad_modeling_api import client, finished, request_spec
 from test_cad_modeling_details import IsolatedModel
 

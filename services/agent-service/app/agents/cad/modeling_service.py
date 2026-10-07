@@ -13,9 +13,8 @@ from threading import BoundedSemaphore, RLock
 from uuid import uuid4
 
 from .modeling_analysis import MissingDesignInformation, UnconfirmedDesignParameters, analyze_design
-from .modeling_drawings import export_drawing_pdf
-from .modeling_engine import CADKernel, CADKernelError, PROJECT_ROOT
-from .modeling_schemas import DesignRequest, ImportRequest
+from .modeling_engine import CADKernel, CADKernelError, PROJECT_ROOT, export_drawing_pdf
+from .schemas import DesignRequest, ImportRequest
 
 
 class CADDesignConflict(ValueError):
@@ -31,12 +30,18 @@ def canonical_digest(value):
 
 
 class CADModelingService:
-    def __init__(self, root=None, kernel=None, model=None, trace=None, workers=2, capacity=8):
+    def __init__(self, root=None, kernel=None, model=None, trace=None, workers=2, capacity=8, agent=None):
         self.root = Path(root or PROJECT_ROOT / ".runtime" / "cad-designs").resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.kernel = kernel or CADKernel()
         self.model = model
         self.trace = trace
+        from .agent import CADAgent
+        from app.tools.registry import ToolRegistry
+        self.agent = agent or CADAgent(tools=ToolRegistry(trace=trace))
+        if trace is not None:
+            self.agent.runtime_trace = trace
+            self.agent.tools.trace = trace
         self.lock = RLock()
         self.slots = BoundedSemaphore(capacity)
         self.pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="cad-modeling")
@@ -83,15 +88,17 @@ class CADModelingService:
             return value
 
     def _event(self, design_id, tool, inputs, output=None, error=""):
+        context = self.agent.tools.current_trace_context()
         event = {"timestamp": utc_now(), "agent": "cad", "tool": tool, "input": inputs,
-            "output": output or {}, "error": error, "status": "failed" if error else "completed"}
+            "output": output or {}, "error": error, "status": "failed" if error else "completed",
+            "node": context.get("node", ""), "skill": context.get("skill", ""), "step": context.get("step", "")}
         with self.lock:
             value = self._load(design_id)
             value["events"].append(event)
             self._save(value)
         if self.trace:
             self.trace.record(type="tool", name=tool, tool_name=tool, agent="cad", task_id=design_id,
-                trace_id=design_id, input=inputs, output=output or {}, error=error, event="tool_completed" if not error else "tool_failed")
+                trace_id=design_id, context=context, input=inputs, output=output or {}, error=error, event="tool_completed" if not error else "tool_failed")
 
     def submit(self, request, idempotency_key="", parent_id=""):
         raw = request.model_dump(mode="json")
@@ -160,6 +167,18 @@ class CADModelingService:
         return "", None
 
     def _execute(self, identifier, request):
+        """有界队列只负责进入 Agent 图，不直接绕过 Skill 调用内核。"""
+        try:
+            result = self.agent.run_modeling(identifier, self, request)
+            self._change(identifier, execution=result["execution"])
+        except Exception:
+            self._event(identifier, "cad_modeling", {}, error="CAD 节点或技能执行失败，未返回未经验证的文件")
+            self._change(identifier, status="failed", message="CAD 节点或技能执行失败，请查看执行日志", artifacts=[])
+        finally:
+            self.slots.release()
+
+    def _build_model(self, identifier, request):
+        """由注册的建模 Tool 执行原实体流水线，保留原有业务校验。"""
         try:
             self._change(identifier, status="analyzing", message="正在解析零件需求")
             self._event(identifier, "cad_input", self.get(identifier)["request"])
@@ -226,8 +245,6 @@ class CADModelingService:
         except Exception:
             self._event(identifier, "cad_modeling", {}, error="CAD 任务处理失败，未返回未经验证的文件")
             self._change(identifier, status="failed", message="CAD 任务处理失败，请查看执行明细并调整需求", artifacts=[])
-        finally:
-            self.slots.release()
 
     def get(self, design_id):
         with self.lock:

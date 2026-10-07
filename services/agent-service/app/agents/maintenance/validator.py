@@ -44,10 +44,7 @@ class MaintenancePlanValidator:
         if diagnosis.get("evidence_validated") is False or diagnosis.get("validated") is False:
             findings.append("诊断证据尚未通过校验")
 
-        steps_text = " ".join(str(item) for item in plan.get("repair_steps") or [])
-        # 新契约优先使用流程计算出的明确标记；兼容旧调用方时才根据步骤
-        # 做保守推断，避免把普通文字误判成必须提供 CAD。
-        needs_cad = bool(plan.get("cad_required")) if "cad_required" in plan else any(token in steps_text for token in cls.STRUCTURAL_ACTIONS)
+        needs_cad = cls.requires_cad(plan)
         if needs_cad and not plan.get("cad_components"):
             findings.append("涉及拆装或部件操作但缺少 CAD/BOM 依据")
         elif needs_cad:
@@ -81,6 +78,15 @@ class MaintenancePlanValidator:
             findings.append("备件库存为演示数据，不能作为正式派工依据")
 
         return cls._dedupe(findings)
+
+    @staticmethod
+    def requires_cad(plan: Mapping[str, Any]) -> bool:
+        """Runtime 和方案校验共用工程依据规则，明确拆修动作不能声明豁免。"""
+        steps_text = " ".join(str(item) for item in plan.get("repair_steps") or [])
+        declared = bool(plan.get("cad_required")) if "cad_required" in plan else any(
+            token in steps_text for token in MaintenancePlanValidator.STRUCTURAL_ACTIONS)
+        return declared or any(token in steps_text for token in (
+            "拆卸", "拆装", "拆解", "更换", "安装", "改接", "调整接线"))
 
     @staticmethod
     def _available_required_part(item: Mapping[str, Any], required: Any) -> bool:

@@ -63,11 +63,12 @@ export function maintenanceDispatchView(record = {}, { hasOrder = false } = {}) 
   const findings = Array.isArray(record.validation_findings) ? record.validation_findings.map(text).filter(Boolean) : [];
   const allowed = record.dispatch?.allowed;
   const blocked = allowed === false || record.workorder_ready === false || findings.length > 0;
+  const reason = text(record.dispatch?.reason) || (record.workorder_ready === false ? "维修方案尚未达到工单就绪条件" : "");
   return {
     label: hasOrder ? "已关联工单" : blocked ? "暂不能自动派发"
       : allowed === true ? "方案就绪，等待系统派发"
       : record.workorder_ready === true ? "方案已就绪，派发条件以系统校验为准" : "派发条件待校验",
-    reason: text(record.dispatch?.reason) || (record.workorder_ready === false ? "维修方案尚未达到工单就绪条件" : ""),
+    reason: [...new Set([reason, ...findings].filter(Boolean))].join("；"),
     findings,
     stopReason: text(record.stop_reason),
     ready: record.workorder_ready === true ? "是" : record.workorder_ready === false ? "否" : "待校验",

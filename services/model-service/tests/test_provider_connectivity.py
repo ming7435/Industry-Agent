@@ -4,6 +4,8 @@ import json
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
+import urllib.request
+import urllib.error
 
 import pytest
 from fastapi.testclient import TestClient
@@ -155,3 +157,28 @@ def test_incomplete_rerank_set_is_not_ready(monkeypatch):
         response = client.post("/v1/rerank", json={"query": "查询", "documents": ["文档一", "文档二"], "top_n": 2})
         assert response.status_code == 503
         assert client.get("/health").json()["capabilities"]["rerank"]["ready"] is False
+
+
+def test_long_running_provider_refreshes_changed_proxy_settings(monkeypatch):
+    """真实全局 HTTP opener 留有过期代理时，当前配置应仍能连接测试供应商。"""
+    with provider_api(monkeypatch) as (client, _, requests):
+        old_opener = urllib.request.build_opener(urllib.request.ProxyHandler({'http':'http://127.0.0.1:9'}))
+        monkeypatch.setattr(urllib.request, '_opener', old_opener)
+        monkeypatch.setattr(urllib.request, 'proxy_bypass', lambda host: False)
+        monkeypatch.setattr(urllib.request, 'getproxies', lambda: {})
+        response = client.post('/v1/chat/completions', json={'messages':[{'role':'user','content':'测试'}]})
+        assert response.status_code == 200
+        assert response.json()['choices'][0]['message']['content'] == '实际测试回答'
+        assert len(requests) == 1
+
+
+def test_network_error_explains_category_without_exposing_reason(monkeypatch):
+    with provider_api(monkeypatch) as (client, _, _):
+        import app.providers.gateway as provider
+        def disconnected(*_args, **_kwargs):
+            raise urllib.error.URLError(ConnectionRefusedError(10061, 'Authorization: isolated-provider-secret'))
+        monkeypatch.setattr(provider, 'urlopen', disconnected)
+        response = client.post('/v1/chat/completions', json={'messages':[{'role':'user','content':'测试'}]})
+        assert response.status_code == 503
+        assert 'connection_refused' in response.text
+        assert 'isolated-provider-secret' not in response.text

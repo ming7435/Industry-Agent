@@ -7,7 +7,7 @@ from threading import Thread
 from urllib.request import Request, urlopen
 
 from app.agents.cad.modeling_analysis import analyze_design, UnconfirmedDesignParameters
-from app.agents.cad.modeling_schemas import DesignRequest
+from app.agents.cad.schemas import DesignRequest
 from app.clients.model import ModelServiceClient
 
 
