@@ -10,7 +10,9 @@ from app.contracts import DiagnosisView, MaintenancePlan
 from app.agents.base import BaseAgent
 
 from .graph import build_maintenance_graph
-from app.workorder.policy import maintenance_decision
+from .validator import MaintenancePlanValidator
+from app.workorder.policy import inspection_decision, maintenance_decision
+from app.workorder.inspection import inspection_plan_template
 from app.workorder.repair_profile import part_matches_profile, repair_profile
 
 
@@ -82,7 +84,7 @@ class MaintenanceAgent(BaseAgent):
     def _merge_cad_result(target: dict[str, Any], result: Mapping[str, Any]) -> None:
         if not isinstance(result, Mapping):
             return
-        for key in ("components", "drawings", "bom_items", "parts", "part_relations", "assembly_relations", "locations", "evidence", "sources", "drawing_ref_details"):
+        for key in ("components", "drawings", "bom_items", "parts", "part_relations", "assembly_relations", "locations", "evidence", "sources", "drawing_refs", "drawing_ref_details", "validation_findings", "findings", "errors"):
             values = result.get(key)
             if not isinstance(values, list):
                 continue
@@ -90,9 +92,21 @@ class MaintenanceAgent(BaseAgent):
             for item in values:
                 if item not in target[key]:
                     target[key].append(item)
-        for key in ("viewer_context", "location", "component", "part_no", "summary", "status"):
+        for key in ("viewer_context", "location", "component", "part_no", "summary", "error", "source", "engineering_status", "evidence_scope"):
             if result.get(key) and not target.get(key):
                 target[key] = result[key]
+        validation = result.get("validation")
+        if isinstance(validation, Mapping) and validation and (
+            not target.get("validation") or validation.get("pass") is False
+            or validation.get("passed") is False or validation.get("errors")
+        ):
+            target["validation"] = dict(validation)
+        status = str(result.get("status") or "").strip().lower()
+        if status and (not target.get("status") or status not in {"completed", "ready", "success", "ok"}):
+            target["status"] = status
+        for key in ("synthetic", "degraded"):
+            if result.get(key) is True:
+                target[key] = True
 
     def _build_plan_payload(
         self,
@@ -104,10 +118,25 @@ class MaintenanceAgent(BaseAgent):
         inventory: Mapping[str, Any] | None = None,
         part_availability: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        inspection_required, inspection_reason = self._inspection_decision(diagnosis, payload)
+        if inspection_required:
+            return {
+                **inspection_plan_template(),
+                "plan_id": "PLAN-" + uuid4().hex[:10].upper(),
+                "maintenance_reason": inspection_reason,
+                "inspection_reason": inspection_reason,
+                "risk_level": self._risk_level(diagnosis.severity),
+                "source_documents": self._document_ids(list(knowledge.get("documents") or [])),
+                "evidence": self._evidence(diagnosis, knowledge, cad, {}, {"kind": "inspection"}, memory or {}),
+                "memory_evidence": list((memory or {}).get("items") or [])[:5],
+                "engineering_context": self._engineering_context(cad, [], diagnosis),
+            }
         tool_plan = self._safe_tool("generate_repair_plan", {"diagnosis": diagnosis.model_dump(mode="json")})
         documents = list(knowledge.get("documents") or [])
-        components = list(cad.get("components") or [])
-        bom_items = list(cad.get("bom_items") or [])
+        components = [item for item in self._mapping_items(cad.get("components"))
+                      if not MaintenancePlanValidator.is_reference_only(item) and not MaintenancePlanValidator.is_reference_only(cad)]
+        bom_items = [item for item in self._mapping_items(cad.get("bom_items"))
+                     if not MaintenancePlanValidator.is_reference_only(item) and not MaintenancePlanValidator.is_reference_only(cad)]
         spare_parts = dict(inventory or {})
         availability = dict(part_availability or {})
         profile = self._profile(diagnosis, components)
@@ -126,11 +155,7 @@ class MaintenanceAgent(BaseAgent):
         safety = self._safety(profile, diagnosis.severity)
         evidence = self._evidence(diagnosis, knowledge, cad, spare_parts, profile, memory or {})
         target_part = self._target_part(diagnosis, profile, components, bom_items)
-        engineering_context = {
-            "drawing_refs": list(cad.get("drawing_refs") or self._drawing_refs(cad, components)),
-            "drawing_ref_details": list(cad.get("drawing_ref_details") or []),
-            "viewer_context": dict(cad.get("viewer_context") or self._viewer_context(cad, components, diagnosis)),
-        }
+        engineering_context = self._engineering_context(cad, components, diagnosis)
         plan_payload = {
             "plan_id": "PLAN-" + uuid4().hex[:10].upper(),
             "repair_target": profile["target"],
@@ -161,6 +186,11 @@ class MaintenanceAgent(BaseAgent):
         return plan_payload
 
     @staticmethod
+    def _inspection_decision(diagnosis: DiagnosisView, payload: Mapping[str, Any]) -> tuple[bool, str]:
+        event = {**dict(payload.get("context") or {}), **dict(payload.get("event") or {})}
+        return inspection_decision(diagnosis.model_dump(mode="json"), event=event)
+
+    @staticmethod
     def _plan_result(plan_payload: Mapping[str, Any], diagnosis: DiagnosisView) -> MaintenancePlan:
         payload = dict(plan_payload or {})
         plan_id = str(payload.pop("plan_id", "") or "PLAN-" + uuid4().hex[:10].upper())
@@ -189,7 +219,9 @@ class MaintenanceAgent(BaseAgent):
     @staticmethod
     def _pre_checks(diagnosis: DiagnosisView, knowledge: Mapping[str, Any], components: list[Mapping[str, Any]]) -> list[str]:
         checks = ["确认设备处于安全停机状态", "复核报警码、实时状态和异常趋势"]
-        for text in MaintenanceAgent._safe_recommended_checks(knowledge):
+        interlock_inspection = repair_profile(diagnosis.model_dump(mode="json"))["kind"] == "safety_interlock"
+        # 核查范围同样约束前置检查，不能从历史检索混入无关拆修动作。
+        for text in ([] if interlock_inspection else MaintenanceAgent._safe_recommended_checks(knowledge)):
             if text not in checks:
                 checks.append(text)
         for component in components[:3]:
@@ -304,7 +336,7 @@ class MaintenanceAgent(BaseAgent):
             parts.append("%s %s" % (identity, item.get("name", "备件")))
         if not parts:
             for item in bom_items or components:
-                if MaintenanceAgent._part_matches_profile(profile, item) and (item.get("part_no") or item.get("name")):
+                if not MaintenancePlanValidator.is_reference_only(item) and MaintenanceAgent._part_matches_profile(profile, item) and (item.get("part_no") or item.get("name")):
                     parts.append("%s %s" % (item.get("part_no", ""), item.get("name", "")))
         return MaintenanceAgent._dedupe([item.strip() for item in parts if item.strip()])[:6]
 
@@ -338,6 +370,8 @@ class MaintenanceAgent(BaseAgent):
                 evidence.append({"type": "inventory", **dict(inventory_item)})
         for cad_item in MaintenanceAgent._mapping_items(cad.get("evidence")):
             evidence.append({"type": "cad", **dict(cad_item)})
+        for drawing in MaintenanceAgent._mapping_items(cad.get("drawings")):
+            evidence.append({"type": "drawing_reference", **dict(drawing)})
         for memory_item in MaintenanceAgent._mapping_items((memory or {}).get("items")):
             evidence.append({"type": "historical_experience", **dict(memory_item)})
         return evidence[:20]
@@ -367,17 +401,44 @@ class MaintenanceAgent(BaseAgent):
     @staticmethod
     def _drawing_refs(cad: Mapping[str, Any], components: list[Mapping[str, Any]]) -> list[Any]:
         values = list(cad.get("drawing_refs") or [])
-        for item in list(cad.get("drawings") or []) + components:
+        for item in MaintenanceAgent._mapping_items(cad.get("drawings")) + components:
             value = item.get("drawing_id") or item.get("drawing_ref")
-            if value and value not in values:
+            if value and not any(value == (existing.get("drawing_id") or existing.get("drawing_ref"))
+                                 if isinstance(existing, Mapping) else value == existing for existing in values):
                 values.append(value)
         return values
 
     @staticmethod
+    def _drawing_ref_details(cad: Mapping[str, Any]) -> list[dict[str, Any]]:
+        details = [dict(item) for item in MaintenanceAgent._mapping_items(cad.get("drawing_ref_details"))]
+        for drawing in MaintenanceAgent._mapping_items(cad.get("drawings")):
+            identity = drawing.get("drawing_id") or drawing.get("drawing_ref") or drawing.get("drawing_url")
+            existing = next((item for item in details if identity and identity == (
+                item.get("drawing_id") or item.get("drawing_ref") or item.get("drawing_url"))), None)
+            if existing is None:
+                details.append(dict(drawing))
+            else:
+                for key, value in drawing.items():
+                    if not existing.get(key):
+                        existing[key] = value
+        return details
+
+    @classmethod
+    def _engineering_context(cls, cad: Mapping[str, Any], components: list[Mapping[str, Any]], diagnosis: DiagnosisView) -> dict[str, Any]:
+        return {
+            "drawing_refs": cls._drawing_refs(cad, components),
+            "drawing_ref_details": cls._drawing_ref_details(cad),
+            "available_drawings": [dict(item) for item in cls._mapping_items(cad.get("drawings"))],
+            "viewer_context": {**cls._viewer_context(cad, components, diagnosis),
+                               **{key: value for key, value in dict(cad.get("viewer_context") or {}).items() if value}},
+        }
+
+    @staticmethod
     def _viewer_context(cad: Mapping[str, Any], components: list[Mapping[str, Any]], diagnosis: DiagnosisView) -> dict[str, str]:
         item = components[0] if components else {}
+        drawing = next((value for value in MaintenanceAgent._mapping_items(cad.get("drawings")) if value.get("model_url")), {})
         return {
-            "model_url": str(cad.get("model_url") or ""),
+            "model_url": str(cad.get("model_url") or drawing.get("model_url") or ""),
             "mesh_id": str(cad.get("mesh_id") or item.get("component_id") or ""),
             "mesh_name": str(cad.get("mesh_name") or item.get("name") or ""),
             "location": str(cad.get("location") or item.get("position") or ""),
@@ -404,14 +465,21 @@ class MaintenanceAgent(BaseAgent):
     @staticmethod
     def _normalize_diagnosis(value: Any) -> DiagnosisView:
         """将诊断 Agent 的字典结果归一化为维修计划输入模型。"""
+        payload = value.model_dump(mode="json") if isinstance(value, DiagnosisView) else dict(value or {})
+        raw = payload.get("raw") if isinstance(payload.get("raw"), Mapping) else {}
+        definition = payload.get("alarm_definition") or raw.get("alarm_definition") or {}
+        definition = definition if isinstance(definition, Mapping) else {}
+        severities = [str(item) for item in (payload.get("severity"), definition.get("severity"), raw.get("severity")) if item]
+        # DiagnosisResult 将报警等级保存在定义中，转换时不能丢失或降为中风险。
+        severity = next((item for item in severities if MaintenanceAgent._risk_level(item) == "high"),
+                        next((item for item in severities if item not in {"未知", "unknown"}), "未知"))
         if isinstance(value, DiagnosisView):
-            return value
-        payload = dict(value or {})
+            return value.model_copy(update={"severity": severity})
         return DiagnosisView(
             device_id=str(payload.get("device_id") or "unknown"),
             fault=str(payload.get("fault") or payload.get("summary") or payload.get("diagnosis") or payload.get("query") or payload.get("user_text") or "设备异常"),
             cause=str(payload.get("cause") or payload.get("diagnosis") or "需要进一步检查"),
-            severity=str(payload.get("severity") or "未知"),
+            severity=severity,
             confidence=payload.get("confidence"),
             evidence=list(payload.get("evidence") or []),
             recommendation=str(payload.get("recommendation") or "按照维修方案执行并复测"),

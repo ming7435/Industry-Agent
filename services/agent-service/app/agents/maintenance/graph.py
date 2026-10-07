@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 from app.skills import get_skill_registry
 from app.agents.base import chain_nodes, prepare_skill_node, trace_skill_node
 from app.contracts import DiagnosisView, MaintenancePlan
+from app.workorder.inspection import inspection_plan_findings
 
 from .schemas import MaintenanceQuery
 from .validator import MaintenancePlanValidator
@@ -65,7 +66,7 @@ def assess_diagnosis(state: MaintenanceGraphState) -> Dict[str, Any]:
         "diagnosis": diagnosis,
         "query": query,
         "memory": dict(request.get("memory") or {}),
-        "cad_required": agent._requires_cad(diagnosis),
+        "cad_required": False if agent._inspection_decision(diagnosis, request)[0] else agent._requires_cad(diagnosis),
         "route": "request_knowledge",
     }
 
@@ -90,9 +91,11 @@ def check_parts_tools(state: MaintenanceGraphState) -> Dict[str, Any]:
     agent = state["agent"]
     diagnosis = state["diagnosis"]
     query = state["query"]
+    plan = dict(state.get("plan_payload") or {})
+    if plan.get("plan_kind") == "inspection":
+        return {"inventory": {}, "part_availability": {}, "plan_payload": plan, "route": "safety_validate"}
     inventory = agent._safe_tool("query_inventory", {"query": query, "device_id": diagnosis.device_id})
     availability = agent._safe_tool("query_part_availability", {"query": query, "device_id": diagnosis.device_id})
-    plan = dict(state.get("plan_payload") or {})
     components = list((state.get("cad") or {}).get("components") or [])
     bom_items = list((state.get("cad") or {}).get("bom_items") or [])
     profile = agent._profile(diagnosis, components)
@@ -120,6 +123,8 @@ def plan_repair(state: MaintenanceGraphState) -> Dict[str, Any]:
 def safety_validate(state: MaintenanceGraphState) -> Dict[str, Any]:
     findings: list[str] = []
     plan = state.get("plan_payload") or {}
+    if plan.get("plan_kind") == "inspection" and not inspection_plan_findings(plan):
+        return {"validation_findings": list(state.get("validation_findings") or []), "route": "validate"}
     if not plan.get("safety_requirements") and not plan.get("safety"):
         findings.append("缺少安全要求")
     if any("运行" in str(step) for step in plan.get("repair_steps") or []) and not any("确认" in str(item) or "LOTO" in str(item) for item in plan.get("safety_requirements") or []):
@@ -138,7 +143,7 @@ def validate(state: MaintenanceGraphState) -> Dict[str, Any]:
     findings.extend(MaintenancePlanValidator.validate(validation_plan, state.get("knowledge") or {}, state.get("cad") or {}, state.get("inventory") or {}))
     findings = agent._dedupe(findings)
     plan["validation_findings"] = findings
-    plan["workorder_ready"] = MaintenancePlanValidator.workorder_ready(findings, plan)
+    plan["workorder_ready"] = MaintenancePlanValidator.workorder_ready(findings, validation_plan)
     return {"plan_payload": plan, "validation_findings": findings, "route": "prepare_workorder"}
 
 
@@ -150,7 +155,7 @@ def prepare_workorder(state: MaintenanceGraphState) -> Dict[str, Any]:
     workorder_title = device_name or diagnosis.fault or str(plan.get("repair_target") or "设备异常")
     draft.update({
         "device_id": diagnosis.device_id,
-        "title": "设备维修：%s" % workorder_title,
+        "title": "%s：%s" % ("设备现场检查" if plan.get("plan_kind") == "inspection" else "设备维修", workorder_title),
         "plan_id": plan.get("plan_id", ""),
         "steps": list(plan.get("repair_steps") or []),
         "ready": bool(plan.get("workorder_ready")),

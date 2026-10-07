@@ -1,3 +1,5 @@
+import pytest
+
 from app.runtime.action import ActionModel
 from app.runtime.policy import PolicyStatus, RuntimePolicy
 
@@ -65,8 +67,31 @@ def test_workorder_query_cannot_smuggle_create_action():
     assert decision.reason == "workorder_action_scope_violation"
 
 
-def test_high_risk_action_waits_for_explicit_approval():
+def test_risk_only_workorder_creation_is_allowed_without_approval():
     action = _workorder_action(payload={"risk_level": "high"})
+
+    decision = RuntimePolicy().evaluate(action, _ready_state())
+
+    assert decision.status == PolicyStatus.ALLOW
+    assert decision.reason == "policy_allow"
+
+
+@pytest.mark.parametrize("action", [
+    ActionModel.agent("workorder", {"required_capability": "workorder_update", "action": "assign", "risk_level": "high"},
+                      side_effect=True, idempotency_key="assign:WO-1"),
+    ActionModel.agent("workorder", {"required_capability": "workorder_update", "action": "close", "risk_level": "high"},
+                      side_effect=True, idempotency_key="close:WO-1"),
+    ActionModel.tool("stop_device", {"risk_level": "high"}, side_effect=True, idempotency_key="stop:D-1"),
+])
+def test_other_high_risk_mutations_still_require_approval(action):
+    decision = RuntimePolicy().evaluate(action, _ready_state())
+
+    assert decision.status == PolicyStatus.REQUIRE_APPROVAL
+    assert decision.reason == "approval_required"
+
+
+def test_explicit_approval_cannot_be_granted_by_client_context():
+    action = _workorder_action(payload={"risk_level": "high", "requires_approval": True})
 
     decision = RuntimePolicy().evaluate(action, _ready_state())
 
@@ -81,7 +106,7 @@ def test_high_risk_action_waits_for_explicit_approval():
 
 
 def test_server_bound_approval_allows_only_the_exact_pending_action():
-    action = _workorder_action(payload={"risk_level": "high", "workorder_id": "WO-1"})
+    action = _workorder_action(payload={"risk_level": "high", "requires_approval": True, "workorder_id": "WO-1"})
     pending = {"status": "resuming", "action": action.as_dict()}
     policy = RuntimePolicy(approval_lookup=lambda pending_id: pending if pending_id == "P-1" else None)
 

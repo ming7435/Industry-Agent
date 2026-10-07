@@ -1,6 +1,8 @@
 """增量存储；每个事务独立连接，席位与账本更新在数据库内串行化。"""
 from contextlib import contextmanager
+from contextvars import ContextVar
 import json
+from math import isfinite
 import os
 from pathlib import Path
 import sqlite3
@@ -10,6 +12,7 @@ from shared.temporary_cache import RedisJsonCache
 
 class TeamRepository:
     def __init__(self, sqlite_path=None):
+        self._transaction_db = ContextVar('team_transaction_db', default=None)
         self.sqlite_path = sqlite_path or (os.getenv('BACKEND_SQLITE_PATH', '.runtime/backend.sqlite3') if os.getenv('BACKEND_STORAGE') == 'sqlite' else None)
         if self.sqlite_path and os.getenv('APP_ENV', 'development').lower() != 'testing':
             raise RuntimeError('在线账号和产线账本必须使用 MySQL，SQLite 仅用于隔离测试')
@@ -27,6 +30,10 @@ class TeamRepository:
 
     @contextmanager
     def transaction(self):
+        active = self._transaction_db.get()
+        if active is not None:
+            yield active
+            return
         if self.sqlite_path:
             connection = sqlite3.connect(self.sqlite_path, timeout=15)
             connection.row_factory = sqlite3.Row
@@ -36,6 +43,7 @@ class TeamRepository:
             import mysql.connector
             connection = mysql.connector.connect(host=os.getenv('MYSQL_HOST', 'mysql'), port=int(os.getenv('MYSQL_PORT', '3306')), user=os.getenv('MYSQL_USER', 'industry'), password=os.getenv('MYSQL_PASSWORD', os.getenv('MYSQL_APP_PASSWORD', 'industry')), database=os.getenv('MYSQL_DATABASE', 'industry_agent'), autocommit=False)
             db = _MySQLSession(connection)
+        context_token = self._transaction_db.set(db)
         try:
             yield db
             connection.commit()
@@ -43,6 +51,7 @@ class TeamRepository:
             connection.rollback()
             raise
         finally:
+            self._transaction_db.reset(context_token)
             if not self.sqlite_path:
                 db.close()
             connection.close()
@@ -78,6 +87,38 @@ class TeamRepository:
             return row['user_id'] if row else None
         value = RedisJsonCache(prefix='industry:team:sessions').get(token_hash)
         return value.get('user_id') if value and float(value.get('expires_at', 0)) > time.time() else None
+
+    def active_session_user_ids(self):
+        """只归集未过期会话的用户身份，不把会话键或令牌暴露给派工调用方。"""
+        now = time.time()
+        if self.sqlite_path:
+            with self.transaction() as db:
+                rows = db.execute('SELECT DISTINCT user_id FROM team_sessions WHERE expires_at>?', (now,)).fetchall()
+            return {row['user_id'] for row in rows}
+        users = set()
+        try:
+            cache = RedisJsonCache(prefix='industry:team:sessions')
+            for key in cache.client.scan_iter(match=cache.prefix + '*', count=100):
+                if not key.startswith(cache.prefix):
+                    continue
+                payload = cache.client.get(key)
+                if payload is None:
+                    continue
+                try:
+                    value = json.loads(payload)
+                    if not isinstance(value, dict):
+                        continue
+                    user_id, expires_at = value.get('user_id'), value.get('expires_at')
+                    if not isinstance(user_id, str) or not user_id.strip() or isinstance(expires_at, bool):
+                        continue
+                    expiry = float(expires_at)
+                    if isfinite(expiry) and expiry > now:
+                        users.add(user_id)
+                except (TypeError, ValueError):
+                    continue
+        except Exception:
+            raise RuntimeError('维修登录状态读取失败，不能确认在线人员') from None
+        return users
 
     def delete_session(self, token_hash):
         if self.sqlite_path:

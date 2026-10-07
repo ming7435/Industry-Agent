@@ -170,3 +170,75 @@ test("matches lifecycle events through event id when task ids differ", () => {
   assert.equal(runEventMatches(run, { event_id: "EVT-1", event: "agent_completed" }), true);
   assert.equal(runEventMatches(run, { trace_id: "TRACE-OTHER", task_id: "TASK-OTHER", event: "tool_completed" }), false);
 });
+
+test("selected Memory RAG retains its real owner, A2A boundaries, and all generic skill steps", () => {
+  const identity = { trace_id: "TRACE-MEMORY-API-1F2717FD5A1D", task_id: "TASK-MEMORY-API-7561F821014F" };
+  const owner = { agent: "memory", agent_run_id: "MEMORY-1", ...identity };
+  const run = { run_type: "rag", trace_ids: [identity.trace_id], task_ids: [identity.task_id] };
+  const records = [
+    { type: "a2a", event: "a2a_started", name: "router->memory", ...identity },
+    { type: "agent", event: "agent_started", name: "memory", ...owner },
+    ...["initialize", "load_skill", "validate_search", "fallback"].flatMap((name) => [
+      { type: "agent_step", event: "step_started", name, node: name, ...owner },
+      { type: "agent_step", event: "step_completed", name, node: name, ...owner },
+    ]),
+    { type: "agent", event: "agent_completed", name: "memory", output: { success: false }, ...owner },
+    { type: "a2a", event: "a2a_completed", name: "router->memory", ...identity },
+  ];
+
+  const selected = records.filter((record) => runEventMatches(run, record));
+  const invocations = buildAgentInvocations(selected);
+
+  assert.deepEqual(selected, records);
+  assert.equal(invocations.length, 1);
+  assert.equal(invocations[0].agent, "memory");
+  assert.equal(invocations[0].event_count, 10);
+  assert.equal(invocations[0].skill_steps.length, 4);
+  assert.deepEqual(invocations[0].output, { success: false });
+});
+
+test("selected RAG Trace excludes other Traces that reuse its Task", () => {
+  const run = { run_type: "rag", trace_ids: ["TRACE-SELECTED"], task_ids: ["TASK-SHARED"] };
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-OTHER", task_id: "TASK-SHARED", agent: "knowledge", event: "agent_completed" }), false);
+  assert.equal(runEventMatches(run, { task_id: "TASK-SHARED", agent: "knowledge", event: "agent_completed" }), false);
+});
+
+test("RAG without Trace uses its Task and excludes records with a different execution identity", () => {
+  const run = { run_type: "rag", task_ids: ["TASK-SELECTED"] };
+  assert.equal(runEventMatches(run, { task_id: "TASK-SELECTED", agent: "memory", event: "agent_started" }), true);
+  assert.equal(runEventMatches(run, { task_id: "TASK-OTHER", agent: "knowledge", event: "agent_completed" }), false);
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-OTHER", task_id: "TASK-SELECTED", agent: "knowledge", event: "agent_completed" }), false);
+});
+
+test("nested Knowledge calls keep a selected Memory root and child steps despite changing Task", () => {
+  const run = { run_type: "rag", trace_ids: ["TRACE-NESTED"], task_ids: ["TASK-MEMORY"] };
+  const records = [
+    { type: "agent", event: "agent_started", agent: "memory", agent_run_id: "MEMORY-1", task_id: "TASK-MEMORY" },
+    { type: "a2a", event: "a2a_started", name: "memory->knowledge", task_id: "TASK-MEMORY" },
+    { type: "agent", event: "agent_started", agent: "knowledge", agent_run_id: "KNOWLEDGE-1", task_id: "TASK-KNOWLEDGE" },
+    { type: "agent_step", event: "step_completed", name: "validate", agent: "knowledge", agent_run_id: "KNOWLEDGE-1", task_id: "TASK-KNOWLEDGE" },
+    { type: "agent", event: "agent_completed", agent: "knowledge", agent_run_id: "KNOWLEDGE-1", task_id: "TASK-KNOWLEDGE" },
+    { type: "a2a", event: "a2a_completed", name: "memory->knowledge", task_id: "TASK-MEMORY" },
+  ].map((record) => ({ ...record, trace_id: "TRACE-NESTED" }));
+
+  const selected = records.filter((record) => runEventMatches(run, record));
+  const invocations = buildAgentInvocations(selected);
+
+  assert.deepEqual(selected, records);
+  assert.deepEqual(invocations.map((item) => [item.agent, item.status]), [["memory", "执行中"], ["knowledge", "已完成"]]);
+  assert.equal(invocations[1].skill_steps.length, 1);
+});
+
+test("quality detail retains supporting Agents in its Trace and excludes a reused Task in another Trace", () => {
+  const run = { run_type: "quality", trace_ids: ["TRACE-QUALITY"], task_ids: ["TASK-SHARED"] };
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-QUALITY", task_id: "TASK-CHILD", agent: "memory", event: "agent_completed" }), true);
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-OTHER", task_id: "TASK-SHARED", agent: "quality", event: "agent_completed" }), false);
+});
+
+test("fault detail rejects a reused Task in another Trace while retaining explicit incident membership", () => {
+  const run = { run_type: "fault", trace_ids: ["TRACE-FAULT"], task_ids: ["TASK-SHARED"], event_ids: ["EVT-1"] };
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-FAULT", task_id: "TASK-CHILD", agent: "memory", event: "agent_completed" }), true);
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-OTHER", task_id: "TASK-SHARED", agent: "diagnosis", event: "agent_completed" }), false);
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-RETRY", event_id: "EVT-1", agent: "diagnosis", event: "agent_completed" }), true);
+  assert.equal(runEventMatches(run, { trace_id: "TRACE-FAULT", agent: "quality", event: "agent_completed" }), false);
+});

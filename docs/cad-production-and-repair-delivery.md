@@ -1,5 +1,7 @@
 # CAD 虚拟生产与维修返回修复交付
 
+> 历史记录：本文 CAD 本地生成、刀路及虚拟生产部分已停用，当前只保留 BuildCAD MCP 生成，见 [操作说明](cad-modeling-operation-guide.md)。维修部分是当时的交付记录，不因 CAD 替换而删除相关维修功能。
+
 实施日期：2026-10-05。以本地 `L:/industry_agent` 及 `C:/Users/12587/Desktop/Factory` 为依据；未下载远程项目，未提交 Git，未修改配置或删除业务数据。
 
 ## 实际完成的功能

@@ -29,6 +29,11 @@ export function qualityFromAction(result = {}) {
   return !result.closure_task_id && result.quality_check_id && result.status ? result : null;
 }
 
+export function pendingQualityAppealId(record = {}) {
+  const pending = (Array.isArray(record?.appeals) ? record.appeals : []).filter(appeal => appeal?.status === "pending");
+  return pending.length === 1 ? String(pending[0].appeal_id || "").trim() : "";
+}
+
 export async function loadQualityResources(request, partId, deviceId) {
   const requests = [
     () => request("/api/experience/search", { method: "POST", body: JSON.stringify({ device_id: deviceId || "", limit: 8 }) }),
@@ -63,8 +68,10 @@ export async function runQualityAction(request, action, values = {}) {
       path = `${base}/appeal`;
       body = { reason: values.note };
     } else if (action === "resolve_appeal") {
+      const appealId = String(values.appealId || "").trim();
+      if (!appealId) throw new Error("未能确定待处理申诉，请刷新质检历史后重试");
       path = `${base}/appeal/resolve`;
-      body = { decision: values.decision || "approved", reason: values.note || "", appeal_id: values.appealId || "" };
+      body = { decision: values.decision || "approved", reason: values.note || "", appeal_id: appealId };
     } else if (action === "release") path = `${base}/release`;
     else if (action === "close") { path = `${base}/close`; body = { note: values.note || "" }; }
     else throw new Error("未知质检操作");

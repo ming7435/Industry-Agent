@@ -85,7 +85,14 @@ class RuntimePolicy:
 
         if canonical_capability == "workorder_create":
             required = ("diagnosis", "knowledge", "cad", "maintenance_plan")
-            if self._non_invasive_interlock_plan(current):
+            if maintenance.get("plan_kind") == "inspection":
+                from app.workorder.policy import auto_workorder_decision
+                allowed, reason = auto_workorder_decision(
+                    current.get("diagnosis") or {}, maintenance, current.get("event") or {})
+                if not allowed:
+                    return PolicyDecision(PolicyStatus.DENY, "invalid_inspection_plan: " + reason, risk_level)
+                required = ("diagnosis", "knowledge", "maintenance_plan")
+            elif self._non_invasive_interlock_plan(current):
                 required = ("diagnosis", "knowledge", "maintenance_plan")
             missing = tuple(name for name in required if not self._workorder_evidence_ready(name, current))
             if missing:
@@ -103,15 +110,31 @@ class RuntimePolicy:
             if inspection_type and inspection_type != "part_quality":
                 return PolicyDecision(PolicyStatus.DENY, "quality_scope_violation", risk_level)
 
+        automatic_dispatch = canonical_capability == "workorder_create" and (
+            action.action_type == ActionType.AGENT
+            or self.capabilities.canonical_name(action.target) == "workorder_create"
+        )
         approval_needed = (
-            risk_level in self._HIGH_RISK
-            or bool(payload.get("requires_approval"))
+            (risk_level in self._HIGH_RISK and not automatic_dispatch)
+            or self._explicit_approval_required(payload, current)
             or bool(definition and definition.requires_approval)
         ) and is_mutation
         approval_granted = self._server_approval_matches(action, current, canonical_capability)
         if approval_needed and not approval_granted:
             return PolicyDecision(PolicyStatus.REQUIRE_APPROVAL, "approval_required", risk_level)
         return PolicyDecision(PolicyStatus.ALLOW, "policy_allow", risk_level)
+
+    @staticmethod
+    def _explicit_approval_required(payload: Mapping[str, Any], state: Mapping[str, Any]) -> bool:
+        event = state.get('event')
+        event = event if isinstance(event, Mapping) else {}
+        sources = (payload, state.get('maintenance_plan'), payload.get('maintenance_plan'),
+                   payload.get('target_input'), state.get('target_input'), event.get('target_input'))
+        # 任一来源的明确要求都有效，其他来源的 False 不能取消。
+        return any(bool(source.get('requires_approval')) or any(
+                   isinstance(source.get(key), Mapping) and bool(source[key].get('requires_approval'))
+                   for key in ('maintenance_plan', 'plan'))
+                   for source in sources if isinstance(source, Mapping))
 
     def _effective_capability(self, action: ActionModel, state: Mapping[str, Any]) -> str:
         """按最终业务动作选择门禁，避免粗粒度 Router 意图掩盖创建操作。"""

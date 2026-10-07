@@ -28,11 +28,13 @@ def require_assignee(workorder_id, actor, backend=None):
 def human_action(workorder_id, action, payload, request, operations=None):
     actor = team_actor(request)
     backend = BackendServiceClient()
-    require_assignee(workorder_id, actor, backend)
+    order = require_assignee(workorder_id, actor, backend)
     from app.monitor.line_control import LineController
     from app.monitor.factory_api import FactoryApiClient
     import os
     if action == 'mark_repair_completed':
+        if (order.get('maintenance_plan_snapshot') or {}).get('plan_kind') == 'inspection':
+            raise HTTPException(409, '现场检查工单请提交检查记录；具体维修需另建维修方案，不能申请复机')
         if operations is not None:
             return operations.execute_workorder(action, {**payload, 'workorder_id': workorder_id}, actor_id=actor['user_id'])
         feedback = payload.get('repair_feedback') or payload.get('feedback') or ''

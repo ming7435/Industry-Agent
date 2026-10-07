@@ -62,3 +62,26 @@ def test_sessions_persist_and_expire(team):
     with reopened.repository.transaction() as db:
         db.execute('UPDATE team_sessions SET expires_at=0')
     assert reopened.resolve_session(token) is None
+
+
+@pytest.mark.parametrize('rollback', [False, True])
+def test_reentrant_team_transaction_reuses_connection_and_releases_after_exit(team, rollback):
+    def nested_write():
+        with team.repository.transaction() as db:
+            team.repository.save_state(db, 'outer', {'saved': True})
+            with team.repository.transaction() as nested:
+                team.repository.save_state(nested, 'inner', {'saved': True})
+            if rollback:
+                raise RuntimeError('abort-isolated-transaction')
+
+    if rollback:
+        with pytest.raises(RuntimeError, match='abort-isolated-transaction'):
+            nested_write()
+    else:
+        nested_write()
+    with team.repository.transaction() as db:
+        assert team.repository.state(db, 'outer') == (None if rollback else {'saved': True})
+        assert team.repository.state(db, 'inner') == (None if rollback else {'saved': True})
+        team.repository.save_state(db, 'after-exit', {'saved': True})
+    with team.repository.transaction() as db:
+        assert team.repository.state(db, 'after-exit') == {'saved': True}

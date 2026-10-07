@@ -18,7 +18,7 @@ class _ControlledWorkOrderAgent(BaseAgent):
         return {"workorder_id": "WO-CONTROLLED", "status": "open", "evidence": [{"id": "WO-E1"}]}
 
 
-def test_controlled_autonomy_allows_replay_but_gates_high_risk_action():
+def test_controlled_autonomy_allows_high_risk_create_and_replay_but_gates_explicit_approval():
     agent = _ControlledWorkOrderAgent()
     registry = CapabilityRegistry()
     registry.register_agent(agent)
@@ -50,20 +50,31 @@ def test_controlled_autonomy_allows_replay_but_gates_high_risk_action():
         ),
         state,
     )
-    approved = dispatcher.dispatch(
+    explicit = dispatcher.dispatch(
         ActionModel.agent(
             "workorder",
-            {"required_capability": "workorder_create", "risk_level": "high"},
+            {"required_capability": "workorder_create", "risk_level": "high", "requires_approval": True},
             side_effect=True,
-            idempotency_key="monitor:EVT-POLICY-HIGH-APPROVED",
+            idempotency_key="monitor:EVT-POLICY-EXPLICIT",
         ),
-        {**state, "context": {"approved_capabilities": ["workorder_create"]}},
+        state,
+    )
+    client_claimed = dispatcher.dispatch(
+        ActionModel.agent(
+            "workorder",
+            {"required_capability": "workorder_create", "risk_level": "high", "requires_approval": True},
+            side_effect=True,
+            idempotency_key="monitor:EVT-POLICY-CLIENT-CLAIMED",
+        ),
+        {**state, "context": {"approved_capabilities": ["workorder_create"], "approval_granted": True}},
     )
 
     assert first.success is True
     assert replay.success is True
-    assert high_risk.output["status"] == "waiting_approval"
-    assert approved.success is False
-    assert approved.output["policy_status"] == "require_approval"
-    assert agent.calls == 1
-    assert len([item for item in trace.list(trace_id="TRACE-POLICY-E2E") if item["event"] == "policy_decision"]) == 4
+    assert high_risk.success is True
+    assert explicit.success is False
+    assert explicit.output["status"] == "waiting_approval"
+    assert client_claimed.success is False
+    assert client_claimed.output["policy_status"] == "require_approval"
+    assert agent.calls == 2
+    assert len([item for item in trace.list(trace_id="TRACE-POLICY-E2E") if item["event"] == "policy_decision"]) == 5

@@ -10,7 +10,7 @@ from starlette.routing import compile_path
 import monitor_web_server as monitor
 
 
-DISPATCH_PATH = "/api/cad/designs/CAD-TEST/manufacturing/NC-TEST/dispatch"
+DISPATCH_PATH = "/api/cad/buildcad/runs"
 
 
 @pytest.fixture
@@ -35,10 +35,10 @@ def proxy_boundary(monkeypatch):
             if getattr(self.server, "test_peer", None):
                 self.client_address = (self.server.test_peer, self.client_address[1])
             return super()._proxy_to_agent_service(method)
-        def _read_local_cad_production_body(self):
+        def _read_local_cad_body(self):
             original_timeout = self.connection.gettimeout()
             try:
-                return super()._read_local_cad_production_body()
+                return super()._read_local_cad_body()
             finally:
                 self.server.body_timeout_pairs.append((original_timeout, self.connection.gettimeout()))
                 self.server.body_read_completed.set()
@@ -133,10 +133,10 @@ def test_host_must_use_current_proxy_port(proxy_boundary):
 
 
 @pytest.mark.parametrize("path", [
-    "/api/cad/designs/CAD-TEST/manufacturing",
-    "/api/cad/designs/CAD-TEST/manufacturing/NC-TEST/dispatch/",
-    "/api/cad/designs/CAD-TEST/%6danufacturing/NC-TEST/dispatch",
-    "/api/cad/%64esigns/CAD-TEST/manufacturing%2FNC-TEST%2Fdispatch",
+    "/api/cad/buildcad/auth/start",
+    "/api/cad/buildcad/runs/",
+    "/api/cad/%62uildcad/runs",
+    "/api/cad/buildcad%2Fruns",
 ])
 def test_production_prepare_dispatch_and_encoded_paths_share_the_guard(proxy_boundary, path):
     proxy, seen, send = proxy_boundary
@@ -147,9 +147,9 @@ def test_production_prepare_dispatch_and_encoded_paths_share_the_guard(proxy_bou
 
 @pytest.mark.parametrize("suffix", ["%0A", "%0A/"])
 def test_prepare_route_terminal_newline_match_is_also_guarded(proxy_boundary, suffix):
-    path = "/api/cad/designs/CAD-TEST/manufacturing" + suffix
+    path = "/api/cad/buildcad/auth/start" + suffix
     # 真实 FastAPI/Starlette 匹配器接受最终解码换行，尾斜杠变体可被重定向归一化。
-    route_regex, _, _ = compile_path("/api/cad/designs/{design_id}/manufacturing")
+    route_regex, _, _ = compile_path("/api/cad/buildcad/auth/start")
     assert route_regex.match(unquote(path).rstrip("/")) is not None
     proxy, seen, send = proxy_boundary
     status, _ = send(path=path, host=f"evil.example:{proxy.server_port}")
@@ -200,7 +200,7 @@ def test_truncated_production_body_never_reaches_upstream(proxy_boundary):
 
 def test_incomplete_body_on_open_connection_has_a_bounded_read_and_restores_timeout(proxy_boundary, monkeypatch):
     proxy, seen, send = proxy_boundary
-    monkeypatch.setattr(monitor, "CAD_PRODUCTION_BODY_TIMEOUT_SECONDS", 0.1, raising=False)
+    monkeypatch.setattr(monitor, "CAD_BODY_TIMEOUT_SECONDS", 0.1, raising=False)
     # 保持连接打开，只发送 2 字节却声明 20 字节，不能靠 EOF 结束读取。
     status, _ = send(content_length="20")
     assert status == 400

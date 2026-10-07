@@ -132,6 +132,29 @@ class TraceRecorder:
         with self._lock:
             self._records.clear()
 
+    def list_run_index(self, limit: int = 5000) -> List[Dict[str, Any]]:
+        from .runs import run_index_record
+        limit = max(0, min(5000, int(limit)))
+        if not limit:
+            return []
+        query = getattr(self.store, 'list_run_index', None)
+        if callable(query):
+            try:
+                records = query(limit=limit)
+                with self._lock:
+                    memory = [dict(item) for item in self._records if item.get('storage_warning')]
+                    order = {item.get('trace_record_id'): index for index, item in enumerate(self._records)}
+                ids = {item.get('trace_record_id') for item in records}
+                records.extend(item for item in memory if item.get('trace_record_id') not in ids)
+                self.storage_error = '轨迹持久化不可用，当前记录仅保留在内存' if memory else ''
+                records.sort(key=lambda item: (item.get('timestamp', ''), order.get(item.get('trace_record_id'), -1)))
+                return [run_index_record(item) for item in records[-limit:]]
+            except Exception:
+                self.storage_error = '轨迹存储查询不可用，当前仅显示内存记录'
+                with self._lock:
+                    return [run_index_record(item) for item in list(self._records)[-limit:]]
+        return [run_index_record(item) for item in self.list(limit=limit)]
+
 
 def safe_trace_value(value: Any) -> Any:
     """日志快照脱敏和限长；保留业务值，明确标记历史排除和截断。"""

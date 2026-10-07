@@ -1,5 +1,7 @@
 # CAD 建模节点实施计划
 
+> 历史计划，已被后续 BuildCAD MCP 接入替换；不要重新执行旧内核接入步骤。当前唯一生成链见 [BuildCAD 接入报告](../../buildcad-mcp-integration.md)。
+
 > 执行方式：当前本地会话连续实施；使用 executing-plans、test-driven-development 与 verification-before-completion 的测试和核验流程。不提交、不推送、不创建其他工作区。
 
 **目标：** 将原三维建模真实纳入 CAD Agent 的节点、Skill、Tool 调用链。

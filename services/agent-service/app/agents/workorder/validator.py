@@ -3,13 +3,33 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from app.workorder.validator import WorkOrderValidator
 from app.workorder.policy import auto_workorder_decision
 
 
+_POLICY_AUTHORIZED_CREATE = ContextVar('policy_authorized_workorder_create', default=False)
+
+
+@contextmanager
+def _policy_authorized_workorder_execution():
+    """仅 Dispatcher 在服务端策略放行后的执行回调内使用，不能由请求体声明。"""
+    token = _POLICY_AUTHORIZED_CREATE.set(True)
+    try:
+        yield
+    finally:
+        _POLICY_AUTHORIZED_CREATE.reset(token)
+
+
 class WorkOrderAgentValidator:
     ACTIONS = {"create", "assign", "query", "get", "update", "submit_feedback", "mark_repair_completed", "close", "reopen"}
+
+    @staticmethod
+    def approval_required(request: Mapping[str, Any]) -> bool:
+        plan = request.get('maintenance_plan') or request.get('plan') or {}
+        return (bool(request.get('requires_approval')) or bool(plan.get('requires_approval'))) and not _POLICY_AUTHORIZED_CREATE.get()
 
     @classmethod
     def validate_request(cls, request: Mapping[str, Any]) -> list[str]:
@@ -28,6 +48,9 @@ class WorkOrderAgentValidator:
                     WorkOrderValidator.validate_plan(plan)
                 except (TypeError, ValueError) as error:
                     findings.append(str(error))
+                if plan.get('validation_findings') or plan.get('validation_errors'):
+                    findings.append('维修方案校验未通过：%s' % '；'.join(
+                        str(item) for item in (plan.get('validation_findings') or plan.get('validation_errors'))))
                 source = str(request.get("source") or "").strip().lower()
                 auto_requested = bool(request.get("auto_dispatch")) or source not in {"", "manual", "manual_draft"} or bool(request.get("event_id"))
                 if auto_requested or (plan.get("workorder_ready") is True and source not in {"manual", "manual_draft"}):

@@ -37,7 +37,7 @@ class _ApprovalPlanner:
             goal=goal,
             actions=[ActionModel.agent(
                 "workorder",
-                {"required_capability": "workorder_create", "risk_level": "high"},
+                {"required_capability": "workorder_create", "risk_level": "high", "requires_approval": True},
                 side_effect=True,
                 idempotency_key="monitor:EVT-RESUME",
             )],
@@ -82,12 +82,15 @@ def test_wait_approve_resumes_saved_plan_at_original_action(tmp_path):
     coordinator, approvals, agent, planner, _container_instance = _container(tmp_path)
 
     waiting = coordinator.run(_state())
+    assert waiting["runtime_result"]["status"] == "waiting_approval"
+    assert agent.calls == 0
     pending_id = waiting["runtime_pending_task"]["pending_id"]
     pending = approvals.get(pending_id)
 
     resumed = approvals.approve(pending_id, approved_by="operator-1")
 
     assert pending["action"]["idempotency_key"] == "monitor:EVT-RESUME"
+    assert pending["action"]["payload"]["requires_approval"] is True
     assert pending["next_index"] == 0
     assert resumed["status"] == "completed"
     assert resumed["result"]["runtime_result"]["status"] == "completed"

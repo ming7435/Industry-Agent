@@ -149,7 +149,7 @@ def build_fault_scenario(tmp_path, monkeypatch, *, review=False, missing_stock_o
     boundary.responses[("inventory", "query_part_availability")] = {"available": True, **stock}
     boundary.responses[("mes", "query_technicians")] = {"items": [{
         "technician_id": "TEST-REGISTERED-U1", "primary_device_id": device_id,
-        "available": True, "workload": 0,
+        "available": True, "online": True, "registered": True, "workload": 0,
     }], "source": "isolated-test-registered-team"}
     for operation in ("query_technician_skills", "query_technician_workload"):
         boundary.responses[("mes", operation)] = {"items": []}

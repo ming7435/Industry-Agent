@@ -16,6 +16,7 @@ def test_candidates_are_registered_and_workload_is_real(service):
     assert service.query_technicians()['items'] == []
     service.team.register('监督', 'password-123', 'supervisor')
     tech = service.team.register('维修', 'password-123', 'technician', 'M1')
+    service.team.login('维修', 'password-123')
     order = service.create_workorder(device_id='M1')['workorder_id']
     service.assign_workorder(order, tech['user_id'])
     candidates = service.query_technicians()['items']
@@ -30,6 +31,7 @@ def test_candidates_are_registered_and_workload_is_real(service):
 def test_supervisor_reminder_targets_actual_assignee(service):
     supervisor = service.team.register('监督', 'password-123', 'supervisor')
     tech = service.team.register('维修', 'password-123', 'technician', 'M1')
+    service.team.login('维修', 'password-123')
     order = service.create_workorder(device_id='M1')['workorder_id']
     service.assign_workorder(order, tech['user_id'])
     with pytest.raises(PermissionError):
@@ -43,6 +45,8 @@ def test_supervisor_reminder_targets_actual_assignee(service):
 def test_repeated_assignment_is_stable_and_cannot_silently_reassign(service):
     first = service.team.register('维修一', 'password-123', 'technician', 'M1')
     second = service.team.register('维修二', 'password-123', 'technician', 'M1')
+    service.team.login('维修一', 'password-123')
+    service.team.login('维修二', 'password-123')
     order = service.create_workorder(device_id='M1')['workorder_id']
     service.assign_workorder(order, first['user_id'])
     before = service.get_workorder(order)['workorder']

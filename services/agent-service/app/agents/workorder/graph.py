@@ -28,6 +28,9 @@ def validate_plan(state: WorkOrderGraphState) -> Dict[str, Any]:
     findings = WorkOrderAgentValidator.validate_request(state["request"])
     if findings:
         return {"validation_findings": findings, "route": "fallback"}
+    if state['action'] == 'create' and WorkOrderAgentValidator.approval_required(state['request']):
+        return {'validation_findings': ['该动作明确要求服务端审批，审批通过后继续派发'],
+                'stop_reason': 'approval_required', 'route': 'fallback'}
     return {"plan": dict(state["request"].get("maintenance_plan") or state["request"].get("plan") or {}), "route": "create_order" if state["action"] == "create" else "execute_action"}
 
 
@@ -36,7 +39,8 @@ def create_order(state: WorkOrderGraphState) -> Dict[str, Any]:
     request = state["request"]
     existing = agent.find_idempotent(request)
     if existing:
-        return {"workorder": existing, "route": "validate" if existing.get('assignee') else "collect_dispatch_context"}
+        return {"workorder": existing, "route": "collect_dispatch_context"
+                if _should_dispatch(request) and not existing.get('assignee') else "validate"}
     plan = dict(state.get("plan") or {})
     for key in ("idempotency_key", "event_id", "diagnosis_snapshot", "maintenance_plan_snapshot"):
         if request.get(key):
@@ -73,11 +77,20 @@ def collect_dispatch_context(state: WorkOrderGraphState) -> Dict[str, Any]:
 
 def select_assignee(state: WorkOrderGraphState) -> Dict[str, Any]:
     context = dict(state.get("dispatch_context") or {})
+    if context.get('personnel_query_error'):
+        return {'dispatch_context': context, 'candidates': [], 'selected_assignee': '',
+                'validation_findings': [str(context['personnel_query_error'])],
+                'stop_reason': 'personnel_query_failed', 'route': 'fallback'}
     candidates = state["agent"].rank_candidates(context, state.get("request") or {}, state.get("plan") or {})
     requested = str(state["request"].get("assignee") or "")
-    selected = requested or (str(candidates[0].get("technician_id") or candidates[0].get("name") or "") if candidates else "")
+    selected = requested if requested in {item['technician_id'] for item in candidates} else \
+        str(candidates[0]['technician_id']) if candidates and not requested else ''
     context["candidates"] = candidates
     context["selected_assignee"] = selected
+    if not selected:
+        reason = '指定人员不是该设备已登录且可用的登记负责人' if requested else '等待该设备对应负责人员登录'
+        return {"dispatch_context": context, "candidates": candidates, "selected_assignee": "",
+                "validation_findings": [reason], "stop_reason": "waiting_for_personnel", "route": "fallback"}
     return {"dispatch_context": context, "candidates": candidates, "selected_assignee": selected, "priority": WorkOrderAgentValidator.priority(state["request"], state.get("plan") or {}), "route": "assign_order"}
 
 
@@ -103,6 +116,8 @@ def execute_action(state: WorkOrderGraphState) -> Dict[str, Any]:
 
 def validate(state: WorkOrderGraphState) -> Dict[str, Any]:
     findings = WorkOrderAgentValidator.final_findings(state["action"], state.get("workorder") or {}, state.get("validation_findings"))
+    if state['action'] == 'create' and _should_dispatch(state['request']) and not (state.get('workorder') or {}).get('assignee'):
+        findings.append('自动派工未返回实际负责人')
     return {"validation_findings": findings, "route": "final" if not findings else "fallback"}
 
 
@@ -124,8 +139,11 @@ def final(state: WorkOrderGraphState) -> Dict[str, Any]:
 
 def fallback(state: WorkOrderGraphState) -> Dict[str, Any]:
     order = dict(state.get("workorder") or {})
-    result = WorkOrderResult(action=state.get("action", "create"), success=False, workorder_id=str(order.get("workorder_id") or ""), status=str(order.get("status") or ""), workorder=order, validation_findings=list(state.get("validation_findings") or []), stop_reason="validation_failed", error="；".join(state.get("validation_findings") or []))
-    return {"result": result, "stop_reason": "validation_failed"}
+    stop_reason = state.get('stop_reason') if state.get('stop_reason') in {'waiting_for_personnel', 'personnel_query_failed', 'approval_required'} else 'validation_failed'
+    status = {'waiting_for_personnel': 'waiting_for_personnel', 'personnel_query_failed': 'blocked',
+              'approval_required': 'waiting_approval'}.get(stop_reason, str(order.get('status') or ''))
+    result = WorkOrderResult(action=state.get("action", "create"), success=False, workorder_id=str(order.get("workorder_id") or ""), status=status, workorder=order, candidates=list(state.get('candidates') or []), dispatch_context=dict(state.get('dispatch_context') or {}), validation_findings=list(state.get("validation_findings") or []), stop_reason=stop_reason, error="；".join(state.get("validation_findings") or []))
+    return {"result": result, "stop_reason": stop_reason}
 
 
 def _route(state: WorkOrderGraphState) -> str:
@@ -155,7 +173,7 @@ def build_workorder_graph():
     workflow.add_edge("prepare", "validate_plan")
     workflow.add_conditional_edges("validate_plan", _route, {"create_order": "create_order", "execute_action": "execute_action", "fallback": "finish"})
     workflow.add_conditional_edges("create_order", _route, {"collect_dispatch_context": "dispatch_context", "validate": "finish"})
-    workflow.add_edge("dispatch_context", "assign_order")
+    workflow.add_conditional_edges("dispatch_context", _route, {"assign_order": "assign_order", "fallback": "finish"})
     workflow.add_edge("assign_order", "finish")
     workflow.add_edge("execute_action", "finish")
     workflow.add_edge("finish", END)

@@ -20,7 +20,8 @@ def main():
     command = json.loads(sys.stdin.read())
     action, values = command["action"], command.get("values", {})
     if action == "register":
-        result = team.register("隔离测试维修人员", "test-only-password", "technician", device_id)
+        team.register("隔离测试维修人员", "test-only-password", "technician", device_id)
+        result, _ = team.login("隔离测试维修人员", "test-only-password")
     elif action == "prestart":
         result = service.confirm_team_repair(values["workorder_id"], values["actor_id"], values["feedback"], values["snapshot"])
     elif action == "poststart":

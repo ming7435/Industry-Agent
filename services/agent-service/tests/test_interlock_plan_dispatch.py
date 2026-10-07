@@ -37,6 +37,15 @@ def test_unknown_alarm_code_does_not_invent_an_interlock_definition():
     assert repair_profile(value)["kind"] == "general"
 
 
+@pytest.mark.parametrize("declared", [None, "未知", "warning"])
+def test_authoritative_critical_alarm_is_not_downgraded_during_plan_conversion(declared):
+    value = interlock_diagnosis(severity=declared)
+    value["alarm_definition"]["severity"] = "critical"
+    diagnosis = MaintenanceAgent._normalize_diagnosis(value)
+    assert diagnosis.severity == "critical"
+    assert MaintenanceAgent._risk_level(diagnosis.severity) == "high"
+
+
 def make_runtime(tmp_path, monkeypatch, **changes):
     runtime = build_test_orchestrator(tmp_path, monkeypatch, model_responses=[], rag_results=[])
     # 模拟外部库存中存在无关/演示备件，不让它们变成本次核查的强制预留。
@@ -46,7 +55,8 @@ def make_runtime(tmp_path, monkeypatch, **changes):
     runtime.test_boundary.responses[("inventory", "query_part_availability")] = {"available": False}
     plan = runtime.container.agents["maintenance"].run({
         "diagnosis": interlock_diagnosis(**changes), "runtime_managed": True, "cad": {},
-        "knowledge": {"documents": [{"document_id": "SOP-INTERLOCK", "metadata": {"device_id": "M-INTERLOCK"}}]},
+        "knowledge": {"documents": [{"document_id": "SOP-INTERLOCK", "metadata": {"device_id": "M-INTERLOCK"}}],
+                      "recommended_checks": ["更换冷却泵", "拆卸主轴检查轴承"]},
     })
     return runtime, plan
 
@@ -59,10 +69,12 @@ def test_non_invasive_interlock_plan_dispatches_without_unrelated_cad_or_stock(t
     assert plan.workorder_ready is True
     assert plan.validation_findings == []
     assert not any("冷却" in step for step in plan.repair_steps)
+    assert not any("更换冷却泵" in step or "拆卸主轴" in step for step in plan.pre_checks)
     assert any("不得" in step and "互锁" in step for step in plan.repair_steps)
     adapter = runtime.container.registry.workorder_mcp
     monkeypatch.setattr(adapter, "query_technicians", lambda **kw: {"items": [
-        {"technician_id": "TECH-INTERLOCK", "primary_device_id": "M-INTERLOCK", "available": True, "workload": 0}
+        {"technician_id": "TECH-INTERLOCK", "primary_device_id": "M-INTERLOCK", "available": True,
+         "registered": True, "online": True, "workload": 0}
     ]})
     def forbid_inventory_reservation(**kw):
         raise AssertionError("非拆修互锁核查不能预留无关备件")
@@ -108,6 +120,12 @@ def test_physical_repair_steps_cannot_claim_cad_is_optional(step):
     assert MaintenancePlanValidator.workorder_ready(findings, plan) is False
 
 
+@pytest.mark.parametrize("field", ["pre_checks", "post_checks"])
+def test_physical_actions_hidden_in_inspection_checks_still_require_cad(field):
+    assert MaintenancePlanValidator.requires_cad({"cad_required": False,
+        "repair_steps": ["读取互锁状态并记录"], field: ["拆卸接料器并检查驱动器"]}) is True
+
+
 def test_entire_runtime_dispatches_current_interlock_fault_without_engineering_records(tmp_path, monkeypatch):
     fault = "开门被禁止：程序、轴、主轴未停止或接料器未下降"
     runtime, event = build_fault_scenario(tmp_path, monkeypatch, device_id="M-INTERLOCK", event_id="EVT-INTERLOCK-CHAIN", fault=fault)
@@ -129,6 +147,35 @@ def test_entire_runtime_dispatches_current_interlock_fault_without_engineering_r
                for item in result["trace"])
 
 
+def test_critical_interlock_runtime_automatically_dispatches_once(tmp_path, monkeypatch):
+    fault = "开门被禁止：程序、轴、主轴未停止或接料器未下降"
+    runtime, event = build_fault_scenario(tmp_path, monkeypatch, device_id="M-INTERLOCK", event_id="EVT-CRITICAL-INTERLOCK", fault=fault)
+    event["severity"] = "critical"
+    runtime.test_boundary.responses[("knowledge", "get_alarm_definition")]["severity"] = "critical"
+    for operation in ("query_part", "query_drawing", "query_bom", "query_relation", "fetch_engineering_record"):
+        runtime.test_boundary.responses[("cad", operation)] = {"components": [], "synthetic": False}
+
+    result = runtime.run_abnormal_event(event)
+
+    assert result["maintenance_plan"]["workorder_ready"] is True
+    assert result["maintenance_plan"]["risk_level"] == "high"
+    assert result["runtime_result"]["status"] == "completed"
+    assert runtime.container.approvals.list("pending_approval") == []
+    orders = runtime.container.workorder_service.list()
+    assert len(orders) == 1
+    assert orders[0]["assignee"] == "TEST-REGISTERED-U1"
+    # 相同已验证创建请求只对账同单，不能重复派工或建立新的单号。
+    repeated = runtime.container.agents['workorder'].run({
+        'maintenance_plan': result['maintenance_plan'], 'source': 'monitor',
+        'event_id': orders[0]['event_id'], 'idempotency_key': orders[0]['idempotency_key'],
+    })
+    assert repeated.workorder_id == orders[0]['workorder_id']
+    assert len(runtime.container.workorder_service.list()) == 1
+    assert runtime.test_reservations == []
+    assert not any(operation in {"stop_line", "start_line", "stop_device", "start_device"}
+                   for _, operation, _ in runtime.test_boundary.calls)
+
+
 @pytest.mark.parametrize("changes", [
     {"repair_steps": ["更换门锁传感器"]}, {"workorder_ready": False},
     {"validation_findings": ["缺少知识证据"]}, {"required_parts": ["DOOR-REAL"]},
@@ -145,13 +192,15 @@ def test_runtime_cad_exception_is_limited_to_validated_non_invasive_inspection(c
     assert "cad" in decision.missing_evidence
 
 
-def test_non_invasive_inspection_keeps_high_risk_approval_and_knowledge_gates():
+def test_non_invasive_high_risk_inspection_keeps_explicit_approval_and_knowledge_gates():
     state = {"diagnosis": interlock_diagnosis(), "knowledge": {"documents": [{"id": "SOP-INTERLOCK"}]},
              "cad": {}, "maintenance_plan": {"cad_required": False, "workorder_ready": True,
              "repair_steps": ["读取互锁输入输出并记录"], "required_parts": [], "parts": [], "risk_level": "high"},
              "context": {"approval_granted": True}}
     action = ActionModel.agent("workorder", {"required_capability": "workorder_create"},
                                side_effect=True, idempotency_key="inspection-once")
+    assert RuntimePolicy().evaluate(action, state).status == PolicyStatus.ALLOW
+    state['maintenance_plan']['requires_approval'] = True
     assert RuntimePolicy().evaluate(action, state).status == PolicyStatus.REQUIRE_APPROVAL
     state["knowledge"] = {}
     assert RuntimePolicy().evaluate(action, state).missing_evidence == ("knowledge",)

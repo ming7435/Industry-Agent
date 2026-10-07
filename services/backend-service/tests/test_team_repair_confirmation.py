@@ -6,6 +6,7 @@ from test_team_dispatch import service
 def test_prestart_confirmation_cannot_close_or_be_spoofed(service):
     tech = service.team.register('维修', 'password-123', 'technician', 'M1')
     supervisor = service.team.register('监督', 'password-123', 'supervisor')
+    service.team.login('维修', 'password-123')
     order_id = service.create_workorder(device_id='M1', event_id='E1')['workorder_id']
     service.assign_workorder(order_id, tech['user_id'])
     sample = {'device_id': 'M1', 'status': 'stopped', 'metrics': {'pressure': 1}, 'checked_at': datetime.now(timezone.utc).isoformat()}
@@ -25,6 +26,7 @@ def test_prestart_confirmation_cannot_close_or_be_spoofed(service):
 
 def test_repeated_confirmation_preserves_poststart_verification(service):
     tech = service.team.register('维修', 'password-123', 'technician', 'M1')
+    service.team.login('维修', 'password-123')
     order_id = service.create_workorder(device_id='M1', event_id='E1')['workorder_id']
     service.assign_workorder(order_id, tech['user_id'])
     sample = {'device_id': 'M1', 'status': 'stopped', 'metrics': {'pressure': 1}, 'checked_at': datetime.now(timezone.utc).isoformat()}

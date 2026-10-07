@@ -30,6 +30,8 @@ class WorkOrderQuery(BaseModel):
     maintenance_confirmed_by: str = ""
     status: str = ""
     assignee: str = ""
+    auto_dispatch: bool | None = None
+    requires_approval: bool = False
     fault_level: str = ""
     idempotency_key: str = ""
     event_id: str = ""

@@ -13,6 +13,7 @@ from .action import ActionModel
 from .loop_engine import LoopEngine, LoopPolicy, LoopResult
 from .evaluator import RuntimeEvaluator
 from .capability import build_capability_registry
+from .policy import RuntimePolicy
 from app.skills import get_skill_registry
 
 
@@ -292,6 +293,51 @@ class RuntimeCoordinator:
             )
             result = self.container.dispatcher.dispatch(action, current)
             if not result.success:
+                if (
+                    RuntimePolicy(self.capabilities)._effective_capability(action, current) == "workorder_create"
+                    and (
+                        result.output.get("status") == "waiting_for_personnel"
+                        or result.output.get("stop_reason") == "personnel_query_failed"
+                    )
+                ):
+                    # 保留已建工单及人员目录的等待/读取失败原因供后续续派，
+                    # 不丢弃业务结果，也不继续执行维修之后的动作。
+                    waiting = dict(result.output)
+                    directory_failed = waiting.get("stop_reason") == "personnel_query_failed"
+                    terminal_status = "blocked" if directory_failed else "waiting_for_personnel"
+                    terminal_reason = "personnel_query_failed" if directory_failed else "waiting_for_personnel"
+                    return {
+                        "state": {
+                            **current,
+                            "workorder": waiting,
+                            "runtime_outputs": {**dict(current.get("runtime_outputs") or {}), "workorder": waiting},
+                            "status": terminal_status,
+                            "stop_reason": terminal_reason,
+                            "failed_steps": [
+                                *list(current.get("failed_steps") or []),
+                                *([{"step": action.step, "agent": action.target, "reason": terminal_reason}]
+                                  if directory_failed else []),
+                            ],
+                            "step_history": [
+                                *list(current.get("step_history") or []),
+                                {
+                                    "step_id": action.step,
+                                    "started_at": step_started_at,
+                                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                                    "status": terminal_status,
+                                    "input_keys": sorted(action.payload),
+                                    "output_keys": sorted(waiting),
+                                    "tool": "",
+                                    "error": str(waiting.get("error") or terminal_reason) if directory_failed else "",
+                                    "reason": str(waiting.get("error") or terminal_reason),
+                                },
+                            ],
+                        },
+                        "action": action,
+                        "terminal_status": terminal_status,
+                        "terminal_reason": terminal_reason,
+                        "done": False,
+                    }
                 policy_status = str(result.output.get("policy_status") or "")
                 if policy_status in {"deny", "require_approval"}:
                     policy_output = dict(result.output or {})
@@ -745,7 +791,7 @@ class RuntimeCoordinator:
         value = str(raw_status or "").strip().lower()
         if value == "open":
             return "waiting_dispatch"
-        if value in {"in_progress", "awaiting_verification", "completed", "closed", "rejected", "timeout"}:
+        if value in {"waiting_for_personnel", "in_progress", "awaiting_verification", "completed", "closed", "rejected", "timeout"}:
             return value
         return "created" if (result or {}).get("success") else "workorder_error"
 

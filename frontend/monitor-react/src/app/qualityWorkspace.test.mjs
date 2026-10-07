@@ -100,3 +100,41 @@ test("扁平整改任务不能替换五项质检结果", () => {
   assert.equal(view.qualityFromAction(task), null);
   assert.equal(view.qualityFromAction({ success: true, closure_task: task }), null);
 });
+
+test("申诉处理定位唯一待办，不能再次定位已批准的第一条", () => {
+  assert.equal(typeof view.pendingQualityAppealId, "function");
+  assert.equal(view.pendingQualityAppealId({ appeals: [
+    { appeal_id: "APPEAL-1", status: "approved" },
+    { appeal_id: "APPEAL-2", status: "pending" },
+  ] }), "APPEAL-2");
+});
+
+test("没有完整待办或存在多个待办时不猜测申诉目标", () => {
+  assert.equal(typeof view.pendingQualityAppealId, "function");
+  for (const record of [undefined, {}, { appeal_ids: ["APPEAL-1"] },
+    { appeals: [{ appeal_id: "APPEAL-1", status: "approved" }] },
+    { appeals: [{ status: "pending" }] },
+    { appeals: [{ appeal_id: " ", status: "pending" }] },
+    { appeals: [{ appeal_id: "APPEAL-1", status: "pending" }, { appeal_id: "APPEAL-2", status: "pending" }] },
+    { appeals: [{ appeal_id: "APPEAL-1", status: "pending" }, { status: "pending" }] },
+  ]) assert.equal(view.pendingQualityAppealId(record), "");
+});
+
+test("批准和驳回都发送页面明确选择的当前申诉ID", async () => {
+  for (const decision of ["approved", "rejected"]) {
+    let outbound;
+    await view.runQualityAction(async (path, options) => {
+      outbound = { path, body: JSON.parse(options.body) };
+      return { success: true };
+    }, "resolve_appeal", { checkId: "QC/1", appealId: "APPEAL/2", decision, note: "复核当前申诉" });
+    assert.deepEqual(outbound, { path: "/api/v1/quality/checks/QC%2F1/appeal/resolve", body: { decision, reason: "复核当前申诉", appeal_id: "APPEAL/2" } });
+  }
+});
+
+test("未能确定当前待处理申诉时不发送批准或驳回请求", async () => {
+  let count = 0;
+  for (const appealId of [undefined, "", " "]) {
+    await assert.rejects(() => view.runQualityAction(async () => { count++; return {}; }, "resolve_appeal", { checkId: "QC-1", appealId }), /待处理申诉/);
+  }
+  assert.equal(count, 0);
+});

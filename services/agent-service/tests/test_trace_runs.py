@@ -32,6 +32,7 @@ def test_fault_lifecycle_is_one_record_with_ordered_real_phases():
         _event("agent_completed", agent="diagnosis", node="diagnosis"),
         _event("agent_completed", agent="maintenance", node="maintenance"),
         _event("tool_completed", type="tool", agent="workorder", tool_name="create_workorder"),
+        _event("agent_completed", agent="workorder", node="workorder"),
         _event("agent_completed", agent="report", node="report"),
         _event("agent_completed", agent="memory", node="memory"),
     ]

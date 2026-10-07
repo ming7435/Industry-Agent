@@ -1,5 +1,7 @@
 # CAD 三维建模节点设计
 
+> 已被后续 BuildCAD MCP 方案替换；下文仅保留历史设计，不应据此重新启用旧队列、CadQuery 或 generate_3d_model。当前方案见 [BuildCAD 接入报告](../../buildcad-mcp-integration.md)。
+
 ## 用户要求与范围
 
 用户要求将已有三维建模接入 CAD Agent 的真实节点：节点调用 Skill，Skill 调度 Tool。沿用用户此前“后面不需要再问”的连续实施要求，直接修改当前本地项目，不建立远程任务、不覆盖已有修改、不改前端布局。

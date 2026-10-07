@@ -35,17 +35,19 @@ function ragEvent(record) {
 
 export function runEventMatches(run, record) {
   if (!run || !record) return false;
-  const traceIds = Array.isArray(run.trace_ids) ? run.trace_ids : [run.trace_id];
-  const taskIds = Array.isArray(run.task_ids) ? run.task_ids : [run.task_id];
-  const eventIds = Array.isArray(run.event_ids) ? run.event_ids : [run.event_id];
-  const sameIdentity = traceIds.filter(Boolean).includes(record.trace_id)
-    || taskIds.filter(Boolean).includes(record.task_id);
-  const sameEvent = eventIds.filter(Boolean).includes(record.event_id);
-  if (!sameIdentity && !sameEvent && (traceIds.some(Boolean) || taskIds.some(Boolean) || eventIds.some(Boolean))) return false;
-  if (run.run_type === "quality") return sameIdentity || qualityEvent(record);
-  if (run.run_type === "rag") return ragEvent(record);
-  if (run.run_type === "fault") return !qualityEvent(record);
-  return true;
+  const traceIds = (Array.isArray(run.trace_ids) ? run.trace_ids : [run.trace_id]).filter(Boolean);
+  const taskIds = (Array.isArray(run.task_ids) ? run.task_ids : [run.task_id]).filter(Boolean);
+  const eventIds = (Array.isArray(run.event_ids) ? run.event_ids : [run.event_id]).filter(Boolean);
+  // 与运行聚合一致：有 Trace 时只按 Trace 归属，缺 Trace 的执行才使用 Task。
+  const sameIdentity = traceIds.length > 0 ? traceIds.includes(record.trace_id)
+    : !record.trace_id && taskIds.includes(record.task_id);
+  const sameEvent = eventIds.includes(record.event_id);
+  const hasIdentity = traceIds.length > 0 || taskIds.length > 0 || eventIds.length > 0;
+  // 已归属的检索/质检 Trace 包含通用步骤和子 Agent，不能再逐条按关键词过滤。
+  if (run.run_type === "quality") return hasIdentity ? sameIdentity : qualityEvent(record);
+  if (run.run_type === "rag") return hasIdentity ? sameIdentity : ragEvent(record);
+  if (run.run_type === "fault") return (!hasIdentity || sameIdentity || sameEvent) && !qualityEvent(record);
+  return !hasIdentity || sameIdentity || sameEvent;
 }
 
 export function formatTraceValue(value) {

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from functools import wraps
 from typing import Any, Mapping
@@ -205,19 +205,36 @@ class BackendBusinessService:
         assignee = str(assignee or "").strip()
         if not assignee:
             raise ValueError("派工必须提供 assignee")
-        candidates = self.query_technicians().get("items") or []
-        candidate = next((item for item in candidates if str(item.get("technician_id") or "") == assignee), None)
-        if not candidate:
-            raise ValueError("技师不存在：%s" % assignee)
-        if candidate.get("available") is False:
-            raise ValueError("技师当前不可用：%s" % assignee)
-        current = self._require(workorder_id)
-        if current.get('assignee'):
-            if current['assignee'] == assignee:
-                return self._order_result(current)
-            raise ValueError('已派工任务不能隐式更换负责人')
-        self._reserve_required_parts(current)
-        return self.update_workorder(workorder_id, status="in_progress", assignee=assignee, assignee_name=candidate['name'])
+        # 复用团队既有数据库锁，覆盖派工读、资格复核、库存预留和落库。
+        inventory_snapshot = None
+        try:
+            with self.team.repository.transaction() as db:
+                self.team.repository.lock(db)
+                inventory_snapshot = deepcopy(self._inventory)
+                borrower = getattr(self.repository, 'borrow_transaction', None)
+                team_path = self.team.repository.sqlite_path
+                transaction = borrower(db, team_path) if borrower and team_path else nullcontext()
+                with transaction:
+                    current = self._require(workorder_id)
+                    if current.get('assignee'):
+                        if current['assignee'] == assignee:
+                            return self._order_result(current)
+                        raise ValueError('已派工任务不能隐式更换负责人')
+                    device_id = str(current.get('device_id') or '').strip()
+                    if not device_id:
+                        raise ValueError('工单缺少设备归属，不能派工')
+                    candidates = self.query_technicians(device_id=device_id).get('items') or []
+                    candidate = next((item for item in candidates if item.get('technician_id') == assignee), None)
+                    if not candidate:
+                        raise ValueError('派工对象必须是启用且负责该设备的维修人员')
+                    if candidate.get('online') is not True or candidate.get('available') is not True:
+                        raise ValueError('对应设备维修人员当前未登录，不能派工')
+                    self._reserve_required_parts(current)
+                    return self.update_workorder(workorder_id, status="in_progress", assignee=assignee, assignee_name=candidate['name'])
+        except Exception:
+            if inventory_snapshot is not None:
+                self._inventory = inventory_snapshot
+            raise
 
     def submit_repair_feedback(self, workorder_id: str, feedback: Any = "", repair_feedback: Any = None, **_: Any) -> dict[str, Any]:
         order = self._require(workorder_id)
@@ -322,9 +339,9 @@ class BackendBusinessService:
     def get_production_status(self, device_id: str = "", **_: Any) -> dict[str, Any]:
         return {"device_id": device_id, "line": "A线", "status": "running", "cycle_state": "processing", "cycle_state_label": "加工中", "source": "backend-local-fixture", "synthetic": True, "degraded": True, "checked_at": self._now()}
 
-    def query_technicians(self, **kwargs: Any) -> dict[str, Any]:
+    def query_technicians(self, device_id: str = "", **kwargs: Any) -> dict[str, Any]:
         orders = self.repository.list()
-        items = [{"technician_id": user['user_id'], "name": user['username'], "primary_device_id": user['primary_device_id'], "available": bool(user['enabled']), "workload": sum(1 for order in orders if order.get('assignee') == user['user_id'] and order.get('status') not in {'completed', 'closed', 'rejected'}), 'registered': True} for user in self.team.technicians()]
+        items = [{"technician_id": user['user_id'], "name": user['username'], "primary_device_id": user['primary_device_id'], "online": user['online'], "available": bool(user['enabled']) and user['online'], "workload": sum(1 for order in orders if order.get('assignee') == user['user_id'] and order.get('status') not in {'completed', 'closed', 'rejected'}), 'registered': True} for user in self.team.technicians(device_id=device_id)]
         return {'success': True, 'items': items, 'total': len(items), 'backend': 'backend-service'}
 
     def query_technician_skills(self, technician_id: str = "", **_: Any) -> dict[str, Any]:
@@ -336,8 +353,8 @@ class BackendBusinessService:
     def query_shift(self, **_: Any) -> dict[str, Any]:
         return {'success': True, 'status': 'not_recorded', 'backend': 'backend-service'}
 
-    def query_team_availability(self, **_: Any) -> dict[str, Any]:
-        count = len(self.team.technicians())
+    def query_team_availability(self, device_id: str = "", **_: Any) -> dict[str, Any]:
+        count = sum(1 for user in self.team.technicians(device_id=device_id) if user['online'] and user['enabled'])
         return {'success': True, 'available': count > 0, 'team': '设备维修一组', 'available_count': count, 'backend': 'backend-service'}
 
     def query_spare_part(self, query: str = "", **_: Any) -> dict[str, Any]:
@@ -524,7 +541,15 @@ class BackendBusinessService:
         if item is None:
             raise KeyError("质检记录不存在：%s" % check_id)
         appeals = list(item.get("appeals") or [])
-        appeal = next((value for value in appeals if not appeal_id or value.get("appeal_id") == appeal_id), None)
+        if appeal_id:
+            appeal = next((value for value in appeals if value.get("appeal_id") == appeal_id), None)
+        else:
+            pending = [value for value in appeals if value.get("status") == "pending"]
+            if len(pending) > 1:
+                raise ValueError("存在多个待处理申诉，请指定 appeal_id")
+            if not pending:
+                raise ValueError("没有待处理的申诉")
+            appeal = pending[0]
         if appeal is None:
             raise KeyError("申诉记录不存在：%s" % appeal_id)
         decision = str(decision or "approved").lower()

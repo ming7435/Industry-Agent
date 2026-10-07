@@ -30,7 +30,7 @@ class SQLiteRepository:
     def create(self, order: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(order)
         key = str(value.get("idempotency_key") or "") or None
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+        with self._record_session() as connection:
             try:
                 connection.execute("INSERT INTO workorders(workorder_id,idempotency_key,payload) VALUES (?,?,?)", (value["workorder_id"], key, json.dumps(value, ensure_ascii=False, default=str)))
             except sqlite3.IntegrityError:
@@ -41,14 +41,15 @@ class SQLiteRepository:
         return value
 
     def get(self, workorder_id: str) -> dict[str, Any] | None:
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+        with self._record_session() as connection:
             row = connection.execute("SELECT payload FROM workorders WHERE workorder_id=?", (str(workorder_id),)).fetchone()
         return dict(json.loads(row[0])) if row else None
 
     def update(self, order: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(order)
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
-            connection.execute('BEGIN IMMEDIATE')
+        with self._record_session() as connection:
+            if not connection.in_transaction:
+                connection.execute('BEGIN IMMEDIATE')
             current = connection.execute('SELECT payload FROM workorders WHERE workorder_id=?', (value['workorder_id'],)).fetchone()
             stored = json.loads(current[0]) if current else None
             if stored is None or int(stored.get('_revision', 0)) != int(value.get('_revision', 0)):
@@ -58,12 +59,12 @@ class SQLiteRepository:
         return value
 
     def list(self) -> list[dict[str, Any]]:
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+        with self._record_session() as connection:
             rows = connection.execute("SELECT payload FROM workorders ORDER BY rowid").fetchall()
         return [dict(json.loads(row[0])) for row in rows]
 
     def delete(self, workorder_id: str) -> bool:
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+        with self._record_session() as connection:
             cursor = connection.execute("DELETE FROM workorders WHERE workorder_id=?", (str(workorder_id),))
             return bool(cursor.rowcount)
 
@@ -88,9 +89,24 @@ class SQLiteRepository:
         return [dict(json.loads(row[0])) for row in rows]
 
     def delete_record(self, record_type: str, record_id: str) -> bool:
-        with self._lock, sqlite3.connect(str(self.path), timeout=30) as connection:
+        with self._record_session() as connection:
             cursor = connection.execute("DELETE FROM business_records WHERE record_type=? AND record_id=?", (str(record_type), str(record_id)))
             return bool(cursor.rowcount)
+
+    @contextmanager
+    def borrow_transaction(self, connection, path):
+        """同一隔离库借用团队事务；提交、回滚和关闭仍由连接拥有者负责。"""
+        if Path(path).resolve() != self.path.resolve():
+            yield
+            return
+        active = self._record_connection.get()
+        if active is not None and active is not connection:
+            raise RuntimeError('工单已有另一活动事务，不能切换连接')
+        token = self._record_connection.set(connection)
+        try:
+            yield
+        finally:
+            self._record_connection.reset(token)
 
     @contextmanager
     def _record_session(self):

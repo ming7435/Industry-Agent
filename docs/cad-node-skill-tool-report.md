@@ -1,5 +1,7 @@
 # CAD 三维建模节点、Skill、Tool 修改报告
 
+> 历史记录（已替换）：下文记录旧本地生成流程，不代表当前代码。2026-10-07 起只保留 BuildCAD MCP；`model_3d` 节点和 Skill 保留，但旧 `generate_3d_model`/CadQuery 工具已删除。当前用法见 [操作说明](cad-modeling-operation-guide.md) 和 [接入报告](buildcad-mcp-integration.md)。
+
 日期：2026-10-07。项目：`L:/industry_agent`。
 
 ## 结果与范围

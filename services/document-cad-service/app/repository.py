@@ -352,6 +352,9 @@ class MySQLCADRepository:
             "project_id": str(raw.get("project_id") or row.get("project_id") or ""),
             "bom_items": list(raw.get("bom_items") or []),
             "part_relations": list(raw.get("part_relations") or []),
+            **{key: raw[key] for key in ('drawing_url', 'model_url', 'viewer_url', 'mesh_id', 'mesh_name',
+                                        'default_view', 'drawing_type', 'evidence_scope', 'engineering_status',
+                                        'source_kind', 'source_path') if key in raw},
         }
 
 

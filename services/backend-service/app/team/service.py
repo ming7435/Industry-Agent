@@ -68,9 +68,12 @@ class TeamService:
     def logout(self, token):
         self.repository.delete_session(hashlib.sha256(token.encode()).hexdigest())
 
-    def technicians(self):
+    def technicians(self, device_id=''):
+        online = self.repository.active_session_user_ids()
         with self.repository.transaction() as db:
-            return [public(row) for row in db.execute("SELECT * FROM team_accounts WHERE role='technician' AND enabled=1 ORDER BY user_id").fetchall()]
+            rows = db.execute("SELECT * FROM team_accounts WHERE role='technician' AND enabled=1 ORDER BY user_id").fetchall()
+        return [{**public(row), 'online': row['user_id'] in online} for row in rows
+                if not device_id or row['primary_device_id'] == device_id]
 
     def create_reminder(self, workorder_id, actor_id, recipient_id, text):
         with self.repository.transaction() as db:

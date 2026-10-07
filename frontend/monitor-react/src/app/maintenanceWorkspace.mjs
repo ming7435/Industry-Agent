@@ -61,17 +61,39 @@ export function retryMaintenancePlan(request, planId, requestId) {
 
 export function maintenanceDispatchView(record = {}, { hasOrder = false } = {}) {
   const findings = Array.isArray(record.validation_findings) ? record.validation_findings.map(text).filter(Boolean) : [];
-  const allowed = record.dispatch?.allowed;
-  const blocked = allowed === false || record.workorder_ready === false || findings.length > 0;
-  const reason = text(record.dispatch?.reason) || (record.workorder_ready === false ? "维修方案尚未达到工单就绪条件" : "");
+  const dispatch = object(record.dispatch);
+  const allowed = dispatch.allowed;
+  const businessBlocked = record.workorder_ready === false || findings.length > 0;
+  const blocked = allowed === false || businessBlocked;
+  const waitingApproval = dispatch.status === "waiting_approval" && record.workorder_ready === true && findings.length === 0;
+  const waitingPersonnel = dispatch.status === "waiting_for_personnel" && record.workorder_ready === true && findings.length === 0;
+  const dispatched = dispatch.status === "dispatched" && allowed === true && Boolean(text(dispatch.assignee)) && !businessBlocked;
+  const reason = text(dispatch.reason) || (record.workorder_ready === false ? "维修方案尚未达到工单就绪条件" : "");
   return {
-    label: hasOrder ? "已关联工单" : blocked ? "暂不能自动派发"
+    label: hasOrder ? "已关联工单" : waitingApproval ? "等待审批后派发"
+      : waitingPersonnel ? "等待负责人员登录" : dispatched ? "已自动派单" : blocked ? "暂不能自动派发"
       : allowed === true ? "方案就绪，等待系统派发"
       : record.workorder_ready === true ? "方案已就绪，派发条件以系统校验为准" : "派发条件待校验",
     reason: [...new Set([reason, ...findings].filter(Boolean))].join("；"),
     findings,
     stopReason: text(record.stop_reason),
     ready: record.workorder_ready === true ? "是" : record.workorder_ready === false ? "否" : "待校验",
+    assigneeName: dispatched ? text(dispatch.assignee_name || dispatch.assignee) : "",
+    assignmentDeviceId: dispatched ? text(dispatch.device_id || record.device_id) : "",
+  };
+}
+
+export function maintenanceWorkType(record = {}) {
+  const source = object(record);
+  const snapshot = object(source.maintenance_plan_snapshot || source.maintenance_plan);
+  const planKind = text(source.plan_kind || snapshot.plan_kind);
+  const inspection = planKind === "inspection" || (!planKind && (source.inspection_required === true || snapshot.inspection_required === true));
+  return {
+    kind: inspection ? "inspection" : "repair",
+    inspection,
+    label: inspection ? "现场检查" : "设备维修",
+    description: inspection ? "仅核查与记录；具体维修另建方案。" : "",
+    reason: inspection ? text(source.inspection_reason || snapshot.inspection_reason) : "",
   };
 }
 
@@ -79,4 +101,34 @@ export function maintenanceHistoryNotice(history = {}) {
   if (history.status === "failed") return text(history.error) || "历史方案读取失败，原始记录仍保留";
   if (history.status !== "loading") return "";
   return `正在后台读取历史方案（${history.loaded_records || 0} / ${history.total_records || 0} 条事件）；最新已读方案先显示，完整执行日志不重复加载。`;
+}
+
+export function maintenanceReferenceDrawings(record = {}) {
+  const source = object(record);
+  const context = object(source.engineering_context);
+  const entries = [
+    ...(Array.isArray(source.available_drawings) ? source.available_drawings : []),
+    ...(Array.isArray(context.available_drawings) ? context.available_drawings : []),
+    ...(Array.isArray(context.reference_drawings) ? context.reference_drawings : []),
+  ];
+  const localUrls = new Set(["/drawings/TC820si.html", "/drawings/Equator300.html", "/drawings/QLS80S2.html"]);
+  const deviceId = text(source.device_id);
+  const seen = new Set();
+  return entries.flatMap(entry => {
+    const drawing = object(entry);
+    const url = text(drawing.drawing_url || drawing.model_url);
+    const drawingDevice = text(drawing.device_id);
+    if (!localUrls.has(url) || (deviceId && drawingDevice && deviceId !== drawingDevice) || seen.has(url)) return [];
+    seen.add(url);
+    const sourceKind = text(drawing.source_kind);
+    const label = sourceKind === "original_edrawings" ? "设备图纸"
+      : sourceKind === "reference_model" ? "设备图纸与参考模型" : "设备参考资料";
+    return [{
+      id: text(drawing.drawing_id) || url,
+      name: text(drawing.drawing_name) || label,
+      url, label, sourceKind, deviceId: drawingDevice || deviceId,
+      evidenceScope: text(drawing.evidence_scope) || "device_reference",
+      engineeringStatus: text(drawing.engineering_status) || "reference_only",
+    }];
+  });
 }

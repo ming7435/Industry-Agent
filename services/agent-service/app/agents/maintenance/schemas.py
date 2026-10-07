@@ -19,6 +19,9 @@ class MaintenanceQuery(BaseModel):
     cad: Dict[str, Any] = Field(default_factory=dict)
     memory: Dict[str, Any] = Field(default_factory=dict)
     constraints: Dict[str, Any] = Field(default_factory=dict)
+    runtime_managed: bool = False
+    event: Dict[str, Any] = Field(default_factory=dict)
+    context: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_payload(cls, payload: Any) -> "MaintenanceQuery":

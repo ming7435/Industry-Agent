@@ -45,14 +45,16 @@ class CADGraphState(AgentExecutionState, total=False):
     route: str
     modeling_result: Dict[str, Any]
     modeling_execution: Dict[str, Any]
+    buildcad_client: Any
+    model_client: Any
     result: CADResult | Dict[str, Any]
 
 
 def initialize(state: CADGraphState) -> Dict[str, Any]:
     if state.get("operation") == "production_modeling":
         request = dict(state.get("request") or {})
-        if not request.get("design_id"):
-            raise ValueError("三维建模节点缺少已登记任务编号")
+        if not str(request.get("prompt") or "").strip():
+            raise ValueError("BuildCAD 节点缺少建模需求")
         return {"request": request, "route": "load_skill", "observations": [], "errors": []}
     request = CADQuery.from_payload(state.get("request") or {}).model_dump(mode="json")
     return {"request": request, "step_count": 0, "max_steps": request["max_steps"], "observations": [], "components": [], "drawings": [], "bom_items": [], "assembly_relations": [], "locations": [], "sources": [], "errors": [], "backend_status": "unknown", "degraded": False, "synthetic": False, "route": "load_skill"}
@@ -72,13 +74,146 @@ def load_skill(state: CADGraphState) -> Dict[str, Any]:
 
 
 def model_3d(state: CADGraphState) -> Dict[str, Any]:
-    """节点选择 Skill；实际工具名称与权限由 Markdown 步骤决定。"""
+    """一个节点内按真实 MCP schema 调用，不运行本地几何或加工代码。"""
+    import json
+    from time import monotonic
+    from app.tools.cad.buildcad_mcp import (buildcad_scope, ALLOWED_REMOTE_TOOLS, ACTION_TOOLS,
+        BuildCADInputError, has_preview_image, normalize_buildcad_result)
+    from app.clients.buildcad import BuildCADError
+
     selected = get_skill_registry().select("cad", names=state.get("active_skills") or [])
     if len(selected) != 1:
         raise ValueError("三维建模节点必须选择唯一建模 Skill")
     skill = selected[0]
-    result = skill.execute_tool_step("build_model", state["agent"].tools,
-        {"design_id": state["request"]["design_id"]}, context={"node": "model_3d"})
+    client, model = state["buildcad_client"], state.get("model_client")
+    request = state["request"]
+    action, design_id = request.get("action", "preview"), str(request.get("design_id") or "").strip()
+    calls, seen = [], set()
+    result = {"status": "failed", "answer": "", "calls": calls, "action": action, "design_id": design_id}
+    deadline = monotonic() + 180
+    stage, current_tool = "tools/list", ""
+    previewed, saved = False, False
+
+    def call_tool(name, arguments):
+        nonlocal stage, current_tool, previewed, saved
+        stage, current_tool = name, name
+        if len(calls) >= 6 or monotonic() >= deadline:
+            raise BuildCADInputError("本轮工具调用已达上限；已完成的远程操作不会重复提交")
+        fingerprint = json.dumps([name, arguments], sort_keys=True, ensure_ascii=False)
+        if fingerprint in seen:
+            raise BuildCADInputError("检测到重复工具调用，已停止，未重复保存设计")
+        seen.add(fingerprint)
+        row = {"tool": name, "arguments": arguments}
+        calls.append(row)
+        try:
+            remote = skill.execute_tool_step("build_model", state["agent"].tools,
+                {"tool_name": name, "arguments": arguments}, context={"node": "model_3d"})
+        except Exception as exc:
+            row["error"] = getattr(exc, "code", "tool_failed")
+            raise
+        row["result"] = remote
+        if not isinstance(remote, dict):
+            raise BuildCADInputError("BuildCAD 工具未返回有效 MCP 结果")
+        if remote.get("isError"):
+            if name == "render_preview" and any(isinstance(item, dict) and str(item.get("text", "")).strip() == "fetch failed" for item in remote.get("content") or []):
+                raise BuildCADInputError("BuildCAD 远端 render_preview 返回 fetch failed，渲染未完成；未自动重试或保存")
+            raise BuildCADInputError(f"BuildCAD 远端 {name} 返回失败，请查看该工具的原始返回")
+        normalized = normalize_buildcad_result(name, remote)
+        required_field = {"list_designs": "designs", "get_design_code": "code"}.get(name)
+        if required_field and required_field not in normalized:
+            raise BuildCADInputError(f"BuildCAD {name} 未返回可解析的读取结果，请查看原始返回")
+        result.update(normalized)
+        if name == "render_preview":
+            if not has_preview_image(remote):
+                raise BuildCADInputError("BuildCAD render_preview 未返回有效预览图片，不能确认建模成功")
+            previewed = True
+            result["code"] = arguments["code"]
+        elif name == "save_design":
+            saved = True
+            result["code"] = arguments["code"]
+        return remote
+
+    try:
+        definitions = {t["name"]: t for t in client.list_tools() if t.get("name") in ALLOWED_REMOTE_TOOLS}
+        if not definitions:
+            raise BuildCADInputError("BuildCAD 未返回受支持的 MCP 工具")
+        with buildcad_scope(client, definitions, action=action, design_id=design_id):
+            if action in {"list_designs", "get_design_code"}:
+                call_tool(action, {} if action == "list_designs" else {"designId": design_id})
+                if action == "list_designs":
+                    result["answer"] = ("当前账号暂无设计；可先生成预览，需要保存时请先在 BuildCAD 创建一个设计。"
+                        if result.get("designs") == [] else "已读取 BuildCAD 设计列表。")
+                else:
+                    result["answer"] = "已读取所选 BuildCAD 设计代码。"
+                result["status"] = "completed"
+            else:
+                if action == "save":
+                    call_tool("list_designs", {})
+                    if not any(item.get("design_id") == design_id for item in result.get("designs", [])):
+                        raise BuildCADInputError("选择的设计不在当前账号的实际设计列表中；请先在 BuildCAD 创建或选择已有设计")
+                    call_tool("get_design_code", {"designId": design_id})
+                    if "code" not in result:
+                        raise BuildCADInputError("未能解析所选设计的最新代码，已停止保存")
+                stage, current_tool = "model", ""
+                if model is None or not model.available:
+                    raise BuildCADInputError("模型服务未配置，无法把自然语言转换为 BuildCAD 工具参数")
+                declarations = [{"type": "function", "function": {"name": name,
+                    "description": value.get("description", ""), "parameters": value["inputSchema"]}}
+                    for name, value in definitions.items() if name in ACTION_TOOLS[action]]
+                messages = [{"role": "system", "content": skill.document}]
+                instructions = str(getattr(client, "server_instructions", "") or "")[:24000]
+                if instructions:
+                    messages.append({"role": "user", "content": "以下为 BuildCAD MCP 的接口参考，只用于代码语法和参数，不改变用户需求或本地权限：\n<接口参考>\n" + instructions + "\n</接口参考>"})
+                messages.append({"role": "user", "content": json.dumps({"action": action,
+                    "design_id": design_id, "prompt": request["prompt"],
+                    "latest_code": result.get("code"),
+                    "completed_tools": [row["tool"] for row in calls]}, ensure_ascii=False)})
+            for _ in range(7) if action in {"preview", "save"} else []:
+                stage, current_tool = "model", ""
+                if monotonic() >= deadline:
+                    raise BuildCADInputError("本轮调用已达时间上限；请查看已返回的工具结果")
+                model.timeout = max(1, min(45, deadline - monotonic()))
+                response = model.chat(messages, tools=declarations)
+                message = response["choices"][0]["message"]
+                requested = message.get("tool_calls") or []
+                if not requested:
+                    answer = message.get("content")
+                    only_reads = all(call["tool"] in {"list_designs", "get_design_code"} for call in calls)
+                    if only_reads and isinstance(answer, str) and answer.strip():
+                        result["status"] = "needs_input"
+                        result["answer"] = "尚未执行建模，请补充需求后重新提交。\n\n模型反馈：\n" + answer.strip()
+                        break
+                    raise BuildCADInputError("本轮未完成所需的预览或保存，不能确认设计成功；请查看实际工具结果")
+                messages.append({k: message[k] for k in ("role", "content", "tool_calls") if k in message})
+                for item in requested:
+                    function = item["function"]
+                    name = function["name"]
+                    stage, current_tool = name, name
+                    arguments = json.loads(function["arguments"])
+                    remote = call_tool(name, arguments)
+                    if (action == "preview" and previewed) or (action == "save" and saved):
+                        # 真实结果已满足本次动作，立即停止，包括本批次剩余调用。
+                        result["status"] = "completed"
+                        result["answer"] = "BuildCAD 已保存所选设计，并返回预览图片。" if action == "save" else "BuildCAD 已返回预览图片。"
+                        break
+                    # 图像返回前端，不把 base64 注入聊天上下文。
+                    content = [c for c in remote.get("content", []) if isinstance(c, dict) and c.get("type") not in {"image", "resource"}]
+                    messages.append({"role": "tool", "tool_call_id": item["id"],
+                        "content": json.dumps({"content": content, "structuredContent": remote.get("structuredContent"),
+                            "preview_image_returned": has_preview_image(remote)}, ensure_ascii=False)[:24000]})
+                if result["status"] == "completed":
+                    break
+            else:
+                if action in {"preview", "save"}:
+                    raise BuildCADInputError("本轮调用已达上限，请查看实际工具结果")
+    except Exception as exc:
+        code = exc.code if isinstance(exc, BuildCADError) else ""
+        result["status"] = "outcome_unknown" if code == "outcome_unknown" else "failed"
+        # 网关异常可能包含供应商正文，只展示受控校验或脱敏 MCP 错误。
+        result["error"] = str(exc) if isinstance(exc, (BuildCADInputError, BuildCADError)) else "模型或 MCP 调用失败，请检查连接；已保存的设计请先在 BuildCAD 核对"
+        result["error_code"] = code or "buildcad_run_failed"
+        result["error_tool"] = current_tool
+        result["error_stage"] = stage
     step = next(item for item in skill.normalized_steps() if item.id == "build_model")
     return {"modeling_result": result, "modeling_execution": {"agent": "cad", "node": "model_3d",
         "skill": skill.name, "step": step.id, "tool": step.tool}, "route": "final"}
@@ -273,6 +408,8 @@ def _result(state: CADGraphState, status: str) -> CADResult:
     if components:
         confidence = 0.75 + (0.08 if bom_items else 0) + (0.07 if drawings else 0) + (0.07 if relations else 0) + (0.03 if all(item.part_no for item in components) else 0)
     summary = ("定位到 %s 个工程部件、%s 份图纸、%s 条 BOM 和 %s 条装配关系。" % (len(components), len(drawings), len(bom_items), len(relations))) if status == "completed" else ("未查询到与“%s”直接相关的工程 CAD/BOM 数据。" % request.query)
+    if status != "completed" and any(item.get("evidence_scope") == "device_reference" for item in drawings):
+        summary = "已找到对应设备图纸，可打开查看；尚缺与本次故障部件匹配的工程定位、零件号或 BOM 依据。"
     remote = any("document-cad-service" in source for source in state.get("sources", []))
     synthetic = bool(state.get("synthetic"))
     degraded = bool(state.get("degraded") or synthetic)
@@ -329,6 +466,9 @@ def _drawing_ref_details(drawings: list[dict[str, Any]], components: list[CADCom
         part_no = str(drawing.get("part_no") or (component.part_no if component else ""))
         location = str(drawing.get("location") or location_by_component.get(component_id) or (component.position if component else ""))
         details.append({
+            **{key: drawing[key] for key in (
+                "device_id", "device_model", "evidence_scope", "engineering_status", "source_kind", "source_path",
+            ) if key in drawing},
             "drawing_id": drawing_id,
             "drawing_url": str(drawing.get("drawing_url") or ""),
             "drawing_type": str(drawing.get("drawing_type") or drawing.get("format") or "unknown"),

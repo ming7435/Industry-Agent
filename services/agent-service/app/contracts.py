@@ -150,6 +150,9 @@ class DiagnosisView(BaseModel):
 class MaintenancePlan(BaseModel):
     plan_id: str
     diagnosis: DiagnosisView
+    plan_kind: Literal["repair", "inspection"] = "repair"
+    inspection_required: bool = False
+    inspection_reason: str = ""
     repair_target: str = ""
     target_part: Dict[str, Any] = Field(default_factory=lambda: {
         "part_no": "",

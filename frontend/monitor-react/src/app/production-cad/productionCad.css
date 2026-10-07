@@ -1,70 +1,44 @@
-.production-cad { max-width: 1180px; margin: 0 auto; color: #19343d; }
-.production-cad h1 { font-size: 32px; margin: 10px 0; }
-.production-cad h2 { font-size: 23px; margin: 0 0 18px; }
-.production-cad h3 { margin: 28px 0 12px; font-size: 19px; }
-.production-cad p { color: #5c727c; line-height: 1.7; overflow-wrap: anywhere; }
+.production-cad { max-width: 940px; margin: 0 auto; color: #19343d; }
+.production-cad h1 { font-size: 30px; margin: 10px 0; }
+.production-cad h2 { font-size: 21px; margin: 0; }
+.production-cad h3 { font-size: 16px; margin: 22px 0 10px; }
+.production-cad p { color: #5c727c; line-height: 1.75; overflow-wrap: anywhere; }
 .cad-eyebrow { color: #007f75; font-weight: 700; letter-spacing: 1px; }
-.cad-card { border: 1px solid #d9e6e8; border-radius: 18px; padding: 28px; background: white; margin: 22px 0; }
-.cad-boundary, .cad-alert { padding: 16px 20px; border-radius: 12px; background: #edf7f5; line-height: 1.7; margin: 18px 0; }
-.cad-alert { color: #9d4620; background: #fff3e7; }
-.production-cad label { display: block; font-weight: 600; margin: 18px 0 8px; }
-.production-cad input:not([type=file]), .production-cad textarea, .production-cad select { width: 100%; display: block; box-sizing: border-box; margin-top: 8px; padding: 12px 14px; border: 1px solid #cadcde; border-radius: 9px; font: inherit; color: #19343d; background: #fcfefe; }
-.production-cad textarea { resize: vertical; line-height: 1.65; }
-.production-cad input[type=file] { display: block; margin: 12px 0; max-width: 100%; }
-.production-cad .cad-check { display: flex; gap: 12px; align-items: center; font-weight: 500; }
-.production-cad .cad-check input[type=checkbox] { width: 18px; margin: 0; flex-shrink: 0; }
-.cad-alert pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; font-size: 13px; }
+.cad-card { border: 1px solid #d9e6e8; border-radius: 16px; padding: 26px; background: white; margin: 22px 0; }
+.cad-card-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
+.production-cad label { display: block; font-weight: 600; margin: 24px 0 10px; }
+.production-cad textarea { width: 100%; box-sizing: border-box; padding: 14px; border: 1px solid #cadcde; border-radius: 9px; font: inherit; color: #19343d; background: #fcfefe; resize: vertical; line-height: 1.75; }
+.production-cad select { width: 100%; box-sizing: border-box; padding: 12px 14px; border: 1px solid #cadcde; border-radius: 9px; font: inherit; color: #19343d; background: #fcfefe; }
+.production-cad select:disabled { opacity: .65; }
 .production-cad button, .production-cad a { font: inherit; color: #15675f; }
 .production-cad button { border: 1px solid #cadcde; background: #fff; padding: 10px 16px; border-radius: 8px; cursor: pointer; }
 .production-cad button:disabled { opacity: .5; cursor: not-allowed; }
 .production-cad button.cad-primary { background: #087f73; color: #fff; border-color: #087f73; }
-.production-cad :focus-visible { outline: 3px solid #63bdb0; outline-offset: 2px; }
+.production-cad :focus-visible { outline: 3px solid #63bdb0; outline-offset: 3px; }
+.cad-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 20px; }
+.cad-actions a { padding: 8px 0; }
+.cad-save-note, .production-cad .cad-storage-note { font-size: 13px; color: #62777c; }
+.cad-save-note { flex: 1 1 270px; line-height: 1.6; }
+.cad-badge { padding: 6px 12px; border-radius: 16px; background: #edf2f4; font-size: 13px; }
+.cad-badge.connected, .cad-badge.completed { color: #006f61; background: #e2f5ed; }
+.cad-badge.failed, .cad-badge.outcome_unknown { color: #934619; background: #fff0df; }
+.cad-badge.needs_input { color: #526878; background: #edf3f7; }
+.cad-alert { padding: 16px 20px; border-radius: 10px; color: #934619; background: #fff3e7; line-height: 1.7; margin: 18px 0; overflow-wrap: anywhere; }
+.cad-alert p, .production-cad .cad-connection-error, .production-cad .cad-run-error { color: #934619; }
+.cad-tool-errors { border-left: 3px solid #c87b43; padding: 0 16px; }
+.cad-tool-errors p { color: #934619; white-space: pre-wrap; }
+.cad-design-help, .cad-design-empty { font-size: 14px; }
+.cad-design-code { margin: 20px 0; }
 .production-cad summary { cursor: pointer; color: #15675f; font-weight: 600; line-height: 1.7; }
-.cad-actions, .cad-card-heading { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 20px; }
-.cad-card-heading { justify-content: space-between; margin-top: 0; }
-.cad-task-list { display: flex; flex-direction: column; gap: 10px; }
-.cad-task-list button { text-align: left; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 16px; }
-.cad-task-list button.is-selected { background: #edf8f4; border-color: #4dbaa5; border-left-width: 5px; }
-.cad-task-list small { flex-basis: 100%; color: #6f8289; overflow-wrap: anywhere; }
-.cad-badge { padding: 5px 12px; border-radius: 18px; background: #edf2f4; font-size: 13px; white-space: nowrap; }
-.cad-badge.ready, .cad-badge.confirmed { color: #006f61; background: #e2f5ed; }
-.cad-badge.failed, .cad-badge.needs_input, .cad-badge.interrupted { color: #9d4620; background: #fff0df; }
-.cad-identifier { overflow-wrap: anywhere; }
-.cad-solid-preview { width: 100%; background: #f2f6fa; border: 1px solid #d4e1e8; border-radius: 14px; overflow: hidden; }
-.cad-preview-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px; border-bottom: 1px solid #d4e1e8; background: #fff; }
-.cad-preview-label { color: #315267; font-size: 13px; font-weight: 700; margin-right: auto; }
-.production-cad .cad-preview-toolbar button { padding: 7px 11px; font-size: 13px; }
-.cad-preview-toolbar button[aria-pressed=true] { background: #e1f3ef; border-color: #55a998; }
-.cad-preview-viewport { height: 500px; position: relative; }
-.cad-solid-canvas { width: 100%; height: 100%; }
-.cad-solid-canvas canvas { display: block; cursor: grab; touch-action: none; }
-.cad-solid-canvas canvas:active { cursor: grabbing; }
-.cad-preview-message { position: absolute; inset: 35% 8% auto; text-align: center; z-index: 1; pointer-events: none; }
-.cad-preview-hint { position: absolute; bottom: 12px; left: 16px; right: 16px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: #586d7d; font-size: 12px; pointer-events: none; }
-.cad-preview-hint span { display: flex; align-items: center; gap: 10px; }
-.cad-preview-hint i { font-style: normal; font-weight: 800; }
-.cad-preview-hint .axis-x { color: #be3c4c; }.cad-preview-hint .axis-y { color: #3d9148; }.cad-preview-hint .axis-z { color: #316dad; }
-.cad-solid-preview:fullscreen { display: flex; flex-direction: column; border: 0; border-radius: 0; }
-.cad-solid-preview:fullscreen .cad-preview-viewport { flex: 1; min-height: 240px; height: auto; }
-.cad-properties { margin: 0; }
-.cad-properties div { padding: 12px 0; border-bottom: 1px solid #e5edef; }
-.cad-properties dt { color: #6d8289; font-size: 14px; }.cad-properties dd { margin: 5px 0 0; font-weight: 600; }
-.cad-projections { display: flex; flex-direction: column; gap: 16px; }
-.cad-projections figure { margin: 0; border: 1px solid #e2eced; padding: 16px; border-radius: 10px; }
-.cad-projections img { width: 100%; max-height: 280px; object-fit: contain; }
-.cad-projections figcaption { color: #15675f; font-weight: 600; }
-.cad-downloads > div { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 14px 0; border-bottom: 1px solid #e5edef; }
-.cad-downloads small { color: #70838b; }.cad-downloads a { padding: 5px 9px; background: #edf7f5; border-radius: 6px; }
-.cad-events { padding-left: 22px; }.cad-events > li { padding: 12px 0; border-bottom: 1px solid #e5edef; }
-.cad-events pre, textarea.cad-json { font-family: Consolas, monospace; font-size: 13px; }
-.cad-events pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; background: #f4f8f8; padding: 16px; border-radius: 8px; }
-@media(max-width: 720px) { .cad-card { padding: 18px; }.production-cad h1 { font-size: 26px; }.cad-preview-viewport { height: 360px; }.cad-preview-label { flex-basis: 100%; } }
-.cad-manufacturing { margin-top: 28px; padding-top: 12px; border-top: 2px solid #cde5df; }
-.cad-manufacturing fieldset { margin: 18px 0; padding: 18px; border: 1px solid #d4e3e2; border-radius: 10px; }
-.cad-manufacturing legend { color: #15675f; font-weight: 700; }
-.cad-toolpath { margin: 20px 0; padding: 18px; border: 1px solid #d4e3e2; border-radius: 12px; }
-.cad-toolpath figcaption { color: #15675f; font-weight: 700; }
-.cad-toolpath svg { display: block; width: 100%; min-height: 180px; }
-.cad-manufacturing pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; padding: 16px; border-radius: 8px; background: #f3f8f7; font: 13px/1.6 Consolas, monospace; }
-.cad-manufacturing progress { width: 100%; height: 16px; accent-color: #087f73; }
-.cad-nc { margin: 20px 0; }
+.cad-connection-details, .cad-call-details { margin-top: 24px; padding-top: 18px; border-top: 1px solid #e2ecec; }
+.cad-connection-details ul, .cad-call-details ol, .cad-result-links ul { padding-left: 22px; }
+.cad-connection-details li, .cad-call-details li, .cad-result-links li { padding: 8px 0; overflow-wrap: anywhere; }
+.cad-connection-details li p { margin: 5px 0; }
+.cad-call-details pre, .cad-design-code pre { font: 13px/1.65 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; background: #f4f8f8; padding: 16px; border-radius: 8px; }
+.cad-result-text { white-space: pre-wrap; }
+.cad-result-images { display: flex; flex-direction: column; gap: 16px; margin: 22px 0; }
+.cad-result-images figure { margin: 0; padding: 12px; border: 1px solid #e2ecec; border-radius: 10px; background: #f7fafb; }
+.cad-result-images img { display: block; max-width: 100%; max-height: 620px; object-fit: contain; margin: auto; }
+.cad-result-images figcaption { text-align: center; color: #5c727c; font-size: 13px; margin-top: 12px; }
+.cad-identifier { font-size: 13px; }
+@media (max-width: 720px) { .cad-card { padding: 18px; }.production-cad h1 { font-size: 26px; }.cad-save-note { flex-basis: 100%; } }

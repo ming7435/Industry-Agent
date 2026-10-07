@@ -13,3 +13,5 @@ alembic>=1.14,<2
 SQLAlchemy>=2.0,<3
 PyMySQL>=1.1,<2
 PyMuPDF>=1.24
+httpx>=0.27,<1
+jsonschema>=4.22,<5

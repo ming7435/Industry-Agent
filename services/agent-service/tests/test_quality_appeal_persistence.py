@@ -215,3 +215,92 @@ def test_legacy_pending_row_with_resolution_audit_cannot_be_resolved_again(conne
         restored.resolve_appeal(check_id, appeal_id, decision="rejected")
     assert restored.get_quality_check(check_id)["status"] == "rectification"
     assert restored.store.list_appeals(check_id)[0]["status"] == "approved"
+
+
+@pytest.fixture(params=["memory", "sql"])
+def selection_service(request, connector, monkeypatch):
+    if request.param == "memory":
+        monkeypatch.setattr("app.closure.service.build_closure_store", lambda: None)
+        return ClosureService()
+    return service_for(connector)
+
+
+@pytest.mark.parametrize("decision,status", [("approved", "rectification"), ("rejected", "rejected"), ("withdrawn", "withdrawn")])
+def test_empty_id_resolves_second_pending_appeal_after_first_approved(selection_service, decision, status):
+    service = selection_service
+    check_id, first_id = pending_appeal(service)
+    service.resolve_appeal(check_id, first_id, decision="approved")
+    second_id = service.submit_appeal(check_id, {"reason": "Second review"})["appeal_id"]
+
+    result = service.resolve_appeal(check_id, decision=decision)
+
+    assert result["appeal"]["appeal_id"] == second_id
+    assert result["status"] == status
+    appeals = service.store.list_appeals(check_id) if service.store else service._appeals[check_id]
+    assert {item["appeal_id"]: item["status"] for item in appeals} == {first_id: "approved", second_id: decision}
+
+
+def test_explicit_resolved_id_cannot_fall_back_to_new_pending_appeal(selection_service):
+    service = selection_service
+    check_id, first_id = pending_appeal(service)
+    service.resolve_appeal(check_id, first_id, decision="approved")
+    second_id = service.submit_appeal(check_id, {"reason": "Second review"})["appeal_id"]
+    before = service.get_quality_check(check_id)
+    audit_before = service.audit_logs()
+
+    with pytest.raises(ValueError, match="不能重复处理"):
+        service.resolve_appeal(check_id, first_id, decision="rejected")
+
+    assert service.get_quality_check(check_id) == before
+    assert service.audit_logs() == audit_before
+    appeals = service.store.list_appeals(check_id) if service.store else service._appeals[check_id]
+    assert next(item for item in appeals if item["appeal_id"] == second_id)["status"] == "pending"
+
+
+def test_empty_id_rejects_multiple_pending_appeals_without_state_change(selection_service):
+    service = selection_service
+    check_id, _ = pending_appeal(service)
+    service.submit_appeal(check_id, {"reason": "Another pending review"})
+    before = service.get_quality_check(check_id)
+    audit_before = service.audit_logs()
+
+    with pytest.raises(ValueError, match="多个待处理申诉"):
+        service.resolve_appeal(check_id, decision="approved")
+
+    assert service.get_quality_check(check_id) == before
+    assert service.audit_logs() == audit_before
+
+
+def test_explicit_id_disambiguates_multiple_pending_appeals(selection_service):
+    service = selection_service
+    check_id, first_id = pending_appeal(service)
+    second_id = service.submit_appeal(check_id, {"reason": "Another pending review"})["appeal_id"]
+
+    result = service.resolve_appeal(check_id, second_id, decision="approved")
+
+    assert result["appeal"]["appeal_id"] == second_id
+    appeals = service.store.list_appeals(check_id) if service.store else service._appeals[check_id]
+    assert {item["appeal_id"]: item["status"] for item in appeals} == {first_id: "pending", second_id: "approved"}
+
+
+def test_empty_id_without_pending_appeal_is_rejected(selection_service):
+    service = selection_service
+    check_id, appeal_id = pending_appeal(service)
+    service.resolve_appeal(check_id, appeal_id, decision="approved")
+
+    with pytest.raises(ValueError):
+        service.resolve_appeal(check_id, decision="rejected")
+
+    assert service.get_quality_check(check_id)["status"] == "rectification"
+
+
+def test_quality_history_exposes_appeal_status_for_current_pending_id(selection_service):
+    service = selection_service
+    check_id, first_id = pending_appeal(service)
+    service.resolve_appeal(check_id, first_id, decision="approved")
+    second_id = service.submit_appeal(check_id, {"reason": "Second review"})["appeal_id"]
+
+    history = service.list_quality_checks(target_id="PART-APPEAL")
+
+    assert len(history) == 1
+    assert {item["appeal_id"]: item["status"] for item in history[0]["appeals"]} == {first_id: "approved", second_id: "pending"}

@@ -1,6 +1,25 @@
 """长期调用轨迹存于 MySQL：索引查询、短事务，不扫描巨大事件上下文。"""
 import json
 from shared.persistence import mysql_session, mysql_configuration
+from .runs import RUN_INDEX_SHAPE, run_index_record
+
+
+def _run_index_sql(shape, prefix='$'):
+    fields = []
+    for key, nested in shape.items():
+        path = prefix + '.' + key
+        if isinstance(nested, dict):
+            value = _run_index_sql(nested, path)
+        else:
+            extract = "JSON_EXTRACT(payload, '%s')" % path
+            # 旧版 result 也可能保存完整对象，不能把正文带入运行索引。
+            value = "CASE WHEN JSON_TYPE(%s) IN ('OBJECT','ARRAY') THEN NULL ELSE %s END" % (extract, extract)
+        fields.extend(("'%s'" % key, value))
+    return 'JSON_MERGE_PATCH(JSON_OBJECT(),JSON_OBJECT(' + ','.join(fields) + '))'
+
+
+# 删除不存在字段的 null 值，避免每条索引行传输数百个空字段。
+_RUN_INDEX_PROJECTION = _run_index_sql(RUN_INDEX_SHAPE)
 
 
 class MySQLTraceStore:
@@ -27,6 +46,12 @@ class MySQLTraceStore:
                 cursor.close()
 
     def list(self, trace_id=None, task_id=None, limit=5000):
+        return self._list(trace_id=trace_id, task_id=task_id, limit=limit)
+
+    def list_run_index(self, limit=5000):
+        return [run_index_record(record) for record in self._list(limit=limit, projection=_RUN_INDEX_PROJECTION)]
+
+    def _list(self, trace_id=None, task_id=None, limit=5000, projection='payload'):
         clauses, parameters = [], []
         for name, value in (('trace_id', trace_id), ('task_id', task_id)):
             if value is not None:
@@ -45,7 +70,7 @@ class MySQLTraceStore:
                 records = {}
                 for offset in range(0, len(ids), 200):
                     chunk = ids[offset:offset + 200]
-                    cursor.execute('SELECT sequence_id,payload FROM agent_execution_trace WHERE sequence_id IN (' + ','.join(['%s'] * len(chunk)) + ')', tuple(chunk))
+                    cursor.execute('SELECT sequence_id,' + projection + ' FROM agent_execution_trace WHERE sequence_id IN (' + ','.join(['%s'] * len(chunk)) + ')', tuple(chunk))
                     records.update({row[0]: json.loads(row[1]) for row in cursor.fetchall()})
                 return [records[key] for key in reversed(ids) if key in records]
             finally:

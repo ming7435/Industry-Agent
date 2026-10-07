@@ -28,10 +28,10 @@ def _dispatcher():
     return RuntimeDispatcher(registry, ExecutionManager(), trace=trace), agent, trace
 
 
-def _action(risk_level="normal"):
+def _action(risk_level="normal", requires_approval=False):
     return ActionModel.agent(
         "workorder",
-        {"required_capability": "workorder_create", "risk_level": risk_level},
+        {"required_capability": "workorder_create", "risk_level": risk_level, "requires_approval": requires_approval},
         side_effect=True,
         idempotency_key="monitor:EVT-POLICY",
     )
@@ -59,10 +59,19 @@ def test_dispatcher_denies_missing_evidence_before_agent_execution():
     assert any(item["event"] == "policy_decision" for item in trace.list(trace_id="TRACE-POLICY"))
 
 
-def test_dispatcher_waits_for_high_risk_approval_without_agent_execution():
+def test_dispatcher_allows_risk_only_workorder_without_approval():
     dispatcher, agent, _trace = _dispatcher()
 
     result = dispatcher.dispatch(_action("high"), _ready_state())
+
+    assert result.success is True
+    assert agent.calls == 1
+
+
+def test_dispatcher_waits_for_explicit_approval_without_agent_execution():
+    dispatcher, agent, _trace = _dispatcher()
+
+    result = dispatcher.dispatch(_action("high", requires_approval=True), _ready_state())
 
     assert result.success is False
     assert result.output["policy_status"] == "require_approval"
@@ -70,11 +79,11 @@ def test_dispatcher_waits_for_high_risk_approval_without_agent_execution():
     assert agent.calls == 0
 
 
-def test_client_scoped_approval_does_not_allow_high_risk_workorder():
+def test_client_scoped_approval_does_not_allow_explicitly_gated_workorder():
     dispatcher, agent, _trace = _dispatcher()
     state = {**_ready_state(), "context": {"approved_capabilities": ["workorder_create"]}}
 
-    result = dispatcher.dispatch(_action("high"), state)
+    result = dispatcher.dispatch(_action("high", requires_approval=True), state)
 
     assert result.success is False
     assert result.output["policy_status"] == "require_approval"

@@ -1,7 +1,7 @@
 """根据详细执行轨迹构建如实反映生命周期的运行记录。
 
 轨迹以事件为中心。本模块为日志工作区提供展示边界：缺失的阶段仍为
-``pending``，已观察到的阶段若发生错误则保留错误状态。
+``pending``，阶段状态与错误取自当前 Runtime 执行和负责人的当前尝试。
 质检运行始终与故障运行分别归组。
 """
 
@@ -22,6 +22,38 @@ FAULT_PHASES = (
 )
 QUALITY_PHASES = (("quality", "质检"),)
 RAG_PHASES = (("rag", "RAG 问答"),)
+
+# 索引仅保留归组、状态判定所需值；输入、工具返回正文按 Trace 单独读取。
+_IDENTITY_FIELDS = ('event_id', 'source_event_id', 'incident_id', 'device_id', 'alarm_code', 'alarm',
+                    'run_type', 'quality_check_id', 'check_id', 'object_id', 'target_id')
+_IDENTITY_SHAPE = dict.fromkeys(_IDENTITY_FIELDS)
+_CONTEXT_SHAPE = {**_IDENTITY_SHAPE, **dict.fromkeys(('agent',)),
+                  **{key: _IDENTITY_SHAPE for key in ('raw', 'event', 'trigger', 'abnormal_event', 'payload')}}
+RUN_INDEX_SHAPE = {
+    **dict.fromkeys(('timestamp', 'trace_record_id', 'type', 'name', 'node', 'agent', 'event',
+                     'task_id', 'trace_id', 'agent_run_id', 'tool_name', 'tool', 'step', 'skill', 'error', 'allowed')),
+    **_IDENTITY_SHAPE,
+    **{key: _CONTEXT_SHAPE for key in ('context', 'runtime_context', 'execution_context')},
+    'state_change': {**_CONTEXT_SHAPE, **dict.fromkeys(('source', 'status', 'stop_reason'))},
+    'output': {**dict.fromkeys(('status', 'result', 'success')),
+               'quality_check': dict.fromkeys(('status', 'result', 'success'))},
+}
+
+
+def run_index_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    def project(value, shape):
+        source = _as_dict(value)
+        result = {}
+        for key, nested in shape.items():
+            item = source.get(key)
+            if isinstance(nested, dict):
+                child = project(item, nested)
+                if child:
+                    result[key] = child
+            elif item is not None and not isinstance(item, (dict, list)):
+                result[key] = item
+        return result
+    return project(record, RUN_INDEX_SHAPE)
 
 
 def _as_dict(value: Any) -> Mapping[str, Any]:
@@ -148,31 +180,100 @@ def _is_complete(record: Mapping[str, Any]) -> bool:
     event = str(record.get("event") or "").lower()
     if event == "goal_parsed" and str(_as_dict(record.get("state_change")).get("source") or "").lower() == "trigger":
         return True
-    return (
-        event.endswith("_completed")
-        or event.endswith("_complete")
-        or event.endswith("_end")
-        or event in {"tool_called", "tool_completed", "step_completed", "loop_stop", "execution_end"}
-    )
+    return event in {'agent_completed', 'node_completed', 'node_complete', 'node_end'}
+
+
+def _same_execution(record: Mapping[str, Any], boundary: Mapping[str, Any]) -> bool:
+    for key in ('trace_id', 'task_id'):
+        if boundary.get(key) and record.get(key):
+            return record[key] == boundary[key]
+    return not (boundary.get('trace_id') or boundary.get('task_id'))
+
+
+def _is_runtime_boundary(record: Mapping[str, Any]) -> bool:
+    return record.get('event') in {'loop_start', 'loop_stop'} \
+        and str(record.get('agent') or 'runtime') == 'runtime' \
+        and str(record.get('node') or record.get('name') or 'runtime') == 'runtime'
+
+
+def _current_runtime_records(records: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    start = next((index for index in range(len(records) - 1, -1, -1)
+                  if records[index].get('event') == 'loop_start' and _is_runtime_boundary(records[index])), None)
+    if start is None:
+        return records
+    return [item for item in records[start:] if _same_execution(item, records[start])]
+
+
+def _rag_owner(records: list[Mapping[str, Any]]) -> str:
+    # 独立检索可以由 Memory 或 Knowledge 发起；根调用先于它的子调用。
+    # A2A 边界也能保留负责人，兼容截断后缺少 Agent 开始事件的轨迹。
+    agents = {'memory', 'knowledge'}
+    for item in records:
+        event = str(item.get('event') or '')
+        if event == 'a2a_started':
+            caller, separator, callee = str(item.get('name') or '').partition('->')
+            if separator:
+                if caller in agents:
+                    return caller
+                if callee in agents:
+                    return callee
+        if event in {'agent_started', 'node_started'}:
+            agent = (item.get('node') or item.get('agent') or item.get('name')) \
+                if event == 'node_started' else (item.get('agent') or item.get('name'))
+            if agent in agents:
+                return str(agent)
+    # 旧 Knowledge 轨迹可能只有完成事件，没有开始事件。
+    return next((str(item.get('agent') or item.get('name')) for item in records
+                 if item.get('event') == 'agent_completed'
+                 and (item.get('agent') or item.get('name')) in agents), 'knowledge')
 
 
 def _phase_record(records: list[Mapping[str, Any]], phase_id: str, label: str) -> dict[str, Any]:
     if not records:
         return {"id": phase_id, "label": label, "status": "pending"}
     ordered = sorted(records, key=lambda item: _timestamp(item.get("timestamp")))
-    # 调用正常返回不代表业务成功：读取最后一个 Agent 的真实结果。
-    last_output = next((_as_dict(item.get('output')) for item in reversed(ordered) if item.get('event') == 'agent_completed'), {})
+    owner = {'diagnosis': 'diagnosis', 'maintenance': 'maintenance', 'workorder': 'workorder',
+             'report': 'report', 'experience': 'memory', 'quality': 'quality', 'rag': 'knowledge'}.get(phase_id)
+    if phase_id == 'rag':
+        owner = _rag_owner(ordered)
+    completed_events = {'agent_completed', 'node_completed', 'node_complete', 'node_end'}
+    lifecycle_events = completed_events | {'agent_started', 'agent_error', 'agent_failed', 'agent_timeout',
+                                           'node_started', 'node_error', 'node_failed', 'node_timeout'}
+    def owns(item):
+        identity = (item.get('node') or item.get('agent') or item.get('name')) \
+            if str(item.get('event') or '').startswith('node_') else (item.get('agent') or item.get('name'))
+        return identity == owner
+    owned = [item for item in ordered if item.get('event') in lifecycle_events and owns(item)]
+    active = ordered
+    if owned:
+        # 重试以负责人最近一次开始事件为边界，不继承旧尝试的结果或错误。
+        start = next((index for index in range(len(ordered) - 1, -1, -1)
+                      if ordered[index].get('event') in {'agent_started', 'node_started'} and owns(ordered[index])), None)
+        if start is not None:
+            boundary = ordered[start]
+            active = [item for item in ordered[start:] if _same_execution(item, boundary)]
+            attempt = str(boundary.get('agent_run_id') or '')
+            if attempt:
+                active = [item for item in active if not owns(item) or not item.get('agent_run_id')
+                          or str(item.get('agent_run_id')) == attempt]
+    lifecycle = [item for item in active if item.get('event') in lifecycle_events
+                 and owns(item)]
+    # 子 Agent 的终态不结束阶段；业务状态读取当前负责人的真实结果。
+    last_output = next((_as_dict(item.get('output')) for item in reversed(lifecycle)
+                        if item.get('event') == 'agent_completed'), {})
+    if not last_output:
+        last_output = next((_as_dict(item.get('output')) for item in reversed(lifecycle)
+                            if item.get('event') in completed_events and _as_dict(item.get('output'))), {})
     if phase_id == 'quality':
-        quality_output = next((_as_dict(item.get('output')) for item in reversed(ordered)
-                               if item.get('event') == 'agent_completed' and (item.get('agent') or item.get('name')) == 'quality'), {})
-        if quality_output:
-            last_output = _as_dict(quality_output.get('quality_check')) or quality_output
+        last_output = _as_dict(last_output.get('quality_check')) or last_output
     business_status = str(last_output.get('status') or '').lower()
     blocked = business_status in {'blocked','pending_approval','review','not_tested','insufficient_data','incomplete'}
     if phase_id == 'quality' and business_status not in {'released', 'closed'}:
         blocked = blocked or str(last_output.get('result') or '').lower() in {'review', 'not_tested', 'insufficient_data'}
-    errors = any(_is_error(item) for item in records)
-    completed = any(_is_complete(item) for item in records)
+    errors = any(_is_error(item) for item in active) or business_status in {'error', 'failed', 'timeout'}
+    completed = lifecycle[-1].get('event') in completed_events if lifecycle else (not owner and any(_is_complete(item) for item in active))
+    if lifecycle and lifecycle[-1].get('event') in {'agent_started', 'node_started'} and not errors:
+        blocked = False
     status = "blocked" if blocked else "error" if errors or last_output.get('success') is False else ("completed" if completed else "running")
     return {
         "id": phase_id,
@@ -195,6 +296,25 @@ def _run_status(phases: list[Mapping[str, Any]]) -> str:
     return "running"
 
 
+def _runtime_terminal(records: list[Mapping[str, Any]]) -> tuple[str, str]:
+    # 同一故障重新运行时，新 loop_start 会撤销旧终态；内部步骤结束不是 Runtime 终态。
+    lifecycle = [item for item in _current_runtime_records(records) if _is_runtime_boundary(item)]
+    if not lifecycle or lifecycle[-1].get('event') != 'loop_stop':
+        return '', ''
+    state = _as_dict(lifecycle[-1].get('state_change'))
+    status = str(state.get('status') or '')
+    return (status, str(state.get('stop_reason') or '')) if status in {'blocked', 'error', 'failed', 'timeout'} else ('', '')
+
+
+def _execution_identity(record: Mapping[str, Any]) -> tuple[str, str] | None:
+    # Trace 是一次执行的边界；有 Trace 时不能通过复用的 Task 串联其他执行。
+    for key in ('trace_id', 'task_id'):
+        value = str(record.get(key) or '')
+        if value:
+            return key, value
+    return None
+
+
 def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """将轨迹事件聚合为用户可见的故障、RAG 和质检运行。
 
@@ -206,31 +326,36 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
     source_records = [dict(item) for item in records if isinstance(item, Mapping)]
     # 监控事件 ID 通常只出现在第一条目标/上下文事件中。将它传递给
     # 同一 Trace 的其余事件，避免整个生命周期拆成监控卡和 Agent 卡。
-    event_ids_by_identity: dict[str, str] = {}
-    trigger_by_identity: set[str] = set()
-    quality_by_identity: set[str] = set()
+    event_ids_by_identity: dict[tuple[str, str], str] = {}
+    trigger_by_identity: set[tuple[str, str]] = set()
+    quality_by_identity: set[tuple[str, str]] = set()
+    rag_by_identity: set[tuple[str, str]] = set()
     for item in source_records:
         event_id = _event_id(item)
-        for identity in (str(item.get("task_id") or ""), str(item.get("trace_id") or "")):
-            if identity and event_id:
-                event_ids_by_identity.setdefault(identity, event_id)
-            if identity and _is_trigger(item):
-                trigger_by_identity.add(identity)
-            if identity and _is_quality(item):
-                quality_by_identity.add(identity)
+        execution_identity = _execution_identity(item)
+        if execution_identity:
+            if event_id:
+                event_ids_by_identity.setdefault(execution_identity, event_id)
+            if _is_trigger(item):
+                trigger_by_identity.add(execution_identity)
+            if _is_quality(item):
+                quality_by_identity.add(execution_identity)
+            if _is_rag(item):
+                rag_by_identity.add(execution_identity)
 
     groups: OrderedDict[str, dict[str, Any]] = OrderedDict()
     for index, item in enumerate(source_records):
         task_id = str(item.get("task_id") or "")
         trace_id = str(item.get("trace_id") or "")
-        quality = _is_quality(item) or task_id in quality_by_identity or trace_id in quality_by_identity
+        execution_identity = _execution_identity(item)
+        quality = _is_quality(item) or execution_identity in quality_by_identity
         quality_identity = str(_first(item, ("quality_check_id", "check_id", "object_id", "target_id")) or "")
         # Trace 是 RAG/质检交互的稳定边界；同一次回答内部的工具 Task
         # 可以合法变化。
         identity = trace_id or task_id or quality_identity or f"event-{index}"
-        event_id = _event_id(item) or event_ids_by_identity.get(task_id) or event_ids_by_identity.get(trace_id) or ""
-        is_fault = bool(event_id or task_id in trigger_by_identity or trace_id in trigger_by_identity)
-        rag = _is_rag(item) and not is_fault
+        event_id = _event_id(item) or event_ids_by_identity.get(execution_identity) or ""
+        is_fault = bool(event_id or execution_identity in trigger_by_identity)
+        rag = _is_rag(item) or execution_identity in rag_by_identity
         if quality:
             group_key = f"quality:{identity}"
             run_type = "quality"
@@ -270,11 +395,13 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
     result: list[dict[str, Any]] = []
     for group in groups.values():
         items = sorted(group["records"], key=lambda item: _timestamp(item.get("timestamp")))
+        current_items = _current_runtime_records(items)
         quality = group["run_type"] == "quality"
         phase_defs = QUALITY_PHASES if quality else RAG_PHASES if group["run_type"] == "rag" else FAULT_PHASES
         phases = [
             _phase_record(
-                [item for item in items if _phase_for(item, quality) == phase_id or (group["run_type"] == "rag" and _is_rag(item))],
+                [item for item in (items if phase_id == 'monitor' else current_items)
+                 if group["run_type"] == "rag" or _phase_for(item, quality) == phase_id],
                 phase_id,
                 label,
             )
@@ -284,11 +411,13 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
         first_at = min(timestamps) if timestamps else datetime.min
         last_at = max(timestamps) if timestamps else datetime.min
         run_id = group["run_key"]
+        terminal_status, stop_reason = _runtime_terminal(items)
         result.append({
             "run_id": run_id,
             "run_type": group["run_type"],
             "label": "质检运行" if quality else "故障闭环" if group["run_type"] == "fault" else "RAG 问答",
-            "status": _run_status(phases),
+            "status": ('error' if terminal_status in {'failed', 'timeout'} else terminal_status) or _run_status(phases),
+            "stop_reason": stop_reason,
             "event_id": group["event_id"],
             "event_ids": group["event_ids"],
             "trace_id": group["trace_ids"][0] if group["trace_ids"] else "",

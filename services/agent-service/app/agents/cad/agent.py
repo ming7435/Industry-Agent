@@ -26,27 +26,16 @@ class CADAgent(BaseAgent):
     def query_bom(self, query: str, device_id: str = "") -> CADResult:
         return self.run({"query": query, "device_id": device_id})
 
-    def production_modeling(self, **options: Any) -> Any:
-        """原建模 API 和有界队列复用本 Agent 的真实建模图分支。"""
-        from .modeling_service import CADModelingService
-
-        return CADModelingService(agent=self, **options)
-
-    def run_modeling(self, design_id: str, service: Any, request: Any) -> dict[str, Any]:
-        """已登记任务进入图；不能从用户正文构造可信工具作用域。"""
-        from uuid import uuid4
-        from app.tools.cad.generate_3d_model import modeling_task_scope
-
-        saved_request = service.get(design_id)["request"]
-        context = {"agent": "cad", "node": "model_3d", "run_type": "cad_modeling",
-            "agent_run_id": "AGENT-RUN-" + uuid4().hex}
-        with modeling_task_scope(service, design_id, request), self.tools.trace_context(
-            task_id=design_id, trace_id=design_id, context=context,
-        ):
+    def run_buildcad(self, prompt: str, *, run_id: str, client: Any, model: Any = None,
+                     action: str = "preview", design_id: str = "") -> dict[str, Any]:
+        """只进入一个建模节点；远程能力由已授权的 MCP 连接提供。"""
+        context = {"agent": "cad", "node": "model_3d", "run_type": "cad_modeling", "agent_run_id": run_id}
+        with self.tools.trace_context(task_id=run_id, trace_id=run_id, context=context):
             output = self.graph.invoke({
                 "agent": self, "operation": "production_modeling",
-                "request": {**saved_request, "design_id": design_id, "task_id": design_id,
-                    "trace_id": design_id, "operation": "production_modeling"},
+                "buildcad_client": client, "model_client": model,
+                "request": {"prompt": prompt, "task_id": run_id, "trace_id": run_id,
+                    "operation": "production_modeling", "action": action, "design_id": design_id},
             })
         result = output.get("result")
         if not isinstance(result, dict):

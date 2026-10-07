@@ -1,5 +1,7 @@
 # CAD Agent 生产前建模实现与验证
 
+> 历史记录（已停用）：本文中的本地实体内核、上传解析、导出接口及测试结果属于旧版本，不能用于当前启动或验收。当前生成只走 BuildCAD MCP，见 [操作说明](cad-modeling-operation-guide.md) 和 [接入报告](buildcad-mcp-integration.md)。
+
 ## 范围与入口
 
 本次仅修改 CAD Agent 相关代码和前端。Agent API 挂载 CAD 专用路由；不修改 Document-CAD、Backend、RAG、Model、生产配置、数据库或设备控制。已有维修 CAD 查询和工单故障定位不替换。

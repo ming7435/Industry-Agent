@@ -16,6 +16,7 @@ def test_workorder_verification_close_and_idempotency(tmp_path, monkeypatch):
     client = TestClient(app)
     main.get_service().team.devices = lambda: [{'device_id': 'CNC-001'}]
     technician_id = main.get_service().team.register('测试维修', 'test-password-123', 'technician', 'CNC-001')['user_id']
+    main.get_service().team.login('测试维修', 'test-password-123')
     payload = {"device_id": "CNC-001", "title": "主轴异常", "idempotency_key": "e2e-1"}
     first = client.post("/tools/call", json={"tool": "create_workorder", "arguments": payload}).json()
     second = client.post("/tools/call", json={"tool": "create_workorder", "arguments": payload}).json()

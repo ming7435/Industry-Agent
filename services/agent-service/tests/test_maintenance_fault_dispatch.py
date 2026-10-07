@@ -193,7 +193,7 @@ def test_verified_lubrication_plan_automatically_assigns_and_persists_order(tmp_
     assert auto_workorder_decision(plan.diagnosis.model_dump(mode="json"), plan.model_dump(mode="json"))[0] is True
     # 人员目录和库存预留是外部业务边界；排序、创建、派发及持久化执行实际代码。
     adapter = runtime.container.registry.workorder_mcp
-    monkeypatch.setattr(adapter, "query_technicians", lambda **kw: {"items": [{"technician_id": "TECH-LUB", "primary_device_id": "M-LUB", "available": True, "workload": 0}]})
+    monkeypatch.setattr(adapter, "query_technicians", lambda **kw: {"items": [{"technician_id": "TECH-LUB", "primary_device_id": "M-LUB", "available": True, "online": True, "registered": True, "workload": 0}]})
     def reserve_inventory(**kw):
         assert kw["part_no"] == "LUB-REAL", "外部库存接口必须收到编号，不是显示名称或库存注释"
         return {"reserved": True, **kw}

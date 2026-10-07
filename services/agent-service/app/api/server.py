@@ -357,9 +357,11 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def runs(limit: int = 5000) -> Dict[str, Any]:
         """每次故障、独立 RAG 问答或质检运行返回一条记录。"""
 
-        records = runtime.container.trace.list(limit=max(1, min(limit, 5000)))
+        recorder = runtime.container.trace
+        query = getattr(recorder, 'list_run_index', recorder.list)
+        records = query(limit=max(1, min(limit, 5000)))
         items = build_run_records(records)
-        return {"runs": items, "count": len(items)}
+        return {"runs": items, "count": len(items), 'storage_warning': getattr(recorder, 'storage_error', '')}
 
     @app.get("/api/v1/runtime/approvals")
     def runtime_approvals(status: str = "") -> Dict[str, Any]:

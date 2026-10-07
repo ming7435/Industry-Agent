@@ -44,6 +44,7 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - SiliconFlow BGE-M3 向量化、bge-reranker-v2-m3 重排、DeepSeek 生成。
 - Milvus 向量集合、Whoosh BM25 索引和 MySQL 文档/分块元数据。
 - CAD 图纸、BOM、部件、装配关系和部件位置查询；配置 CAD MySQL 后从工程元数据表读取，开发环境才使用显式 Demo fallback。
+- CAD 生成仅保留 BuildCAD MCP：生产建模页面 → `model_3d` 节点 → 中文 `production_modeling_skill` → `buildcad_mcp` → BuildCAD。旧本地几何内核和虚拟加工入口已停用；维修工程查询不受影响。操作见 [BuildCAD 建模说明](docs/cad-modeling-operation-guide.md)。
 - 维修计划中的 target_part、drawing_context 和 viewer_context 数据契约。
 - WorkOrder 生命周期、维修反馈、维修完成、派工和 MySQL 持久化幂等；临时上下文与登录会话使用 Redis。
 - 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。

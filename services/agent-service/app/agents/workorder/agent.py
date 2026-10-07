@@ -56,7 +56,11 @@ class WorkOrderAgent(BaseAgent):
         component = str((target_part.get("component") or "") if isinstance(target_part, Mapping) else target_part or "")
         priority = WorkOrderAgentValidator.priority(request, plan)
         area = str(order.get("area") or plan.get("area") or request.get("area") or "")
-        candidates = self._safe_tool("query_technicians", {"device_id": device_id, "component": component, "priority": priority}).get("items", [])
+        directory = self._safe_tool("query_technicians", {"device_id": device_id, "component": component, "priority": priority})
+        if directory.get('success') is False or not isinstance(directory.get('items'), list):
+            return {'device_id': device_id, 'candidates': [],
+                    'personnel_query_error': '对应设备负责人员查询失败，请稍后重试'}
+        candidates = directory['items']
         enriched: list[dict[str, Any]] = []
         for candidate in candidates:
             item = dict(candidate)
@@ -82,34 +86,15 @@ class WorkOrderAgent(BaseAgent):
 
     @staticmethod
     def rank_candidates(context: Mapping[str, Any], request: Mapping[str, Any], plan: Mapping[str, Any]) -> list[dict[str, Any]]:
-        if any('primary_device_id' in item for item in context.get('candidates') or []):
-            device_id = str(context.get('device_id') or '')
-            candidates = [dict(item) for item in context.get('candidates') or [] if item.get('available') is True]
-            for item in candidates:
-                primary = bool(device_id and item.get('primary_device_id') == device_id)
-                item['dispatch_score'] = 100 if primary else 1
-                item['dispatch_reasons'] = ['主要负责该设备' if primary else '同组工作量最少候补']
-            return sorted(candidates, key=lambda item: (-item['dispatch_score'], int(item.get('workload') or 0), str(item.get('technician_id') or '')))
-        availability = context.get("availability") or {}
-        shift = context.get("shift") or {}
-        current_shift = str(shift.get("shift") or shift.get("name") or "")
-        team_available = bool(availability.get("available", True))
-        priority = str(context.get("priority") or WorkOrderAgentValidator.priority(request, plan))
-        ranked: list[dict[str, Any]] = []
-        for candidate in context.get("candidates") or []:
-            item = dict(candidate)
-            score, reasons = WorkOrderAgentValidator.score_candidate(
-                item,
-                component=str(context.get("component") or ""),
-                area=str(context.get("area") or ""),
-                current_shift=current_shift,
-                team_available=team_available,
-                priority=priority,
-            )
-            item["dispatch_score"] = score
-            item["dispatch_reasons"] = reasons
-            ranked.append(item)
-        return sorted(ranked, key=lambda item: (-int(item.get("dispatch_score") or 0), int(item.get("workload") or 0), str(item.get("technician_id") or "")))
+        device_id = str(context.get('device_id') or '')
+        candidates = [dict(item) for item in context.get('candidates') or []
+                      if device_id and item.get('technician_id') and item.get('registered') is True
+                      and item.get('available') is True and item.get('online') is True
+                      and item.get('primary_device_id') == device_id]
+        for item in candidates:
+            item['dispatch_score'] = 100
+            item['dispatch_reasons'] = ['该设备已登录且可用的登记负责人']
+        return sorted(candidates, key=lambda item: (int(item.get('workload') or 0), str(item['technician_id'])))
 
     def execute_action(self, request: Mapping[str, Any]) -> Any:
         return self.service.execute_action(request)

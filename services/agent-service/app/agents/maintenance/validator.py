@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any, Mapping
 from math import isfinite
 
-from app.workorder.policy import maintenance_decision
+from app.workorder.policy import inspection_decision, maintenance_decision
+from app.workorder.inspection import inspection_plan_findings
 from app.workorder.repair_profile import part_matches_profile, repair_profile
 
 
@@ -44,15 +45,33 @@ class MaintenancePlanValidator:
         if diagnosis.get("evidence_validated") is False or diagnosis.get("validated") is False:
             findings.append("诊断证据尚未通过校验")
 
+        if plan.get("plan_kind") == "inspection":
+            findings.extend(inspection_plan_findings(plan))
+            required, reason = inspection_decision(diagnosis, event=plan.get("event"), plan=plan)
+            if not required:
+                findings.append("现场检查依据不足：%s" % reason)
+
         needs_cad = cls.requires_cad(plan)
+        reference_drawings = any(cls.is_reference_only(item) for item in cad.get("drawings") or []
+                                 if isinstance(item, Mapping))
+        missing_engineering = (
+            "已找到设备图纸，但缺少与故障部件匹配的工程部件/零件/CAD/BOM 依据"
+            if reference_drawings else "涉及拆装或部件操作但缺少 CAD/BOM 依据"
+        )
+        cad_findings = cls._cad_findings(cad) if needs_cad else []
+        if cad_findings:
+            if reference_drawings:
+                findings.append(missing_engineering)
+            findings.extend(cad_findings)
         if needs_cad and not plan.get("cad_components"):
-            findings.append("涉及拆装或部件操作但缺少 CAD/BOM 依据")
+            findings.append(missing_engineering)
         elif needs_cad:
             profile = repair_profile(diagnosis)
             matched = [item for item in list(cad.get("components") or []) + list(cad.get("bom_items") or [])
-                       if isinstance(item, Mapping) and part_matches_profile(profile, item)]
+                       if isinstance(item, Mapping) and not cls.is_reference_only(item)
+                       and not cls.is_reference_only(cad) and part_matches_profile(profile, item)]
             if not any(str(item.get("component_id") or item.get("part_no") or "") in plan.get("cad_components", []) for item in matched):
-                findings.append("CAD/BOM 依据未匹配本次故障维修对象")
+                findings.append(missing_engineering if reference_drawings else "CAD/BOM 依据未匹配本次故障维修对象")
         if needs_cad and isinstance(cad, Mapping) and (cad.get("synthetic") is True or cad.get("degraded") is True or str(cad.get("source") or "").endswith("-local")):
             findings.append("CAD 为演示或降级数据，不能作为正式维修依据")
 
@@ -80,12 +99,47 @@ class MaintenancePlanValidator:
         return cls._dedupe(findings)
 
     @staticmethod
+    def is_reference_only(value: Mapping[str, Any]) -> bool:
+        metadata = value.get("metadata") if isinstance(value.get("metadata"), Mapping) else {}
+        return any(
+            str(item.get("engineering_status") or "").lower() == "reference_only"
+            or str(item.get("evidence_scope") or "").lower() == "device_reference"
+            for item in (value, metadata)
+        )
+
+    @classmethod
+    def _cad_findings(cls, cad: Mapping[str, Any]) -> list[str]:
+        findings: list[str] = []
+        status = str(cad.get("status") or "").strip().lower()
+        if status and status not in {"completed", "ready", "success", "ok"}:
+            findings.append("CAD/BOM 工程证据未通过校验（状态：%s）" % status)
+        if cad.get("error"):
+            findings.append("CAD/BOM 查询失败，工程依据不可用")
+        if cls.is_reference_only(cad):
+            findings.append("设备参考图不能作为故障部件的 CAD/BOM 工程依据")
+        validation = cad.get("validation") if isinstance(cad.get("validation"), Mapping) else {}
+        for values in (cad.get("validation_findings"), cad.get("findings"), cad.get("errors"), validation.get("errors")):
+            if not isinstance(values, (list, tuple)):
+                continue
+            for value in values:
+                if isinstance(value, str) and value.strip():
+                    detail = value.strip().replace("缺少图纸依据", "缺少与故障部件匹配的工程图纸依据")
+                    findings.append("CAD/BOM 工程证据校验未通过：%s" % detail)
+        if validation.get("passed") is False or validation.get("pass") is False:
+            findings.append("CAD/BOM 工程证据尚未通过校验")
+        return cls._dedupe(findings)
+
+    @staticmethod
     def requires_cad(plan: Mapping[str, Any]) -> bool:
         """Runtime 和方案校验共用工程依据规则，明确拆修动作不能声明豁免。"""
+        if plan.get("plan_kind") == "inspection" and not inspection_plan_findings(plan):
+            return False
         steps_text = " ".join(str(item) for item in plan.get("repair_steps") or [])
         declared = bool(plan.get("cad_required")) if "cad_required" in plan else any(
             token in steps_text for token in MaintenancePlanValidator.STRUCTURAL_ACTIONS)
-        return declared or any(token in steps_text for token in (
+        procedure_text = " ".join(str(item) for field in ("repair_steps", "pre_checks", "post_checks")
+                                  for item in plan.get(field) or [])
+        return declared or any(token in procedure_text for token in (
             "拆卸", "拆装", "拆解", "更换", "安装", "改接", "调整接线"))
 
     @staticmethod
@@ -108,6 +162,9 @@ class MaintenancePlanValidator:
 
     @staticmethod
     def workorder_ready(findings: list[str], plan: Mapping[str, Any]) -> bool:
+        if plan.get("plan_kind") == "inspection":
+            required, _ = inspection_decision(plan.get("diagnosis") or {}, event=plan.get("event"), plan=plan)
+            return not findings and required and not inspection_plan_findings(plan)
         return (
             not findings
             and bool(plan.get("repair_steps"))
@@ -130,6 +187,8 @@ class MaintenancePlanValidator:
     def _known_part_tokens(cad: Mapping[str, Any]) -> list[str]:
         tokens: list[str] = []
         for item in list(cad.get("components") or []) + list(cad.get("bom_items") or []):
+            if not isinstance(item, Mapping) or MaintenancePlanValidator.is_reference_only(item) or MaintenancePlanValidator.is_reference_only(cad):
+                continue
             for key in ("component_id", "part_no", "name"):
                 value = str(item.get(key) or "").strip()
                 if value:

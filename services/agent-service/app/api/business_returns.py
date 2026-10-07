@@ -10,6 +10,7 @@ from app.api.team_auth import team_actor, require_assignee
 from app.common.serialization import _serialize_agent_result
 from app.runtime.event_store import EventResultConflict
 from app.runtime.durable_store import PendingResultError
+from app.runtime.policy import RuntimePolicy
 
 
 class InspectionInput(BaseModel):
@@ -56,8 +57,10 @@ def build_business_return_router(runtime, event_results, require_write_auth):
             if listing.get('success') is False or not isinstance(listing.get('items'),list):
                 return not_started(502,'工单对账数据不可用，未重新派工')
             existing = next((o for o in listing.get('items',[]) if o.get('device_id')==device_id and o.get('event_id')==event_id),None)
-            if existing:
-                return {**source, 'status':'already_dispatched','workorder':{'workorder_id':existing['workorder_id'],'status':existing['status']},'trace':[]}
+            if existing and existing.get('assignee'):
+                return {**source, 'status':'already_dispatched','workorder':dict(existing),'trace':[]}
+            if existing and existing.get('status') != 'open':
+                return not_started(409,'历史工单状态不支持自动续派，请先核对工单')
             try:
                 current = registry.execute('get_device_status',{'device_id':device_id},context={'agent':'runtime','step':'refresh_device_status','event_id':event_id})
             except Exception:
@@ -71,9 +74,34 @@ def build_business_return_router(runtime, event_results, require_write_auth):
                 age = float('inf')
             if not -30 <= age <= 300 or str(current.get('alarm_code') or '') != str(event.get('alarm_code') or ''):
                 return not_started(409,'设备数据已过期或当前报警已变化，请从监控中心处理当前故障')
+            if not current.get('alarm_code') and str(current.get('status') or '').lower() not in {'fault', 'abnormal', 'alarm', 'error'}:
+                return not_started(409,'设备当前没有对应故障，未执行自动派工')
+            if existing:
+                plan = dict(existing.get('maintenance_plan_snapshot') or {})
+                create_key = str(existing.get('idempotency_key') or '')
+                if not create_key or not plan:
+                    return not_started(409,'历史工单缺少原创建幂等键或验证方案，不能安全续派')
+                if RuntimePolicy._explicit_approval_required({'maintenance_plan': plan}, source) or source.get('requires_approval') is True:
+                    return not_started(409,'该动作明确要求审批，请通过原审批入口继续')
+                # 重放完全相同的创建参数，由后端指纹对账取回原单，再重新查询在线人员。
+                # source 仅决定 Agent 自动派工门禁，不改变原方案/创建指纹。
+                order_result = runtime.container.operations.execute_workorder('create', {
+                    'maintenance_plan': plan, 'maintenance_plan_snapshot': plan,
+                    'diagnosis_snapshot': dict(existing.get('diagnosis_snapshot') or plan.get('diagnosis') or {}),
+                    'event_id': event_id, 'idempotency_key': create_key, 'source': 'monitor',
+                }, from_agent='runtime')
+                actual = dict(order_result.get('workorder') or {})
+                if not actual.get('workorder_id'):
+                    actual = dict(existing)
+                dispatched = bool(order_result.get('success') and actual.get('assignee'))
+                status = 'dispatched' if dispatched else 'waiting_for_personnel' \
+                    if order_result.get('stop_reason') == 'waiting_for_personnel' else 'blocked'
+                return {**source, 'status': status, 'stop_reason': order_result.get('stop_reason') or '',
+                        'dispatch_reason': order_result.get('error') or '', 'workorder': actual,
+                        'workorder_result': order_result, 'trace': []}
             fresh_event = {**event,'realtime_snapshot':current,'timestamp':current['checked_at'],
                            'retry_source_plan_id':plan_id,'retry_requested_by':actor['user_id']}
-            # 保留原故障身份，重新诊断、检索、建方案与派工；审批和库存门禁不变。
+            # 尚未创建工单才重新诊断、检索和建方案；显式审批与库存门禁保留。
             return runtime.run_abnormal_event(fresh_event)
         try:
             result = event_results.get_or_create(key,execute,fingerprint=fingerprint)

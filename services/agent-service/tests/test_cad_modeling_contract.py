@@ -6,8 +6,6 @@ import pytest
 from threading import Thread
 from urllib.request import Request, urlopen
 
-from app.agents.cad.modeling_analysis import analyze_design, UnconfirmedDesignParameters
-from app.agents.cad.schemas import DesignRequest
 from app.clients.model import ModelServiceClient
 
 
@@ -26,13 +24,12 @@ def test_model_http_chat_and_vision_contract():
     Thread(target=server.serve_forever, daemon=True).start()
     try:
         client = ModelServiceClient(f"http://127.0.0.1:{server.server_port}")
-        request = DesignRequest(prompt="图纸标注长12、宽15、高3毫米的板件")
-        with pytest.raises(UnconfirmedDesignParameters) as error:
-            analyze_design(request, client)
-        assert error.value.spec.operations[0].length == 12
-        assert error.value.metadata["model_called"] is True
-        with pytest.raises(UnconfirmedDesignParameters):
-            analyze_design(request, client, image_data="data:image/png;base64,test")
+        result = client.chat([{"role": "user", "content": "图纸标注长12、宽15、高3毫米的板件"}])
+        assert result["model_metadata"]["synthetic"] is False
+        assert json.loads(result["choices"][0]["message"]["content"])["spec"]["operations"][0]["length"] == 12
+        client._post("/v1/vision", {"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "识别图纸"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,test"}}]}]})
         assert [item[0] for item in seen] == ["/v1/chat/completions", "/v1/vision"]
         assert seen[1][1]["messages"][-1]["content"][1]["image_url"]["url"] == "data:image/png;base64,test"
     finally:
@@ -45,7 +42,9 @@ def test_monitor_proxy_keeps_cad_payload_and_pdf_download_headers(monkeypatch):
     class AgentAdapter(BaseHTTPRequestHandler):
         def do_POST(self):
             seen.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-            self.send_response(202); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b'{}')
+            self.send_response(202); self.send_header("Content-Type", "application/json")
+            self.send_header("Set-Cookie", "buildcad_oauth=test-nonce; HttpOnly; SameSite=Lax; Path=/api/cad/buildcad")
+            self.end_headers(); self.wfile.write(b'{}')
         def do_GET(self):
             self.send_response(200); self.send_header("Content-Type", "application/pdf"); self.send_header("Content-Disposition", 'attachment; filename="drawing.pdf"'); self.end_headers(); self.wfile.write(b"%PDF-test-adapter")
         def log_message(self, *args):
@@ -57,10 +56,12 @@ def test_monitor_proxy_keeps_cad_payload_and_pdf_download_headers(monkeypatch):
     monkeypatch.setattr(monitor, "AGENT_SERVICE_BASE_URL", f"http://127.0.0.1:{agent.server_port}")
     try:
         root = f"http://127.0.0.1:{proxy.server_port}"
-        with urlopen(Request(root + "/api/cad/designs", data=json.dumps({"command_id": "one", "prompt": "需求"}).encode(), headers={"Content-Type": "application/json"})) as response:
+        with urlopen(Request(root + "/api/cad/buildcad/auth/start", data=json.dumps({"command_id": "one", "prompt": "需求"}).encode(), headers={"Content-Type": "application/json", "Origin": root})) as response:
             assert response.status == 202
+            assert "buildcad_oauth=" in response.headers["Set-Cookie"]
+            assert "HttpOnly" in response.headers["Set-Cookie"]
         assert seen == [{"command_id": "one", "prompt": "需求"}]
-        with urlopen(root + "/api/cad/designs/CAD-0123456789ABCDEF0123/artifacts/pdf?download=1") as response:
+        with urlopen(root + "/api/reports/RPT-test/pdf?download=1") as response:
             assert response.headers["Content-Type"] == "application/pdf"
             assert "attachment" in response.headers["Content-Disposition"]
             assert response.read().startswith(b"%PDF")

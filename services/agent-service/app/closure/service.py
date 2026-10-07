@@ -144,15 +144,18 @@ class ClosureService:
 
     def list_quality_checks(self, target_id: str = "", status: str = "") -> list[dict[str, Any]]:
         if self.store:
-            return self.store.list_quality_checks(target_id=target_id, status=status)
-        with self._lock:
-            values = list(self._quality_checks.values())
-        return [
-            dict(item)
-            for item in values
-            if (not target_id or item.get("target_id") == target_id)
-            and (not status or item.get("status") == status)
-        ]
+            values = self.store.list_quality_checks(target_id=target_id, status=status)
+            appeals = self.store.list_appeals() if values else []
+        else:
+            with self._lock:
+                values = [deepcopy(item) for item in self._quality_checks.values()
+                          if (not target_id or item.get("target_id") == target_id)
+                          and (not status or item.get("status") == status)]
+                appeals = [deepcopy(appeal) for group in self._appeals.values() for appeal in group]
+        by_check: dict[str, list[dict[str, Any]]] = {}
+        for appeal in appeals:
+            by_check.setdefault(str(appeal.get("quality_check_id") or ""), []).append(appeal)
+        return [{**item, "appeals": by_check.get(item["quality_check_id"], [])} for item in values]
 
     def get_quality_check(self, check_id: str) -> dict[str, Any] | None:
         if self.store:
@@ -207,7 +210,15 @@ class ClosureService:
             raise ValueError("无效申诉结论：%s" % decision)
         # 启用持久化时以事务内的当前记录/审计为准；其他实例可能已经处理缓存中的待办申诉。
         appeals = self.store.list_appeals(check_id) if self.store else list(self._appeals.get(check_id) or [])
-        appeal = next((item for item in appeals if not appeal_id or item.get("appeal_id") == appeal_id), None)
+        if appeal_id:
+            appeal = next((item for item in appeals if item.get("appeal_id") == appeal_id), None)
+        else:
+            pending = [item for item in appeals if item.get("status") == "pending"]
+            if len(pending) > 1:
+                raise ValueError("存在多个待处理申诉，请指定 appeal_id")
+            if not pending:
+                raise ValueError("没有待处理的申诉")
+            appeal = pending[0]
         if appeal is None:
             raise KeyError("申诉记录不存在：%s" % appeal_id)
         if appeal.get("status") != "pending":

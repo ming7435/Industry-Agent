@@ -98,6 +98,34 @@ def test_plan_api_keeps_real_confidence_gate_when_plan_is_structurally_ready(tmp
     assert "0.45" in plan["dispatch"]["reason"]
 
 
+def test_saved_high_risk_plan_needs_no_manual_dispatch_approval_but_explicit_requirement_remains():
+    from app.api.maintenance_plans import list_saved_maintenance_plans
+    pipeline = saved_pipeline()
+    pipeline.update(status="waiting_approval", stop_reason="approval_required")
+    pipeline["maintenance_plan"].update(workorder_ready=True, validation_findings=[], risk_level="high")
+    plan = list_saved_maintenance_plans([pipeline])["items"][0]
+    assert plan["workorder_ready"] is True
+    assert plan['dispatch']['allowed'] is True
+    assert plan['dispatch'].get('status') != 'waiting_approval'
+    pipeline['maintenance_plan']['requires_approval'] = True
+    plan = list_saved_maintenance_plans([pipeline])['items'][0]
+    assert plan["dispatch"]["allowed"] is False
+    assert plan["dispatch"]["status"] == "waiting_approval"
+    assert "审批" in plan["dispatch"]["reason"]
+
+
+def test_pending_approval_does_not_hide_a_real_confidence_blocker():
+    from app.api.maintenance_plans import list_saved_maintenance_plans
+    pipeline = saved_pipeline()
+    pipeline.update(status="waiting_approval", stop_reason="approval_required")
+    pipeline["diagnosis"]["confidence"] = 0.45
+    pipeline["maintenance_plan"].update(workorder_ready=True, validation_findings=[])
+    plan = list_saved_maintenance_plans([pipeline])["items"][0]
+    assert plan["dispatch"]["allowed"] is False
+    assert "0.45" in plan["dispatch"]["reason"]
+    assert plan["dispatch"].get("status") != "waiting_approval"
+
+
 def test_monitor_compact_pipeline_preserves_plan_evidence_and_gate_fields():
     from monitor_web_server import compact_public_pipeline
     result = compact_public_pipeline(saved_pipeline())

@@ -36,7 +36,7 @@ MONITOR_PROXY_TIMEOUT_SECONDS = float(
 # HTTP 超时只表明没有收到响应。此窗口内只读回查，绝不再次提交事件。
 AGENT_RESULT_RECOVERY_SECONDS = max(0.0, float(os.getenv("AGENT_RESULT_RECOVERY_SECONDS", "180")))
 AGENT_RESULT_POLL_SECONDS = max(0.1, float(os.getenv("AGENT_RESULT_POLL_SECONDS", "2")))
-CAD_PRODUCTION_BODY_TIMEOUT_SECONDS = 5.0
+CAD_BODY_TIMEOUT_SECONDS = 5.0
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
@@ -810,14 +810,12 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         body = None
         # Starlette 的终端 '$' 也接受最终换行，斜杠重定向还能去掉尾斜杠；两者均须防护。
         path_parts = unquote(urlparse(self.path).path).strip("/").removesuffix("\n").split("/")
-        cad_production_write = (
+        cad_write = (
             method != "GET"
-            and len(path_parts) >= 5
-            and path_parts[:3] == ["api", "cad", "designs"]
-            and path_parts[4] == "manufacturing"
+            and path_parts[:3] == ["api", "cad", "buildcad"]
         )
-        if cad_production_write:
-            body = self._read_local_cad_production_body()
+        if cad_write:
+            body = self._read_local_cad_body()
             if body is None:
                 return
         else:
@@ -845,6 +843,9 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "no-store")
                 if response.headers.get("Content-Disposition"):
                     self.send_header("Content-Disposition", response.headers["Content-Disposition"])
+                if path_parts[:4] == ["api", "cad", "buildcad", "auth"]:
+                    for cookie in response.headers.get_all("Set-Cookie", []):
+                        self.send_header("Set-Cookie", cookie)
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
@@ -852,14 +853,17 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             payload = error.read() or json.dumps({"error": str(error)}, ensure_ascii=False).encode("utf-8")
             self.send_response(error.code)
             self.send_header("Content-Type", error.headers.get("Content-Type", "application/json; charset=utf-8"))
+            if path_parts[:4] == ["api", "cad", "buildcad", "auth"]:
+                for cookie in error.headers.get_all("Set-Cookie", []):
+                    self.send_header("Set-Cookie", cookie)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
         except URLError as error:
             self._error(HTTPStatus.BAD_GATEWAY, "Agent Service unavailable: %s" % error.reason)
 
-    def _read_local_cad_production_body(self) -> bytes | None:
-        """在服务凭据代理前验证虚拟生产写入的传输来源和请求边界。"""
+    def _read_local_cad_body(self) -> bytes | None:
+        """在附加服务凭据前验证本机 BuildCAD 请求的来源和正文边界。"""
         def reject(status: HTTPStatus, message: str) -> None:
             self.close_connection = True
             self._error(status, message)
@@ -875,10 +879,10 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         hosts = self.headers.get_all("Host", [])
         origins = self.headers.get_all("Origin", [])
         if not local_peer or len(hosts) != 1 or hosts[0].lower() not in authorities:
-            reject(HTTPStatus.FORBIDDEN, "CAD 生产写入仅允许本机地址和当前服务端口")
+            reject(HTTPStatus.FORBIDDEN, "CAD 接口仅允许本机地址和当前服务端口")
             return None
         if len(origins) != 1 or origins[0].lower() != "http://" + hosts[0].lower():
-            reject(HTTPStatus.FORBIDDEN, "CAD 生产写入需要完整的 HTTP 同源 Origin")
+            reject(HTTPStatus.FORBIDDEN, "CAD 接口需要完整的 HTTP 同源 Origin")
             return None
         lengths = self.headers.get_all("Content-Length", [])
         if (
@@ -887,24 +891,24 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             or not lengths[0].isascii()
             or not lengths[0].isdigit()
         ):
-            reject(HTTPStatus.BAD_REQUEST, "CAD 生产写入的 Content-Length 无效")
+            reject(HTTPStatus.BAD_REQUEST, "CAD 请求的 Content-Length 无效")
             return None
-        # 新生产接口仅接收小型 JSON；CAD 文件上传仍走原有上传接口。
+        # 新入口仅接收 JSON 需求，不再接收原本地模型文件上传。
         if len(lengths[0]) > 10 or int(lengths[0]) > 1024 * 1024:
-            reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "CAD 生产请求体过大")
+            reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "CAD 请求体过大")
             return None
         length = int(lengths[0])
         original_timeout = self.connection.gettimeout()
         try:
-            self.connection.settimeout(CAD_PRODUCTION_BODY_TIMEOUT_SECONDS)
+            self.connection.settimeout(CAD_BODY_TIMEOUT_SECONDS)
             body = self.rfile.read(length)
         except (OSError, TimeoutError):
-            reject(HTTPStatus.BAD_REQUEST, "CAD 生产请求体读取失败")
+            reject(HTTPStatus.BAD_REQUEST, "CAD 请求体读取失败")
             return None
         finally:
             self.connection.settimeout(original_timeout)
         if len(body) != length:
-            reject(HTTPStatus.BAD_REQUEST, "CAD 生产请求体长度与 Content-Length 不一致")
+            reject(HTTPStatus.BAD_REQUEST, "CAD 请求体长度与 Content-Length 不一致")
             return None
         return body
 

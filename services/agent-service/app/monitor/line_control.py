@@ -156,6 +156,8 @@ class LineController:
         order = self.ledger.call('get_workorder', {'workorder_id': workorder_id}).get('workorder') or {}
         if not actor_id or order.get('assignee') != actor_id:
             raise PermissionError('仅被派工维修人员可以确认维修')
+        if (order.get('maintenance_plan_snapshot') or {}).get('plan_kind') == 'inspection':
+            raise ValueError('现场检查工单不能确认维修或申请复机，请提交检查记录')
         if not str(feedback or '').strip():
             raise ValueError('请填写实际维修反馈')
         # 新的人工确认才触发待停机事件对账；绝不自动重试启动写操作。

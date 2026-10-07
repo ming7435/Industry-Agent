@@ -156,11 +156,20 @@ class RuntimeDispatcher:
                 )
                 return cached
 
+        def execute_agent():
+            from contextlib import nullcontext
+            from app.agents.workorder.validator import _policy_authorized_workorder_execution
+
+            # 本回调在执行线程中进入服务端授权域，确保审批恢复后领域门禁接受
+            # 已经 Policy 核验过的 Action；请求体中的任何 approved 标记均无效。
+            scope = _policy_authorized_workorder_execution() if self.policy._effective_capability(action, state) == 'workorder_create' else nullcontext()
+            with scope:
+                return self.harnesses[agent_name].execute_once(task) if agent_name in self.harnesses \
+                    else (agent.execute(task) if callable(getattr(agent, 'execute', None)) else agent.run(task))
+
         record = self.execution_manager.execute(
             action,
-            lambda: self.harnesses[agent_name].execute_once(task)
-            if agent_name in self.harnesses
-            else (agent.execute(task) if callable(getattr(agent, "execute", None)) else agent.run(task)),
+            execute_agent,
             state_check=self.resolvers.callback(canonical_capability, action, state),
             trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
@@ -296,6 +305,7 @@ class RuntimeDispatcher:
                 "memory": dict(state.get("memory") or {}),
                 "runtime_managed": True,
                 "event_id": state.get("event", {}).get("event_id", ""),
+                "event": dict(state.get("event") or {}),
                 "context": dict(state.get("context") or {}),
             }
         if capability in {"workorder_create", "workorder_update", "workorder_query"}:

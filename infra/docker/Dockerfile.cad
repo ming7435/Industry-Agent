@@ -8,6 +8,10 @@ RUN pip install --no-cache-dir -r /tmp/cad-requirements.txt
 COPY services/document-cad-service/app/__init__.py /app/services/document-cad-service/app/__init__.py
 COPY services/document-cad-service/app/main.py /app/services/document-cad-service/app/main.py
 COPY services/document-cad-service/app/repository.py /app/services/document-cad-service/app/repository.py
+COPY shared/local_drawings.py /app/shared/local_drawings.py
+COPY frontend/monitor-react/public/drawings/TC820si.html /app/frontend/monitor-react/public/drawings/TC820si.html
+COPY frontend/monitor-react/public/drawings/QLS80S2.html /app/frontend/monitor-react/public/drawings/QLS80S2.html
+COPY frontend/monitor-react/public/drawings/Equator300.html /app/frontend/monitor-react/public/drawings/Equator300.html
 
 ENV PYTHONPATH=/app/services/document-cad-service:/app
 
