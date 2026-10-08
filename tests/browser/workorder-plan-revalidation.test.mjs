@@ -80,7 +80,7 @@ test('同一已派单应用新方案，保留负责人和未提交记录并允�
   });
   try {
     await page.getByLabel('处理说明', { exact: true }).fill('尚未提交的现场刀塔记录');
-    assert.equal(await page.getByRole('checkbox').count(), 0);
+    assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), false);
     current = baseOrder; await page.clock.runFor(5000); await initialButton(page).waitFor();
     assert.equal(await page.getByLabel('处理说明', { exact: true }).inputValue(), '尚未提交的现场刀塔记录');
@@ -91,7 +91,7 @@ test('同一已派单应用新方案，保留负责人和未提交记录并允�
     const title = await page.locator('.workorder-titlebar').innerText();
     assert.ok(title.includes(baseOrder.workorder_id)); assert.ok(title.includes(actor.username));
     assert.equal(await page.getByLabel('处理说明', { exact: true }).inputValue(), '尚未提交的现场刀塔记录');
-    assert.equal(await page.getByRole('checkbox').count(), 0);
+    assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), false);
     assert.equal(await initialButton(page).count(), 0);
     assertOnlyScopedPosts(posts, unexpectedWrites, errors);
@@ -110,7 +110,7 @@ test('候选方案被阻止时原工单与复核审计保留，挂起请求不�
     await respond(pendingRoute, blocked(pendingBody));
     await reviewPanel(page).getByText('缺少刀塔部件工程依据', { exact: true }).waitFor();
     assert.ok((await reviewPanel(page).innerText()).includes(review.findings[0]));
-    assert.equal(await page.getByRole('checkbox').count(), 0);
+    assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal(await page.getByLabel('处理说明', { exact: true }).inputValue(), '保留原始现场证据');
     assert.equal(await page.locator('.workorder-queue-item').count(), 1);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), false);
@@ -177,7 +177,7 @@ test('旧轮询晚回包不能覆盖已应用的新方案和重新校验结果',
     await initialButton(page).click(); await page.getByRole('status').filter({ hasText: '仍需实际执行' }).waitFor();
     await respond(lateRoute, { items: [baseOrder] }); await frame(page);
     assert.equal(await initialButton(page).count(), 0);
-    assert.equal(await page.getByRole('checkbox').count(), 0);
+    assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal((await page.locator('.workorder-detail-page').innerText()).includes(review.findings[0]), false);
     assertOnlyScopedPosts(posts, unexpectedWrites, errors);
     observations.push({ case: 'late_old_list_ignored', posts, new_review_retained: true, unexpectedWrites, errors });

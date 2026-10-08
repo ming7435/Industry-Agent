@@ -1,4 +1,4 @@
-"""BuildCAD 薄接口：授权、Redis 临时运行记录和单个 CAD 建模节点。"""
+"""CAD 建模接口：本地 FreeCAD 运行；历史 BuildCAD 路由保留但不挂载。"""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -12,7 +12,7 @@ import time
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.clients.buildcad import BuildCADClient, BuildCADError
@@ -274,5 +274,196 @@ def build_modeling_router(require_auth, trace=None):
         if record is None:
             raise HTTPException(404, detail="BuildCAD 临时运行记录不存在或已过期。")
         return _public_record(record)
+
+    return router
+
+
+FREECAD_PREFIX = "/api/cad/freecad"
+
+
+class FreeCADRunRequest(StrictRequest):
+    prompt: str = Field(min_length=1, max_length=10000)
+    command_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    spec: dict | None = None
+
+    @field_validator("prompt")
+    @classmethod
+    def nonempty_original_prompt(cls, value):
+        if not value.strip():
+            raise ValueError("请输入建模需求")
+        return value
+
+    @field_validator("spec")
+    @classmethod
+    def validated_spec(cls, value):
+        if value is None:
+            return None
+        from app.tools.cad.freecad_mcp import validate_spec
+        return validate_spec(value)
+
+
+class FreeCADRunStore(BuildCADRunStore):
+    """临时记录和 NX 认领使用独立 Redis 命名空间。"""
+    def __init__(self):
+        self.cache = RedisJsonCache(prefix="industry:freecad:runs", ttl_seconds=RUN_TTL_SECONDS)
+
+
+def _freecad_public_record(record):
+    keys = ("run_id", "prompt", "status", "answer", "calls", "artifacts", "validation", "spec",
+        "error", "error_code", "error_stage", "error_tool", "execution", "created_at", "updated_at")
+    value = {key: record[key] for key in keys if key in record}
+    if value.get("status") == "running" and time.time() - record.get("created_at", 0) > RUN_DEADLINE_SECONDS:
+        value.update(status="outcome_unknown", error="此运行长时间未返回结果，请检查本地 FreeCAD；不会自动重新执行。")
+    return value
+
+
+def build_freecad_router(require_auth, trace=None):
+    """本地运行无需 OAuth，仍沿用服务认证、幂等认领及固定文件下载。"""
+    from app.clients.freecad import FreeCADClient, FreeCADConnectionError
+    from app.tools.cad.freecad_mcp import artifact_path
+
+    router = APIRouter(prefix=FREECAD_PREFIX, tags=["FreeCAD"], dependencies=[Depends(require_auth)])
+    store_lock = Lock()
+    slots = BoundedSemaphore(2)
+
+    def storage_error():
+        return HTTPException(503, detail="FreeCAD 临时运行存储不可用，请检查 Redis；请求不会自动重新执行。")
+
+    def store(request):
+        try:
+            with store_lock:
+                if getattr(request.app.state, "freecad_run_store", None) is None:
+                    request.app.state.freecad_run_store = FreeCADRunStore()
+                return request.app.state.freecad_run_store
+        except Exception:
+            raise storage_error() from None
+
+    def read(storage, run_id):
+        try:
+            return storage.get(run_id)
+        except Exception:
+            raise storage_error() from None
+
+    def close(client):
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def lookup(request, run_id):
+        if not re.fullmatch(r"FC-[a-f0-9]{64}", run_id):
+            raise HTTPException(404, detail="FreeCAD 临时运行记录不存在或已过期。")
+        record = read(store(request), run_id)
+        if record is None:
+            raise HTTPException(404, detail="FreeCAD 临时运行记录不存在或已过期。")
+        return record
+
+    def execute_run(storage, record, client_factory, model_factory):
+        client = None
+        try:
+            client = client_factory()
+            agent = CADAgent(ToolRegistry(trace=trace))
+            if trace is not None:
+                agent.runtime_trace = trace
+            result = agent.run_freecad(record["prompt"], run_id=record["run_id"], client=client,
+                model=model_factory(), spec=record.get("spec"))
+            record = {**record, **result, "updated_at": time.time()}
+        except Exception as error:
+            code = getattr(error, "code", "freecad_run_failed") if isinstance(error, FreeCADConnectionError) else "freecad_run_failed"
+            record = {**record, "status": "outcome_unknown" if code == "outcome_unknown" else "failed",
+                "error_code": code, "error": str(error) if isinstance(error, FreeCADConnectionError) else "CAD 节点执行失败，请检查本地 FreeCAD 和模型服务。",
+                "updated_at": time.time()}
+        finally:
+            try:
+                storage.set(record["run_id"], record)
+            except Exception:
+                if trace is not None:
+                    trace.record(event="freecad_storage_failed", agent="cad", task_id=record["run_id"], error="FreeCAD 结果写入 Redis 失败；禁止自动重放。")
+            finally:
+                close(client)
+                slots.release()
+
+    @router.get("/status")
+    def status(request: Request):
+        client = None
+        try:
+            client = getattr(request.app.state, "freecad_client_factory", FreeCADClient)()
+            value = client.status()
+            error = value.get("error")
+            if isinstance(error, dict):
+                value = {**value, "error": error.get("message", "本地 FreeCAD 尚未连接。"), "error_code": error.get("code", "")}
+            return {**value, "connected": value.get("connected") is True, "tools": value.get("tools") or []}
+        except FreeCADConnectionError as error:
+            return {"connected": False, "tools": [], "error": str(error), "error_code": getattr(error, "code", "connection_failed")}
+        except Exception:
+            raise HTTPException(502, detail="无法读取本地 FreeCAD 状态，请检查本地服务。") from None
+        finally:
+            close(client)
+
+    @router.post("/runs", status_code=202)
+    def create_run(body: FreeCADRunRequest, request: Request, background_tasks: BackgroundTasks):
+        storage = store(request)
+        run_id = "FC-" + sha256(body.command_id.encode()).hexdigest()
+        digest = sha256(json.dumps([body.prompt, body.spec], ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+        def existing(record):
+            if record.get("input_digest") != digest:
+                raise HTTPException(409, detail="同一命令身份已用于其他需求，请使用新命令。")
+            return _freecad_public_record(record)
+
+        previous = read(storage, run_id)
+        if previous is not None:
+            return existing(previous)
+        if not slots.acquire(blocking=False):
+            previous = read(storage, run_id)
+            if previous is not None:
+                return existing(previous)
+            raise HTTPException(429, detail="当前已有两个 FreeCAD 运行，请稍后再提交。")
+        handed_off = False
+        try:
+            now = time.time()
+            record = {"run_id": run_id, "input_digest": digest, "prompt": body.prompt, "spec": body.spec,
+                "status": "running", "answer": "", "calls": [], "artifacts": [], "created_at": now, "updated_at": now}
+            try:
+                created = storage.create(run_id, record)
+            except Exception:
+                raise storage_error() from None
+            if not created:
+                previous = read(storage, run_id)
+                if previous is None:
+                    raise storage_error()
+                return existing(previous)
+            background_tasks.add_task(execute_run, storage, record,
+                getattr(request.app.state, "freecad_client_factory", FreeCADClient),
+                getattr(request.app.state, "freecad_model_factory", ModelServiceClient))
+            handed_off = True
+            return _freecad_public_record(record)
+        finally:
+            if not handed_off:
+                slots.release()
+
+    @router.get("/runs/{run_id}")
+    def get_run(run_id: str, request: Request):
+        return _freecad_public_record(lookup(request, run_id))
+
+    @router.get("/runs/{run_id}/artifacts/{name}")
+    def download_artifact(run_id: str, name: str, request: Request):
+        if name not in {"model.stl", "model.step", "model.FCStd"}:
+            raise HTTPException(404, detail="模型文件不存在。")
+        record = lookup(request, run_id)
+        if record.get("status") != "completed" or not any(
+            item.get("name") == name for item in record.get("artifacts", []) if isinstance(item, dict)
+        ):
+            raise HTTPException(404, detail="此运行没有可下载的模型文件。")
+        try:
+            path = artifact_path(run_id, name)
+            if not path.is_file():
+                raise ValueError("模型文件不存在")
+        except (ValueError, OSError):
+            raise HTTPException(404, detail="模型文件不存在。") from None
+        media_type = {"model.stl": "model/stl", "model.step": "application/step", "model.FCStd": "application/octet-stream"}[name]
+        return FileResponse(path, media_type=media_type, filename=name, headers={"X-Content-Type-Options": "nosniff"})
 
     return router

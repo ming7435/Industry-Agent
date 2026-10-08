@@ -416,13 +416,14 @@ class RuntimeCoordinator:
             outputs = dict(current.get("runtime_outputs") or {})
             result_key = self.capabilities.result_key_for(capability)
             outputs[result_key] = result.output
-            if result_key == "diagnosis" and initial.get("entry") == "trigger":
+            if initial.get("entry") == "trigger" and (result_key == "diagnosis" or outputs.get("diagnosis")):
                 stage_store = getattr(self.container, "event_results", None)
                 if stage_store is not None:
                     try:
                         stage_store.record_stage(dict(initial.get("event") or {}), {
                             "event": dict(initial.get("event") or {}), "task_id": initial.get("task_id"),
-                            "trace_id": initial.get("trace_id"), "status": "running", "diagnosis": result.output,
+                            "trace_id": initial.get("trace_id"), "status": "running",
+                            **{key:outputs[key] for key in ('diagnosis','maintenance_plan','workorder') if key in outputs},
                         })
                     except Exception as error:
                         # 不记录异常正文，避免缓存地址或凭据泄漏；主业务仍继续执行。

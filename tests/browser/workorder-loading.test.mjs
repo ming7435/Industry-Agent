@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const evidenceDir = resolve(root, '.runtime/verification/workorder-loading-20261007');
 const actorA = { user_id: 'U-A', username: '维修人员甲', role: 'technician' };
 const actorB = { user_id: 'U-B', username: '维修人员乙', role: 'technician' };
-const orderFor = (actor, id, alarm = '700006') => ({ workorder_id: id, device_id: 'D-1', alarm_code: '',
+const orderFor = (actor, id, alarm = '700006') => ({ workorder_id: id, device_id: 'D-1', alarm_code: '', event_id:`EVT-${alarm}`,
   status: 'in_progress', assignee: actor.user_id, assignee_name: actor.username, title: '现场故障核查',
   diagnosis_snapshot: { device_id: 'D-1', raw: { device_id: 'D-1', alarm_code: alarm } },
   maintenance_plan_snapshot: { plan_id: 'PLAN-1', plan_kind: 'inspection' } });

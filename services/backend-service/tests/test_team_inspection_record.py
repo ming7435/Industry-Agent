@@ -115,13 +115,14 @@ def test_verified_inspection_replay_preserves_original_frozen_record(context):
 
 
 @pytest.mark.parametrize('actor', ['supervisor', 'another_technician', 'unknown'])
-def test_inspection_endpoint_requires_registered_current_assignee(context, actor):
+def test_inspection_endpoint_requires_registered_current_assignee(context, actor, legacy_supervisor):
     service, client, body = context
     if actor == 'unknown':
         body['actor_id'] = 'FAKE'
+    elif actor == 'supervisor':
+        body['actor_id'] = legacy_supervisor(service.team)['user_id']
     else:
-        role = 'supervisor' if actor == 'supervisor' else 'technician'
-        body['actor_id'] = service.team.register(actor, 'password-123', role, 'M1' if role == 'technician' else '')['user_id']
+        body['actor_id'] = service.team.register(actor, 'password-123', 'technician', 'M1')['user_id']
     response = record(client, body)
     assert response.status_code == 403
     assert service.get_workorder(body['workorder_id'])['workorder'].get('repair_feedback') in ({}, None)

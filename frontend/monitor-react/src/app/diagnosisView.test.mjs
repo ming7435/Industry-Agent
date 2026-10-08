@@ -2,6 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDiagnosisView, getLatestDiagnosis } from "./diagnosisView.mjs";
 
+test('同设备再次出现同一报警时旧事件诊断不能冒充本次完成', () => {
+  const snapshot={device_id:'D',trigger_history:[{abnormal_event:{device_id:'D',alarm_code:'700010',event_id:'E-NEW'}}],
+    diagnosis:{latest:{device_id:'D',alarm_code:'700010',event_id:'E-OLD',status:'completed',summary:'上次结果'}}};
+  const view=buildDiagnosisView(snapshot,{device_id:'D',alarm_code:'700010'});
+  assert.equal(view.isCurrent,false);
+  assert.equal(view.status,'waiting');
+  assert.ok(!view.summary.includes('上次结果'));
+});
+
 test("diagnosis view prefers structured model fields over embedded JSON", () => {
   const raw = "分析过程\n\n```json\n{\"summary\":\"主轴温度异常\",\"diagnosis\":\"优先检查冷却系统\",\"recommendation\":\"停机检查冷却泵\",\"next_action\":\"核对压力传感器\"}\n```";
   const view = buildDiagnosisView({

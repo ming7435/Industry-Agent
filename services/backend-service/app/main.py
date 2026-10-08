@@ -23,7 +23,7 @@ app = FastAPI(title="Industry Agent Backend Service", version="1.0.0")
 _service: BackendBusinessService | None = None
 _startup_error: str = ""
 BUSINESS_TOOLS = {
-    "create_workorder", "get_workorder", "query_workorder", "list_workorders", "delete_workorder", "update_workorder",
+    "create_workorder", "get_workorder", "query_workorder", "list_workorders", "delete_workorder", "update_workorder", "list_deleted_maintenance_plan_ids",
     "assign_workorder", "submit_repair_feedback", "mark_repair_completed", "record_repair_verification_failed", "close_workorder",
     "reopen_workorder", "get_workorder_template", "submit_workorder_draft", "get_production_status",
     "query_technicians", "query_technician_skills", "query_technician_workload", "query_shift",
@@ -85,6 +85,8 @@ def execute_tool(request: ToolCall) -> dict[str, Any]:
         return dict(result or {})
     except HTTPException:
         raise
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     except (KeyError, ValueError, BusinessStoreError) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except Exception as error:

@@ -91,7 +91,7 @@ def create_router(get_service):
     def orders(request: Request):
         user = actor(request)
         items = get_service().list_workorders()['items']
-        return {'items': [item for item in items if user['role'] == 'supervisor' or item.get('assignee') == user['user_id']]}
+        return {'items': [item for item in items if not item.get('deleted_at') and (user['role'] == 'supervisor' or item.get('assignee') == user['user_id'])]}
 
     @router.get('/api/team/reminders')
     def reminders(request: Request):

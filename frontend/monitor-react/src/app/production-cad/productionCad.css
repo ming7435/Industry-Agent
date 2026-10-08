@@ -45,4 +45,25 @@
 .cad-result-images img { display: block; max-width: 100%; max-height: 620px; object-fit: contain; margin: auto; }
 .cad-result-images figcaption { text-align: center; color: #5c727c; font-size: 13px; margin-top: 12px; }
 .cad-identifier { font-size: 13px; }
+.cad-validation { display: flex; flex-wrap: wrap; gap: 10px 20px; font-size: 13px; line-height: 1.8; color: #236b60; padding: 14px 0; }
+.cad-model-viewer { border: 1px solid #d9e6e8; border-radius: 12px; overflow: hidden; background: #f8fbfc; margin: 12px 0 20px; }
+.cad-viewer-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 18px; }
+.cad-viewer-heading h3 { margin: 0; }
+.cad-viewer-heading span, .cad-viewer-help { font-size: 12px; color: #5c727c; }
+.cad-viewport { position: relative; width: 100%; height: clamp(300px, 44vw, 520px); background: #f0f5f7; }
+.cad-viewport canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.cad-viewer-overlay { position: absolute; z-index: 1; inset: 0; margin: 0; padding: 35px; display: grid; place-content: center; text-align: center; background: #f0f5f7; }
+.production-cad .cad-viewer-error { color: #934619; }
+.cad-viewer-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; }
+.cad-viewer-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.cad-viewer-buttons button { font-size: 12px; padding: 7px 10px; }
+.cad-viewer-buttons button[aria-pressed="true"] { color: #fff; background: #087f73; border-color: #087f73; }
+.production-cad .cad-model-loaded { font-size: 12px; margin: 0; padding: 0 16px 14px; }
+.cad-downloads { display: flex; flex-wrap: wrap; gap: 12px; }
+.cad-downloads a { border: 1px solid #bcd9d6; border-radius: 8px; padding: 10px 18px; text-decoration: none; background: #f3faf7; }
+.cad-downloads a:hover { background: #e2f5ed; }
+.cad-execution-details { margin-top: 22px; }
+.cad-execution-details p { font-size: 13px; }
+.cad-model-viewer:fullscreen { box-sizing: border-box; display: flex; flex-direction: column; width: 100%; height: 100%; border: 0; border-radius: 0; margin: 0; }
+.cad-model-viewer:fullscreen .cad-viewport { flex: 1; height: auto; }
 @media (max-width: 720px) { .cad-card { padding: 18px; }.production-cad h1 { font-size: 26px; }.cad-save-note { flex-basis: 100%; } }

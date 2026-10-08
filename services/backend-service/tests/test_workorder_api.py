@@ -281,7 +281,8 @@ def test_backend_supports_explicit_deletion_for_workorders_and_reports(tmp_path,
     deleted = client.delete(f"/api/workorders/{workorder_id}")
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
-    assert client.get(f"/api/workorders/{workorder_id}").json()["found"] is False
+    retained = client.get(f"/api/workorders/{workorder_id}").json()
+    assert retained['found'] is True and retained['workorder']['deleted_at']
 
     report = client.post("/tools/call", json={"tool": "persist_report", "arguments": {"title": "可查看报告"}}).json()
     report_id = report["report_id"]

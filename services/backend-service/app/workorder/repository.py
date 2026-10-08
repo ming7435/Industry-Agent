@@ -68,6 +68,25 @@ class SQLiteRepository:
             cursor = connection.execute("DELETE FROM workorders WHERE workorder_id=?", (str(workorder_id),))
             return bool(cursor.rowcount)
 
+    def archive(self, order, audit, deleted_plan_ids):
+        """工单、关联方案删除标记及审计在同一事务中保存。"""
+        value = dict(order)
+        with self._record_session() as connection:
+            if not connection.in_transaction:
+                connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute('SELECT payload FROM workorders WHERE workorder_id=?', (value['workorder_id'],)).fetchone()
+            stored = json.loads(row[0]) if row else None
+            if stored is None or int(stored.get('_revision', 0)) != int(value.get('_revision', 0)):
+                raise ValueError('工单已被其他操作更新，请刷新后重试')
+            value['_revision'] = int(value.get('_revision', 0)) + 1
+            connection.execute('UPDATE workorders SET payload=? WHERE workorder_id=?', (json.dumps(value, ensure_ascii=False, default=str), value['workorder_id']))
+            records = [('audit', audit['audit_id'], audit), *[('maintenance_plan_deleted', plan_id,
+                {'plan_id': plan_id, 'workorder_id': value['workorder_id'], 'deleted_at': value['deleted_at'], 'actor_id': value['deleted_by']}) for plan_id in deleted_plan_ids]]
+            for kind, key, payload in records:
+                connection.execute('INSERT INTO business_records(record_type,record_id,payload) VALUES (?,?,?) '
+                    'ON CONFLICT(record_type,record_id) DO UPDATE SET payload=excluded.payload', (kind, key, json.dumps(payload, ensure_ascii=False)))
+        return value
+
     def save_record(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(payload)
         with self._record_session() as connection:
@@ -267,6 +286,28 @@ class MySQLRepository:
         except Exception:
             self.connection.rollback()
             raise
+        finally:
+            cursor.close()
+
+    @_mysql_operation
+    def archive(self, order, audit, deleted_plan_ids):
+        value = dict(order)
+        cursor = self.connection.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT payload FROM workorders WHERE workorder_id=%s FOR UPDATE', (value['workorder_id'],))
+            row = cursor.fetchone()
+            stored = json.loads(row['payload']) if row else None
+            if stored is None or int(stored.get('_revision', 0)) != int(value.get('_revision', 0)):
+                raise ValueError('工单已被其他操作更新，请刷新后重试')
+            value['_revision'] = int(value.get('_revision', 0)) + 1
+            cursor.execute('UPDATE workorders SET payload=%s WHERE workorder_id=%s', (json.dumps(value, ensure_ascii=False, default=str), value['workorder_id']))
+            records = [('audit', audit['audit_id'], audit), *[('maintenance_plan_deleted', plan_id,
+                {'plan_id': plan_id, 'workorder_id': value['workorder_id'], 'deleted_at': value['deleted_at'], 'actor_id': value['deleted_by']}) for plan_id in deleted_plan_ids]]
+            for kind, key, payload in records:
+                cursor.execute('INSERT INTO business_records(record_type,record_id,payload) VALUES (%s,%s,%s) '
+                    'ON DUPLICATE KEY UPDATE payload=VALUES(payload)', (kind, key, json.dumps(payload, ensure_ascii=False)))
+            # _session commits only after all three records succeed; no intermediate commit.
+            return value
         finally:
             cursor.close()
 

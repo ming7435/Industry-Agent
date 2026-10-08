@@ -24,19 +24,19 @@ class TeamService:
         key = name.casefold()
         if not 1 <= len(name) <= 64 or not 8 <= len(password) <= 256:
             raise ValueError('用户名须为1–64字，密码须为8–256字')
-        if role not in {'technician', 'supervisor'}:
-            raise ValueError('无效身份')
-        if role == 'technician' and primary_device_id not in {str(d.get('device_id') or d.get('id') or '') for d in self.devices()}:
+        if role != 'technician':
+            raise ValueError('仅支持维修人员注册')
+        if primary_device_id not in {str(d.get('device_id') or d.get('id') or '') for d in self.devices()}:
             raise ValueError('请选择工厂当前存在的设备')
         salt = secrets.token_hex(16)
         digest = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt), n=16384, r=8, p=1).hex()
-        account = dict(user_id='USER-' + uuid4().hex, username=name, role=role, primary_device_id=primary_device_id if role == 'technician' else '', enabled=1)
+        account = dict(user_id='USER-' + uuid4().hex, username=name, role='technician', primary_device_id=primary_device_id, enabled=1)
         with self.repository.transaction() as db:
             self.repository.lock(db)
             if db.execute('SELECT user_id FROM team_accounts WHERE username_key=?', (key,)).fetchone():
                 raise ValueError('用户名已注册')
             count = db.execute('SELECT COUNT(*) AS n FROM team_accounts WHERE role=?', (role,)).fetchone()['n']
-            if count >= (1 if role == 'supervisor' else 4):
+            if count >= 4:
                 raise ValueError('该身份名额已满')
             db.execute('INSERT INTO team_accounts VALUES (?,?,?,?,?,?,?,?)', (account['user_id'], name, key, salt + ':' + digest, role, account['primary_device_id'], 1, time.time()))
         return account
@@ -46,7 +46,7 @@ class TeamService:
             raise ValueError('用户名或密码错误')
         key = unicodedata.normalize('NFC', str(username).strip()).casefold()
         with self.repository.transaction() as db:
-            row = db.execute('SELECT * FROM team_accounts WHERE username_key=? AND enabled=1', (key,)).fetchone()
+            row = db.execute("SELECT * FROM team_accounts WHERE username_key=? AND enabled=1 AND role='technician'", (key,)).fetchone()
         if not row:
             raise ValueError('用户名或密码错误')
         salt, expected = row['password_hash'].split(':')
@@ -62,7 +62,7 @@ class TeamService:
         if not user_id:
             return None
         with self.repository.transaction() as db:
-            row = db.execute('SELECT * FROM team_accounts WHERE user_id=? AND enabled=1', (user_id,)).fetchone()
+            row = db.execute("SELECT * FROM team_accounts WHERE user_id=? AND enabled=1 AND role='technician'", (user_id,)).fetchone()
         return public(row) if row else None
 
     def logout(self, token):

@@ -238,3 +238,18 @@ def test_production_reads_keep_the_existing_proxy_behavior(proxy_boundary):
     status, _ = send(path=DISPATCH_PATH.replace("/dispatch", ""), host=f"evil.example:{proxy.server_port}", method="GET")
     assert status == 200
     assert seen == []
+
+
+@pytest.mark.parametrize("path", ["/api/cad/freecad/runs", "/api/cad/freecad%2Fruns", "/api/cad/freecad/runs/%0A"])
+def test_local_freecad_write_keeps_the_cad_host_boundary(proxy_boundary, path):
+    proxy, seen, send = proxy_boundary
+    status, _ = send(path=path, host=f"evil.example:{proxy.server_port}")
+    assert (status, len(seen)) == (403, 0)
+
+
+def test_local_freecad_write_forwards_same_origin_requests(proxy_boundary):
+    proxy, seen, send = proxy_boundary
+    status, _ = send(path="/api/cad/freecad/runs")
+    assert status == 200
+    assert seen[0]["authorization"] == "Bearer isolated-proxy-test-token"
+    assert proxy.body_timeout_pairs == [(None, None)]

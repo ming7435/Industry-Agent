@@ -73,7 +73,7 @@ test('本人有效维修单填写处理说明后直接一击申请复机，只�
   try {
     await result.page.getByLabel('处理说明', { exact: true }).fill(`  ${feedback}  `);
     assert.equal(await completeButton(result.page).isDisabled(), false, '实际处理说明已填写，应可直接提交，无需额外勾选');
-    assert.equal(await result.page.getByRole('checkbox').count(), 0);
+    assert.equal(await result.page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     await completeButton(result.page).click();
     await result.page.getByRole('button', { name: '再次确认并申请复机', exact: true }).waitFor();
     assertActualFeedbackOnly(result.posts); assertClean(result);
@@ -106,7 +106,7 @@ test('旧模板要求复核仍展示审计，但本人可直接提交实际维�
     assert.equal(await result.page.getByRole('button', { name: '重新生成并校验方案', exact: true }).count(), 1);
     await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
     assert.equal(await completeButton(result.page).isDisabled(), false, '旧方案审计不能阻止本人提交真实结果；实际复机仍由服务端核验');
-    assert.equal(await result.page.getByRole('checkbox').count(), 0);
+    assert.equal(await result.page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     await completeButton(result.page).click();
     await result.page.getByRole('button', { name: '再次确认并申请复机', exact: true }).waitFor();
     assertActualFeedbackOnly(result.posts); assertClean(result);
@@ -144,3 +144,66 @@ test('监督人只读，不能填写或提交维修申请', async () => {
     observations.push({ case: 'supervisor_readonly', posts: result.posts, errors: result.errors });
   } finally { await result.context.close(); }
 });
+
+test('维修完成已落库但复机控制未启用，显示已完成及明确复机结果，轮询后保留', async () => {
+  const currentOrder = structuredClone(order);
+  const result = await pageFor({ currentOrder, actionHandler: (route, body) => {
+    Object.assign(currentOrder, { status: 'completed', repair_feedback: body.repair_feedback,
+      repair_verification: { phase: 'prestart', passed: true } });
+    return respond(route, { workorder: currentOrder, machine_control: { state: 'blocked', reason: '自动复机控制未启用', workorder_ids: ['WO-OLDER-1', 'WO-OLDER-2'] } });
+  } });
+  try {
+    await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
+    await completeButton(result.page).click();
+    await result.page.getByText('维修已完成，复机申请未通过：自动复机控制未启用', { exact: true }).waitFor();
+    assert.equal(await result.page.locator('.workorder-status-badge').innerText(), '已完成');
+    assert.equal(await result.page.locator('.machine-control-blockers').innerText(), '需先处理的故障工单：WO-OLDER-1、WO-OLDER-2');
+    await result.page.clock.runFor(5100); await frame(result.page);
+    assert.equal(await result.page.locator('.workorder-status-badge').innerText(), '已完成');
+    assert.match(await result.page.locator('.machine-control-result').innerText(), /维修已完成，复机申请未通过/);
+    assertActualFeedbackOnly(result.posts); assertClean(result);
+  } finally { await result.context.close(); }
+});
+
+test('设备报警未解除则明确提示维修确认未通过，不虚报完成，轮询后保留原因', async () => {
+  const result = await pageFor({ actionHandler: route => respond(route, {
+    workorder: order, machine_control: { state: 'blocked', reason: '报警尚未解除', checks: { alarms_clear: false } },
+  }) });
+  try {
+    await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
+    await completeButton(result.page).click();
+    await result.page.getByText('维修确认未通过：报警尚未解除', { exact: true }).waitFor();
+    await result.page.clock.runFor(5100); await frame(result.page);
+    assert.equal(await result.page.locator('.workorder-status-badge').innerText(), '处理中');
+    assert.match(await result.page.locator('.machine-control-result').innerText(), /维修确认未通过：报警尚未解除/);
+    assertActualFeedbackOnly(result.posts); assertClean(result);
+  } finally { await result.context.close(); }
+});
+
+test('仅返回控制拒绝而没有工单记录时，不静默成功，轮询后仍显示失败原因', async () => {
+  const result = await pageFor({ actionHandler: route => respond(route, {
+    machine_control: { state: 'blocked', reason: '虚拟控制模式未启用' },
+  }) });
+  try {
+    await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
+    await completeButton(result.page).click();
+    await result.page.locator('.maintenance-sheet .inline-error').filter({ hasText: '虚拟控制模式未启用' }).waitFor();
+    await result.page.clock.runFor(5100); await frame(result.page);
+    assert.equal(await result.page.locator('.workorder-status-badge').innerText(), '处理中');
+    assert.match(await result.page.locator('.maintenance-sheet .inline-error').innerText(), /虚拟控制模式未启用/);
+    assertActualFeedbackOnly(result.posts); assertClean(result);
+  } finally { await result.context.close(); }
+});
+
+for (const changed of [{ workorder_id: 'WO-OTHER' }, { device_id: 'D-OTHER' }, { assignee: 'U-OTHER' }]) {
+  test(`工单动作回包身份不匹配时保留原单并提示未确认：${Object.keys(changed)[0]}`, async () => {
+    const result = await pageFor({ actionHandler: route => respond(route, { workorder: { ...order, ...changed, status: 'completed' } }) });
+    try {
+      await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
+      await completeButton(result.page).click();
+      await result.page.locator('.maintenance-sheet .inline-error').filter({ hasText: '工单操作结果未确认' }).waitFor();
+      assert.equal(await result.page.locator('.workorder-status-badge').innerText(), '处理中');
+      assertActualFeedbackOnly(result.posts); assertClean(result);
+    } finally { await result.context.close(); }
+  });
+}

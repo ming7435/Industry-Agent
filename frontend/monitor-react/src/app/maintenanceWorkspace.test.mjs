@@ -3,6 +3,37 @@ import assert from "node:assert/strict";
 
 const workspace = await import("./maintenanceWorkspace.mjs").catch(error => error.code === "ERR_MODULE_NOT_FOUND" ? {} : Promise.reject(error));
 
+test('关联工单的现行步骤与状态优先于同编号的旧方案快照', () => {
+  const plan = {plan_id:'P1',device_id:'M1',event_id:'E1',repair_steps:['旧步骤'],workorder_ready:true,
+    dispatch:{status:'dispatched',assignee:'U1',workorder_id:'W1'}};
+  const records = workspace.buildMaintenanceWorkspaceRecords({items:[plan], orders:[{workorder_id:'W1',device_id:'M1',event_id:'E1',plan_id:'P1',
+    status:'completed',assignee:'U1',assignee_name:'维修甲',maintenance_plan_snapshot:{...plan,repair_steps:['工单的现行步骤']}}]});
+  assert.equal(records.length,1);
+  assert.deepEqual(records[0].repair_steps,['工单的现行步骤']);
+  assert.equal(records[0].dispatch.workorder_status,'completed');
+});
+
+test('工单更新方案后旧版本不能继续被选作当前方案，也不混入同设备其他事件', () => {
+  const old = {plan_id:'P1',device_id:'M1',event_id:'E1',repair_steps:['旧方案']};
+  const other = {...old,event_id:'E2'};
+  const records = workspace.buildMaintenanceWorkspaceRecords({items:[old,other],orders:[{workorder_id:'W1',device_id:'M1',event_id:'E1',plan_id:'P2',
+    status:'in_progress',assignee:'U1',plan_revisions:[{previous_plan_id:'P1',plan_id:'P2'}],maintenance_plan_snapshot:{...old,plan_id:'P2',repair_steps:['现行方案']}}]});
+  assert.deepEqual(records.map(record=>[record.plan_id,record.event_id]).sort(),[['P1','E2'],['P2','E1']]);
+});
+
+test('删除工单后旧监控和方案接口不能让关联方案重新出现在列表', () => {
+  const plan = {plan_id:'P1',device_id:'M1',event_id:'E1'};
+  assert.deepEqual(workspace.buildMaintenanceWorkspaceRecords({items:[plan],snapshot:{diagnosis:{pipeline:{event:{device_id:'M1',event_id:'E1'},maintenance_plan:plan}}},
+    orders:[{workorder_id:'W1',device_id:'M1',event_id:'E1',plan_id:'P1',deleted_at:'2026-10-07T14:00:00Z',maintenance_plan_snapshot:plan}]}),[]);
+});
+
+test('删除更换过方案的工单也隐藏关联的旧版本', () => {
+  const records = workspace.buildMaintenanceWorkspaceRecords({items:[{plan_id:'P1',device_id:'M1',event_id:'E1'}],
+    orders:[{workorder_id:'W1',device_id:'M1',event_id:'E1',plan_id:'P2',deleted_at:'2026-10-07T14:00:00Z',
+      plan_revisions:[{previous_plan_id:'P1',plan_id:'P2'}],maintenance_plan_snapshot:{plan_id:'P2'}}]});
+  assert.deepEqual(records,[]);
+});
+
 test("已删除方案不从工单快照、监控或历史接口重新出现", () => {
   const plan = { plan_id: "PLAN-DELETED", device_id: "M-1" };
   const records = workspace.buildMaintenanceWorkspaceRecords({ items: [plan],
@@ -28,7 +59,7 @@ test("plan loading preserves readable plans when personal workorders are unautho
   assert.equal(typeof workspace.loadMaintenanceWorkspace, "function", "Independent plan loading is missing");
   const result = await workspace.loadMaintenanceWorkspace(async path => {
     if (path === "/api/maintenance/plans") return { items: [{ plan_id: "PLAN-1", workorder_ready: false }], count: 1 };
-    if (path === "/api/workorders") throw new Error("维修会话已失效，请重新登录");
+    if (path === "/api/workorders?include_deleted=true") throw new Error("维修会话已失效，请重新登录");
     throw new Error(`Unexpected route: ${path}`);
   }, { user_id: "U-1" });
   assert.deepEqual(result.items, [{ plan_id: "PLAN-1", workorder_ready: false }]);

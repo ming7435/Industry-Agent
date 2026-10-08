@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import { registrationPayload } from './teamApi.mjs';
 import { buildRepairCompletionPayload } from './workorderSheet.mjs';
 
-test('registration identity includes machine only for technician', () => {
-  assert.deepEqual(registrationPayload('a', 'password', 'supervisor', 'M1'), {username: 'a', password: 'password', role: 'supervisor', primary_device_id: ''});
-  assert.equal(registrationPayload('b', 'password', 'technician', 'M1').primary_device_id, 'M1');
+test('registration always binds a technician to the chosen machine', () => {
+  assert.deepEqual(registrationPayload(' 维修甲 ', 'password', 'M1'), {username: '维修甲', password: 'password', role: 'technician', primary_device_id: 'M1'});
 });
 
 test('completion never manufactures actor, timestamp or verification', () => {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import signal
 import socket
 import subprocess
@@ -16,6 +17,7 @@ from urllib.request import urlopen
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FREECAD_PLATFORM = sys.platform
 _LOCAL_INTERNAL_TOKEN = secrets.token_urlsafe(32)
 
 
@@ -196,6 +198,32 @@ def _terminate(processes: list[tuple[str, subprocess.Popen[str]]]) -> None:
                 process.kill()
 
 
+def _start_optional_freecad(env: dict[str, str]) -> dict[str, object]:
+    """复用或启动已安装的本地 CAD；失败不阻止其他业务服务启动。"""
+    required = (
+        PROJECT_ROOT / '.runtime/freecad/bin/FreeCAD.exe',
+        PROJECT_ROOT / '.runtime/freecad-mcp-venv/Scripts/freecad-mcp.exe',
+        PROJECT_ROOT / 'scripts/freecad_runtime.ps1',
+    )
+    if not all(path.is_file() for path in required):
+        return {'ready': False, 'reason': 'not_installed'}
+    if FREECAD_PLATFORM != 'win32' or env.get('APP_ENV', 'development').lower() != 'development':
+        return {'ready': False, 'reason': 'manual_start_required'}
+    command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+        str(required[-1]), 'start', '-WaitSeconds', '45']
+    try:
+        response = subprocess.run(command, cwd=PROJECT_ROOT, env=env, capture_output=True,
+            text=True, encoding='utf-8', errors='replace', timeout=55,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        evidence = json.loads(response.stdout) if response.returncode == 0 else {}
+        # 只读取启动器的受控确认，不打印继承的环境或第三方异常正文。
+        if evidence.get('running') is True and evidence.get('rpc_ready') is True:
+            return {'ready': True}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return {'ready': False, 'reason': 'start_failed'}
+
+
 def main() -> int:
     python = sys.executable
     services = [
@@ -271,6 +299,11 @@ def main() -> int:
     print("启动本地演示服务。模拟工厂需已在 http://127.0.0.1:4529 运行。")
     print("监控工作台：http://127.0.0.1:8001，按 Ctrl+C 统一停止。")
     try:
+        cad_status = _start_optional_freecad(launch_env)
+        if cad_status['ready']:
+            print("本地 FreeCAD 已启动或复用；完整 MCP 连通状态请在生产建模页面查看。")
+        else:
+            print(f"本地 FreeCAD 未自动就绪（{cad_status['reason']}），其他服务继续启动；详见 docs/freecad-local-setup.md。")
         for name, command, cwd, env_root in services:
             port = service_port(name, command, monitor_port=monitor_port)
             if port is not None and _port_in_use("127.0.0.1", port):

@@ -310,7 +310,5 @@ class FactorySnapshotProvider:
             or (payload.get("summary") or {}).get("updated_at")
         )
         if isinstance(raw, (int, float)):
-            return datetime.fromtimestamp(raw / 1000.0, tz=timezone.utc).replace(
-                tzinfo=None
-            )
-        return datetime.now()
+            return datetime.fromtimestamp(raw / 1000.0, tz=timezone.utc)
+        return datetime.now(timezone.utc)

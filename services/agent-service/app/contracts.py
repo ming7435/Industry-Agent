@@ -150,6 +150,7 @@ class DiagnosisView(BaseModel):
 class MaintenancePlan(BaseModel):
     plan_id: str
     diagnosis: DiagnosisView
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     plan_kind: Literal["repair", "inspection"] = "repair"
     inspection_required: bool = False
     inspection_reason: str = ""

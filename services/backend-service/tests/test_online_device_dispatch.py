@@ -38,10 +38,10 @@ def test_unlogged_registered_owner_is_unavailable(service):
     assert service.query_team_availability(device_id="M1")["available_count"] == 0
 
 
-def test_device_candidates_and_availability_never_fall_back(service):
+def test_device_candidates_and_availability_never_fall_back(service, legacy_supervisor):
     owner, _ = registered(service)
     registered(service, "other-owner", "M2")
-    registered(service, "supervisor", role="supervisor")
+    legacy_supervisor(service.team)
     items = service.query_technicians(device_id="M1")["items"]
     assert [item["technician_id"] for item in items] == [owner["user_id"]]
     assert items[0]["online"] is True
@@ -67,9 +67,13 @@ def test_multiple_sessions_are_deduplicated_and_logout_keeps_other_session(servi
 def test_new_assignment_rejects_ineligible_owner_without_changing_order(service, state):
     user, token = registered(
         service, device="M2" if state == "other_device" else "M1",
-        online=state != "unlogged", role="supervisor" if state == "supervisor" else "technician",
+        online=state != "unlogged",
     )
-    if state == "expired":
+    if state == "supervisor":
+        # Existing sessions must not turn a historical supervisor into a dispatch candidate.
+        with service.team.repository.transaction() as db:
+            db.execute("UPDATE team_accounts SET role='supervisor' WHERE user_id=?", (user["user_id"],))
+    elif state == "expired":
         with service.team.repository.transaction() as db:
             db.execute("UPDATE team_sessions SET expires_at=0")
     elif state == "logged_out":
@@ -115,10 +119,10 @@ def test_assignment_is_idempotent_after_logout_and_never_reassigns(service):
     assert len(service.repository.list()) == 1
 
 
-def test_online_users_are_filtered_by_enabled_technician_role(service):
+def test_online_users_are_filtered_by_enabled_technician_role(service, legacy_supervisor):
     owner, _ = registered(service)
     disabled, _ = registered(service, "disabled-owner")
-    registered(service, "supervisor", role="supervisor")
+    legacy_supervisor(service.team)
     with service.team.repository.transaction() as db:
         db.execute("UPDATE team_accounts SET enabled=0 WHERE user_id=?", (disabled["user_id"],))
     assert [item["technician_id"] for item in service.query_technicians()["items"]] == [owner["user_id"]]

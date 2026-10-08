@@ -12,9 +12,9 @@ def service(tmp_path):
     return BackendBusinessService(SQLiteRepository(str(tmp_path / 'orders.db')), team_service=team)
 
 
-def test_candidates_are_registered_and_workload_is_real(service):
+def test_candidates_are_registered_and_workload_is_real(service, legacy_supervisor):
     assert service.query_technicians()['items'] == []
-    service.team.register('监督', 'password-123', 'supervisor')
+    legacy_supervisor(service.team)
     tech = service.team.register('维修', 'password-123', 'technician', 'M1')
     service.team.login('维修', 'password-123')
     order = service.create_workorder(device_id='M1')['workorder_id']
@@ -28,8 +28,8 @@ def test_candidates_are_registered_and_workload_is_real(service):
         service.assign_workorder(order, 'TECH-001')
 
 
-def test_supervisor_reminder_targets_actual_assignee(service):
-    supervisor = service.team.register('监督', 'password-123', 'supervisor')
+def test_supervisor_reminder_targets_actual_assignee(service, legacy_supervisor):
+    supervisor = legacy_supervisor(service.team)
     tech = service.team.register('维修', 'password-123', 'technician', 'M1')
     service.team.login('维修', 'password-123')
     order = service.create_workorder(device_id='M1')['workorder_id']
@@ -58,8 +58,8 @@ def test_repeated_assignment_is_stable_and_cannot_silently_reassign(service):
     assert after['events'] == before['events']
 
 
-def test_reminder_read_status_requires_actual_recipient(service):
-    supervisor = service.team.register('监督', 'password-123', 'supervisor')
+def test_reminder_read_status_requires_actual_recipient(service, legacy_supervisor):
+    supervisor = legacy_supervisor(service.team)
     tech = service.team.register('维修', 'password-123', 'technician', 'M1')
     reminder = service.team.create_reminder('WO1', supervisor['user_id'], tech['user_id'], '请接单')
     with pytest.raises(PermissionError):

@@ -172,11 +172,14 @@ def test_other_completed_fault_with_wrong_template_blocks_line_before_restart(se
     assert not any(action == 'start' for _, action in factory.calls)
 
 
-def test_unfinished_fault_order_outside_current_ledger_also_blocks(setup):
+@pytest.mark.parametrize('deleted', [False, True])
+def test_unfinished_fault_order_outside_current_ledger_also_blocks(setup, deleted):
     factory, ledger, controller = setup
     controller.handle_fault('E1', 'M1', 'fault')
     repaired_order(ledger)
     repaired_order(ledger, 'older-event', 'M2', 'WO-old', 'U2')
+    if deleted:
+        ledger.orders[1]['deleted_at'] = '2026-10-07T14:00:00Z'
     assert controller.confirm_and_restart('WO1', 'U1', 'fixed')['machine_control']['state'] == 'blocked'
     assert not any(action == 'start' for _, action in factory.calls)
 

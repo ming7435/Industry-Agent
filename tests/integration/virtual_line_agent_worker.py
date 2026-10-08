@@ -2,6 +2,7 @@
 import json
 import os
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 from fastapi.testclient import TestClient
 from app.clients.backend import BackendServiceClient
 from app.monitor.factory_api import FactoryApiClient
@@ -20,14 +21,23 @@ def public_call(path, body):
         return json.load(response), response.headers.get('Set-Cookie', '').split(';')[0]
 
 
+def rejected_public_call(path, body, status):
+    try:
+        public_call(path, body)
+    except HTTPError as error:
+        assert error.code == status
+    else:
+        raise AssertionError('Removed supervisor access was accepted')
+
+
 backend = BackendServiceClient()
 factory = FactoryApiClient(os.environ['FACTORY_API_BASE_URL'])
 controller = LineController(factory, backend)
 tech, _ = public_call('/api/team/register', {'username': 'technician', 'password': 'test-password-123', 'role': 'technician', 'primary_device_id': 'M1'})
-supervisor, _ = public_call('/api/team/register', {'username': 'supervisor', 'password': 'test-password-123', 'role': 'supervisor'})
+rejected_public_call('/api/team/register', {'username': 'supervisor', 'password': 'test-password-123', 'role': 'supervisor'}, 409)
 other, _ = public_call('/api/team/register', {'username': 'other-device', 'password': 'test-password-123', 'role': 'technician', 'primary_device_id': 'M2'})
 public_call('/api/team/login', {'username': 'other-device', 'password': 'test-password-123'})
-_, supervisor_cookie = public_call('/api/team/login', {'username': 'supervisor', 'password': 'test-password-123'})
+rejected_public_call('/api/team/login', {'username': 'supervisor', 'password': 'test-password-123'}, 401)
 assert controller.handle_fault('E1', 'M1', '隔离虚拟故障')['state'] == 'stopped'
 agent = WorkOrderAgent()
 # 固定、已验证诊断输入只用于离线合同测试，仍经过真实派单门禁及 Agent 图。
@@ -41,7 +51,7 @@ waiting = dispatcher.dispatch(
     {'event': {'event_id': 'E1'}, 'maintenance_plan': plan, 'diagnosis': plan['diagnosis'],
      'knowledge': {'documents': [{'id': 'ISOLATED-SOP'}]}, 'cad': {'components': [{'id': 'ISOLATED-PART'}]}},
 )
-# 高风险创建已进入派工流程，但当前仅有监督和其他设备技师在线，不能误派。
+# 高风险创建已进入派工流程，但当前仅有其他设备技师在线，不能误派。
 assert not waiting.success, waiting.output
 assert waiting.output['status'] == 'waiting_for_personnel', waiting.output
 pending_id = waiting.output['workorder_id']
@@ -58,13 +68,9 @@ assert order_id == pending_id
 assert len(backend.call('list_workorders', {})['items']) == 1
 api = TestClient(create_app())
 assert api.get('/api/workorders').status_code == 401
-api.cookies.set('maintenance_session', supervisor_cookie.split('=', 1)[1])
-assert api.get('/api/workorders').json()['count'] == 1
-assert api.post(f'/api/workorders/{order_id}/action', json={'action': 'mark_repair_completed', 'feedback': '伪造监督维修', 'maintenance_confirmed_by': tech['user']['user_id']}).status_code == 403
-reminder, _ = public_call('/api/team/login', {'username': 'supervisor', 'password': 'test-password-123'})
-req = Request(os.environ['BACKEND_SERVICE_BASE_URL'] + '/api/team/reminders', data=json.dumps({'workorder_id': order_id, 'text': '请及时维修'}).encode(), headers={'Content-Type': 'application/json', 'Cookie': supervisor_cookie}, method='POST')
-with urlopen(req) as response:
-    assert json.load(response)['recipient_id'] == tech['user']['user_id']
+api.cookies.set('maintenance_session', 'isolated-rejected-supervisor')
+assert api.get('/api/workorders').status_code == 401
+assert api.post(f'/api/workorders/{order_id}/action', json={'action': 'mark_repair_completed', 'feedback': '伪造监督维修', 'maintenance_confirmed_by': tech['user']['user_id']}).status_code == 401
 api.cookies.set('maintenance_session', tech_cookie.split('=', 1)[1])
 assert api.get('/api/workorders').json()['count'] == 1
 assert api.post(f'/api/workorders/{order_id}/action', json={'action': 'update', 'status': 'in_progress'}).status_code == 200
@@ -78,4 +84,15 @@ assert stored['accepted_by'] == tech['user']['user_id']
 repeat = api.post(f'/api/workorders/{order_id}/action', json={'action': 'mark_repair_completed', 'feedback': '重复确认'})
 assert repeat.status_code == 200
 assert repeat.json()['machine_control']['state'] == 'running'
-print(json.dumps({'workorder_id': order_id, 'state': 'running', 'assignee': stored['assignee']}, ensure_ascii=False))
+# 同一隔离链路验证删除回执、默认列表与方案删除标记，保留原维修凭证。
+before_delete = backend.call('get_workorder', {'workorder_id': order_id})['workorder']
+deleted = api.delete(f'/api/workorders/{order_id}')
+assert deleted.status_code == 200, deleted.text
+assert deleted.json()['deleted_plan_ids'] == ['P1'], deleted.text
+assert api.get('/api/workorders').json()['count'] == 0
+archived = api.get('/api/workorders?include_deleted=true').json()['items']
+assert len(archived) == 1 and archived[0]['deleted_at']
+retained = backend.call('get_workorder', {'workorder_id': order_id})['workorder']
+assert retained['status'] == before_delete['status'] and retained['repair_verification'] == before_delete['repair_verification']
+assert 'P1' in api.get('/api/maintenance/plans').json()['deleted_plan_ids']
+print(json.dumps({'workorder_id': order_id, 'state': 'running', 'assignee': stored['assignee'], 'deletion_synced': True}, ensure_ascii=False))

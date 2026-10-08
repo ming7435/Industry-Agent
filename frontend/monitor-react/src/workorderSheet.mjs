@@ -1,4 +1,5 @@
 import { cleanDisplayText, parseEmbeddedJson } from "./app/textFormatting.mjs";
+import { localizeIncidentText } from './app/incidentIdentity.mjs';
 
 function text(value) {
   return String(value ?? "").trim();
@@ -177,7 +178,7 @@ export function buildMaintenancePlanView({ order = {}, plan = {}, diagnosis = {}
 }
 
 export function getWorkorderDisplayTitle(order = {}, target = {}, context = {}) {
-  const candidateTitle = cleanDisplayText(order.title);
+  const candidateTitle = localizeIncidentText(cleanDisplayText(order.title),order);
   const targetName = text(target.part_name) && !["待确认故障部件", "待补充"].includes(text(target.part_name))
     ? text(target.part_name)
     : "设备";
@@ -188,7 +189,7 @@ export function getWorkorderDisplayTitle(order = {}, target = {}, context = {}) 
       || (Array.isArray(context?.snapshot?.devices) && context.snapshot.devices.some((item) => text(item?.device_id || item?.id) === deviceId && text(item?.name || item?.display_name)))
       || DEVICE_DISPLAY_NAMES[deviceId],
   );
-  const fault = faultText(order, context);
+  const fault = localizeIncidentText(faultText(order, context),order);
   const genericTitle = !candidateTitle
     || candidateTitle.length > 80
     || /[\n#{}]/.test(candidateTitle)
@@ -236,7 +237,7 @@ export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagno
     partNo: text(target.part_no) || "待补充",
     system: text(target.system) || "待确认",
     location: text(target.location) || "待现场确认",
-    faultSymptom: text(target.symptom) || text(target.description) || text(diagnosis.fault) || text(diagnosisContext.diagnosis) || text(order.title) || "设备异常",
+    faultSymptom: localizeIncidentText(text(target.symptom) || text(target.description) || text(diagnosis.fault) || text(diagnosisContext.diagnosis) || text(order.title) || "设备异常",order),
     autoDispatched: ["", "agent", "auto", "monitor"].includes(text(order.source).toLowerCase())
       || Boolean(diagnosisContext.summary || order.drawing_context?.model_url),
   };

@@ -61,14 +61,20 @@ class EventResultStore:
         key = scoped_event_key(event)
         if not key:
             return
-        if self._stage_cache is not None:
-            self._stage_cache.set(key, result)
-            return
         with self._lock:
             self._stages[key] = (monotonic() + 900, dict(result))
             self._stages.move_to_end(key)
             while len(self._stages) > self.max_items:
                 self._stages.popitem(last=False)
+        if self._stage_cache is not None:
+            self._stage_cache.set(key, result)
+
+    def list_active_plan_stages(self) -> list[Dict[str, Any]]:
+        """方案已生成即可只读展示，只包含本进程仍在处理的实际事件。"""
+        now = monotonic()
+        with self._lock:
+            return [dict(result) for key, (expires, result) in reversed(self._stages.items())
+                    if key in self._key_locks and expires > now and result.get('maintenance_plan')]
 
     def get_stage(self, scoped_key: str) -> Dict[str, Any] | None:
         """只读临时进度；过期或缺失不表示整个事件已失败。"""

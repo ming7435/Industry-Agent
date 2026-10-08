@@ -1,9 +1,11 @@
 import { cleanDisplayText, cleanEvidenceText, parseEmbeddedJson } from "./textFormatting.mjs";
+import { currentIncident, matchesIncident } from './incidentIdentity.mjs';
 
 function resolveCurrentSample(snapshot, sample) {
   return sample
-    || snapshot?.latest_result?.current_sample
+    || snapshot?.latest_results?.[snapshot?.device_id]?.current_sample
     || snapshot?.devices?.find((device) => device.device_id === snapshot?.device_id)?.current_sample
+    || ((!snapshot?.device_id || snapshot?.latest_result?.current_sample?.device_id === snapshot.device_id) ? snapshot?.latest_result?.current_sample : null)
     || {};
 }
 
@@ -38,7 +40,8 @@ export function diagnosisMatchesCurrent(snapshot, sample, latest = snapshot?.dia
   // 没有实时报警时，表示没有需要区分的新事件；在监控报告新报警前保留最后一次完成的结果。
   if (!currentAlarm) return true;
   if (!latestAlarm || currentAlarm !== latestAlarm) return false;
-  return !currentDevice || !latestDevice || currentDevice === latestDevice;
+  const incident = currentIncident(snapshot, current);
+  return incident.event_id ? matchesIncident(latest,incident) : !currentDevice || !latestDevice || currentDevice === latestDevice;
 }
 
 export function buildDiagnosisView(snapshot, sample) {

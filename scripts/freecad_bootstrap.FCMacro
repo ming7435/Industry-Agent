@@ -1,0 +1,31 @@
+"""在独立的本地 FreeCAD 进程中启动已经安装的 MCP 插件。"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+import FreeCAD
+import FreeCADGui
+
+runtime = Path(os.environ["INDUSTRY_FREECAD_RUNTIME_DIR"]).resolve()
+sys.path.insert(0, str(runtime / "Mod" / "FreeCADMCP"))
+from rpc_server import rpc_server
+
+# 仅应用本进程配置，将 RPC 绑定到本机，不读取其他 FreeCAD 用户配置。
+rpc_server.load_settings = lambda: {
+    "remote_enabled": False,
+    "allowed_ips": "127.0.0.1",
+    "auto_start_rpc": False,
+    "auth_token": "",
+}
+FreeCADGui.getMainWindow().hide()
+message = rpc_server.start_rpc_server(port=9875)
+host, port = rpc_server.rpc_server_instance.server_address
+if host != "127.0.0.1" or port != 9875:
+    raise RuntimeError("FreeCAD RPC must bind exclusively to 127.0.0.1:9875")
+(runtime / "rpc-ready.json").write_text(
+    json.dumps({"pid": os.getpid(), "host": host, "port": port,
+                "message": message, "freecad_version": FreeCAD.Version()}),
+    encoding="utf-8",
+)

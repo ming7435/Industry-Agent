@@ -46,6 +46,7 @@ class CADGraphState(AgentExecutionState, total=False):
     modeling_result: Dict[str, Any]
     modeling_execution: Dict[str, Any]
     buildcad_client: Any
+    freecad_client: Any
     model_client: Any
     result: CADResult | Dict[str, Any]
 
@@ -54,7 +55,7 @@ def initialize(state: CADGraphState) -> Dict[str, Any]:
     if state.get("operation") == "production_modeling":
         request = dict(state.get("request") or {})
         if not str(request.get("prompt") or "").strip():
-            raise ValueError("BuildCAD 节点缺少建模需求")
+            raise ValueError("CAD 节点缺少建模需求")
         return {"request": request, "route": "load_skill", "observations": [], "errors": []}
     request = CADQuery.from_payload(state.get("request") or {}).model_dump(mode="json")
     return {"request": request, "step_count": 0, "max_steps": request["max_steps"], "observations": [], "components": [], "drawings": [], "bom_items": [], "assembly_relations": [], "locations": [], "sources": [], "errors": [], "backend_status": "unknown", "degraded": False, "synthetic": False, "route": "load_skill"}
@@ -74,6 +75,211 @@ def load_skill(state: CADGraphState) -> Dict[str, Any]:
 
 
 def model_3d(state: CADGraphState) -> Dict[str, Any]:
+    """唯一活动建模节点仅执行本地技能声明的结构化建模工具。"""
+    import json
+    from app.tools.cad.freecad_mcp import FreeCADModelError, freecad_tool_scope, validate_spec
+    from app.clients.freecad import FreeCADConnectionError
+
+    selected = get_skill_registry().select("cad", names=state.get("active_skills") or [])
+    if len(selected) != 1:
+        raise ValueError("三维建模节点必须选择唯一建模 Skill")
+    skill = selected[0]
+    step = next(item for item in skill.normalized_steps() if item.id == "build_model")
+    result = {"status": "needs_input", "answer": "请补充形状、单位及完整尺寸；圆柱需要外径、长度，通孔还需要孔径和方向；正四面体需要边长。", "calls": [], "artifacts": []}
+    request, model = state["request"], state.get("model_client")
+    stage = "specification"
+    try:
+        if request.get("provider") != "freecad":
+            raise FreeCADModelError("BuildCAD 建模已停用，请通过本地 FreeCAD 接口提交需求。")
+        spec = request.get("spec")
+        if spec is None:
+            spec = _explicit_advanced_spec(request["prompt"]) or _explicit_tetrahedron_spec(request["prompt"]) or _explicit_cylinder_spec(request["prompt"])
+        if spec is None and model is not None and model.available:
+            model.timeout = min(model.timeout, 60)
+            response = model.chat([
+                {"role": "system", "content": skill.document},
+                {"role": "user", "content": json.dumps({"prompt": request["prompt"]}, ensure_ascii=False)},
+            ])
+            content = response["choices"][0]["message"].get("content")
+            if not isinstance(content, str):
+                raise FreeCADModelError("模型未返回结构化尺寸，请补充明确的尺寸需求。")
+            value = json.loads(content)
+            if not isinstance(value, dict):
+                raise FreeCADModelError("模型未返回结构化尺寸，请补充明确的尺寸需求。")
+            if value.get("status") == "needs_input":
+                questions = value.get("questions")
+                if isinstance(questions, list) and questions and all(isinstance(item, str) for item in questions):
+                    result["answer"] = "请补充建模尺寸：\n" + "\n".join(questions)[:2000]
+            else:
+                spec = validate_spec(value.get("spec"))
+                if not _dimensions_are_explicit(spec, request["prompt"]):
+                    raise FreeCADModelError("无法完整核对需求中的尺寸、孔数、孔位或额外特征，请补充明确规格；不会忽略特征或借用其他尺寸建模。")
+        if spec is not None:
+            spec = validate_spec(spec)
+            result["spec"] = spec
+            stage = "freecad_mcp"
+            with freecad_tool_scope(state["freecad_client"], request["task_id"]):
+                remote = skill.execute_tool_step("build_model", state["agent"].tools,
+                    {"spec": spec}, context={"node": "model_3d"})
+            result.update(remote)
+            if result.get("status") == "completed":
+                result["answer"] = "FreeCAD 已生成并校验三维模型，可旋转查看并下载 STL、STEP 和 FCStd 文件。"
+    except FreeCADModelError as error:
+        result.update(status="needs_input" if stage == "specification" else "failed",
+            error=str(error), error_code="invalid_specification" if stage == "specification" else "freecad_run_failed",
+            error_stage=stage)
+        result["calls"] = list(getattr(error, "calls", []))
+        result["answer"] = str(error)
+    except Exception as error:
+        connection_error = isinstance(error, FreeCADConnectionError)
+        code = getattr(error, "code", "freecad_run_failed") if connection_error else "freecad_run_failed"
+        result.update(status="outcome_unknown" if code == "outcome_unknown" else "failed", error_code=code,
+            error=str(error) if connection_error else "模型或 FreeCAD 调用失败，请检查本地连接和模型服务。",
+            error_stage=stage)
+        result["calls"] = list(getattr(error, "calls", []))
+        result["answer"] = result["error"]
+    return {"modeling_result": result, "modeling_execution": {"agent": "cad", "node": "model_3d",
+        "skill": skill.name, "step": step.id, "tool": step.tool}, "route": "final"}
+
+
+def _dimensions_are_explicit(spec: dict, prompt: str) -> bool:
+    """按完整几何语义逐字段核对，不能仅检查数字是否出现在需求中。"""
+    expected = _explicit_advanced_spec(prompt) or _explicit_tetrahedron_spec(prompt) or _explicit_cylinder_spec(prompt) or _explicit_box_spec(prompt)
+    return expected is not None and spec == expected
+
+
+def _explicit_advanced_spec(prompt: str) -> dict | None:
+    """确定性解析完整高级形体；不能借用其他参数或丢弃剩余要求。"""
+    import re
+    text = prompt.lower().strip()
+    modifier = re.search(r"[，,；;]\s*全部边(圆角半径|倒角距离)\s*(\d+(?:\.\d+)?)\s*(?:mm|毫米)\s*[。.]?$", text)
+    if modifier:
+        base_text = text[:modifier.start()]
+        base = _explicit_box_spec(base_text) or _explicit_cylinder_spec(base_text) or _explicit_tetrahedron_spec(base_text)
+        if base is None:
+            return None
+        rounded = modifier.group(1) == '圆角半径'
+        base['operations'].append({'type': 'fillet' if rounded else 'chamfer',
+            'radius' if rounded else 'distance': float(modifier.group(2)), 'edges': 'all'})
+        return base
+    families = [
+        ('sphere', ('球体', '实心球'), [('diameter', '直径', 'mm|毫米')]),
+        ('cone', ('圆锥', '圆台'), [('bottom_diameter', '底径', 'mm|毫米'), ('top_diameter', '顶径', 'mm|毫米'), ('height', '高度|高', 'mm|毫米')]),
+        ('gear', ('直齿轮', '渐开线直齿轮'), [('module', '模数', 'mm|毫米'), ('teeth', '齿数', ''), ('pressure_angle', '压力角', '度|°'), ('width', '齿宽', 'mm|毫米'), ('bore_diameter', '孔径', 'mm|毫米')]),
+        ('thread', ('右旋外螺纹', '左旋外螺纹'), [('major_diameter', '大径', 'mm|毫米'), ('pitch', '螺距', 'mm|毫米'), ('length', '长度|长', 'mm|毫米'), ('depth', '牙深', 'mm|毫米'), ('flank_angle', '牙型角', '度|°')]),
+    ]
+    for kind, nouns, fields in families:
+        noun = next((word for word in sorted(nouns, key=len, reverse=True) if word in text), None)
+        if noun is None:
+            continue
+        residue = text.replace(noun, '', 1)
+        op = {'type': kind, 'mode': 'add', 'position': [0, 0, 0]}
+        for key, label, unit in fields:
+            matched = re.search(r'(?:' + label + r')\s*(?:为|是|=|：|:)?\s*(\d+(?:\.\d+)?)' + (r'\s*(?:' + unit + ')' if unit else r'(?![\d.])'), residue)
+            if matched is None:
+                return None
+            value = float(matched.group(1))
+            if key == 'teeth':
+                if not value.is_integer():
+                    return None
+                value = int(value)
+            op[key] = value
+            residue = residue.replace(matched.group(0), '', 1)
+        for word in ('设计', '创建', '生成', '制作', '一个', '请', '的', '模型', '实体'):
+            residue = residue.replace(word, '', 1)
+        if re.sub(r'[\s，,、。.;；:：()（）]', '', residue):
+            return None
+        if kind in {'cone', 'gear', 'thread'}:
+            op['axis'] = 'z'
+        if kind == 'thread':
+            op['hand'] = 'left' if noun.startswith('左') else 'right'
+        return {'units': 'mm', 'operations': [op]}
+    return None
+
+
+def _dimension_first(text: str) -> str:
+    """规范尺寸后置标注，仅交换明确的尺寸标签，不猜测孔位或缺失数据。"""
+    import re
+    return re.sub(r"(\d+(?:\.\d+)?\s*(?:mm|毫米))\s*(外直径|外径|长度|宽度|高度|边长|(?:同轴|轴向)通孔孔径)",
+        lambda m: m.group(2) + m.group(1), text)
+
+
+def _explicit_tetrahedron_spec(prompt: str) -> dict | None:
+    """正四面体只需明确边长；普通四面体不能擅自假设为正四面体。"""
+    import re
+    text = _dimension_first(prompt.lower().strip())
+    edge = re.search(r"边长\s*(?:为|是|=|：|:)?\s*(\d+(?:\.\d+)?)\s*(?:mm|毫米)", text)
+    if not edge or "正四面体" not in text:
+        return None
+    residue = text.replace(edge.group(0), "", 1)
+    for word in ("正四面体", "立体三角形", "四面相同", "四个面相同", "等边三角形", "四个面都是", "每个面都是", "设计", "创建", "生成", "制作", "一个", "请", "的", "模型", "实体"):
+        residue = residue.replace(word, "")
+    if re.sub(r"[\s，,、。.;；:：()（）]", "", residue):
+        return None
+    return {"units": "mm", "operations": [{"type": "tetrahedron", "mode": "add",
+        "edge_length": float(edge.group(1)), "position": [0, 0, 0]}]}
+
+
+def _explicit_box_spec(prompt: str) -> dict | None:
+    """自然语言长方体严格绑定长、宽、高，只用于模型输出的完整核对。"""
+    import re
+    text = _dimension_first(prompt.lower().strip())
+    if "长方体" not in text:
+        return None
+    dimensions, residue = {}, text
+    for key, label in (("length", "长度|长"), ("width", "宽度|宽"), ("height", "高度|高")):
+        matched = re.search(r"(?:" + label + r")\s*(?:为|是|=|：|:)?\s*(\d+(?:\.\d+)?)\s*(?:mm|毫米)", residue)
+        if not matched:
+            return None
+        dimensions[key] = float(matched.group(1))
+        residue = residue.replace(matched.group(0), "", 1)
+    for word in ("长方体", "设计", "创建", "生成", "制作", "一个", "请", "的", "模型", "实体"):
+        residue = residue.replace(word, "")
+    if re.sub(r"[\s，,、。.;；:：()（）]", "", residue):
+        return None
+    return {"units": "mm", "operations": [{"type": "box", "mode": "add", **dimensions, "position": [0, 0, 0]}]}
+
+
+def _explicit_cylinder_spec(prompt: str) -> dict | None:
+    """只解析完整且无额外特征的毫米圆柱和同轴通孔描述。"""
+    import re
+    text = _dimension_first(prompt.lower().strip())
+    number = r"(\d+(?:\.\d+)?)\s*(?:mm|毫米)"
+    diameter = re.search(r"(?:外径|外直径)\s*(?:为|是|=|：|:)?\s*" + number, text)
+    length = re.search(r"(?:长度|长)\s*(?:为|是|=|：|:)?\s*" + number, text)
+    # 多主体不能在去掉共同尺寸或名称后坍缩成一个主体。
+    if not diameter or not length or len(re.findall(r"圆柱(?:体)?|销轴|轴套|套筒", text)) != 1:
+        return None
+    hole = None
+    if "孔" in text:
+        # 仅“轴向”不能确定孔中心；必须明确同轴或沿主体轴线。
+        if not re.search(r"(?:同轴|沿轴线)", text) or len(re.findall(r"通孔|贯穿孔", text)) != 1:
+            return None
+        hole_text = text.replace(diameter.group(0), "", 1).replace(length.group(0), "", 1)
+        hole = re.search(r"(?:孔径|直径)\s*(?:为|是|=|：|:)?\s*" + number, hole_text)
+        if hole is None:
+            hole = re.search(r"(?:通孔|贯穿孔)\s*" + number, hole_text)
+        if hole is None:
+            return None
+    residue = text.replace(diameter.group(0), "", 1).replace(length.group(0), "", 1)
+    if hole:
+        residue = residue.replace(hole.group(0), "", 1)
+    words = ("沿轴线", "沿轴向", "贯穿孔", "圆柱体", "轴向", "同轴", "通孔", "圆柱", "销轴", "轴套", "套筒", "按说明", "请帮我", "生成", "设计", "创建", "制作", "建立", "一个", "一根", "做", "请", "带有", "带", "的", "开", "并", "有", "需要", "帮我", "模型")
+    for word in words:
+        residue = residue.replace(word, "")
+    if re.sub(r"[\s，,、。.;；:：()（）]", "", residue):
+        return None
+    operations = [{"type": "cylinder", "mode": "add", "diameter": float(diameter.group(1)),
+        "length": float(length.group(1)), "position": [0, 0, 0], "axis": "z"}]
+    if hole:
+        if float(hole.group(1)) >= float(diameter.group(1)):
+            return None
+        operations.append({"type": "cylinder", "mode": "cut", "diameter": float(hole.group(1)),
+            "length": float(length.group(1)), "position": [0, 0, 0], "axis": "z"})
+    return {"units": "mm", "operations": operations}
+
+
+def _legacy_buildcad_model_3d(state: CADGraphState) -> Dict[str, Any]:
     """一个节点内按真实 MCP schema 调用，不运行本地几何或加工代码。"""
     import json
     from time import monotonic

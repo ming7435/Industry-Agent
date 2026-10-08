@@ -202,6 +202,24 @@ def test_old_revision_cannot_overwrite_current_diagnosis():
     assert state.diagnosis_pending == 0
 
 
+def test_plan_progress_is_visible_before_final_and_stale_callback_cannot_replace_it():
+    state = _state()
+    state._latest_diagnosis_event = EVENT
+    progress = {'diagnosis':RESULT['diagnosis'],'maintenance_plan':{'plan_id':'P-STAGE','created_at':'2026-10-07T13:02:00Z'}}
+    state._on_pipeline_progress(progress,0,EVENT)
+    assert state.latest_pipeline['status']=='running'
+    assert state.latest_pipeline['maintenance_plan']['plan_id']=='P-STAGE'
+    assert state.latest_pipeline['maintenance_plan']['created_at']=='2026-10-07T13:02:00Z'
+    state._on_pipeline_progress({'maintenance_plan':{'plan_id':'OLD'}},0,{**EVENT,'event_revision':1})
+    assert state.latest_pipeline['maintenance_plan']['plan_id']=='P-STAGE'
+    state.latest_diagnoses_by_device['D-1']={**RESULT['diagnosis'],'status':'completed'}
+    future=Future()
+    future.set_exception(ConnectionError('final connection unavailable'))
+    state._on_diagnosis_done(future,0,EVENT)
+    assert state.latest_pipeline['maintenance_plan']['plan_id']=='P-STAGE'
+    assert state.latest_pipeline['status']=='unknown'
+
+
 def test_old_session_callback_cannot_decrement_new_session_pending_count():
     state, future = _state(), Future()
     future.set_result(RESULT)

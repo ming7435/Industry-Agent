@@ -135,6 +135,28 @@ def test_monitor_compact_pipeline_preserves_plan_evidence_and_gate_fields():
     assert result["stop_reason"] == "replan_limit_exceeded"
 
 
+def test_plan_projection_preserves_distinct_event_diagnosis_and_plan_times():
+    from app.api.maintenance_plans import list_saved_maintenance_plans
+    pipeline = saved_pipeline()
+    pipeline['event'].update(timestamp='2026-10-07T13:00:00', device_name='设备甲', device_model='MODEL-A')
+    pipeline['diagnosis']['created_at'] = '2026-10-07T21:01:00+08:00'
+    pipeline['maintenance_plan']['created_at'] = '2026-10-07T13:02:00+00:00'
+    item = list_saved_maintenance_plans([pipeline])['items'][0]
+    assert item['created_at'] == '2026-10-07T13:02:00+00:00'
+    assert item['event_timestamp'] == '2026-10-07T13:00:00+00:00'
+    assert item['diagnosis_created_at'] == '2026-10-07T21:01:00+08:00'
+    assert item['device_model'] == 'MODEL-A'
+    assert item['diagnosis']['event_id'] == 'EVT-1'
+    assert item['diagnosis']['event_revision'] == 2
+
+
+def test_legacy_plan_without_own_time_does_not_claim_diagnosis_time_is_plan_time():
+    from app.api.maintenance_plans import list_saved_maintenance_plans
+    item = list_saved_maintenance_plans([saved_pipeline()])['items'][0]
+    assert item['created_at'] == ''
+    assert item['diagnosis_created_at'] == '2026-10-04T19:07:50+08:00'
+
+
 def test_monitor_serves_independent_plans_through_existing_authenticated_proxy(monkeypatch):
     import monitor_web_server as monitor
     class Agent(BaseHTTPRequestHandler):

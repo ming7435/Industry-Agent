@@ -66,7 +66,7 @@ test('需复核维修单保留审计与记录入口，填写实际结果后可�
     const detail = await page.locator('.workorder-detail-page').innerText();
     assert.ok(detail.includes('方案需重新校验'));
     for (const finding of review.findings) assert.ok(detail.includes(finding));
-    assert.equal(await page.getByRole('checkbox').count(), 0);
+    assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), true);
     await page.getByLabel('处理说明', { exact: true }).fill('已记录现场刀塔报警；等待重新校验方案。');
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), false);
@@ -87,11 +87,11 @@ test('旧完成记录无可信维修确认时不能直接关闭，但可提交�
   try {
     await page.goto(`${fixture.base}/?view=workorder`);
     await page.locator('.workorder-titlebar').waitFor();
-    assert.equal(await page.getByRole('button', { name: '关闭工单并生成总结', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: '关闭工单', exact: true }).isDisabled(), true);
     assert.equal(await page.getByRole('button', { name: '再次确认并申请复机', exact: true }).isDisabled(), true);
     await page.getByLabel('处理说明', { exact: true }).fill('已按现场核查结果处理，请重新读回设备恢复数据。');
     assert.equal(await page.getByRole('button', { name: '再次确认并申请复机', exact: true }).isDisabled(), false);
-    assert.equal(await page.getByRole('button', { name: '关闭工单并生成总结', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: '关闭工单', exact: true }).isDisabled(), true);
     assert.deepEqual(writes, []);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
@@ -106,10 +106,10 @@ test('服务端可信维修确认与运行复核通过后可关闭，原方案�
     await page.locator('.workorder-titlebar').waitFor();
     const panel = page.getByRole('region', { name: '方案执行复核', exact: true });
     assert.ok((await panel.innerText()).includes(review.findings[0]));
-    assert.equal(await page.getByRole('button', { name: '关闭工单并生成总结', exact: true }).isDisabled(), false);
+    assert.equal(await page.getByRole('button', { name: '关闭工单', exact: true }).isDisabled(), false);
     await page.getByLabel('处理说明', { exact: true }).fill('已有真实确认和运行复核，不再重复申请。');
     assert.equal(await page.getByRole('button', { name: '再次确认并申请复机', exact: true }).isDisabled(), true);
-    assert.equal(await page.getByRole('checkbox').count(), 0);
+    assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.deepEqual(writes, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
@@ -128,7 +128,7 @@ test('保存记录回包省略execution_review展示字段时不能抹掉已知�
     await page.getByRole('button', { name: '提交处理记录', exact: true }).click();
     await page.getByRole('status').filter({ hasText: '处理记录已保存' }).waitFor();
     assert.ok((await page.locator('.workorder-detail-page').innerText()).includes('方案需重新校验'));
-    assert.equal(await page.getByRole('checkbox').count(), 0);
+    assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), false);
     assert.deepEqual(writes, []);
     assert.deepEqual(errors, []);
@@ -147,7 +147,7 @@ test('服务端明确解除复核后恢复正常维修操作', async () => {
     await page.getByRole('button', { name: '提交处理记录', exact: true }).click();
     await page.getByRole('button', { name: '提交处理记录', exact: true }).waitFor({ state: 'detached' });
     assert.equal((await page.locator('.workorder-detail-page').innerText()).includes('方案需重新校验'), false);
-    assert.equal(await page.getByRole('checkbox').count(), 0);
+    assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), false);
     assert.deepEqual(writes, []);
     assert.deepEqual(errors, []);

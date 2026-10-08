@@ -57,7 +57,7 @@ async function pageFor({ initialActor = actorA, handler } = {}) {
   await page.route('**/api/**', route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (request.method() === 'GET') reads.push(path);
-    else if (request.method() === 'POST' && ['/api/team/login', '/api/team/logout', `/api/workorders/${orderFor(actorA).workorder_id}/action`].includes(path)) mockWrites.push({ path });
+    else if (request.method() === 'POST' && ['/api/team/register', '/api/team/login', '/api/team/logout', `/api/workorders/${orderFor(actorA).workorder_id}/action`].includes(path)) mockWrites.push({ path, body: request.postDataJSON() });
     else if (!['GET', 'HEAD'].includes(request.method())) { unexpectedWrites.push({ path, method: request.method() }); return route.abort(); }
     if (handler) {
       const outcome = handler(route, path, serverActor);
@@ -66,6 +66,7 @@ async function pageFor({ initialActor = actorA, handler } = {}) {
     if (path === '/api/team/me') return respond(route, { user: serverActor });
     if (path === '/api/team/devices') return respond(route, { items: [{ device_id: 'D-1', name: '隔离设备' }] });
     if (path === '/api/team/line') return respond(route, { state: 'stopped' });
+    if (path === '/api/team/register') return respond(route, { user: actorB }, 201);
     if (path === '/api/team/login') { serverActor = actorB; return respond(route, { user: serverActor }); }
     if (path === '/api/team/logout') { serverActor = null; return respond(route, { success: true }); }
     if (path === '/api/monitor/snapshot') return respond(route, { device_id: 'D-1', devices: [{ device_id: 'D-1', name: '隔离设备', current_sample: sample }] });
@@ -87,6 +88,30 @@ async function loginAsB(view) {
   await view.page.getByRole('button', { name: '登录', exact: true }).click();
   await view.page.getByRole('button', { name: new RegExp(orderFor(actorB).workorder_id) }).waitFor();
 }
+
+test('注册只提供维修人员，必须选择机器后才能注册并登录', async () => {
+  const view = await pageFor({ initialActor: null });
+  try {
+    await view.openLogin();
+    await view.page.getByRole('button', { name: '注册新账号', exact: true }).click();
+    assert.equal(await view.page.getByLabel('身份', { exact: true }).count(), 0);
+    assert.equal(await view.page.locator('.team-access-body').getByRole('combobox').count(), 1);
+    assert.equal((await view.page.locator('.team-access-body').innerText()).includes('监督'), false);
+    await view.page.getByLabel('用户名', { exact: true }).fill(actorB.username);
+    await view.page.getByLabel('密码', { exact: true }).fill('isolated-test-password');
+    await view.page.getByRole('button', { name: '注册并登录', exact: true }).click();
+    await frame(view.page);
+    assert.equal(view.mockWrites.length, 0);
+    await view.page.getByLabel(/^主要负责机器/).selectOption('D-1');
+    await view.page.getByRole('button', { name: '注册并登录', exact: true }).click();
+    await view.page.getByRole('button', { name: '退出登录', exact: true }).waitFor();
+    assert.deepEqual(view.mockWrites.map(write => write.path), ['/api/team/register', '/api/team/login']);
+    assert.deepEqual(view.mockWrites[0].body, { username: actorB.username, password: 'isolated-test-password', role: 'technician', primary_device_id: 'D-1' });
+    assert.ok((await header(view.page).innerText()).includes('维修人员'));
+    assert.deepEqual(view.errors, []); assert.deepEqual(view.unexpectedWrites, []);
+    observations.push({ case: 'technician_only_registration', machine_required: true, registration_role: view.mockWrites[0].body.role, unexpectedWrites: view.unexpectedWrites });
+  } finally { await view.context.close(); }
+});
 
 test('工单提交401使顶部统一登录失效，并卸载旧私人工单和催办内容', async () => {
   const view = await pageFor({ handler: (route, path) => path.endsWith('/action') ? respond(route, { detail: '请先登录维修小组账号' }, 401) : undefined });

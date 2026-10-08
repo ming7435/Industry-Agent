@@ -11,6 +11,8 @@ from app.common.serialization import _serialize_agent_result
 from app.runtime.event_store import EventResultConflict
 from app.runtime.durable_store import PendingResultError
 from app.runtime.policy import RuntimePolicy
+from app.api.maintenance_plans import deleted_maintenance_plan_ids
+from app.clients.backend import BackendServiceError
 
 
 class InspectionInput(BaseModel):
@@ -40,7 +42,11 @@ def build_business_return_router(runtime, event_results, require_write_auth):
         actor = team_actor(request)
         results, _ = event_results.list_plan_results()
         source = next((item for item in results if (item.get('maintenance_plan') or {}).get('plan_id') == plan_id), None)
-        if not source or plan_id in event_results.deleted_plan_ids():
+        try:
+            deleted = deleted_maintenance_plan_ids(event_results)
+        except BackendServiceError:
+            raise HTTPException(503, '方案与工单删除状态暂无法核对，未重新派工') from None
+        if not source or plan_id in deleted:
             raise HTTPException(404, '维修方案不存在或已移除')
         event = dict(source.get('event') or {})
         device_id, event_id = str(event.get('device_id') or ''), str(event.get('event_id') or '')

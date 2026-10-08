@@ -40,7 +40,7 @@ from app.tools.query_contracts import QueryArgumentError
 from app.clients.backend import BackendServiceError
 from app.clients.backend import BackendServiceClient
 from app.api.team_auth import team_actor, require_assignee, human_action
-from app.api.maintenance_plans import list_saved_maintenance_plans
+from app.api.maintenance_plans import list_saved_maintenance_plans, deleted_maintenance_plan_ids
 
 
 class MaintenancePlanDeleteRequest(BaseModel):
@@ -437,7 +437,14 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     def maintenance_plans(device_id: str = "", limit: int = 100) -> Dict[str, Any]:
         """展示既有维修方案；个人工单授权仍由工单读取接口检查。"""
         results, history = event_results.list_plan_results()
-        deleted = event_results.deleted_plan_ids()
+        final_keys = {(event_result_key(result.get('event') or {}), result.get('task_id'), result.get('trace_id')) for result in results}
+        stages = [stage for stage in event_results.list_active_plan_stages()
+                  if (event_result_key(stage.get('event') or {}), stage.get('task_id'), stage.get('trace_id')) not in final_keys]
+        results = [*stages, *results]
+        try:
+            deleted = deleted_maintenance_plan_ids(event_results)
+        except BackendServiceError:
+            raise HTTPException(503, '方案与工单删除状态暂无法同步，请稍后重试；已读记录保留') from None
         return {**list_saved_maintenance_plans(results, device_id, max(1, min(limit, 500)), deleted), "history": history, "deleted_plan_ids": deleted}
 
     def remove_maintenance_plans(ids, request):
@@ -459,7 +466,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return remove_maintenance_plans(body.plan_ids, request)
 
     @app.get("/api/workorders")
-    def workorders(request: Request) -> Dict[str, Any]:
+    def workorders(request: Request, include_deleted: bool = False) -> Dict[str, Any]:
         started = perf_counter()
         actor = team_actor(request)
         # 列表读取不执行 Agent；权威工单仍来自同一个 Backend 数据源。
@@ -472,13 +479,22 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
                 or any(not isinstance(order, Mapping) for order in result['items'])):
             raise HTTPException(502, '工单读取失败，请稍后重试；已有工单未删除')
         from app.workorder.review import reviewed_workorder
-        items = [o for o in result.get('items', []) if actor['role'] == 'supervisor' or o.get('assignee') == actor['user_id']]
+        items = [o for o in result.get('items', []) if (include_deleted or not o.get('deleted_at'))
+                 and (actor['role'] == 'supervisor' or o.get('assignee') == actor['user_id'])]
         visible = [reviewed_workorder(o) for o in items]
         logging.getLogger('uvicorn.error').info(
             'workorder_list_read role=%s visible_count=%d source_count=%d elapsed_ms=%.3f',
             actor['role'], len(visible), len(result['items']), (perf_counter() - started) * 1000,
         )
-        return {'items': visible, 'count': len(visible), 'backend': 'backend-service'}
+        deleted_plans = set()
+        for order in result['items']:
+            if not order.get('deleted_at') or order.get('assignee') != actor['user_id']:
+                continue
+            related_ids = [order.get('plan_id'), (order.get('maintenance_plan_snapshot') or {}).get('plan_id')]
+            for revision in order.get('plan_revisions') or []:
+                related_ids.extend((revision.get('previous_plan_id'), revision.get('plan_id')))
+            deleted_plans.update(str(value) for value in related_ids if value)
+        return {'items': visible, 'count': len(visible), 'backend': 'backend-service', 'deleted_plan_ids':sorted(deleted_plans)}
 
     @app.post("/api/workorders", dependencies=[Depends(require_write_auth)])
     def workorder_create(body: WorkOrderCreateRequest, request: Request) -> Dict[str, Any]:
@@ -495,16 +511,24 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.delete("/api/workorders/{workorder_id}", dependencies=[Depends(require_write_auth)])
     def delete_workorder(workorder_id: str, request: Request) -> Dict[str, Any]:
-        require_assignee(workorder_id, team_actor(request))
+        backend = BackendServiceClient()
+        actor = team_actor(request, backend)
+        require_assignee(workorder_id, actor, backend)
         try:
-            result = runtime.container.registry.execute("delete_workorder", {"workorder_id": workorder_id}, context={"agent": "router", "step": "delete_workorder"})
-        except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")[:500]
-            raise HTTPException(status_code=error.code if error.code in {404, 409} else 502, detail=detail or "工单删除请求失败") from error
-        except Exception as error:
-            raise HTTPException(status_code=502, detail="工单删除服务不可用：%s" % error) from error
-        if not result.get("deleted"):
+            result = backend.call('delete_workorder', {'workorder_id': workorder_id, 'actor_id': actor['user_id']})
+        except BackendServiceError as error:
+            status = error.status_code if error.status_code in {403, 404, 409} else 502
+            raise HTTPException(status, '工单删除未完成，请核对权限和最新工单状态后重试；工单与方案仍保留') from None
+        if not result.get("deleted") or result.get('workorder_id') != workorder_id:
             raise HTTPException(status_code=404, detail="工单不存在：%s" % workorder_id)
+        # The Backend receipt already committed both removals atomically. Projecting
+        # the event-store marker is best effort; reads also consult the durable receipt.
+        plan_ids = result.get('deleted_plan_ids') or []
+        if plan_ids:
+            try:
+                event_results.delete_plans(plan_ids, actor['user_id'])
+            except Exception:
+                result['projection_sync_pending'] = True
         return result
 
     @app.get("/api/reports")
@@ -707,11 +731,11 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return runtime.container.operations.execute_memory("search", request.model_dump(mode="json"), from_agent="router")
 
     # 生产建模只增加 CAD 专用路由，不替换维修定位或其他服务接口。
-    from app.agents.cad.modeling_api import build_modeling_router
+    from app.agents.cad.modeling_api import build_freecad_router
     from app.api.business_returns import build_business_return_router
 
     app.include_router(build_business_return_router(runtime, event_results, require_write_auth))
-    app.include_router(build_modeling_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
+    app.include_router(build_freecad_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
     return app
 
 

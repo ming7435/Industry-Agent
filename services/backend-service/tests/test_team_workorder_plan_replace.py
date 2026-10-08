@@ -114,13 +114,14 @@ def test_completed_order_with_prior_receipt_can_reconcile_same_command_but_canno
 
 
 @pytest.mark.parametrize('actor', ['unknown', 'other_device', 'same_device_other', 'supervisor'])
-def test_only_current_device_assignee_technician_can_replace(context, actor):
+def test_only_current_device_assignee_technician_can_replace(context, actor, legacy_supervisor):
     service, client, body, before = context
     if actor == 'unknown':
         body['actor_id'] = 'UNKNOWN'
+    elif actor == 'supervisor':
+        body['actor_id'] = legacy_supervisor(service.team)['user_id']
     else:
-        role = 'supervisor' if actor == 'supervisor' else 'technician'
-        user, _ = registered(service, actor, 'M2' if actor == 'other_device' else 'M1', role=role)
+        user, _ = registered(service, actor, 'M2' if actor == 'other_device' else 'M1')
         body['actor_id'] = user['user_id']
     assert replace(client, body).status_code == 403
     assert service.get_workorder(body['workorder_id'])['workorder'] == before

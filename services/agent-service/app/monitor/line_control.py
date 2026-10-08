@@ -22,6 +22,31 @@ def recovery_snapshot(payload, device_id):
     return result
 
 
+def explicitly_retired_order(order):
+    """仅排除有本次明确撤销授权及状态迁移审计的已归档历史任务。"""
+    if order.get('status') != 'rejected' or not order.get('deleted_at'):
+        return False
+    record = order.get('administrative_cancellation')
+    if not isinstance(record, dict) or record.get('source') != 'explicit_user_legacy_removal':
+        return False
+    if not all(isinstance(record.get(key), str) and record[key].strip() for key in ('request_id', 'operator', 'reason')):
+        return False
+    if any(record.get(key) != order.get(key) for key in ('workorder_id', 'device_id', 'event_id', 'assignee')):
+        return False
+    latest = next((event for event in reversed(order.get('events') or [])
+                   if isinstance(event, dict) and event.get('action') == 'status_changed'), {})
+    return (latest.get('to_status') == 'rejected' and latest.get('workorder_id') == order.get('workorder_id')
+            and (latest.get('payload') or {}).get('administrative_cancellation') == record)
+
+
+def pending_fault_orders(orders, device_ids):
+    # 关联受控故障的工单在 try_restart 前段另行核对，撤销不能解除真实停机。
+    return [order for order in orders
+            if order.get('device_id') in device_ids and (order.get('event_id') or order.get('alarm_code'))
+            and order.get('status') not in {'completed', 'closed'}
+            and not explicitly_retired_order(order)]
+
+
 class LineController:
     def __init__(self, factory_client, ledger):
         self.factory = factory_client
@@ -151,8 +176,6 @@ class LineController:
                 return {**result, 'state': 'unreconciled'}
 
     def confirm_and_restart(self, workorder_id, actor_id, feedback):
-        if not self.enabled():
-            return {'machine_control': {'state': 'blocked', 'reason': '虚拟控制模式未启用'}}
         order = self.ledger.call('get_workorder', {'workorder_id': workorder_id}).get('workorder') or {}
         if not actor_id or order.get('assignee') != actor_id:
             raise PermissionError('仅被派工维修人员可以确认维修')
@@ -160,33 +183,41 @@ class LineController:
             raise ValueError('现场检查工单不能确认维修或申请复机，请提交检查记录')
         if not str(feedback or '').strip():
             raise ValueError('请填写实际维修反馈')
-        # 新的人工确认才触发待停机事件对账；绝不自动重试启动写操作。
-        try:
-            pending_faults = self._pending()
-        except Exception:
-            return {'workorder': order, 'machine_control': {'state': 'blocked', 'reason': '本地安全账本不可用，禁止复机'}}
-        for pending in pending_faults:
-            self.handle_fault(pending['event_id'], pending['device_id'], pending['reason'])
-        line = self.ledger.status()
-        if line['state'] == 'unreconciled':
-            for fault in line['faults']:
-                if not fault.get('resolved'):
-                    self.handle_fault(fault['event_id'], fault['device_id'], '人工确认前停机对账')
+        # 自动控制关闭时仍可保存本人维修确认；只读取恢复数据，不发送设备控制。
+        if self.enabled():
+            # 新的人工确认才触发待停机事件对账；绝不自动重试启动写操作。
+            try:
+                pending_faults = self._pending()
+            except Exception:
+                return {'workorder': order, 'machine_control': {'state': 'blocked', 'reason': '本地安全账本不可用，禁止复机'}}
+            for pending in pending_faults:
+                self.handle_fault(pending['event_id'], pending['device_id'], pending['reason'])
+            line = self.ledger.status()
+            if line['state'] == 'unreconciled':
+                for fault in line['faults']:
+                    if not fault.get('resolved'):
+                        self.handle_fault(fault['event_id'], fault['device_id'], '人工确认前停机对账')
         sample = self.sample(str(order.get('device_id') or ''))
         checks = repair_checks(order.get('device_id'), sample, 'prestart')
         if not all(checks.values()):
-            return {'workorder': order, 'machine_control': {'state': 'blocked', 'checks': checks, 'reason': '设备恢复证据未通过校验'}}
+            labels = {'device_identity': '设备不匹配', 'ready_to_start': '设备状态未就绪',
+                      'alarms_clear': '报警或异常指标尚未解除', 'metrics_available': '缺少有效设备指标',
+                      'interlocks_clear': '安全互锁未解除', 'recovery_fresh': '设备数据已过期或时间无效'}
+            reason = '设备恢复证据未通过校验：' + '；'.join(labels.get(key, key) for key, passed in checks.items() if not passed)
+            return {'workorder': order, 'machine_control': {'state': 'blocked', 'checks': checks, 'reason': reason}}
         completed = self.ledger.request('/internal/team/repair/confirm', {'workorder_id': workorder_id, 'actor_id': actor_id, 'feedback': str(feedback), 'snapshot': sample})
         control = self.try_restart(workorder_id, actor_id)
         updated = self.ledger.call('get_workorder', {'workorder_id': workorder_id}).get('workorder')
         return {**completed, 'workorder': updated, 'machine_control': control}
 
     def try_restart(self, workorder_id, actor_id):
+        if not self.enabled():
+            return {'state': 'blocked', 'reason': '自动复机控制未启用'}
         try:
             pending = self._pending()
         except Exception:
             return {'state': 'blocked', 'reason': '本地安全账本不可用，禁止复机'}
-        if not self.enabled() or self._unpersisted or pending:
+        if self._unpersisted or pending:
             return {'state': 'blocked', 'reason': '控制模式或停机账本未对账'}
         line = self.ledger.status()
         faults = [f for f in line['faults'] if not f.get('resolved')]
@@ -210,24 +241,25 @@ class LineController:
                     'event_id': fault['event_id'], 'workorder_ids': [o['workorder_id'] for o, _ in blocked]}
         ids = sorted({d for f in faults for d in f['device_ids']})
         actual_ids = sorted({str(d.get('device_id') or d.get('id') or '') for d in self.factory.devices()} - {''})
-        if line['state'] == 'running':
+        # 尚无受控停机记录时可只读确认设备已经运行；不补造控制账本或发送启动。
+        if line['state'] == 'running' or (line['state'] == 'unknown' and not faults):
             if not actual_ids or current.get('device_id') not in actual_ids:
                 return {'state': 'blocked', 'reason': '当前工单设备不在整线设备目录中'}
-            unfinished = [o for o in orders if o.get('device_id') in actual_ids and (o.get('event_id') or o.get('alarm_code')) and o.get('status') not in {'completed', 'closed'}]
+            unfinished = pending_fault_orders(orders, actual_ids)
             if unfinished:
                 return {'state': 'blocked', 'reason': '整线还有其他未完成故障工单', 'workorder_ids': [o['workorder_id'] for o in unfinished]}
             samples = {device_id: self.sample(device_id) for device_id in actual_ids}
             if any(not all(repair_checks(device_id, sample, 'poststart').values()) for device_id, sample in samples.items()):
-                return {'state': 'blocked', 'reason': '最近复机账本与当前设备状态不一致'}
+                return {'state': 'blocked', 'reason': '最近复机账本与当前设备状态不一致' if line['state'] == 'running' else '整线设备尚未全部恢复正常运行'}
             latest = self.ledger.status()
-            if latest['state'] != 'running' or latest['generation'] != line['generation']:
+            if latest['state'] != line['state'] or latest['generation'] != line['generation']:
                 return {'state': 'blocked', 'reason': '运行复核期间整线状态发生变化，请重新确认'}
             if current.get('status') == 'completed':
                 self.ledger.request('/internal/team/repair/poststart', {'workorder_id': workorder_id, 'snapshot': samples[current['device_id']]})
             return {'state': 'running', 'already_running': True}
         if not ids or ids != actual_ids:
             return {'state': 'blocked', 'reason': '设备目录变化或没有受控停机事件'}
-        unfinished = [o for o in orders if o.get('device_id') in ids and (o.get('event_id') or o.get('alarm_code')) and o.get('status') not in {'completed', 'closed'}]
+        unfinished = pending_fault_orders(orders, ids)
         if unfinished:
             return {'state': 'blocked', 'reason': '整线还有其他未完成故障工单', 'workorder_ids': [o['workorder_id'] for o in unfinished]}
         for d in ids:

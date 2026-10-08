@@ -139,17 +139,33 @@ class BackendBusinessService:
         values = [item for item in self.repository.list() if (not device_id or item.get("device_id") == device_id) and (not status or item.get("status") == status)]
         return {"success": True, "items": values, "total": len(values), "backend": "backend-service"}
 
-    def delete_workorder(self, workorder_id: str = "", **_: Any) -> dict[str, Any]:
+    def delete_workorder(self, workorder_id: str = "", actor_id: str = "", **_: Any) -> dict[str, Any]:
         workorder_id = str(workorder_id or "").strip()
         if not workorder_id:
             raise ValueError("workorder_id 不能为空")
         order = self.repository.get(workorder_id)
         if order is None:
             return {"success": False, "deleted": False, "found": False, "workorder_id": workorder_id, "backend": "backend-service"}
-        if str(order.get("status") or "open") not in {"open", "rejected", "timeout"} or order.get("repair_feedback") or order.get("repair_verification"):
-            raise ValueError("只有未开始且没有维修结果的工单允许删除")
-        deleted = bool(getattr(self.repository, "delete", lambda _id: False)(workorder_id))
-        return {"success": deleted, "deleted": deleted, "found": deleted, "workorder_id": workorder_id, "backend": "backend-service"}
+        if actor_id:
+            with self.team.repository.transaction() as db:
+                actor = db.execute("SELECT user_id FROM team_accounts WHERE user_id=? AND enabled=1 AND role='technician'", (actor_id,)).fetchone()
+            if not actor or order.get('assignee') != actor_id:
+                raise PermissionError('只能删除本人被派发的工单')
+        related_ids = [order.get('plan_id'), (order.get('maintenance_plan_snapshot') or {}).get('plan_id')]
+        for revision in order.get('plan_revisions') or []:
+            related_ids.extend((revision.get('previous_plan_id'), revision.get('plan_id')))
+        plan_ids = list(dict.fromkeys(str(value) for value in related_ids if value))
+        if not order.get('deleted_at'):
+            stamp = self._now()
+            order.update(deleted_at=stamp, deleted_by=actor_id, updated_at=stamp)
+            audit = {'audit_id': 'AUDIT-' + uuid4().hex[:10].upper(), 'action': 'workorder_deleted',
+                     'object_id': workorder_id, 'operator': actor_id, 'created_at': stamp, 'deleted_plan_ids': plan_ids}
+            self.repository.archive(order, audit, plan_ids)
+        return {"success": True, "deleted": True, "found": True, "workorder_id": workorder_id,
+                "deleted_plan_ids": plan_ids, "mode": "soft-delete", "backend": "backend-service"}
+
+    def list_deleted_maintenance_plan_ids(self, **_: Any) -> dict[str, Any]:
+        return {'deleted_plan_ids': sorted({str(item['plan_id']) for item in self._list_records('maintenance_plan_deleted') if item.get('plan_id')})}
 
     def update_workorder(self, workorder_id: str, status: str = "in_progress", **fields: Any) -> dict[str, Any]:
         order = self.repository.get(workorder_id)

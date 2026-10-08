@@ -1,7 +1,7 @@
 import { assertTeamSessionCurrent, getTeamSession, invalidateTeamSession, isTeamSessionPath } from './teamSession.mjs';
 
-export function registrationPayload(username, password, role, primaryDeviceId) {
-  return { username: username.trim(), password, role, primary_device_id: role === 'technician' ? primaryDeviceId : '' };
+export function registrationPayload(username, password, primaryDeviceId) {
+  return { username: username.trim(), password, role: 'technician', primary_device_id: primaryDeviceId };
 }
 
 export async function teamRequest(path, body) {
