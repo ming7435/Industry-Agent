@@ -17,10 +17,9 @@ import { publishMaintenanceChange, subscribeMaintenanceChanges, rememberDeletedM
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { createMotionClock, getMachineMotionState, getWorkshopMotionState } from "./workshopMotion.mjs";
-import { loadQualityResources, pendingQualityAppealId, qualityChecks, qualityFromAction, qualityHistoryStatusLabel, qualityOutcome, runQualityAction } from "./qualityWorkspace.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
-import InspectionInput from './InspectionInput.jsx';
+import CadQualityWorkspace from "./CadQualityWorkspace.jsx";
 import "../workbench.css";
 import TeamAccess from '../TeamAccess.jsx';
 import SupervisorQueue from '../SupervisorQueue.jsx';
@@ -782,7 +781,7 @@ function App() {
         {teamActor && (workorderVisited || activeView === "workorder") && <WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} active={!bigScreen && activeView === "workorder"} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
         {(logsVisited || activeView === "logs") && <LogsWorkspace active={!bigScreen && activeView === "logs"} snapshot={snapshot} />}
-        {!bigScreen && activeView === "quality" && <QualityWorkspace snapshot={snapshot} sample={sample} />}
+        {!bigScreen && activeView === "quality" && <CadQualityWorkspace />}
         {(reportVisited || activeView === "report") && <ReportWorkspace active={!bigScreen && activeView === "report"} snapshot={snapshot} />}
         {toast && <div className="toast-message" role="status">{toast}</div>}
         {(error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
@@ -3688,158 +3687,6 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
   );
 }
 
-function QualityWorkspace({ snapshot, sample }) {
-  const [partId, setPartId] = useState("PART-001");
-  const [quality, setQuality] = useState(null);
-  const [experiences, setExperiences] = useState([]);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [qualityHistory, setQualityHistory] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskOwner, setTaskOwner] = useState("");
-  const [note, setNote] = useState("");
-  const [reinspectionId, setReinspectionId] = useState("");
-  const resourceGeneration = useRef(0);
-  const targetGeneration = useRef(0);
-  const operationGeneration = useRef(0);
-  const currentPartRef = useRef(partId.trim());
-  const currentCheckRef = useRef(selectedId);
-  currentPartRef.current = partId.trim();
-  currentCheckRef.current = selectedId;
-  const selected = qualityHistory.find(item => item.quality_check_id === selectedId);
-  const relatedTasks = tasks.filter(item => item.quality_check_id === selectedId);
-  const outcome = qualityOutcome(quality || {});
-  const appealId = pendingQualityAppealId(selected || {});
-  function qualityScope(checkId = "") {
-    return { partId: partId.trim(), generation: targetGeneration.current, checkId };
-  }
-  function isQualityScopeCurrent(scope) {
-    return scope.generation === targetGeneration.current && scope.partId === currentPartRef.current
-      && (!scope.checkId || scope.checkId === currentCheckRef.current);
-  }
-  async function loadQualityData(value) {
-    const scope = value?.partId !== undefined ? value : qualityScope();
-    if (!isQualityScopeCurrent(scope)) return;
-    const generation = ++resourceGeneration.current;
-    const result = await loadQualityResources(request, scope.partId, sample?.device_id || snapshot?.device_id);
-    if (generation !== resourceGeneration.current || !isQualityScopeCurrent(scope)) return;
-    setExperiences(result.experiences);
-    setQualityHistory(result.history);
-    setTasks(result.tasks);
-    setError(result.errors.join("；"));
-    return result;
-  }
-
-  useEffect(() => {
-    setBusy(false);
-    setError("");
-    setQuality(null);
-    setQualityHistory([]);
-    setTasks([]);
-    setSelectedId("");
-    setReinspectionId("");
-    loadQualityData();
-    return () => {
-      resourceGeneration.current++;
-      targetGeneration.current++;
-      operationGeneration.current++;
-    };
-  }, [partId]);
-
-  async function verifyQuality() {
-    if (!partId.trim()) return;
-    const scope = qualityScope();
-    const selectedAtStart = currentCheckRef.current;
-    const operation = ++operationGeneration.current;
-    const ownsOperation = () => operation === operationGeneration.current && isQualityScopeCurrent(scope);
-    const isCurrent = () => ownsOperation() && currentCheckRef.current === selectedAtStart;
-    setBusy(true);
-    setError("");
-    try {
-      const body = await request(`/api/quality/parts/${encodeURIComponent(scope.partId)}`, { method: "POST", body: "{}" });
-      if (!isCurrent()) return;
-      setQuality(body);
-      setSelectedId(body.quality_check_id || "");
-      setQualityHistory((items) => body.quality_check_id && !items.some((item) => item.quality_check_id === body.quality_check_id)
-        ? [{ quality_check_id: body.quality_check_id, target_id: scope.partId, result: body.status, score: body.score, created_at: body.checked_at }, ...items]
-        : items);
-      await loadQualityData(scope);
-    } catch (err) {
-      if (isCurrent()) setError(err.message);
-    } finally {
-      if (ownsOperation()) setBusy(false);
-    }
-  }
-
-  async function executeAction(action, extras = {}) {
-    const scope = qualityScope(selectedId);
-    const operation = ++operationGeneration.current;
-    const isCurrent = () => operation === operationGeneration.current && isQualityScopeCurrent(scope);
-    setBusy(true);
-    setError("");
-    try {
-      const result = await runQualityAction(request, action, { checkId: selectedId, title: taskTitle, owner: taskOwner, note, reinspectionCheckId: reinspectionId, ...extras });
-      if (!isCurrent()) return;
-      const updated = qualityFromAction(result);
-      if (updated) setQuality(updated);
-      await loadQualityData(scope);
-    } catch (err) { if (isCurrent()) setError(err.message); }
-    finally { if (operation === operationGeneration.current) setBusy(false); }
-  }
-
-  return (
-    <section className="workspace-view active module-board quality-workspace" aria-label="质检系统">
-      <ModuleHero eyebrow="QMS 质检系统" title="生产零件质量检测" text="对生产完成的零件执行尺寸、外观、材料、功能和工艺追溯检测。" />
-      <div className="ops-grid quality-primary-grid">
-        <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">检测任务</span><h2>输入零件编号</h2></div></div>
-          <label className="field-label" htmlFor="quality-part-id">生产零件编号</label>
-          <input id="quality-part-id" className="select-input" value={partId} onChange={(event) => setPartId(event.target.value)} placeholder="例如 PART-001" />
-          <InspectionInput key={partId} partId={partId} onSaved={() => setError('')} />
-          <div className="action-row"><button className="button primary" type="button" disabled={busy || !partId.trim()} onClick={verifyQuality}>{busy ? "检测中" : "执行质量检测"}</button></div>
-          {error && <div className="inline-error">{error}</div>}
-        </section>
-        <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">最近结果</span><h2>{quality ? `检测结果：${outcome.label}` : "等待检测"}</h2></div>{quality && <span className={`severity-pill ${outcome.tone}`}>{outcome.label}</span>}</div>
-          {quality ? <QualityResultView quality={quality} /> : <div className="empty-state">输入生产零件编号后，系统会返回尺寸、外观、材料、功能和工艺检测结果。</div>}
-          {quality?.recommendation && <FormattedText value={quality.recommendation} />}
-          {quality?.trace_id && <p>本轮日志：{quality.trace_id}（日志系统中查看 Quality Agent 和五项工具调用）</p>}
-          {quality?.report?.report_id && <p>已生成质检报告：{quality.report.report_id}，请在报告中心查看和导出 PDF。</p>}
-        </section>
-      </div>
-      <section className="answer-grid quality-experience-grid">
-        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">经验库 · {experiences.length} 条</span><h2>相关维修经验</h2></div><button className="button" type="button" onClick={loadQualityData}>刷新经验</button></div><ExperienceList items={experiences} /></div>
-        <div className="panel module-panel"><div className="panel-heading"><div><span className="eyebrow">真实记录 · {qualityHistory.length} 条</span><h2>质检历史 · 选择记录查看闭环</h2></div></div>{qualityHistory.length ? <div className="document-list">{qualityHistory.map((item) => <button className="button quality-history-card" type="button" aria-pressed={selectedId === item.quality_check_id} key={item.quality_check_id} onClick={() => { setSelectedId(item.quality_check_id); setQuality(item); setReinspectionId(""); }}><strong>{item.quality_check_id}</strong><span>{item.target_id || item.part_id || partId} · {qualityHistoryStatusLabel(item)} · {formatTime(item.created_at)}</span></button>)}</div> : <div className="empty-state">完成检测后，质检记录会写入后端并显示在这里。</div>}</div>
-      </section>
-      {selected && <section className="panel module-panel quality-closure-panel">
-        <div className="panel-heading"><div><span className="eyebrow">同一质检任务的闭环操作</span><h2>{qualityHistoryStatusLabel(selected)}</h2><p>{selected.quality_check_id} · 批次 {selected.batch_id || "未提供"}</p></div></div>
-        <p>检测失败后创建整改任务；全部整改完成后，重新执行质量检测并引用新记录复检。服务端再次校验通过才能放行和关闭。</p>
-        {["failed", "rectification"].includes(selected.status) && <div>
-          <label className="field-label" htmlFor="quality-task-title">整改内容</label><input className="select-input" id="quality-task-title" value={taskTitle} onChange={event => setTaskTitle(event.target.value)} />
-          <label className="field-label" htmlFor="quality-task-owner">整改负责人</label><input className="select-input" id="quality-task-owner" value={taskOwner} onChange={event => setTaskOwner(event.target.value)} />
-          <div className="action-row"><button className="button primary" disabled={busy || !taskTitle.trim()} onClick={() => executeAction("create_task")}>创建整改任务</button></div>
-        </div>}
-        <label className="field-label" htmlFor="quality-closure-note">执行记录／申诉原因</label><textarea className="qa-input" id="quality-closure-note" value={note} onChange={event => setNote(event.target.value)} placeholder="记录真实整改操作、检测数据或申诉原因" />
-        {relatedTasks.map(task => <div className="quality-task-record" key={task.closure_task_id}><strong>{task.title}</strong><p>{task.closure_task_id} · {task.owner || "负责人未设置"} · {task.status === "completed" ? "已整改" : "待整改"}</p>{task.status === "open" && <button className="button" disabled={busy || !note.trim()} onClick={() => executeAction("complete_task", { taskId: task.closure_task_id })}>提交该任务整改记录</button>}</div>)}
-        {selected.status === "reinspection" && <div>
-          <label className="field-label" htmlFor="quality-reinspection-id">选择新生成的合格检测记录</label>
-          <select className="select-input" id="quality-reinspection-id" value={reinspectionId} onChange={event => setReinspectionId(event.target.value)}><option value="">完成整改后，请先重新执行质量检测</option>{qualityHistory.filter(item => item.quality_check_id !== selectedId && item.result === "passed" && item.batch_id && item.batch_id === selected.batch_id).map(item => <option value={item.quality_check_id} key={item.quality_check_id}>{item.quality_check_id} · {formatTime(item.created_at)}</option>)}</select>
-          <div className="action-row"><button className="button" disabled={busy || !reinspectionId} onClick={() => executeAction("reinspect")}>引用该记录复检</button></div>
-        </div>}
-        <div className="action-row">
-          {["failed", "rectification"].includes(selected.status) && <button className="button" disabled={busy || !note.trim()} onClick={() => executeAction("appeal")}>提交申诉</button>}
-          {selected.status === "appealed" && <><button className="button" disabled={busy || !appealId} onClick={() => executeAction("resolve_appeal", { decision: "approved", appealId })}>批准申诉并重新整改</button><button className="button" disabled={busy || !appealId} onClick={() => executeAction("resolve_appeal", { decision: "rejected", appealId })}>驳回申诉</button>{!appealId && <p>待处理申诉信息不完整或存在多条待办，请刷新质检记录后核对。</p>}</>}
-          {(selected.status === "passed" || (selected.status === "reinspection" && selected.reinspection?.passed === true)) && <button className="button primary" disabled={busy || relatedTasks.some(task => task.status !== "completed")} onClick={() => executeAction("release")}>校验并放行</button>}
-          {selected.status === "released" && <button className="button primary" disabled={busy} onClick={() => executeAction("close")}>关闭质检任务</button>}
-        </div>
-        {error && <div className="inline-error" role="alert">{error}</div>}
-      </section>}
-    </section>
-  );
-}
-
 function ModuleHero({ eyebrow, title, text, action = null }) {
   return <header className="module-hero"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{text}</p></div>{action && <div className="module-hero-action">{action}</div>}</header>;
 }
@@ -3879,17 +3726,6 @@ function StepList({ steps = [] }) {
   const visibleSteps = steps.map(cleanDisplayText).filter(Boolean);
   if (!visibleSteps.length) return <div className="empty-state">暂无维修步骤</div>;
   return <ol className="step-list">{visibleSteps.map((step, index) => <li key={`${step}-${index}`}><FormattedText value={step} /></li>)}</ol>;
-}
-
-function QualityResultView({ quality }) {
-  const checks = qualityChecks(quality);
-  const defects = (quality.defects || []).map((item) => typeof item === "string" ? item : item?.description || item?.message || item?.name || "").filter(Boolean);
-  return <div className="quality-result"><div className="check-grid">{checks.map((item, index) => { const status = qualityOutcome(item); return <div key={`${item.name}-${index}`} className={status.tone}><span>{item.name}</span><strong>{status.label}</strong></div>; })}</div><StepList steps={[...defects, ...(quality.findings || [])]} /></div>;
-}
-
-function ExperienceList({ items }) {
-  if (!items.length) return <div className="empty-state">暂无经验记录；闭环通过后会自动沉淀。</div>;
-  return <div className="document-list">{items.map((item, index) => <article key={item.experience_id || index}><strong>{cleanDisplayText(item.title) || "维修经验"}</strong><FormattedText value={cleanDisplayText(item.content) || "暂无经验正文"} /></article>)}</div>;
 }
 
 function FormattedText({ value, className = "" }) {

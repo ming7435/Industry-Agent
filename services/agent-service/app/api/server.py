@@ -230,7 +230,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         workorder_dispatcher = SavedPlanDispatcher(event_results, BackendServiceClient(), runtime.container.registry)
         app.add_event_handler('startup', workorder_dispatcher.start)
         app.add_event_handler('shutdown', workorder_dispatcher.close)
-    app.add_event_handler("shutdown", event_results.close)
+    # FastAPI 新版本不再暴露 app.add_event_handler；Router 生命周期仍可注册 shutdown 回收。
+    app.router.on_shutdown.append(event_results.close)
 
     def closure_call(callable_: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """把质检闭环的业务拒绝转换成可读的 HTTP 状态。"""
@@ -741,9 +742,11 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     # 生产建模只增加 CAD 专用路由，不替换维修定位或其他服务接口。
     from app.agents.cad.modeling_api import build_freecad_router
     from app.api.business_returns import build_business_return_router
+    from app.api.cad_quality import build_cad_quality_router
 
     app.include_router(build_business_return_router(runtime, event_results, require_write_auth))
     app.include_router(build_freecad_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
+    app.include_router(build_cad_quality_router(runtime, require_write_auth))
     return app
 
 

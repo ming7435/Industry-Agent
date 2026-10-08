@@ -1,0 +1,33 @@
+.cad-qms { display: grid; gap: 16px; }
+.cad-qms .module-panel { min-width: 0; }
+.cad-qms-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.cad-qms-fields label { display: grid; gap: 8px; color: #45606a; font-weight: 600; font-size: 13px; }
+.cad-qms-fields .select-input { width: 100%; min-width: 0; }
+.cad-qms-source { margin-top: 12px; padding: 13px 16px; background: #e9f7f3; border: 1px solid #b9dfd5; border-radius: 9px; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+.cad-qms-source span { color: #087a65; font-weight: 600; }
+.cad-qms-source strong { color: #194a51; }
+.cad-qms-source small { color: #536e75; }
+.cad-qms-help { color: #657981; font-size: 13px; line-height: 1.7; }
+.cad-qms-table-scroll { overflow-x: auto; max-height: 510px; overflow-y: auto; margin: 16px 0; border: 1px solid #d8e5e7; border-radius: 9px; }
+.cad-qms-table { width: 100%; border-collapse: collapse; min-width: 860px; text-align: left; }
+.cad-qms-table th, .cad-qms-table td { border-bottom: 1px solid #e5eef0; padding: 12px 10px; vertical-align: middle; }
+.cad-qms-table thead { position: sticky; top: 0; background: #f0f6f6; z-index: 1; }
+.cad-qms-table th { color: #31505a; font-size: 13px; font-weight: 650; }
+.cad-qms-table tbody th { width: 32%; }
+.cad-qms-table td { font-variant-numeric: tabular-nums; font-size: 13px; }
+.cad-qms-table td small { display: block; color: #647983; font-size: 11px; }
+.cad-qms-table input { width: 100%; min-width: 125px; }
+.cad-qms-table tr:last-child td, .cad-qms-table tr:last-child th { border-bottom: 0; }
+.cad-qms-table .cad-qms-good { color: #027c65; }
+.cad-qms-table .cad-qms-bad { color: #c1483d; }
+.cad-qms-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.cad-qms-actions span { color: #647981; font-size: 12px; }
+.cad-qms-summary { border-radius: 10px; border: 1px solid #d6e2e6; background: #f4f8f8; padding: 20px; }
+.cad-qms-summary strong { font-size: 24px; font-weight: 750; }
+.cad-qms-summary p { margin: 8px 0; font-size: 13px; }
+.cad-qms-summary small { color: #536e75; }
+.cad-qms-summary.match { background: #e9f8f1; border-color: #9cd5ba; color: #126148; }
+.cad-qms-summary.mismatch { background: #fff4f0; border-color: #e6b8a8; color: #8f3e31; }
+.cad-qms-summary.incomplete { background: #f4f7f9; color: #556674; }
+.cad-qms-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 720px) { .cad-qms-fields { grid-template-columns: 1fr; } .cad-qms-table-scroll { margin-left: -6px; margin-right: -6px; } }

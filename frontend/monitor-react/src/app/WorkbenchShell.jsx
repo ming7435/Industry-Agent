@@ -22,7 +22,7 @@ const pages = {
   diagnosis: { title: "智能诊断", description: "查看 Runtime 诊断结论、证据与处置建议", category: "生产运营" },
   maintenance: { title: "维修方案", description: "查看诊断生成的维修步骤、工具、备件与证据", category: "生产运营" },
   workorder: { title: "工单系统", description: "跟进维修任务、执行反馈与验收", category: "生产运营" },
-  quality: { title: "质检系统", description: "执行零件质量检测并追踪结果", category: "生产运营" },
+  quality: { title: "零件参数一致性检测", description: "人工实测生产零件，并与 FreeCAD 设计参数逐项对比", category: "生产运营" },
   rag: { title: "知识问答", description: "检索维修知识与可引用的文档证据", category: "知识资产" },
   logs: { title: "日志系统", description: "查看每一步执行操作、工具调用、上下文与返回体", category: "知识资产" },
   report: { title: "报告中心", description: "汇总诊断、维修与质量闭环报告", category: "知识资产" },

@@ -41,7 +41,9 @@ class PartInspectionService:
                 raise ValueError('录入必须有登录人员和零件编号')
             # 保存原始观测和设计规格，不接受用户宣称 passed 或 identity_verified。
             allowed = ('part_id', 'part_no', 'part_name', 'batch_id', 'production_order_id', 'device_id',
-                       'measurements', 'specifications', 'appearance', 'material', 'function', 'process')
+                       'measurements', 'specifications', 'appearance', 'material', 'function', 'process',
+                       'design_run_id', 'design_spec_digest', 'comparison_status', 'comparison_items',
+                       'comparison_checked_at', 'tolerance_source')
             item = {key: supplied[key] for key in allowed if key in supplied}
             for key in ('measurements', 'specifications', 'appearance', 'material', 'function', 'process'):
                 if not isinstance(item.get(key, {}), Mapping):
