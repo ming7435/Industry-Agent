@@ -230,7 +230,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         workorder_dispatcher = SavedPlanDispatcher(event_results, BackendServiceClient(), runtime.container.registry)
         app.add_event_handler('startup', workorder_dispatcher.start)
         app.add_event_handler('shutdown', workorder_dispatcher.close)
-    app.add_event_handler("shutdown", event_results.close)
+    # FastAPI 新版本不再暴露 app.add_event_handler；Router 生命周期仍可注册 shutdown 回收。
+    app.router.on_shutdown.append(event_results.close)
 
     def closure_call(callable_: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """把质检闭环的业务拒绝转换成可读的 HTTP 状态。"""
