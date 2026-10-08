@@ -91,7 +91,7 @@ test('已派检查工单按保存的方案快照显示类型和真实负责人',
     assert.equal(await sheet.getByRole('button', { name: /复机|关闭工单/ }).count(), 0);
     assert.equal(await sheet.getByRole('button', { name: '确认接单', exact: true }).count(), 1);
     assert.equal(await sheet.getByRole('button', { name: '提交检查结果', exact: true }).count(), 1);
-    assert.ok((await sheet.innerText()).includes('报警解除并核验通过后结束检查；仍有异常保留待处理'));
+    assert.ok((await sheet.innerText()).includes('检查通过后自动核验整线复机；仍有异常保留待处理'));
     assert.ok((await page.locator('.workorder-titlebar').innerText()).includes('设备负责人员甲'));
     assert.ok((await sheet.locator('.basic-grid').innerText()).includes('设备负责人员甲'));
     assert.deepEqual(mutations, []);
@@ -163,7 +163,8 @@ test('报警已清且服务端核验通过返回closed时完成检查，禁止�
       return respond(route, { workorder: { ...order, status: 'closed', repair_feedback: route.request().postDataJSON().repair_feedback,
         repair_verification: { source: 'inspection', phase: 'inspection', passed: true,
           checks: { alarm_clear: true, normal: true }, validation_findings: [] },
-      }, inspection_result: { passed: true, checks: { alarm_clear: true, normal: true }, validation_findings: [] } });
+      }, inspection_result: { passed: true, checks: { alarm_clear: true, normal: true }, validation_findings: [] },
+      machine_control: {state:'running'} });
     });
     await page.goto(`${fixture.base}/?view=workorder`);
     await page.getByRole('button', { name: /WO-CHECK-CLOSE/ }).click();
@@ -175,10 +176,40 @@ test('报警已清且服务端核验通过返回closed时完成检查，禁止�
     assert.equal(await page.getByRole('button', { name: '提交检查结果', exact: true }).isDisabled(), true);
     assert.equal(await page.getByLabel('处理说明', { exact: true }).isDisabled(), true);
     assert.equal(await page.getByRole('button', { name: /复机|关闭工单/ }).count(), 0);
+    assert.ok((await page.locator('.machine-control-result').innerText()).includes('运行复核通过'));
     assert.deepEqual(writes, [{ action: 'submit_feedback', status: 'in_progress',
       repair_feedback: { feedback: '报警已解除，现场检查和数据读回正常。' } }]);
     assert.deepEqual(mutations, []);
     assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('检查已通过但其他任务阻止整线复机时显示原因，并可显式再次核验', async () => {
+  const order = {workorder_id:'WO-RETRY', device_id:'M-1', assignee:'U-TECH', status:'in_progress',
+    accepted_by:'U-TECH', maintenance_plan_snapshot:inspection};
+  const {context, page, errors} = await pageFor([inspection],[order]);
+  const writes=[];
+  try {
+    await page.route('**/api/workorders/WO-RETRY/action', route => {
+      const body=route.request().postDataJSON(); writes.push(body);
+      return respond(route,{workorder:{...order,status:'closed',repair_feedback:body.repair_feedback,
+        repair_verification:{source:'inspection',phase:'inspection',passed:true,validation_findings:[]}},
+        inspection_result:{passed:true}, machine_control:writes.length===1
+          ? {state:'blocked',reason:'整线还有其他未完成故障工单',workorder_ids:['WO-OTHER']}
+          : {state:'running'}});
+    });
+    await page.goto(`${fixture.base}/?view=workorder`,{waitUntil:'domcontentloaded'});
+    await page.getByRole('button',{name:/WO-RETRY/}).click();
+    await page.getByLabel('处理说明',{exact:true}).fill('现场核查已完成，报警已解除');
+    await page.getByRole('button',{name:'提交检查结果',exact:true}).click();
+    await page.locator('.machine-control-result').filter({hasText:'WO-OTHER'}).waitFor();
+    assert.equal(writes.length,1);
+    await page.getByRole('button',{name:'再次核验并申请复机',exact:true}).click();
+    await page.locator('.machine-control-result.is-ok').waitFor();
+    assert.equal(writes.length,2);
+    assert.ok(writes.every(body=>body.action==='submit_feedback'));
+    assert.equal(await page.getByRole('button',{name:'再次核验并申请复机',exact:true}).count(),0);
+    assert.deepEqual(errors,[]);
   } finally { await context.close(); }
 });
 

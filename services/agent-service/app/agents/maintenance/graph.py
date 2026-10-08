@@ -12,6 +12,7 @@ from app.skills import get_skill_registry
 from app.agents.base import chain_nodes, prepare_skill_node, trace_skill_node
 from app.contracts import DiagnosisView, MaintenancePlan
 from app.workorder.inspection import inspection_plan_findings
+from app.workorder.repair_profile import hydraulic_inspection_plan_matches
 
 from .schemas import MaintenanceQuery
 from .validator import MaintenancePlanValidator
@@ -92,7 +93,7 @@ def check_parts_tools(state: MaintenanceGraphState) -> Dict[str, Any]:
     diagnosis = state["diagnosis"]
     query = state["query"]
     plan = dict(state.get("plan_payload") or {})
-    if plan.get("plan_kind") == "inspection":
+    if plan.get("plan_kind") == "inspection" or hydraulic_inspection_plan_matches(plan):
         return {"inventory": {}, "part_availability": {}, "plan_payload": plan, "route": "safety_validate"}
     inventory = agent._safe_tool("query_inventory", {"query": query, "device_id": diagnosis.device_id})
     availability = agent._safe_tool("query_part_availability", {"query": query, "device_id": diagnosis.device_id})

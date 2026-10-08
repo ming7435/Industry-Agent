@@ -21,7 +21,7 @@ export function incidentIdentity(record = {}) {
   return Object.fromEntries(['device_id','alarm_code','event_id','event_revision','tenant_id','project_id'].map(key => [key,field(key)]));
 }
 
-export function currentIncident(snapshot = {}, sample) {
+export function currentIncident(snapshot = {}, sample, records = []) {
   snapshot = object(snapshot);
   const deviceId = text(sample?.device_id || snapshot.device_id);
   const current = sample || snapshot.latest_results?.[deviceId]?.current_sample
@@ -33,7 +33,22 @@ export function currentIncident(snapshot = {}, sample) {
     snapshot.diagnosis?.pipeline_by_device?.[deviceId]?.event, snapshot.diagnosis?.pipeline?.event];
   const event = candidates.map(incidentIdentity).find(candidate => candidate.event_id && candidate.device_id === deviceId
     && (!alarm || candidate.alarm_code === alarm)) || {};
-  return {...event, device_id:deviceId, alarm_code:alarm || text(event.alarm_code), event_id:text(event.event_id)};
+  const incident = {...event, device_id:deviceId, alarm_code:alarm || text(event.alarm_code), event_id:text(event.event_id)};
+  if (!incident.event_id) return incident;
+  const revision = value => /^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : 0;
+  let latestRevision = revision(incident.event_revision);
+  // 原触发确定故障身份；已保存的同事件新修订可以补充当前版本，不改写原触发。
+  for (const record of [...candidates, ...(Array.isArray(records) ? records : [])]) {
+    if (record?.deleted_at) continue;
+    const candidate = incidentIdentity(record);
+    if (!['device_id','alarm_code','event_id','tenant_id','project_id'].every(key => text(candidate[key]) === text(incident[key]))) continue;
+    const candidateRevision = revision(candidate.event_revision);
+    if (candidateRevision > latestRevision) {
+      latestRevision = candidateRevision;
+      incident.event_revision = candidate.event_revision;
+    }
+  }
+  return incident;
 }
 
 export function matchesIncident(record, incident) {

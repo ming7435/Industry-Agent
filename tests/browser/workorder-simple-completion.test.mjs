@@ -37,7 +37,7 @@ after(async () => {
 
 const completeButton = page => page.getByRole('button', { name: '确认维修完成并申请复机', exact: true });
 const frame = page => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
-async function pageFor({ currentFixture = fixture, currentOrder = order, actionHandler } = {}) {
+async function pageFor({ currentFixture = fixture, currentOrder = order, actionHandler, lineStatus } = {}) {
   const context = await currentFixture.browser.newContext(), page = await context.newPage();
   page.setDefaultTimeout(2500); await page.clock.install();
   const posts = [], unexpectedWrites = [], errors = [];
@@ -54,6 +54,7 @@ async function pageFor({ currentFixture = fixture, currentOrder = order, actionH
       unexpectedWrites.push({ path, method: request.method() }); return route.abort();
     }
     if (path === '/api/workorders') return respond(route, { items: [currentOrder] });
+    if (path === '/api/team/line' && lineStatus) return respond(route, lineStatus);
     return respond(route, { items: [] });
   });
   await page.goto(`${currentFixture.base}/?view=workorder`);
@@ -176,6 +177,68 @@ test('设备报警未解除则明确提示维修确认未通过，不虚报完�
     await result.page.clock.runFor(5100); await frame(result.page);
     assert.equal(await result.page.locator('.workorder-status-badge').innerText(), '处理中');
     assert.match(await result.page.locator('.machine-control-result').innerText(), /维修确认未通过：报警尚未解除/);
+    assertActualFeedbackOnly(result.posts); assertClean(result);
+  } finally { await result.context.close(); }
+});
+
+test('没有关联工单的旧故障显示设备报警与事件，不提示用户寻找不存在的工单', async () => {
+  const result = await pageFor({ actionHandler: route => respond(route, {
+    workorder: { ...order, status: 'completed', repair_verification: { phase: 'prestart', passed: true } },
+    machine_control: { state: 'blocked', reason: '仍有历史故障没有关联工单，需要确认处理结果并核验设备',
+      workorder_ids: [], fault_blockers: [{ event_id: 'EVT-OLDER', device_id: 'D-1', alarm_code: '700015',
+        kind: 'missing_workorder', workorder_ids: [] }] },
+  }) });
+  try {
+    await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
+    await completeButton(result.page).click();
+    const details = result.page.getByRole('region', { name: '复机阻挡记录', exact: true });
+    await details.waitFor();
+    assert.match(await details.innerText(), /D-1.*700015/);
+    assert.match(await details.innerText(), /EVT-OLDER/);
+    assert.match(await details.innerText(), /没有关联工单/);
+    assert.equal(await result.page.locator('.machine-control-blockers').count(), 0);
+    assertActualFeedbackOnly(result.posts); assertClean(result);
+  } finally { await result.context.close(); }
+});
+
+test('后台启动后核验更新到达时自动移除旧拒绝提示，无需刷新网页', async () => {
+  const currentOrder = structuredClone(order);
+  const lineStatus = {state:'stopped'};
+  const result = await pageFor({ currentOrder, lineStatus, actionHandler: route => {
+    Object.assign(currentOrder, { status: 'completed', repair_verification: { phase: 'prestart', passed: true } });
+    return respond(route, { workorder: currentOrder, machine_control: { state: 'blocked', reason: '还有未确认完成的故障工单' } });
+  } });
+  try {
+    await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
+    await completeButton(result.page).click();
+    await result.page.getByText('维修已完成，复机申请未通过：还有未确认完成的故障工单', { exact: true }).waitFor();
+    Object.assign(currentOrder, { repair_verification: { phase: 'poststart', passed: true } });
+    lineStatus.state = 'running';
+    await result.page.clock.runFor(2100); await frame(result.page);
+    assert.equal(await result.page.locator('.machine-control-result.is-error').count(), 0);
+    assert.equal(await result.page.locator('.machine-control-result.is-ok').count(), 1);
+    assert.equal(await result.page.getByRole('button', { name: '关闭工单并生成总结', exact: true }).count(), 1);
+    assertActualFeedbackOnly(result.posts); assertClean(result);
+  } finally { await result.context.close(); }
+});
+
+test('仅工单列表返回权威复机结果就能替换旧提示，无需整线请求成功或再次提交', async () => {
+  const currentOrder = structuredClone(order);
+  const result = await pageFor({ currentOrder, actionHandler: route => {
+    Object.assign(currentOrder, { status: 'completed', repair_verification: { phase: 'prestart', passed: true } });
+    return respond(route, { workorder: currentOrder,
+      machine_control: { state: 'blocked', reason: '还有未确认完成的故障工单' } });
+  } });
+  try {
+    await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
+    await completeButton(result.page).click();
+    await result.page.getByText('维修已完成，复机申请未通过：还有未确认完成的故障工单', { exact: true }).waitFor();
+    Object.assign(currentOrder, { status: 'closed', repair_verification: { phase: 'poststart', passed: true },
+      machine_control: { state: 'running', source: 'persisted_line_restart', generation: 20, cycle_id: 'CYCLE-VERIFIED' } });
+    await result.page.clock.runFor(2100); await frame(result.page);
+    assert.equal(await result.page.locator('.machine-control-result.is-error').count(), 0);
+    assert.equal(await result.page.locator('.machine-control-result.is-ok').count(), 1);
+    assert.equal(await result.page.locator('.workorder-status-badge').innerText(), '已关闭');
     assertActualFeedbackOnly(result.posts); assertClean(result);
   } finally { await result.context.close(); }
 });

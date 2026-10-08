@@ -16,6 +16,7 @@ import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, executionRevi
 import { publishMaintenanceChange, subscribeMaintenanceChanges, rememberDeletedMaintenancePlans } from './maintenanceChanges.mjs';
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
+import { createMotionClock, getMachineMotionState, getWorkshopMotionState } from "./workshopMotion.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
 import CadQualityWorkspace from "./CadQualityWorkspace.jsx";
@@ -557,23 +558,64 @@ function observationLabel(item) {
 function useMonitorSnapshot() {
   const [snapshot, setSnapshot] = useState(null);
   const [error, setError] = useState("");
-
-  async function refresh() {
-    try {
-      setSnapshot(await request("/api/monitor/snapshot"));
-      setError("");
-    } catch (err) {
-      setError(err.message);
-    }
-  }
+  const [monitorLine, setMonitorLine] = useState(null);
+  const [motionUnavailable, setMotionUnavailable] = useState(true);
+  const revisionRef = useRef(0);
 
   useEffect(() => {
+    let disposed = false;
+    let inFlight = false;
+    let controller;
+    async function refresh() {
+      if (inFlight) return;
+      inFlight = true;
+      const revision = ++revisionRef.current;
+      const canApply = () => !disposed && revision === revisionRef.current;
+      const pauseOnFailure = failure => {
+        if (canApply()) setMotionUnavailable(true);
+        throw failure;
+      };
+      controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 3000);
+      try {
+        // The public ledger is also required when logged out or in big-screen mode.
+        const [monitor, line] = await Promise.allSettled([
+          request("/api/monitor/snapshot", { signal: controller.signal }).then(value => {
+            // A stop must not wait for the other request. Running is published
+            // only after both reads in this round have succeeded.
+            const deviceMotion = getWorkshopMotionState({ machines: buildWorkshopMachines(value), line: { state: "running" }, runner: value.runner });
+            if (canApply() && !deviceMotion.running) setSnapshot(value);
+            return value;
+          }, pauseOnFailure),
+          request("/api/team/line", { signal: controller.signal }).then(value => {
+            if (canApply() && !["running", "unknown"].includes(value?.state)) setMonitorLine(value);
+            return value;
+          }, pauseOnFailure),
+        ]);
+        if (disposed || revision !== revisionRef.current) return;
+        if (monitor.status === "fulfilled") {
+          setSnapshot(monitor.value);
+          setError("");
+        } else setError(monitor.reason.message);
+        if (line.status === "fulfilled") setMonitorLine(line.value);
+        setMotionUnavailable(monitor.status !== "fulfilled" || line.status !== "fulfilled");
+      } finally {
+        window.clearTimeout(timeout);
+        inFlight = false;
+      }
+    }
     refresh();
     const timer = window.setInterval(refresh, 1000);
-    return () => window.clearInterval(timer);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      controller?.abort();
+    };
   }, []);
 
   async function control(action) {
+    ++revisionRef.current;
+    setMotionUnavailable(true);
     try {
       setSnapshot(await request("/api/monitor/control", {
         method: "POST",
@@ -586,6 +628,7 @@ function useMonitorSnapshot() {
   }
 
   async function resetStats() {
+    ++revisionRef.current;
     try {
       setSnapshot(await request("/api/monitor/reset", {
         method: "POST",
@@ -597,7 +640,7 @@ function useMonitorSnapshot() {
     }
   }
 
-  return { snapshot, error, control, resetStats };
+  return { snapshot, error, control, resetStats, monitorLine, motionUnavailable };
 }
 
 function useMetricHistory(machines) {
@@ -635,9 +678,13 @@ function App() {
   });
   const [maintenanceVisited, setMaintenanceVisited] = useState(activeView === "maintenance");
   const [logsVisited, setLogsVisited] = useState(activeView === "logs");
+  const [workorderVisited, setWorkorderVisited] = useState(activeView === "workorder");
+  const [reportVisited, setReportVisited] = useState(activeView === "report");
   useEffect(() => {
     if (activeView === "maintenance") setMaintenanceVisited(true);
     if (activeView === "logs") setLogsVisited(true);
+    if (activeView === "workorder") setWorkorderVisited(true);
+    if (activeView === "report") setReportVisited(true);
   }, [activeView]);
   const [ragMessages, setRagMessages] = useState(() => {
     if (typeof window === "undefined") return [];
@@ -647,9 +694,10 @@ function App() {
   const [toast, setToast] = useState("");
   const [selectedMachineId, setSelectedMachineId] = useState(workshopMachines[0].id);
   const [bigScreen, setBigScreen] = useState(false);
-  const { snapshot, error, control, resetStats } = useMonitorSnapshot();
+  const { snapshot, error, control, resetStats, monitorLine, motionUnavailable } = useMonitorSnapshot();
   const runner = snapshot?.runner || {};
   const machines = useMemo(() => buildWorkshopMachines(snapshot), [snapshot]);
+  const motion = getWorkshopMotionState({ machines, line: monitorLine, runner, unavailable: motionUnavailable });
   const metricHistory = useMetricHistory(machines);
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
   const result = selectedMachine?.result || null;
@@ -703,7 +751,7 @@ function App() {
     <div className={`platform-shell ${bigScreen ? "big-screen" : "workbench"}`}>
       {!bigScreen && <WorkbenchSidebar activeView={activeView} onChange={setActiveView} hasError={Boolean(error || runner.last_error)} connected={Boolean(snapshot)} />}
       <main className={`app-shell ${!bigScreen && activeView === "monitor" ? "monitor-canvas-shell" : !bigScreen ? "content-shell" : ""}`}>
-        {!bigScreen && <TeamAccess actor={teamActor} onActor={setTeamActor} line={lineState} onLine={setLineState} />}
+        {!bigScreen && <TeamAccess actor={teamActor} onActor={setTeamActor} line={monitorLine || lineState} onLine={setLineState} />}
         {bigScreen ? (
           <Topbar
             snapshot={snapshot}
@@ -717,6 +765,7 @@ function App() {
         {(activeView === "monitor" || bigScreen) && (
           <MonitorCenter
             machines={machines}
+            motion={motion}
             result={result}
             sample={sample}
             dataSource={snapshot?.data_source}
@@ -728,11 +777,12 @@ function App() {
         {!bigScreen && activeView === "cad" && <ProductionCadWorkspace />}
         {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} sample={sample} />}
         {(maintenanceVisited || activeView === "maintenance") && <MaintenancePlanWorkspace active={!bigScreen && activeView === "maintenance"} snapshot={snapshot} sample={sample} actor={teamActor} />}
-        {!bigScreen && activeView === "workorder" && (teamActor ? <><SupervisorQueue actor={teamActor} /><WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} /></> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单，监督人查看全部并催办。</p></section>)}
+        {!bigScreen && activeView === "workorder" && (teamActor ? <SupervisorQueue actor={teamActor} /> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单。</p></section>)}
+        {teamActor && (workorderVisited || activeView === "workorder") && <WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} active={!bigScreen && activeView === "workorder"} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
         {(logsVisited || activeView === "logs") && <LogsWorkspace active={!bigScreen && activeView === "logs"} snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <CadQualityWorkspace />}
-        {!bigScreen && activeView === "report" && <ReportWorkspace snapshot={snapshot} />}
+        {(reportVisited || activeView === "report") && <ReportWorkspace active={!bigScreen && activeView === "report"} snapshot={snapshot} />}
         {toast && <div className="toast-message" role="status">{toast}</div>}
         {(error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
       </main>
@@ -770,6 +820,7 @@ function Topbar({ snapshot, runner, onControl, onReset, bigScreen, onToggleBigSc
 
 function MonitorCenter({
   machines,
+  motion,
   result,
   sample,
   dataSource,
@@ -788,6 +839,7 @@ function MonitorCenter({
     <section className="workspace-view active monitor-map-only" aria-label="车间流水线">
       <WorkshopMap
         machines={machines}
+        motion={motion}
         selectedMachineId={selectedMachine.id}
         result={result}
         onSelectMachine={selectFromMap}
@@ -797,7 +849,7 @@ function MonitorCenter({
   );
 }
 
-function WorkshopMap({ machines, selectedMachineId, result, onSelectMachine }) {
+function WorkshopMap({ machines, motion = getWorkshopMotionState(), selectedMachineId, result, onSelectMachine }) {
   const [viewMode, setViewMode] = useState("iso");
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
   const selectedStatus = machineStatus(selectedMachine, selectedMachine?.result || result);
@@ -807,6 +859,7 @@ function WorkshopMap({ machines, selectedMachineId, result, onSelectMachine }) {
       <div className="factory-map" aria-label="车间设备分布图">
         <Machine3DScene
           machines={machines}
+          motion={motion}
           selectedMachineId={selectedMachineId}
           status={selectedStatus}
           viewMode={viewMode}
@@ -817,11 +870,15 @@ function WorkshopMap({ machines, selectedMachineId, result, onSelectMachine }) {
             <span className="eyebrow">车间总览</span>
             <h2>流水线三维视图</h2>
             <p className="scene-click-hint">点击设备模型查看运行数据</p>
+            <p className={`scene-motion-status ${motion.running ? "running" : "paused"}`} role="status">
+              <strong>{motion.label}</strong><span>{motion.reason}</span>
+            </p>
           </div>
           <div className="map-legend" aria-label="状态图例">
             <span><i className="legend-dot normal" />正常</span>
             <span><i className="legend-dot warning" />预警</span>
             <span><i className="legend-dot fault" />故障</span>
+            <span><i className="legend-dot stopped" />已停止</span>
           </div>
           <div className="scene-view-toggle" aria-label="视角切换">
             {[["iso", "等轴"], ["top", "俯视"], ["line", "产线"]].map(([id, label]) => (
@@ -871,6 +928,9 @@ function machineStatus(machine, result) {
   if (result?.status === "fault") return "fault";
   if (result?.status === "alarm") return "alarm";
   if (result?.status === "warning") return "warning";
+  const motionState = getMachineMotionState(machine);
+  if (motionState === "stopped") return "stopped";
+  if (motionState !== "running") return "unknown";
   return "normal";
 }
 
@@ -879,6 +939,8 @@ function machineStatusLabel(status) {
   if (status === "alarm") return "报警";
   if (status === "warning") return "预警";
   if (status === "idle") return "未接入";
+  if (status === "stopped") return "已停止";
+  if (status === "unknown") return "待确认";
   return "正常";
 }
 
@@ -892,27 +954,37 @@ const workshopLayout = Object.freeze({
   robotReach: 2.22,
 });
 
-function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, onSelect }) {
+function Machine3DScene({ machines = [], motion, selectedMachineId, status, viewMode, onSelect }) {
   const mountRef = useRef(null);
   const onSelectRef = useRef(onSelect);
   const machinesRef = useRef(machines);
+  const motionRef = useRef(motion);
+  const motionClockRef = useRef(null);
+  if (!motionClockRef.current) motionClockRef.current = createMotionClock();
+  const applyViewRef = useRef(null);
+  const viewModeRef = useRef(viewMode || "iso");
   const selectedMachineIdRef = useRef(selectedMachineId);
   const updateSelectionRef = useRef(null);
   const hoverTimerRef = useRef(null);
   const hoveredMachineRef = useRef(null);
   const [hoveredLabel, setHoveredLabel] = useState(null);
   const sceneMachineState = useMemo(
-    () => machines.map((machine) => `${machine.id}:${machine.live ? 1 : 0}:${machineStatus(machine, machine.result)}`).join("|"),
+    () => machines.map((machine) => machine.id).join("|"),
     [machines],
   );
-  const sceneViewState = viewMode || "iso";
 
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
   useEffect(() => {
     machinesRef.current = machines;
+    updateSelectionRef.current?.(selectedMachineIdRef.current);
   }, [machines]);
+  useEffect(() => { motionRef.current = motion; }, [motion]);
+  useEffect(() => {
+    viewModeRef.current = viewMode || "iso";
+    applyViewRef.current?.(viewModeRef.current);
+  }, [viewMode]);
   useEffect(() => {
     selectedMachineIdRef.current = selectedMachineId;
     updateSelectionRef.current?.(selectedMachineId);
@@ -970,7 +1042,8 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       camera.lookAt(controls.target);
       controls.update();
     };
-    applyCameraView(sceneViewState);
+    applyViewRef.current = applyCameraView;
+    applyCameraView(viewModeRef.current);
 
     const machineById = new Map(machinesRef.current.map((machine) => [machine.id, machine]));
     const getCurrentMachine = (id) => machinesRef.current.find((machine) => machine.id === id);
@@ -982,6 +1055,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     const colorForMachine = (id) => statusColor(statusForMachine(id));
     const selectionEffects = [];
     const machineHalos = [];
+    const statusMaterials = [];
     const isSelectedMachine = (id) => id === selectedMachineIdRef.current;
     const updateSelection = (id) => {
       machineHalos.forEach(({ machineId, ring }) => {
@@ -994,6 +1068,11 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       });
       selectionEffects.forEach(({ machineId, material, selectedValue, defaultValue, property }) => {
         material[property] = machineId === id ? selectedValue : defaultValue;
+      });
+      statusMaterials.forEach(({ machineId, material }) => {
+        const color = statusColor(currentStatusForMachine(machineId));
+        material.color.setHex(color);
+        material.emissive.setHex(color);
       });
     };
     updateSelectionRef.current = updateSelection;
@@ -1037,6 +1116,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     const lightMat = new THREE.MeshStandardMaterial({ color: 0xb9bec2, roughness: .55, metalness: .12, transparent: true, opacity: .68 });
     const glassMat = new THREE.MeshStandardMaterial({ color: 0x71969c, roughness: .12, metalness: .04, transparent: true, opacity: .35, side: THREE.DoubleSide, depthWrite: false });
     const accentMat = new THREE.MeshStandardMaterial({ color: accent, roughness: .42, metalness: .12, emissive: accent, emissiveIntensity: .08 });
+    statusMaterials.push({ machineId: "TRAK-TC820LTYSI-001", material: accentMat });
     const innerMat = new THREE.MeshStandardMaterial({ color: 0x95a0a5, roughness: .52, metalness: .28 });
     const railMat = new THREE.MeshStandardMaterial({ color: 0x49545a, roughness: .36, metalness: .45 });
     const rawMat = new THREE.MeshStandardMaterial({ color: 0xb7822a, roughness: .42, metalness: .22, emissive: 0x3a2300, emissiveIntensity: .05 });
@@ -1242,6 +1322,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       const id = "LNS-QL-SERVO-80-S2-001";
       const color = colorForMachine(id);
       const accentLocal = new THREE.MeshStandardMaterial({ color, roughness: .4, metalness: .12, emissive: color, emissiveIntensity: isSelectedMachine(id) ? .16 : .05 });
+      statusMaterials.push({ machineId: id, material: accentLocal });
       selectionEffects.push({ machineId: id, material: accentLocal, property: "emissiveIntensity", selectedValue: .16, defaultValue: .05 });
       const feederWhiteMat = new THREE.MeshStandardMaterial({ color: 0xe6e9ec, roughness: .56, metalness: .08 });
       const feederPanelMat = new THREE.MeshStandardMaterial({ color: 0xcfd5d8, roughness: .5, metalness: .12 });
@@ -1365,6 +1446,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       const id = "ELITE-CS612-ROBOT-001";
       const color = colorForMachine(id);
       const accentLocal = new THREE.MeshStandardMaterial({ color, roughness: .38, metalness: .16, emissive: color, emissiveIntensity: isSelectedMachine(id) ? .18 : .06 });
+      statusMaterials.push({ machineId: id, material: accentLocal });
       selectionEffects.push({ machineId: id, material: accentLocal, property: "emissiveIntensity", selectedValue: .18, defaultValue: .06 });
       const robotShellMat = new THREE.MeshStandardMaterial({ color: 0xf1f3f5, roughness: .34, metalness: .08 });
       const robotArmMat = new THREE.MeshStandardMaterial({ color: 0xcfd4d8, roughness: .24, metalness: .62 });
@@ -1837,7 +1919,10 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
     let frameId = 0;
     const animate = () => {
       frameId = window.requestAnimationFrame(animate);
-      const time = performance.now() * 0.001;
+      const now = performance.now();
+      const liveMotion = motionRef.current;
+      const { time, delta } = motionClockRef.current.tick(now, Boolean(liveMotion?.running) && Date.now() <= liveMotion.validUntil && !document.hidden);
+      const alertTime = now * .001;
       const cutCycle = (Math.sin(time * 1.05) + 1) / 2;
       const lineCycle = (time * .18) % 1;
       const robotCycle = (time % 12) / 12;
@@ -1854,7 +1939,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       machineDoor.position.x = -1.62 + (machining ? 0 : 1.12);
       loadingArm.rotation.z = Math.sin(time * 1.2) * .18;
       conveyorRollers.forEach((roller) => {
-        roller.rotateY(-.16);
+        roller.rotateY(-9.6 * delta);
       });
       conveyorFlights.forEach((flight) => {
         const progress = (lineCycle + flight.mesh.userData.offset) % 1;
@@ -1863,7 +1948,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       });
       if (feederCell) {
         feederCell.feederRollers.forEach((roller) => {
-          roller.rotateY(-.18);
+          roller.rotateY(-10.8 * delta);
         });
         feederCell.pusher.position.x = -1.72 + ((time * .32) % 1) * 3.18;
       }
@@ -1958,13 +2043,13 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       });
       alertEffects.forEach((effect) => {
         const shouldAlert = isAlertStatus(currentStatusForMachine(effect.id));
-        const pulse = .35 + Math.abs(Math.sin(time * 4.6)) * .65;
+        const pulse = .35 + Math.abs(Math.sin(alertTime * 4.6)) * .65;
         effect.glow.intensity = shouldAlert ? 2.2 + pulse * 2.4 : 0;
       });
       towerLamps.forEach(({ id, lamps }) => {
         const current = currentStatusForMachine(id);
-        const active = current === "idle" ? -1 : current === "fault" || current === "alarm" ? 0 : current === "warning" ? 1 : 2;
-        lamps.forEach((lamp, index) => { lamp.emissiveIntensity = index === active ? (active === 0 ? .8 + Math.abs(Math.sin(time * 5)) * 1.3 : .9) : .04; });
+        const active = ["idle", "stopped", "unknown"].includes(current) ? -1 : current === "fault" || current === "alarm" ? 0 : current === "warning" ? 1 : 2;
+        lamps.forEach((lamp, index) => { lamp.emissiveIntensity = index === active ? (active === 0 ? .8 + Math.abs(Math.sin(alertTime * 5)) * 1.3 : .9) : .04; });
       });
       controls.update();
       renderer.render(scene, camera);
@@ -2039,6 +2124,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
 
     return () => {
       updateSelectionRef.current = null;
+      applyViewRef.current = null;
       window.cancelAnimationFrame(frameId);
       resizeObserver.disconnect();
       clearHover();
@@ -2062,7 +2148,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
       renderer.dispose();
       renderer.forceContextLoss();
     };
-  }, [sceneMachineState, sceneViewState]);
+  }, [sceneMachineState]);
 
   return (
     <div ref={mountRef} className="machine-3d-canvas" aria-hidden="true">
@@ -2083,7 +2169,7 @@ function Machine3DScene({ machines = [], selectedMachineId, status, viewMode, on
 function statusColor(status) {
   if (status === "fault") return 0xb73732;
   if (status === "alarm" || status === "warning") return 0xb66a00;
-  if (status === "idle") return 0x7d8c93;
+  if (["idle", "stopped", "unknown"].includes(status)) return 0x7d8c93;
   return 0x087f75;
 }
 
@@ -2352,19 +2438,15 @@ function PipelineData({ snapshot }) {
 
 function DiagnosisWorkspace({ snapshot, sample }) {
   const view = buildDiagnosisView(snapshot, sample);
-  const pipeline = view.isCurrent ? getLatestPipeline(snapshot, sample) : {};
-  const runtime = pipeline.runtime_result || {};
-  const status = ({ completed: "诊断已返回", waiting: "等待诊断", running: "正在诊断", recovering: "正在回查结果",
-    blocked: "证据不足，待核实", failed: "诊断调用失败", unknown: "结果待确认", idle: "等待异常事件" })[view.status] || view.status;
   const confidence = view.confidence == null ? "--" : `${Math.round(view.confidence * 100)}%`;
   const alarm = sample?.alarm_label || sample?.alarm_code || "当前无活动报警";
   return (
     <section className="workspace-view active module-board diagnosis-workspace" aria-label="智能诊断">
       <ModuleHero eyebrow="Runtime Diagnosis" title="智能诊断" text="基于实时事件、知识证据和工程数据生成可追溯的诊断结论。" />
       <div className="module-grid">
-        <ModuleStat label="诊断状态" value={status} text={view.deviceId || "等待设备"} />
+        <ModuleStat label="诊断状态" value={view.statusLabel} text={view.deviceId || "等待设备"} />
         <ModuleStat label="置信度" value={confidence} text="Evaluator 评估结果" />
-        <ModuleStat label="当前报警" value={alarm} text={runtime.stop_reason || pipeline.stop_reason || "持续监测中"} />
+        <ModuleStat label="当前报警" value={alarm} text={view.workflowReason || "持续监测中"} />
       </div>
       <div className="answer-grid diagnosis-content-grid">
         <section className="panel module-panel">
@@ -2391,6 +2473,7 @@ function machineAlertReason(machine) {
   const observations = Array.isArray(result?.observations) ? result.observations : [];
   const evidenceReason = monitorEvidenceReason(sample);
   if (evidenceReason) return evidenceReason;
+  if (getMachineMotionState(machine) === "stopped") return sample?.control_reason || "设备已停止，整线画面同步暂停";
   if (observations.length) {
     return observations
       .slice(0, 3)
@@ -2404,13 +2487,14 @@ function machineAlertReason(machine) {
 }
 
 function preferredWorkorderId(items, sample, snapshot) {
-  const incident = currentIncident(snapshot, sample);
+  const visibleItems = items.filter(item => !item.deleted_at);
+  const incident = currentIncident(snapshot, sample, visibleItems);
   const deviceId = incident.device_id, alarmCode = incident.alarm_code;
-  const exact = items.find(item => matchesIncident({...item,alarm_code:getWorkorderAlarmCode(item)},incident));
-  const sameDevice = items.find((item) => String(item.device_id || "") === deviceId);
+  const exact = visibleItems.find(item => matchesIncident({...item,alarm_code:getWorkorderAlarmCode(item)},incident));
+  const sameDevice = visibleItems.find((item) => String(item.device_id || "") === deviceId);
   // 存在报警时，绝不能静默回退到其他报警的工单，否则历史工单会被误显示为当前事件。
   if (alarmCode) return exact?.workorder_id || "";
-  return sameDevice?.workorder_id || items[0]?.workorder_id || "";
+  return sameDevice?.workorder_id || visibleItems[0]?.workorder_id || "";
 }
 
 function LogsWorkspace({ snapshot, active = true }) {
@@ -2611,8 +2695,7 @@ function LogsWorkspace({ snapshot, active = true }) {
   );
 }
 
-function ReportWorkspace({ snapshot }) {
-  const pipeline = PipelineData({ snapshot });
+function ReportWorkspace({ snapshot, active = true }) {
   const [reports, setReports] = useState([]);
   const [selectedReportId, setSelectedReportId] = useState("");
   const [reportError, setReportError] = useState("");
@@ -2621,30 +2704,22 @@ function ReportWorkspace({ snapshot }) {
   const [pdfReportIds, setPdfReportIds] = useState([]);
   const reportGeneration = useRef(0);
   const currentReportRef = useRef("");
-  const [sourceType,setSourceType] = useState('plan_id');
-  const [sourceId,setSourceId] = useState('');
-  const [generatingReport,setGeneratingReport] = useState(false);
-  async function generateReport() {
-    setGeneratingReport(true);
-    try {
-      const result = await request('/api/reports/generate',{method:'POST',body:JSON.stringify({[sourceType]:sourceId.trim()})});
-      await loadReports();
-      setSelectedReportId(result.report_id);
-      setReportError('');
-    } catch (err) {setReportError(err.message);}
-    finally {setGeneratingReport(false);}
-  }
+  const reportsLoaded = useRef(false);
+  const reportVersions = useRef({});
 
-  async function loadReports() {
+  async function loadReports({ silent = false } = {}) {
     const generation = ++reportGeneration.current;
-    setLoadingReports(true);
+    if (!silent) setLoadingReports(true);
     try {
       const body = await request("/api/reports");
       if (generation !== reportGeneration.current) return;
       const items = (body.items || []).map((item) => item?.report && typeof item.report === "object" ? item.report : item).filter(Boolean);
       setReports(items);
       setSelectedReportId((current) => items.some((item) => item.report_id === current) ? current : items[0]?.report_id || "");
-      setPdfReportIds((current) => current.filter((id) => items.some((item) => item.report_id === id)));
+      const oldVersions = reportVersions.current;
+      setPdfReportIds((current) => current.filter((id) => items.some((item) => item.report_id === id && oldVersions[id] === item.updated_at)));
+      reportVersions.current = Object.fromEntries(items.map(item => [item.report_id, item.updated_at]));
+      reportsLoaded.current = true;
       setReportError("");
     } catch (error) {
       if (generation === reportGeneration.current) setReportError(error.message);
@@ -2654,18 +2729,20 @@ function ReportWorkspace({ snapshot }) {
   }
 
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     let timer;
     async function poll() {
-      await loadReports();
-      if (!cancelled) timer = window.setTimeout(poll, 5000);
+      await loadReports({silent: reportsLoaded.current});
+      if (!cancelled) timer = window.setTimeout(poll, 1000);
     }
     poll();
-    return () => { cancelled = true; reportGeneration.current++; window.clearTimeout(timer); };
-  }, []);
+    const unsubscribe = subscribeMaintenanceChanges(() => loadReports({silent: true}));
+    return () => { cancelled = true; reportGeneration.current++; window.clearTimeout(timer); unsubscribe(); };
+  }, [active]);
   const reportItems = reports.map((item) => item?.report && typeof item.report === "object" ? item.report : item).filter(Boolean);
   const persistedReport = reportItems.find((item) => item.report_id === selectedReportId) || reportItems[0];
-  const report = persistedReport || pipeline.report || {};
+  const report = persistedReport || {};
   currentReportRef.current = report.report_id || "";
   const pdfReady = pdfReportIds.includes(report.report_id);
   const completeness = reportCompleteness(report);
@@ -2700,10 +2777,10 @@ function ReportWorkspace({ snapshot }) {
       setReportError(error.message);
     }
   }
+  if (!active) return null;
   return (
     <section className="workspace-view active module-board report-workspace" aria-label="报告中心">
-      <section className="panel module-panel"><h2>从已有业务记录生成报告</h2><label className="field-label">来源类型</label><select className="select-input" value={sourceType} onChange={event=>setSourceType(event.target.value)}><option value="plan_id">维修方案 PLAN</option><option value="workorder_id">工单 WO</option><option value="quality_check_id">质检 QC</option></select><label className="field-label">来源编号</label><input className="select-input" value={sourceId} onChange={event=>setSourceId(event.target.value)} placeholder="输入已保存的 PLAN、WO 或 QC 编号"/><p>Report Agent 汇总服务器保存的内容；未完成维修不会标记闭环完成。</p><button className="button primary" disabled={generatingReport || !sourceId.trim()} onClick={generateReport}>{generatingReport ? '正在生成…' : '生成报告'}</button></section>
-      <ModuleHero eyebrow="Report Agent" title="报告中心" text="汇总诊断、维修方案、工单和质检结果，形成可追溯运维报告。" action={<button className="button" type="button" onClick={loadReports} disabled={loadingReports}>{loadingReports ? "刷新中…" : "刷新报告"}</button>} />
+      <ModuleHero eyebrow="Report Agent" title="报告中心" text="每次故障停机处理完成、工单检查与整线复机核验通过后，自动汇总智能诊断、维修方案、工单和质检结果，生成一份故障处理报告。" action={<button className="button" type="button" onClick={() => loadReports()} disabled={loadingReports}>{loadingReports ? "同步中…" : "同步报告"}</button>} />
       {reportError && <div className="inline-error" role="status">报告服务暂不可用：{reportError}</div>}
       <section className="panel module-panel report-list-panel" aria-label="已持久化报告列表">
         <div className="panel-heading"><div><span className="eyebrow">持久化记录 · {reportItems.length} 份</span><h2>报告列表</h2></div></div>
@@ -2714,10 +2791,10 @@ function ReportWorkspace({ snapshot }) {
       </section>
       {hasReport ? (
         <>
-          <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text={report.report_type || "运维报告"} /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质量状态" value={reportQualityLabel(sections.quality)} text="质量协同结果" /></div>
+          <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text="故障处理汇总报告" /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质检结果" value={reportQualityLabel(sections.quality)} text="关联质检的实际结果" /></div>
           <section className="panel module-panel report-panel"><div className="panel-heading"><div><span className="eyebrow">报告摘要</span><h2>{report.title || "运维报告"}</h2><span className={`severity-pill ${completeness.tone}`}>{completeness.label}</span></div><div className="report-file-actions"><button className="button" type="button" onClick={generatePdf} disabled={!report.report_id || Boolean(generatingPdf)}>{generatingPdf === report.report_id ? "生成中…" : "生成 PDF"}</button>{pdfReady && <><a className="button" href={pdfUrl} target="_blank" rel="noreferrer">打开 PDF</a><a className="button" href={`${pdfUrl}?download=1`} download={`report-${report.report_id}.pdf`}>下载 PDF</a></>}</div></div>{completeness.findings.length > 0 && <div className="workspace-notice" role="status"><ul>{completeness.findings.map((finding, index) => <li key={`${index}-${finding}`}>{finding}</li>)}</ul></div>}<FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</section>
         </>
-      ) : <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="完成异常诊断、维修与质检闭环后，报告会自动汇总在这里。" />}
+      ) : <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="工单检查通过并确认整线恢复运行后，报告会自动显示，无需选择来源或手动生成。" />}
     </section>
   );
 }
@@ -2760,7 +2837,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
   const currentDevice = String(sample?.device_id || snapshot?.device_id || "").trim();
   // 删除集合未知时不能信任旧监控/工单快照，避免页面切换时已删除方案复活。
   const records = deletionsLoaded ? buildMaintenanceWorkspaceRecords({ snapshot, items: planItems, orders, deletedPlanIds }) : [];
-  const incident = currentIncident(snapshot, sample);
+  const incident = currentIncident(snapshot, sample, records);
   const currentRecord = records.find(record => matchesIncident(record, incident));
   const selectedRecord = records.find(record => record.recordId === selectedId) || currentRecord || records[0];
   const linkedOrders = selectedRecord?.plan_id ? orders.filter(order => linkedPlanOrder(selectedRecord,order)) : [];
@@ -2877,7 +2954,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
   async function removePlans(ids) {
     if (!actor?.user_id || deleting || !ids.length) return;
     if (ids.length > 100) { setDeleteError("每批最多删除 100 条方案，请减少选择后重试。"); return; }
-    if (!window.confirm(`确定从方案列表移除这 ${ids.length} 条方案吗？关联工单、执行日志和审计记录仍保留。`)) return;
+    if (!window.confirm(`确定删除这 ${ids.length} 条维修方案的已保存内容吗？`)) return;
     setDeleting(true);
     setDeleteError("");
     try {
@@ -2922,7 +2999,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
       </section>}
       <section className="workorder-queue maintenance-plan-queue" aria-label="维修方案列表">
         <div className="workorder-queue-heading"><div><span className="eyebrow">已有方案</span><h2>选择维修方案</h2></div><div className="maintenance-delete-actions"><span>{records.length} 条记录</span><button className="button" type="button" disabled={!actor?.user_id || deleting || !records.some(record => record.plan_id)} onClick={() => setCheckedIds(records.filter(record => record.plan_id).slice(0, 100).map(record => record.plan_id))}>{records.length > 100 ? "选择前 100 条" : "全选方案"}</button><button className="button danger" type="button" disabled={!actor?.user_id || deleting || !checkedIds.length} onClick={() => removePlans(checkedIds)}>{deleting ? "删除中…" : `删除选中方案（${checkedIds.length}）`}</button></div></div>
-        <p className="maintenance-plan-muted">{actor?.user_id ? "删除仅移除方案列表展示，不删除关联工单和审计日志。" : "登录后可删除方案；关联工单和审计日志将保留。"}</p>
+        <p className="maintenance-plan-muted">{actor?.user_id ? "删除会清除已保存的维修方案内容。" : "登录后可删除已保存的维修方案。"}</p>
         {records.length ? <div className="workorder-queue-list">{records.map(record => {
           const hasOrder = orders.some(order => linkedPlanOrder(record,order));
           const dispatch = maintenanceDispatchView(record, { hasOrder });
@@ -2946,19 +3023,19 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
 // Keep an unconfirmed command across workspace navigation, scoped to its actor and order.
 const workorderPlanCommands = new Map();
 
-function WorkorderView({ snapshot, sample, onClosed, actor }) {
+function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
   const [orders, setOrders] = useState([]);
   const [selectedId, setSelectedId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("workorder_id") || "");
   const explicitSelection = useRef(Boolean(selectedId));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showDeleted, setShowDeleted] = useState(() => new URLSearchParams(window.location.search).get('include_deleted') === 'true');
   const [loadState, setLoadState] = useState("loading");
   const reloadRef = useRef(null);
   const orderRevisionRef = useRef(0);
   const mountedRef = useRef(false);
   const [revalidationResults, setRevalidationResults] = useState({});
   const [actionErrors, setActionErrors] = useState({});
+  const actorKey = JSON.stringify([actor?.user_id || '', actor?.role || '']);
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -2975,7 +3052,7 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
   const currentIncidentCode = currentFaultCode || String(latestDiagnosis?.alarm_code || "").trim();
   const hasCurrentIncident = Boolean(currentIncidentCode);
   const currentDevice = String(liveSample?.device_id || snapshot?.device_id || "");
-  const incident = currentIncident(snapshot, sample);
+  const incident = currentIncident(snapshot, sample, orders);
   const incidentKey = JSON.stringify(incident);
   const currentPlanRecord = buildMaintenanceWorkspaceRecords({ snapshot }).find(record => matchesIncident(record,incident));
   const hasVisibleIncidentOrder = orders.some(order => matchesIncident({...order,alarm_code:getWorkorderAlarmCode(order)},incident));
@@ -2983,20 +3060,26 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
     || (!hasCurrentIncident ? orders[0] : undefined);
 
   useEffect(() => {
+    if (!active) return;
     // 报警触发的创建由运行时负责；查看队列不能创建或重新创建操作员明确删除的工单。
     let cancelled = false;
     let pending = null;
     const controller = new AbortController();
-    setLoadState("loading");
+    setLoadState(previous => previous === 'ready' ? previous : 'loading');
     function loadOrders() {
       if (pending) return pending;
       const revision = orderRevisionRef.current;
-      pending = request(`/api/workorders${showDeleted ? '?include_deleted=true' : ''}`, { signal: controller.signal }).then(body => {
+      pending = Promise.all([
+        request('/api/workorders', { signal: controller.signal }),
+        request('/api/team/line', { signal: controller.signal }).catch(() => null),
+      ]).then(([body, line]) => {
         if (cancelled || revision !== orderRevisionRef.current) return;
         if (!Array.isArray(body.items)) throw new Error("工单列表返回异常，请重试");
         rememberDeletedMaintenancePlans(body.deleted_plan_ids || []);
-        const items = body.items.map(normalizeWorkorderResponse).filter(item => showDeleted || !item.deleted_at);
-        setOrders(previous => items.map(item => ({...item, machine_control: previous.find(old => old.workorder_id === item.workorder_id)?.machine_control || item.machine_control})));
+        const items = body.items.map(normalizeWorkorderResponse).filter(item => !item.deleted_at);
+        setOrders(previous => items.map(item => ({...item, machine_control: item.machine_control
+          || (line?.state === 'running' && item.repair_verification?.phase === 'poststart' && item.repair_verification?.passed === true
+            ? {state:'running'} : previous.find(old => old.workorder_id === item.workorder_id)?.machine_control)})));
         setSelectedId(previous => explicitSelection.current && items.some(item => item.workorder_id === previous) ? previous : preferredWorkorderId(items, sample, snapshot));
         setError("");
         setLoadState("ready");
@@ -3014,14 +3097,28 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
     reloadRef.current = loadOrders;
     loadOrders();
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    const timer = window.setInterval(loadOrders, 5000);
+    const timer = window.setInterval(loadOrders, 1000);
     return () => {
       cancelled = true;
       controller.abort();
       reloadRef.current = null;
       window.clearInterval(timer);
     };
-  }, [actor?.user_id, actor?.role, currentDevice, currentIncidentCode, incidentKey, showDeleted]);
+  }, [actor?.user_id, actor?.role, currentDevice, currentIncidentCode, incidentKey, active]);
+
+  useEffect(() => subscribeMaintenanceChanges(change => {
+    if (change.actorKey !== actorKey) return;
+    orderRevisionRef.current++;
+    const updated = change.workorder;
+    if (updated && !updated.deleted_at && (actor?.role === 'supervisor' || updated.assignee === actor?.user_id)) {
+      setOrders(items => [updated, ...items.filter(item => item.workorder_id !== updated.workorder_id)]);
+      setSelectedId(previous => explicitSelection.current ? previous : updated.workorder_id);
+      setLoadState('ready');
+    }
+    if (change.deleted_workorder_ids?.length) {
+      setOrders(items => items.filter(item => !change.deleted_workorder_ids.includes(item.workorder_id)));
+    }
+  }), [actorKey]);
 
   const revalidationKey = orderId => JSON.stringify([actor?.user_id, actor?.role, orderId]);
   const revalidation = revalidationResults[revalidationKey(selectedOrder?.workorder_id)]
@@ -3129,7 +3226,7 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
   }
 
   async function deleteOrder(order) {
-    if (!order?.workorder_id || !window.confirm(`确定从列表删除工单 ${order.workorder_id} 及关联维修方案吗？原始处理记录仍保留。`)) return;
+    if (!order?.workorder_id || !window.confirm(`确定删除工单 ${order.workorder_id} 及对应维修方案的已保存内容吗？删除后无法恢复。`)) return;
     setBusy(true);
     orderRevisionRef.current++;
     try {
@@ -3148,11 +3245,11 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
     }
   }
 
+  if (!active) return null;
   return (
     <section className="workspace-view active workorder-page" aria-label="工单系统">
       {!currentFaultActive && <div className="module-hero"><span className="eyebrow">维修执行</span><h1>工单系统</h1><p>跟进维修任务、执行反馈与验收。</p></div>}
       <section className="workorder-queue" aria-label="工单队列">
-        <label><input type="checkbox" checked={showDeleted} onChange={event => setShowDeleted(event.target.checked)} />查看已删除工单的处理记录</label>
         <div className="workorder-queue-heading">
           <div><span className="eyebrow">工单队列</span><h2>维修任务</h2></div>
           <div className="maintenance-delete-actions"><span>{orders.length ? `${orders.length} 条记录` : loadState === "ready" ? "0 条记录" : loadState === "failed" ? "读取未完成" : "正在读取…"}</span><button className="button" type="button" disabled={busy || loadState === "loading"} onClick={() => reloadRef.current?.()}>刷新工单</button></div>
@@ -3164,10 +3261,10 @@ function WorkorderView({ snapshot, sample, onClosed, actor }) {
               <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{inspectionWorkorderView(order).statusLabel || labelFor(workorderStatusLabels, order.status)}</em>
             </button>)}
           </div>
-        ) : <div className="workorder-queue-empty" role="status">{loadState === "loading" ? "正在读取已派发工单及任务内容，请稍候…" : loadState === "failed" ? "工单暂未读出，请查看错误提示或点击刷新工单重试。" : "暂无可见工单；系统仅在诊断证据、维修方案和派发条件通过后自动派发。可在维修方案页查看未满足条件的具体原因。"}</div>}
+        ) : <div className="workorder-queue-empty" role="status">{loadState === "loading" ? "正在读取已派发工单及任务内容，请稍候…" : loadState === "failed" ? "工单暂未读出，请查看错误提示或点击刷新工单重试。" : "暂无可见工单；已有有效诊断和方案后，系统自动派发给负责该设备且已登录的维修人员，任务生成后自动显示。"}</div>}
         {!selectedOrder && error && <div className="inline-error" role="alert">工单读取失败：{error}</div>}
       </section>
-      {loadState === "ready" && hasCurrentIncident && !hasVisibleIncidentOrder && <><div className="workspace-notice" role="status">当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统按派发条件处理，可在维修方案页查看已有方案和依据。</div>{currentPlanRecord && <MaintenanceDispatchStatus record={currentPlanRecord} />}</>}
+      {loadState === "ready" && hasCurrentIncident && !hasVisibleIncidentOrder && <div className="workspace-notice" role="status">当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统正在核对本次方案、当前报警和设备负责人，派发后自动显示。{currentPlanRecord ? '工程资料待核实项将保留在任务内。' : '需先有本次故障对应的已保存方案；已删除的方案不会自动恢复。'}</div>}
       {(selectedOrder || loadState === "ready") && <WorkorderDetail
         order={selectedOrder || null}
         sample={sample}
@@ -3229,10 +3326,16 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
           <h1>{getWorkorderDisplayTitle(order, target, { snapshot, sample: matchedSample, fault: matchedDiagnosis.fault || matchedDiagnosis.summary })}</h1>
           <p>{order.workorder_id} · {order.device_id} · {order.assignee_name || order.assignee || "未分配"}{order.event_id ? ` · 故障事件 ${order.event_id}` : ''}</p>
         </div>
-        <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy || readOnly || Boolean(order.deleted_at)} onClick={() => onDelete?.(order)}>{order.deleted_at ? '已从列表删除' : '删除工单'}</button></div>
+        <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy || readOnly} onClick={() => onDelete?.(order)}>删除工单</button></div>
       </header>
 
       <IncidentTimeline record={order} />
+
+      {sheet.dispatchMode === 'fault_followup' && <section className="maintenance-plan-panel" aria-label="工单任务范围">
+        <h2>故障处理任务</h2><p>关联维修方案：{order.plan_id}。原方案已保留；先完成现场核查，涉及拆修或换件前需补齐相应工程与备件依据。</p>
+        <PlanList title="本工单处理步骤" items={sheet.taskSteps} ordered />
+        <PlanList title="工程资料与备件待核实项" items={sheet.dispatchFindings} />
+      </section>}
 
       {(review.required || revalidation?.message) && <section className="maintenance-plan-panel" aria-label="方案执行复核">
         <h2>{review.required ? review.label : '方案校验结果'}</h2>
@@ -3316,7 +3419,7 @@ function resolveWorkorderDrawing(order = {}, target = {}) {
 }
 
 function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionResult = inspectionWorkorderView(), review = executionReviewView(), confirmationRevision = 0, busy, error, onUpdate, readOnly = false }) {
-  const [repairFeedback, setRepairFeedback] = useState("");
+  const [repairFeedback, setRepairFeedback] = useState(sheet.feedback || "");
   const [feedbackSavedId, setFeedbackSavedId] = useState("");
   useEffect(() => {
     setFeedbackSavedId("");
@@ -3333,7 +3436,7 @@ function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionRes
         <div>
           <span className="eyebrow">自动派发工单</span>
           <h2>{workType.inspection ? "检查工单" : "维修工单"}</h2>
-          <p className="sheet-subtitle">{workType.inspection ? `${workType.description} 报警解除并核验通过后结束检查；仍有异常保留待处理。` : "故障确认后由系统自动派出，维修人员按维修方案执行并提交反馈。"}</p>
+          <p className="sheet-subtitle">{workType.inspection ? `${workType.description} 检查通过后自动核验整线复机；仍有异常保留待处理。` : "故障确认后由系统自动派出，维修人员按维修方案执行并提交反馈。"}</p>
         </div>
         <span className={isDone ? "sheet-status done" : "sheet-status"}>{inspectionResult.statusLabel || labelFor(workorderStatusLabels, sheet.status)}</span>
       </div>
@@ -3365,13 +3468,23 @@ function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionRes
           {workType.inspection && (feedbackSavedId === sheet.workorderId || inspectionResult.completed) && <p role="status">{inspectionResult.completed ? "检查已完成。" : "检查结果已保存；仍有异常或核验条件未满足，保留待处理。"}</p>}
           {!workType.inspection && review.required && feedbackSavedId === sheet.workorderId && <p role="status">处理记录已保存。完成实际维修后可直接确认并申请复机。</p>}
           {workType.inspection && inspectionResult.findings.length > 0 && <PlanList title="检查未满足的条件" items={inspectionResult.findings} />}
-          {!workType.inspection && sheet.machineControl && (
+          {sheet.machineControl && (
             <div className={`machine-control-result ${sheet.machineControl.state === 'running' ? "is-ok" : "is-error"}`} role="status">
               <span>{sheet.machineControl.state === 'running'
                 ? "整线设备启动后已逐台读回，运行复核通过。"
-                : `${isDone ? '维修已完成，复机申请未通过' : '维修确认未通过'}：${sheet.machineControl.reason || sheet.machineControl.error || sheet.machineControl.state}`}</span>
+                : `${workType.inspection ? '检查已完成，整线复机未通过' : isDone ? '维修已完成，复机申请未通过' : '维修确认未通过'}：${sheet.machineControl.reason || sheet.machineControl.error || sheet.machineControl.state}`}</span>
               {Array.isArray(sheet.machineControl.workorder_ids) && sheet.machineControl.workorder_ids.length > 0 && (
                 <p className="machine-control-blockers">需先处理的故障工单：{sheet.machineControl.workorder_ids.join('、')}</p>
+              )}
+              {Array.isArray(sheet.machineControl.fault_blockers) && sheet.machineControl.fault_blockers.length > 0 && (
+                <section aria-label="复机阻挡记录">
+                  <ul>{sheet.machineControl.fault_blockers.map(blocker => <li key={`${blocker.event_id}-${blocker.device_id}`}>
+                    <strong>{blocker.device_id} · 报警 {blocker.alarm_code || '未记录'}</strong>
+                    <p>{blocker.kind === 'missing_workorder' ? '这条停机记录没有关联工单，需确认旧故障处理结果并核验设备。' : '关联工单尚未确认完成。'}</p>
+                    <small>故障事件：{blocker.event_id}</small>
+                    {blocker.workorder_ids?.map(id => <p key={id}><a href={`/?view=workorder&workorder_id=${encodeURIComponent(id)}`}>查看工单 {id}</a></p>)}
+                  </li>)}</ul>
+                </section>
               )}
             </div>
           )}
@@ -3385,6 +3498,7 @@ function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionRes
               disabled={busy || readOnly || sheet.status === 'closed' || completionVerified || !repairFeedback.trim()}
               onClick={() => onUpdate("completed", buildRepairCompletionPayload({ feedback: repairFeedback }))}
             >{isDone ? '再次确认并申请复机' : '确认维修完成并申请复机'}</button>}
+            {workType.inspection && inspectionResult.completed && sheet.machineControl && sheet.machineControl.state !== 'running' && <button className="button primary" type="button" disabled={busy || readOnly || !(sheet.feedback || repairFeedback).trim()} onClick={() => onUpdate('feedback', {repair_feedback:{feedback:sheet.feedback || repairFeedback.trim()}})}>再次核验并申请复机</button>}
             {!workType.inspection && sheet.status === 'completed' && sheet.verificationPhase === 'poststart' && <button className="button" disabled={busy || readOnly || (review.required && !review.humanConfirmed)} onClick={() => onUpdate('closed')}>{review.required ? '关闭工单' : '关闭工单并生成总结'}</button>}
           </div>
         </section>
@@ -3639,7 +3753,7 @@ function ReportDisplaySections({ sections }) {
   return <div className="report-display-sections">{sections.map((section) => (
     <section className="report-display-section" key={section.title}>
       <h3>{section.title}</h3>
-      {section.body && <FormattedText value={section.body} />}
+      {section.lines?.length ? section.lines.map((line, index) => <FormattedText key={index} value={line} />) : section.body && <FormattedText value={section.body} />}
       {section.items?.length > 0 && <StepList steps={section.items} />}
     </section>
   ))}</div>;

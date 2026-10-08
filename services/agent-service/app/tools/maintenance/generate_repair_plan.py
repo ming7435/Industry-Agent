@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping
-from app.workorder.repair_profile import interlock_inspection_steps, repair_profile
+from app.workorder.repair_profile import interlock_inspection_steps, hydraulic_inspection_steps, repair_profile
 
 
 def generate_repair_plan(diagnosis: Mapping[str, Any], **_: Any) -> Dict[str, Any]:
@@ -11,6 +11,8 @@ def generate_repair_plan(diagnosis: Mapping[str, Any], **_: Any) -> Dict[str, An
     kind = repair_profile(diagnosis)["kind"]
     if kind == "safety_interlock":
         steps = interlock_inspection_steps()
+    elif kind == "hydraulic":
+        steps = hydraulic_inspection_steps()
     elif kind == "lubrication":
         steps = ["执行安全隔离和断电挂牌", "检查润滑油液位、润滑泵及油路压力反馈", "检查油路过滤器及泄漏，确认故障后处理", "复测润滑压力与报警状态并记录恢复数据"]
     elif kind == "thermal":

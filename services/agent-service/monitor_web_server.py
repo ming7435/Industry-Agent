@@ -942,7 +942,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         return body
 
     def _proxy_team(self, method):
-        allowed = {'GET': {'/api/team/me', '/api/team/devices', '/api/team/reminders', '/api/team/workorders', '/api/team/line'}, 'POST': {'/api/team/register', '/api/team/login', '/api/team/logout', '/api/team/reminders'}}
+        allowed = {'GET': {'/api/team/me', '/api/team/devices', '/api/team/reminders', '/api/team/workorders', '/api/team/line'}, 'POST': {'/api/team/register', '/api/team/login', '/api/team/logout', '/api/team/reminders', '/api/team/responsibilities'}}
         path = urlparse(self.path).path
         import re
         reminder_read = method == 'POST' and re.fullmatch(r'/api/team/reminders/[a-f0-9]{32}/read', path)

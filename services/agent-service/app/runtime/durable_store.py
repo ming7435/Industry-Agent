@@ -13,6 +13,7 @@ from time import monotonic, sleep
 from typing import Any
 from typing import Callable
 from shared.persistence import MySQLJsonStore, PendingResultError
+from shared.task_deletion import deleted_entities
 
 
 class DurableJsonStore:
@@ -57,14 +58,45 @@ class DurableJsonStore:
         value = json.loads(row["payload"])
         return dict(value) if isinstance(value, dict) else None
 
+    @staticmethod
+    def _without_deleted_entities(connection, value):
+        receipts = [{**json.loads(row['payload']), 'plan_id': row['state_key']}
+                    for row in connection.execute("SELECT state_key,payload FROM runtime_state WHERE namespace='maintenance_plan_deleted'")]
+        return deleted_entities(value, [r['plan_id'] for r in receipts],
+                                [identifier for r in receipts for identifier in r.get('workorder_ids') or []])
+
     def set(self, namespace: str, key: str, value: dict[str, Any]) -> None:
-        payload = json.dumps(dict(value), ensure_ascii=False, default=str)
         with self._lock, closing(self._connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            if namespace == 'agent_event':
+                value = self._without_deleted_entities(connection, value)
+            payload = json.dumps(dict(value), ensure_ascii=False, default=str)
             connection.execute(
                 "INSERT INTO runtime_state(namespace, state_key, payload) VALUES (?, ?, ?) "
                 "ON CONFLICT(namespace, state_key) DO UPDATE SET payload=excluded.payload, updated_at=CURRENT_TIMESTAMP",
                 (str(namespace), str(key), payload),
             )
+
+    def delete_plans(self, plan_ids, actor_id, *, workorder_ids=(), allow_missing=False):
+        ids = list(dict.fromkeys(plan_ids))
+        with self._lock, closing(self._connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            from shared.task_deletion import event_plan_id
+            rows = connection.execute("SELECT state_key,payload FROM runtime_state WHERE namespace='agent_event'").fetchall()
+            values = [(row['state_key'], json.loads(row['payload'])) for row in rows]
+            markers = {row['state_key'] for row in connection.execute("SELECT state_key FROM runtime_state WHERE namespace='maintenance_plan_deleted'")}
+            if not allow_missing and not set(ids).issubset({event_plan_id(value) for _, value in values} | markers):
+                raise KeyError('维修方案不存在')
+            for key, value in values:
+                updated = deleted_entities(value, ids, workorder_ids)
+                if updated != value:
+                    connection.execute("UPDATE runtime_state SET payload=? WHERE namespace='agent_event' AND state_key=?", (json.dumps(updated, ensure_ascii=False), key))
+            for plan_id in ids:
+                row = connection.execute("SELECT payload FROM runtime_state WHERE namespace='maintenance_plan_deleted' AND state_key=?", (plan_id,)).fetchone()
+                old = json.loads(row['payload']) if row else {}
+                receipt = {'plan_id': plan_id, 'actor_id': actor_id, 'workorder_ids': sorted(set(old.get('workorder_ids') or []) | set(workorder_ids))}
+                connection.execute("INSERT INTO runtime_state(namespace,state_key,payload) VALUES ('maintenance_plan_deleted',?,?) ON CONFLICT(namespace,state_key) DO UPDATE SET payload=excluded.payload", (plan_id, json.dumps(receipt)))
+        return ids
 
     def delete(self, namespace: str, key: str) -> None:
         with self._lock, closing(self._connect()) as connection, connection:
@@ -149,6 +181,8 @@ class DurableJsonStore:
                     raise
                 with self._lock, closing(self._connect()) as connection, connection:
                     connection.execute("BEGIN IMMEDIATE")
+                    if namespace == 'agent_event':
+                        value = self._without_deleted_entities(connection, value)
                     connection.execute(
                         "INSERT INTO runtime_state(namespace, state_key, payload) VALUES (?, ?, ?)",
                         (namespace, key, json.dumps(value, ensure_ascii=False, default=str)),
@@ -184,6 +218,8 @@ class DurableJsonStore:
             if not isinstance(current, dict) or current.get(str(field)) != expected:
                 return None
             current.update(dict(values))
+            if namespace == 'agent_event':
+                current = self._without_deleted_entities(connection, current)
             connection.execute(
                 "UPDATE runtime_state SET payload = ?, updated_at = CURRENT_TIMESTAMP WHERE namespace = ? AND state_key = ?",
                 (json.dumps(current, ensure_ascii=False, default=str), str(namespace), str(key)),

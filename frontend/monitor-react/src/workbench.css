@@ -313,6 +313,10 @@
 .platform-shell.workbench .monitor-map-only .workshop-panel { height: 100%; margin: 0; overflow: hidden; border: 0; border-radius: 0; }
 .platform-shell.workbench .monitor-map-only .factory-map { height: 100%; min-height: 0; border-radius: 0; }
 .scene-click-hint { margin-top: 7px; color: #577076; font-size: 12px; font-weight: 700; }
+.scene-motion-status { display: inline-flex; flex-direction: column; gap: 4px; margin-top: 10px; padding: 9px 12px; border: 1px solid #b5d9ce; border-radius: 8px; background: rgba(244, 252, 248, .96); color: #146a59; font-size: 12px; }
+.scene-motion-status.paused { border-color: #ddc9a4; background: rgba(255, 250, 239, .96); color: #865f1d; }
+.scene-motion-status strong { font-size: 13px; }
+.legend-dot.stopped, .legend-dot.unknown { background: #8b9aa2; }
 .platform-shell.workbench .monitor-map-only .scene-overlay h2 { font-size: clamp(20px, 2vw, 26px); }
 .platform-shell.workbench .machine-drawer { width: min(700px, 100%); padding: 22px; background: #f3f6f5; }
 .platform-shell.workbench .machine-drawer .drawer-heading { position: sticky; z-index: 2; top: -22px; margin: -22px -22px 18px; padding: 24px 22px 18px; border: 0; border-bottom: 1px solid #dce5e4; border-radius: 0; }

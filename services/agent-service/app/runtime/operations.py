@@ -34,6 +34,8 @@ class RuntimeOperations:
         self.requests = requests
         self.closure_service = closure_service
         self.report_harness = report_harness
+        # 在线报告由已核验的停机至复机周期统一保存；孤立内存演示沿用独立报告。
+        self.lifecycle_reporting = getattr(closure_service, 'backend', '') == 'backend-service'
         self.quality_harness = quality_harness
         self.trace = trace
         self.factory_client = factory_client
@@ -127,6 +129,8 @@ class RuntimeOperations:
                     'measurements': dict(result.get('measurements') or {}),
                     'specifications': dict(result.get('specifications') or {}),
                     'device_id': str(result.get('device_id') or values.get('device_id') or ''),
+                    'workorder_id': str(values.get('workorder_id') or ''),
+                    'event_id': str(values.get('event_id') or ''),
                     'task_id': str(state.get('task_id') or ''), 'trace_id': str(state.get('trace_id') or ''),
                     "reviewer": str(values.get("reviewer") or "quality-agent"),
                     "risk_level": str(values.get("risk_level") or "R1"),
@@ -142,7 +146,7 @@ class RuntimeOperations:
                 check = self.closure_service.record_part_quality(record_payload,operator=str(values.get('reviewer') or 'quality-agent'))
             result["quality_check_id"] = check["quality_check_id"]
             result['quality_check'] = check
-            if self.report_harness is not None:
+            if self.report_harness is not None and not self.lifecycle_reporting:
                 try:
                     result['report'] = _serialize_agent_result(self.report_harness.execute_agent({
                         **dict(state), 'report_type':'quality_report', 'quality':{**result, **check, 'passed':result.get('passed')},
@@ -266,7 +270,7 @@ class RuntimeOperations:
                     if rag_saved is None:
                         rag_saved = experience.get("rag_saved", True)
                     report_harness = self.report_harness
-                    if memory_result.get("success") and bool(rag_saved) and report_harness is not None:
+                    if memory_result.get("success") and bool(rag_saved) and report_harness is not None and not self.lifecycle_reporting:
                         if "rag" not in learning_loop["stages"]:
                             learning_loop["stages"].append("rag")
                         report_state = {
@@ -369,7 +373,7 @@ class RuntimeOperations:
                  'task_id': 'TASK-QC-ACTION-' + uuid4().hex[:12], 'trace_id':(source or {}).get('trace_id') or 'TRACE-QC-' + check_id,
                  'runtime_context':{'run_type':'quality','quality_check_id':check_id}}
         result = _serialize_agent_result(harness.execute_once(state))
-        if operation == 'close_quality_check' and self.report_harness is not None:
+        if operation == 'close_quality_check' and self.report_harness is not None and not self.lifecycle_reporting:
             saved = self.closure_service.get_quality_check(check_id) or {}
             try:
                 result['report'] = _serialize_agent_result(self.report_harness.execute_agent({**state,'quality':{**saved,'passed':saved.get('result')=='passed'},'report_type':'quality_report','persist':True}))

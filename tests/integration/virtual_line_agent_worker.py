@@ -84,15 +84,16 @@ assert stored['accepted_by'] == tech['user']['user_id']
 repeat = api.post(f'/api/workorders/{order_id}/action', json={'action': 'mark_repair_completed', 'feedback': '重复确认'})
 assert repeat.status_code == 200
 assert repeat.json()['machine_control']['state'] == 'running'
-# 同一隔离链路验证删除回执、默认列表与方案删除标记，保留原维修凭证。
+# 同一隔离链路验证真正删除和方案同步，删除后所有工单列表均为空。
 before_delete = backend.call('get_workorder', {'workorder_id': order_id})['workorder']
 deleted = api.delete(f'/api/workorders/{order_id}')
 assert deleted.status_code == 200, deleted.text
 assert deleted.json()['deleted_plan_ids'] == ['P1'], deleted.text
 assert api.get('/api/workorders').json()['count'] == 0
 archived = api.get('/api/workorders?include_deleted=true').json()['items']
-assert len(archived) == 1 and archived[0]['deleted_at']
+assert archived == []
 retained = backend.call('get_workorder', {'workorder_id': order_id})['workorder']
-assert retained['status'] == before_delete['status'] and retained['repair_verification'] == before_delete['repair_verification']
+assert retained == {}
+assert api.delete(f'/api/workorders/{order_id}').status_code==200
 assert 'P1' in api.get('/api/maintenance/plans').json()['deleted_plan_ids']
 print(json.dumps({'workorder_id': order_id, 'state': 'running', 'assignee': stored['assignee'], 'deletion_synced': True}, ensure_ascii=False))

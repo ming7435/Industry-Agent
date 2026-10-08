@@ -185,7 +185,7 @@ test('轮询移除已生成PDF的报告时回退报告不能沿用就绪状态',
     await page.getByRole('button', { name: '生成 PDF', exact: true }).click();
     await page.getByRole('link', { name: '打开 PDF', exact: true }).waitFor();
     items = [b];
-    await page.getByRole('button', { name: '刷新报告', exact: true }).click();
+    await page.getByRole('button', { name: '同步报告', exact: true }).click();
     await page.locator('.report-panel h2').filter({ hasText: '报告 B' }).waitFor();
     assert.equal(await page.getByRole('link', { name: '打开 PDF', exact: true }).count(), 0);
     assert.equal(await page.locator('.report-list-item.is-selected .report-list-select').count(), 1);

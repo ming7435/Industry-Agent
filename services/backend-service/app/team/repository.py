@@ -21,6 +21,7 @@ class TeamRepository:
         with self.transaction() as db:
             key_type = 'VARCHAR(256)' if self.sqlite_path else 'VARCHAR(256) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin'
             db.execute('CREATE TABLE IF NOT EXISTS team_accounts (user_id VARCHAR(64) PRIMARY KEY, username VARCHAR(128) NOT NULL, username_key ' + key_type + ' NOT NULL UNIQUE, password_hash TEXT NOT NULL, role VARCHAR(24) NOT NULL, primary_device_id VARCHAR(128) NOT NULL, enabled INTEGER NOT NULL, created_at DOUBLE NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS team_account_devices (user_id VARCHAR(64) NOT NULL, device_id VARCHAR(128) NOT NULL, sort_order INTEGER NOT NULL, PRIMARY KEY (user_id, device_id))')
             db.execute('CREATE TABLE IF NOT EXISTS team_sessions (token_hash VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, expires_at DOUBLE NOT NULL)')
             payload_type = 'TEXT' if self.sqlite_path else 'LONGTEXT'
             db.execute('CREATE TABLE IF NOT EXISTS team_state (state_key VARCHAR(128) PRIMARY KEY, payload ' + payload_type + ' NOT NULL)')
@@ -63,6 +64,18 @@ class TeamRepository:
     def state(self, db, key, default=None):
         row = db.execute('SELECT payload FROM team_state WHERE state_key=?', (key,)).fetchone()
         return json.loads(row['payload']) if row else default
+
+    def responsible_devices(self, db, account):
+        rows = db.execute('SELECT device_id FROM team_account_devices WHERE user_id=? ORDER BY sort_order, device_id', (account['user_id'],)).fetchall()
+        if rows:
+            return [row['device_id'] for row in rows]
+        # 未迁移的历史账号只保留原来负责的设备，不自动扩展范围。
+        return [account['primary_device_id']] if account['primary_device_id'] else []
+
+    def save_responsible_devices(self, db, user_id, device_ids):
+        db.execute('DELETE FROM team_account_devices WHERE user_id=?', (user_id,))
+        for position, device_id in enumerate(device_ids):
+            db.execute('INSERT INTO team_account_devices(user_id,device_id,sort_order) VALUES (?,?,?)', (user_id, device_id, position))
 
     def save_state(self, db, key, value):
         if self.sqlite_path:

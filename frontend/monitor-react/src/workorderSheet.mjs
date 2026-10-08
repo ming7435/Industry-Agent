@@ -230,15 +230,19 @@ export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagno
     assignee: text(order.assignee_name || order.assignee) || "待派工",
     status: text(order.status) || "open",
     accepted: Boolean(order.accepted_by),
+    feedback: text(order.repair_feedback?.feedback),
     verificationPhase: text(order.repair_verification?.phase),
     machineControl: order.machine_control && typeof order.machine_control === "object" ? order.machine_control : null,
     recoverySample: context.recoverySample && typeof context.recoverySample === "object" ? context.recoverySample : {},
+    dispatchMode: text(order.dispatch_mode),
+    taskSteps: list(order.steps),
+    dispatchFindings: list(order.dispatch_findings),
     partName: text(target.part_name) || "待确认故障部件",
     partNo: text(target.part_no) || "待补充",
     system: text(target.system) || "待确认",
     location: text(target.location) || "待现场确认",
     faultSymptom: localizeIncidentText(text(target.symptom) || text(target.description) || text(diagnosis.fault) || text(diagnosisContext.diagnosis) || text(order.title) || "设备异常",order),
-    autoDispatched: ["", "agent", "auto", "monitor"].includes(text(order.source).toLowerCase())
+    autoDispatched: ["", "agent", "auto", "monitor", "saved-plan-dispatch"].includes(text(order.source).toLowerCase())
       || Boolean(diagnosisContext.summary || order.drawing_context?.model_url),
   };
 }

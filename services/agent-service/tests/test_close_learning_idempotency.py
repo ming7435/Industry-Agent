@@ -46,6 +46,17 @@ class _Report:
         return {"report_id": "REPORT-1", "report_type": "full_case_report", "status": "completed", "persisted": True}
 
 
+def test_online_close_keeps_learning_but_report_belongs_to_restart_cycle(tmp_path):
+    from types import SimpleNamespace
+    report = _Report()
+    operations = RuntimeOperations(_Requests(), SimpleNamespace(backend='backend-service'), report_harness=report,
+                                   learning_store_path=str(tmp_path / 'learning.db'))
+    result = operations.execute_workorder('close', {'workorder_id': 'WO-CLOSE-1'})
+    assert result['learning_loop']['stages'] == ['memory', 'rag']
+    assert result['learning_loop']['status'] == 'completed'
+    assert report.calls == 0
+
+
 class _FlakyReport(_Report):
     def execute_agent(self, state):
         self.calls += 1

@@ -40,26 +40,27 @@ before(async()=>{
 after(async()=>{await fixture?.close();});
 const frame=page=>page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));
 const nav=(page,name)=>page.getByRole('navigation',{name:'功能导航'}).getByRole('button',{name,exact:true});
-async function open(){
+async function open({legacyHidden=false,legacyUrl=false}={}){
   const context=await fixture.browser.newContext(),page=await context.newPage();page.setDefaultTimeout(3000);await page.clock.install();
-  let order=structuredClone(initial),deleted=false,holdPlans=false,holdOrders=false,heldOrder;
-  const writes=[],errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',dialog=>dialog.accept());
+  let order={...structuredClone(initial),...(legacyHidden?{deleted_at:'2026-09-28T14:00:00Z'}:{})},deleted=false,holdPlans=false,holdOrders=false,heldOrder;
+  const writes=[],reads=[],errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('dialog',dialog=>dialog.accept());
   await page.route('**/drawings/**',route=>route.abort());
   await page.route('**/api/**',route=>{
     const req=route.request(),url=new URL(req.url()),path=url.pathname;
-    if(req.method()==='DELETE'&&path==='/api/workorders/W1'){writes.push(path);deleted=true;order={...order,deleted_at:'2026-10-07T14:00:00Z'};return respond(route,{deleted:true,workorder_id:'W1',deleted_plan_ids:['P1'],mode:'soft-delete'});}
+    if(req.method()==='DELETE'&&path==='/api/workorders/W1'){writes.push(path);deleted=true;order=null;return respond(route,{deleted:true,workorder_id:'W1',deleted_plan_ids:['P1'],mode:'permanent-delete'});}
     if(req.method()==='POST'&&path==='/api/workorders/W1/action'){writes.push(path);order={...order,status:'completed'};return respond(route,{workorder:order,machine_control:{state:'blocked',reason:'自动复机控制未启用'}});}
     if(req.method()!=='GET'){writes.push('UNEXPECTED:'+path);return route.abort();}
+    reads.push(url.pathname+url.search);
     if(path==='/api/team/me')return respond(route,{user:actor});
     if(path==='/api/team/devices'||path==='/api/team/reminders')return respond(route,{items:[]});
     if(path==='/api/team/line')return respond(route,{state:'stopped'});
     if(path==='/api/monitor/snapshot')return respond(route,{device_id:'M1',devices:[{device_id:'M1',name:'隔离设备',current_sample:{device_id:'M1',alarm_code:'700006',status:'alarm'}}],diagnosis:{pipeline:{event:{device_id:'M1',event_id:'E1',alarm_code:'700006'},maintenance_plan:plan}}});
     if(path==='/api/maintenance/plans'){if(holdPlans)return;return respond(route,{items:deleted?[]:[plan],deleted_plan_ids:deleted?['P1']:[],history:{status:'ready'}});}
-    if(path==='/api/workorders'){if(holdOrders){heldOrder=route;return;}return respond(route,{items:deleted&&!url.searchParams.has('include_deleted')?[]:[order],deleted_plan_ids:deleted?['P1']:[]});}
+    if(path==='/api/workorders'){if(holdOrders){heldOrder=route;return;}return respond(route,{items:deleted||(legacyHidden&&!url.searchParams.has('include_deleted'))?[]:[order],deleted_plan_ids:deleted?['P1']:[]});}
     return respond(route,{items:[]});
   });
-  await page.goto(fixture.base+'/?view=maintenance');await page.locator('.maintenance-plan-list-row').waitFor();
-  return {context,page,writes,errors,setHoldPlans:v=>{holdPlans=v;},setHoldOrders:v=>{holdOrders=v;},getHeldOrder:()=>heldOrder};
+  await page.goto(fixture.base+'/?view=maintenance'+(legacyUrl?'&include_deleted=true':''),{waitUntil:'domcontentloaded'});await page.locator('.maintenance-plan-list-row').waitFor();
+  return {context,page,writes,reads,errors,setHoldPlans:v=>{holdPlans=v;},setHoldOrders:v=>{holdOrders=v;},getHeldOrder:()=>heldOrder};
 }
 
 test('处理中工单可以删除，返回维修方案时立即移除关联方案，旧轮询回包不复活工单',async()=>{
@@ -99,17 +100,31 @@ test('维修结果提交后，缓存的维修方案立即显示工单完成状�
   }finally{await view.context.close();}
 });
 
-test('删除工单的处理记录可单独查看，关联方案仍不回到维修方案列表',async()=>{
+test('真正删除后刷新工单仍为空，不提供已删除记录入口',async()=>{
   const view=await open();
   try{
     await nav(view.page,'工单系统').click();await view.page.locator('.workorder-titlebar').waitFor();
     await view.page.getByRole('button',{name:'删除工单',exact:true}).click();
     await view.page.locator('.workorder-titlebar').waitFor({state:'detached'});
-    await view.page.getByLabel('查看已删除工单的处理记录',{exact:true}).check();
-    await view.page.locator('.workorder-titlebar').waitFor();
-    assert.equal(await view.page.getByRole('button',{name:'已从列表删除',exact:true}).isEnabled(),false);
+    assert.equal(await view.page.getByLabel('查看旧版隐藏记录',{exact:true}).count(),0);
+    await view.page.getByRole('button',{name:'刷新工单',exact:true}).click();
+    await frame(view.page);await view.page.clock.runFor(5100);await frame(view.page);
+    assert.equal(await view.page.locator('.workorder-titlebar').count(),0);
     await nav(view.page,'维修方案').click();await frame(view.page);
     assert.equal(await view.page.locator('.maintenance-plan-list-row').count(),0);
     assert.deepEqual(view.writes,['/api/workorders/W1']);assert.deepEqual(view.errors,[]);
+  }finally{await view.context.close();}
+});
+
+test('旧网址参数不能恢复隐藏记录，维修方案和工单都只请求当前工单',async()=>{
+  const view=await open({legacyHidden:true,legacyUrl:true});
+  try{
+    await nav(view.page,'工单系统').click();
+    assert.equal(await view.page.getByLabel('查看旧版隐藏记录',{exact:true}).count(),0);
+    await view.page.clock.runFor(5100);await frame(view.page);
+    assert.equal(await view.page.locator('.workorder-titlebar').count(),0);
+    assert.ok(view.reads.some(path=>path.startsWith('/api/workorders')));
+    assert.ok(view.reads.filter(path=>path.startsWith('/api/workorders')).every(path=>path==='/api/workorders'));
+    assert.deepEqual(view.writes,[]);assert.deepEqual(view.errors,[]);
   }finally{await view.context.close();}
 });

@@ -56,6 +56,7 @@ class Ledger:
 
     def record_device_control(self, event_id, device_id, action, outcome):
         self.controls[event_id, device_id, action] = outcome
+        self.line.setdefault('controls', {})[event_id + ':' + device_id + ':' + action] = outcome
 
     def set_stop_result(self, generation, result):
         if generation == self.line['generation']:
@@ -116,6 +117,71 @@ def repaired_order(ledger, event='E1', device='M1', order='WO1', user='U1'):
     ledger.orders.append({'event_id': event, 'device_id': device, 'workorder_id': order, 'assignee': user, 'status': 'in_progress'})
 
 
+def inspected_order(ledger, event='E1', device='M1', order='WO-CHECK', user='U1'):
+    ledger.orders.append({'event_id': event, 'device_id': device, 'workorder_id': order,
+        'assignee': user, 'status': 'closed', 'maintenance_plan_snapshot': {'plan_kind': 'inspection'},
+        'repair_feedback': {'operator': user, 'feedback': '核查完成，报警已解除'},
+        'repair_verification': {'source': 'inspection', 'phase': 'inspection', 'passed': True,
+            'checks': {key: True for key in ('device_identity', 'ready_to_start', 'alarms_clear',
+                'metrics_available', 'interlocks_clear', 'recovery_fresh', 'alarm_state_available', 'snapshot_trusted')}}})
+
+
+def test_verified_inspection_completion_restores_line_without_faking_repair_confirmation(setup):
+    factory, ledger, controller = setup
+    controller.handle_fault('E1', 'M1', 'fault')
+    inspected_order(ledger)
+    assert controller.try_restart_after_inspection('WO-CHECK', 'U1')['state'] == 'running'
+    assert factory.calls.count(('M1', 'start')) == factory.calls.count(('M2', 'start')) == 1
+    controller.try_restart_after_inspection('WO-CHECK', 'U1')
+    assert factory.calls.count(('M1', 'start')) == 1
+    assert not ledger.orders[0].get('maintenance_confirmed_by')
+    assert ledger.orders[0]['repair_verification']['source'] == 'inspection'
+
+
+@pytest.mark.parametrize('issue', ['wrong_actor', 'unverified', 'open', 'other_fault', 'active_alarm'])
+def test_inspection_cannot_restart_line_until_all_conditions_pass(setup, issue):
+    factory, ledger, controller = setup
+    controller.handle_fault('E1', 'M1', 'fault')
+    inspected_order(ledger)
+    actor = 'U1'
+    if issue == 'wrong_actor': actor = 'other'
+    if issue == 'unverified': ledger.orders[0]['repair_verification']['checks']['alarms_clear'] = False
+    if issue == 'open': ledger.orders[0]['status'] = 'in_progress'
+    if issue == 'other_fault': controller.handle_fault('E2', 'M2', 'fault')
+    if issue == 'active_alarm': factory.alarms['M2'] = 'F2'
+    assert controller.try_restart_after_inspection('WO-CHECK', actor)['state'] == 'blocked'
+    assert not any(action == 'start' for _, action in factory.calls)
+
+
+def test_inspection_partial_restart_failure_rolls_back_entire_line(setup):
+    factory, ledger, controller = setup
+    controller.handle_fault('E1', 'M1', 'fault')
+    inspected_order(ledger)
+    factory.fail_start = 'M2'
+    assert controller.try_restart_after_inspection('WO-CHECK', 'U1')['state'] == 'failed'
+    assert all(state == 'stopped' for state in factory.states.values())
+
+
+@pytest.mark.parametrize('real_fault', [False, True])
+def test_collateral_stop_event_needs_persisted_no_fault_control_evidence(setup, real_fault):
+    factory, ledger, controller = setup
+    other = 'ELITE-CS612-ROBOT-001'
+    factory.states = {'M1': 'running', other: 'running'}
+    controller.handle_fault('E1', 'M1', 'fault')
+    inspected_order(ledger)
+    controller.handle_fault('STOP-ZERO-EVENT', other, 'stopped zeros')
+    evidence = {'source': 'control_boundary', 'active': real_fault, 'evidence_status': 'unavailable', 'control_reason': 'stopped zeros'}
+    sample = {'device_id': other, 'status': 'stopped', 'control_state': 'stopped',
+              'control_reason': 'stopped zeros', 'fault_evidence': evidence, 'alarm_code': '',
+              'metrics': {'robot_power_on': 0}, 'metric_details': {'robot_power_on': {'normal_range': [1, 1]}},
+              'checked_at': datetime.now(timezone.utc).isoformat()}
+    ledger.line['controls'] = {'STOP-ZERO-EVENT:' + other + ':emergency_stop': {
+        'state': 'verified', 'device_id': other, 'action': 'emergency_stop', 'snapshot': sample}}
+    result = controller.try_restart_after_inspection('WO-CHECK', 'U1')
+    assert result['state'] == ('blocked' if real_fault else 'running')
+    if real_fault: assert not any(action == 'start' for _, action in factory.calls)
+
+
 def test_assignee_confirmation_starts_all_and_duplicate_does_not_start_again(setup):
     factory, ledger, controller = setup
     controller.handle_fault('E1', 'M1', 'fault')
@@ -150,6 +216,113 @@ def test_other_unconfirmed_fault_blocks_line(setup):
     repaired_order(ledger, 'E2', 'M2', 'WO2', 'U2')
     assert controller.confirm_and_restart('WO1', 'U1', 'fixed')['machine_control']['state'] == 'blocked'
     assert controller.confirm_and_restart('WO2', 'U2', 'fixed')['machine_control']['state'] == 'running'
+
+
+def test_missing_workorder_is_reported_as_untracked_fault_not_unfinished_task(setup):
+    factory, ledger, controller = setup
+    controller.handle_fault('OLD-MISSING', 'M1', 'older fault')
+    controller.handle_fault('E1', 'M1', 'current fault')
+    repaired_order(ledger)
+    ledger.line['controls'] = {'OLD-MISSING:M1:emergency_stop': {
+        'state': 'verified', 'device_id': 'M1', 'action': 'emergency_stop',
+        'snapshot': {**factory.snapshot('M1'), 'alarm_code': 'F-OLD'}}}
+    result = controller.confirm_and_restart('WO1', 'U1', 'fixed')['machine_control']
+    assert result['state'] == 'blocked'
+    assert '没有关联工单' in result['reason']
+    assert result['fault_blockers'] == [{'event_id': 'OLD-MISSING', 'device_id': 'M1',
+        'alarm_code': 'F-OLD', 'kind': 'missing_workorder', 'workorder_ids': []}]
+    assert not any(action == 'start' for _, action in factory.calls)
+
+
+def test_unfinished_task_response_names_actual_blocking_order(setup):
+    factory, ledger, controller = setup
+    controller.handle_fault('E1', 'M1', 'fault')
+    controller.handle_fault('E2', 'M2', 'another fault')
+    repaired_order(ledger)
+    repaired_order(ledger, 'E2', 'M2', 'WO2', 'U2')
+    result = controller.confirm_and_restart('WO1', 'U1', 'fixed')['machine_control']
+    assert result['workorder_ids'] == ['WO2']
+    assert result['fault_blockers'][0]['kind'] == 'unfinished_workorder'
+    assert result['fault_blockers'][0]['device_id'] == 'M2'
+
+
+def old_untracked_fault(factory, ledger, controller):
+    controller.handle_fault('OLD-MISSING', 'M1', 'older fault')
+    controller.handle_fault('E1', 'M1', 'current fault')
+    repaired_order(ledger)
+    ledger.line['controls'] = {'OLD-MISSING:M1:emergency_stop': {
+        'state': 'verified', 'device_id': 'M1', 'action': 'emergency_stop',
+        'snapshot': {**factory.snapshot('M1'), 'alarm_code': 'F-OLD',
+                     'metric_details': {'pressure': {'normal_range': [0, 2]}}}}}
+    original = factory.snapshot
+    factory.snapshot = lambda device: {**original(device), 'metric_details': {'pressure': {'normal_range': [0, 2]}}}
+
+
+def test_explicit_untracked_fault_review_keeps_audit_then_allows_normal_restart(setup):
+    factory, ledger, controller = setup
+    old_untracked_fault(factory, ledger, controller)
+    result = controller.review_untracked_faults(['OLD-MISSING'], {
+        'request_id': 'REQUEST-1', 'operator': 'human-user', 'feedback': '旧故障已处理完，请核验设备后解除'})
+    assert result['reviewed_events'] == ['OLD-MISSING']
+    assert all(not f['resolved'] for f in ledger.line['faults'])
+    assert ledger.orders[0]['status'] == 'in_progress'
+    assert not any(action == 'start' for _, action in factory.calls)
+    review = ledger.line['controls']['OLD-MISSING:M1:fault_recovery_review']
+    assert review['source'] == 'explicit_user_fault_recovery'
+    assert review['operator'] == 'human-user' and review['feedback'].startswith('旧故障已处理完')
+    assert controller.confirm_and_restart('WO1', 'U1', 'fixed')['machine_control']['state'] == 'running'
+
+
+@pytest.mark.parametrize('issue', ['no_authorization', 'wrong_event', 'active_alarm', 'old_sample',
+                                  'missing_metric', 'unknown_range', 'existing_order', 'unverified_stop', 'synthetic'])
+def test_untracked_recovery_review_cannot_skip_real_faults_or_invent_verification(setup, issue):
+    factory, ledger, controller = setup
+    old_untracked_fault(factory, ledger, controller)
+    authorization = {'request_id': 'REQUEST-1', 'operator': 'human-user', 'feedback': '旧故障已处理完'}
+    events = ['OLD-MISSING']
+    if issue == 'no_authorization': authorization['feedback'] = ''
+    if issue == 'wrong_event': events = ['DOES-NOT-EXIST']
+    if issue == 'active_alarm': factory.alarms['M1'] = 'F-OLD'
+    if issue == 'old_sample': factory.old = True
+    if issue in {'missing_metric', 'unknown_range'}:
+        original = factory.snapshot
+        factory.snapshot = lambda device: {**original(device),
+            'metrics': {'other': 1} if issue == 'missing_metric' else {'pressure': 1},
+            'metric_details': {} if issue == 'unknown_range' else {'other': {'normal_range': [0, 2]}}}
+    if issue == 'existing_order': repaired_order(ledger, 'OLD-MISSING', 'M1', 'WO-OLD')
+    if issue == 'unverified_stop': ledger.line['controls']['OLD-MISSING:M1:emergency_stop']['state'] = 'pending'
+    if issue == 'synthetic':
+        original = factory.snapshot
+        factory.snapshot = lambda device: {**original(device), 'raw': {'synthetic': True}}
+    with pytest.raises(ValueError): controller.review_untracked_faults(events, authorization)
+    assert not any(key.endswith(':fault_recovery_review') for key in ledger.line['controls'])
+    assert all(not f['resolved'] for f in ledger.line['faults'])
+    assert not any(action == 'start' for _, action in factory.calls)
+
+
+def test_review_of_old_fault_does_not_cover_a_new_fault(setup):
+    factory, ledger, controller = setup
+    old_untracked_fault(factory, ledger, controller)
+    controller.review_untracked_faults(['OLD-MISSING'], {'request_id': 'R', 'operator': 'user', 'feedback': '旧故障已处理'})
+    controller.handle_fault('NEW-FAULT', 'M2', 'new fault')
+    result = controller.confirm_and_restart('WO1', 'U1', 'fixed')['machine_control']
+    assert result['state'] == 'blocked' and result['event_id'] == 'NEW-FAULT'
+    assert not any(action == 'start' for _, action in factory.calls)
+
+
+@pytest.mark.parametrize('issue', ['event_identity', 'different_stop', 'corrupt_snapshot', 'missing_authorization'])
+def test_corrupt_saved_review_stays_blocked(setup, issue):
+    factory, ledger, controller = setup
+    old_untracked_fault(factory, ledger, controller)
+    controller.review_untracked_faults(['OLD-MISSING'], {'request_id': 'R', 'operator': 'user', 'feedback': '旧故障已处理'})
+    proof = ledger.line['controls']['OLD-MISSING:M1:fault_recovery_review']
+    if issue == 'event_identity': proof['event_id'] = 'E1'
+    if issue == 'different_stop': ledger.line['controls']['OLD-MISSING:M1:emergency_stop']['snapshot']['alarm_code'] = 'OTHER'
+    if issue == 'corrupt_snapshot': proof['snapshot']['metrics']['pressure'] = 100
+    if issue == 'missing_authorization': proof['request_id'] = ''
+    result = controller.confirm_and_restart('WO1', 'U1', 'fixed')['machine_control']
+    assert result['state'] == 'blocked' and result['event_id'] == 'OLD-MISSING'
+    assert not any(action == 'start' for _, action in factory.calls)
 
 
 @pytest.mark.parametrize('status', ['completed', 'closed'])

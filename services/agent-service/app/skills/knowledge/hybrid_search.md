@@ -1,8 +1,11 @@
 ---
 name: hybrid_search_skill
 version: 1.0
-goal: 在没有指定专业知识源时执行全库混合检索。
+goal: 为维修依据补充混合资料源，或在没有指定专业知识源时执行混合检索。
 trigger: default
+triggers:
+  - default
+  - maintenance_evidence
 steps:
   - classify_query
   - search_knowledge
@@ -28,17 +31,20 @@ tools:
 
 # 混合知识检索
 
-运行标识：`hybrid_search_skill`。在没有指定专业知识源时执行全库混合检索。
+运行标识：`hybrid_search_skill`。负责默认混合检索及明确维修依据请求的互补资料检索。
 
-本文正文是技能说明；顶部 YAML 元数据仍由运行时加载，名称、触发条件、步骤标识、工具权限和兼容别名保持不变。
+本文正文是技能说明；顶部 YAML 元数据由运行时加载并声明触发条件、步骤和工具权限。
 
 ## 适用场景
 
 没有匹配专业知识源时使用默认混合检索；有设备或活动报警范围时仍保留该条件，不自动扩大到全库。
 
+当结构化 `purpose` 为 `maintenance` 时，可与报警检索技能共同选中，允许 Graph 在已有报警资料之外检索 SOP 和故障案例。检索仍受原有预算、设备范围与来源校验约束；普通报警说明不因此启用额外资料源。
+
 ## 输入与前置条件
 
 - `query` 与可选 `device_id`、`alarm_code`、`component`、`filters`。
+- `purpose: maintenance` 表示明确的维修依据检索意图。
 - `required_sources`、`document_id`、`chunk_id`、`limit`、`max_steps` 按实际请求提供。
 
 ## 执行步骤

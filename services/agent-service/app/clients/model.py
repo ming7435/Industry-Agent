@@ -19,7 +19,14 @@ class ModelServiceClient:
     def __init__(self, base_url: str | None = None, model: str | None = None) -> None:
         self.base_url = str(base_url or os.getenv("MODEL_SERVICE_BASE_URL", "")).rstrip("/")
         self.model = str(model or os.getenv("MODEL_CHAT_MODEL", "deepseek-chat"))
-        self.timeout = float(os.getenv("MODEL_SERVICE_TIMEOUT_SECONDS", "90"))
+        # 网关按每次上游请求计时并允许有限重试；客户端须覆盖该预算，
+        # 否则会在网关重试成功前丢弃结果。Runtime 的动作期限仍独立生效。
+        configured_timeout = os.getenv("MODEL_SERVICE_TIMEOUT_SECONDS")
+        if configured_timeout is None:
+            provider_timeout = float(os.getenv("MODEL_PROVIDER_TIMEOUT_SECONDS", "90"))
+            attempts = max(1, min(5, int(os.getenv("MODEL_PROVIDER_MAX_ATTEMPTS", "2"))))
+            configured_timeout = str(provider_timeout * attempts + 10)
+        self.timeout = float(configured_timeout)
 
     @property
     def available(self) -> bool:

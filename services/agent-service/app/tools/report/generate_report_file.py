@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
 _DEFAULT_REPORT_FILE_DIR = ".runtime/report-files"
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 _SECTION_LABELS = {
+    "lifecycle": "停机到复机",
     "diagnosis": "诊断结果",
     "diagnosis_result": "诊断结果",
     "maintenance_plan": "维修方案",
@@ -27,6 +29,20 @@ _SECTION_LABELS = {
     "trace_summary": "运行记录",
 }
 _FIELD_LABELS = {
+    "cycle_id": "停机处理编号",
+    "started_at": "故障停机开始",
+    "stopped_at": "停机确认时间",
+    "restarted_at": "复机核验通过时间",
+    "duration_seconds": "停机处理时长（秒）",
+    "device_ids": "整线设备",
+    "event_ids": "故障事件",
+    "records": "关联业务记录",
+    "inspection_verification": "工单检查核验",
+    "generation": "产线控制版本",
+    "claimed_at": "故障登记时间",
+    "faults": "停机事件",
+    "reason": "核验说明",
+    "resolved": "故障已处理",
     "report_id": "报告编号",
     "report_type": "报告类型",
     "title": "报告标题",
@@ -254,11 +270,61 @@ def _display_key(key: Any) -> str:
     return _FIELD_LABELS.get(value, value.replace("_", " "))
 
 
+def _lifecycle_pdf_sections(sections):
+    """统一报告按全部业务记录输出，避免首张工单快照挤掉后续记录。"""
+    lifecycle = sections['lifecycle']
+    result = {'lifecycle': {key: lifecycle[key] for key in (
+        'cycle_id', 'started_at', 'stopped_at', 'restarted_at', 'duration_seconds', 'device_ids', 'event_ids', 'reason'
+    ) if key in lifecycle}}
+    fields = {
+        'diagnosis': ('device_id', 'event_id', 'fault', 'summary', 'confidence', 'possible_causes', 'recommended_checks'),
+        'maintenance_plan': ('plan_id', 'workorder_id', 'plan_kind', 'repair_target', 'repair_steps', 'safety_requirements'),
+        'workorder': ('workorder_id', 'device_id', 'status', 'assignee_name', 'assignee', 'created_at', 'updated_at',
+                      'repair_feedback', 'inspection_verification', 'repair_verification'),
+        'quality': ('quality_check_id', 'workorder_id', 'device_id', 'part_id', 'part_no', 'batch_id', 'result', 'status',
+                    'created_at', 'findings', 'quality_validation', 'reinspection'),
+    }
+    for name, keys in fields.items():
+        records = (sections.get(name) or {}).get('records') or []
+        result[name] = [{key: record[key] for key in keys if key in record} for record in records] or {'summary': '未关联记录'}
+        if name == 'diagnosis' and records:
+            for record, display in zip(records, result[name]):
+                event = re.match(r'^EVT-(\d{8})-(\d{6})-\d{3}-\d+$', str(record.get('event_id') or ''))
+                stamp = record.get('event_timestamp')
+                if not stamp and event:
+                    try:
+                        stamp = datetime.strptime(event[1] + event[2], '%Y%m%d%H%M%S').replace(tzinfo=timezone.utc).isoformat()
+                    except ValueError:
+                        pass
+                stamp = stamp or record.get('triggered_at') or (record.get('raw') or {}).get('triggered_at')
+                if not stamp:
+                    continue
+                try:
+                    when = datetime.fromisoformat(str(stamp).replace('Z', '+00:00'))
+                    if when.tzinfo is None:
+                        when = when.replace(tzinfo=timezone.utc)
+                    utc = when.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+                    local = _display_value(when.isoformat(), 'triggered_at')
+                    for key in ('fault', 'summary'):
+                        if isinstance(display.get(key), str):
+                            display[key] = display[key].replace(utc, local).replace(utc.replace('T', ' '), local)
+                except (TypeError, ValueError):
+                    pass
+    return result
+
+
 def _display_value(value: Any, key: str = "") -> str:
     """将状态、布尔值等机器值转换为中文可读文本。"""
 
     if isinstance(value, bool):
         return "是" if value else "否"
+    if key.endswith('_at') and value:
+        try:
+            stamp = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+            if stamp.tzinfo:
+                return stamp.astimezone(timezone(timedelta(hours=8))).strftime('%Y/%m/%d %H:%M:%S（北京时间）')
+        except (TypeError, ValueError):
+            pass
     text = str(value)
     if "HTTP Error 404" in text or text == "404":
         return "未找到对应记录（HTTP 404）"
@@ -285,6 +351,8 @@ def _value_lines(value: Any, prefix: str = "", depth: int = 0, limit: int = 80) 
             if str(key) in _PDF_SKIP_FIELDS:
                 continue
             key_text = _display_key(key)
+            if str(key).endswith('_at') and isinstance(child, str):
+                child = _display_value(child, str(key))
             if key in {"success", "found"} and child is True:
                 continue
             child_lines = _value_lines(child, key_text, depth + 1, limit)
@@ -392,12 +460,14 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
     add_text(f"报告编号：{report_id}", size=10, color=(0.35, 0.43, 0.46))
     report_type = _VALUE_LABELS.get(str(report.get("report_type") or ""), _SECTION_LABELS.get(str(report.get("report_type") or ""), "运维报告"))
     report_status = _VALUE_LABELS.get(str(report.get("status") or ""), str(report.get("status") or "待确认"))
-    add_text(f"报告类型：{report_type}    报告状态：{report_status}", size=10, color=(0.35, 0.43, 0.46))
-    add_text(f"生成时间：{report.get('created_at') or report.get('updated_at') or '未记录'}", size=10, color=(0.35, 0.43, 0.46))
+    add_text(f"停机处理汇总    报告状态：{report_status}" if (report.get('sections') or {}).get('lifecycle') else f"报告类型：{report_type}    报告状态：{report_status}", size=10, color=(0.35, 0.43, 0.46))
+    add_text(f"生成时间：{_display_value(report.get('created_at') or report.get('updated_at') or '未记录', 'created_at')}", size=10, color=(0.35, 0.43, 0.46))
     y += 8
     add_text("报告摘要", size=13, color=(0.02, 0.32, 0.38), bold=True)
     add_text(str(report.get("summary") or "暂无摘要"), size=11)
     sections = report.get("sections") or {}
+    if sections.get('lifecycle'):
+        sections = _lifecycle_pdf_sections(sections)
     if isinstance(sections, Mapping):
         for key, value in sections.items():
             y += 8

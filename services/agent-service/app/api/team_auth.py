@@ -60,10 +60,18 @@ def human_action(workorder_id, action, payload, request, operations=None):
                 snapshot = recovery_snapshot(factory.snapshot(device_id), device_id)
             except FactoryApiError:
                 snapshot = {}
-            return backend.request('/internal/team/inspection/record', {
+            result = backend.request('/internal/team/inspection/record', {
                 'workorder_id': workorder_id, 'actor_id': actor['user_id'],
                 'feedback': str(feedback), 'snapshot': snapshot,
             })
+            if (result.get('inspection_result') or {}).get('passed') is True and (result.get('workorder') or {}).get('status') == 'closed':
+                try:
+                    result['machine_control'] = LineController(factory, backend).try_restart_after_inspection(workorder_id, actor['user_id'])
+                except Exception:
+                    # The already saved inspection remains valid. Do not retry a
+                    # possibly applied start automatically or change it to repair.
+                    result['machine_control'] = {'state': 'blocked', 'reason': '检查已保存，整线复机结果未确认，请核对当前状态后再次申请'}
+            return result
         from app.workorder.review import reviewed_workorder
         return reviewed_workorder(backend.call('submit_repair_feedback', {'workorder_id': workorder_id, 'feedback': {'feedback': str(feedback), 'operator': actor['user_id']}}))
     if action == 'update' and payload.get('status') == 'in_progress':

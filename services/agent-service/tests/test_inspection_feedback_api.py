@@ -1,4 +1,4 @@
-"""检查反馈由服务端采样，Backend事实决定结束，不进入任何复机路径。"""
+"""检查由服务端采样；仅真实核验通过后请求整线恢复，不伪造维修确认。"""
 from copy import deepcopy
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -65,6 +65,13 @@ def setup_boundary(monkeypatch, *, status="warning", alarm="700003", passed=Fals
     monkeypatch.setattr(LineController, "__init__", forbid_control)
     monkeypatch.setattr(LineController, "confirm_and_restart", forbid_control)
     monkeypatch.setattr(LineController, "try_restart", forbid_control)
+    backend.restart_calls = []
+    if passed:
+        monkeypatch.setattr(LineController, '__init__', lambda self, factory, ledger: None)
+        def restart_after_inspection(self, workorder_id, actor_id):
+            backend.restart_calls.append((workorder_id, actor_id))
+            return {'state': 'running', 'devices': {}}
+        monkeypatch.setattr(LineController, 'try_restart_after_inspection', restart_after_inspection)
     request = SimpleNamespace(cookies={"maintenance_session": "isolated-test-session"})
     return backend, reads, envelope, sample, request
 
@@ -83,7 +90,13 @@ def test_inspection_feedback_sends_only_server_snapshot_and_returns_backend_fact
     assert backend.requests == [("/internal/team/inspection/record", {
         "workorder_id": "WO-CHECK", "actor_id": "U-CHECK", "feedback": "已核查报警及外观并上报", "snapshot": sample})]
     assert [name for name, _ in backend.calls] == ["get_workorder"]
-    assert result == backend.result
+    if passed:
+        assert result['machine_control']['state'] == 'running'
+        assert backend.restart_calls == [('WO-CHECK', 'U-CHECK')]
+        assert {key: value for key, value in result.items() if key != 'machine_control'} == backend.result
+    else:
+        assert result == backend.result
+        assert backend.restart_calls == []
     assert result["inspection_result"]["passed"] is passed
     assert result["workorder"]["status"] == ("closed" if passed else "in_progress")
 

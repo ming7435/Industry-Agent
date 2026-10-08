@@ -67,6 +67,7 @@ class ScriptMCP:
             shape.Faces = [SimpleNamespace(Area=area) for area in areas]
             return shape
         part = SimpleNamespace(makeCylinder=lambda r, h, *_: Shape(math.pi*r*r*h, (r*2,r*2,h)),
+            makeSphere=lambda r,*_: Shape(4*math.pi*r**3/3, (r*2,r*2,r*2)),
             makeBox=lambda x,y,z,*_: Shape(x*y*z, (x,y,z)), export=export, read=read,
             makePolygon=lambda vertices: vertices, Face=lambda vertices: vertices,
             makeShell=lambda faces: faces, makeSolid=solid)

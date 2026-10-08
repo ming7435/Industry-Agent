@@ -13,8 +13,19 @@ const loginA = () => setTeamSessionActor(actorA, { force: true });
 const stale = error => error.sessionChanged === true && error.name === 'AbortError';
 
 test('会话保护范围排除公开方案与CAD外部账号', () => {
-  for (const path of ['/api/workorders', '/api/workorders/W/action', '/api/workorders/W/revalidate-plan', '/api/maintenance/plans/delete', '/api/maintenance/plans/P/retry', '/api/team/me', '/api/team/line', '/api/team/reminders']) assert.equal(isTeamSessionPath(path), true, path);
-  for (const path of ['/api/maintenance/plans', '/api/reports', '/api/quality/checks', '/api/cad/resolve', '/api/cad/buildcad/auth/status', '/api/team/devices', '/api/team/login', '/api/team/register']) assert.equal(isTeamSessionPath(path), false, path);
+  for (const path of ['/api/workorders', '/api/workorders/W/action', '/api/workorders/W/revalidate-plan', '/api/maintenance/plans/delete', '/api/maintenance/plans/P/retry', '/api/team/me', '/api/team/reminders']) assert.equal(isTeamSessionPath(path), true, path);
+  for (const path of ['/api/maintenance/plans', '/api/reports', '/api/quality/checks', '/api/cad/resolve', '/api/cad/buildcad/auth/status', '/api/team/devices', '/api/team/line', '/api/team/login', '/api/team/register']) assert.equal(isTeamSessionPath(path), false, path);
+});
+
+test('公共整线状态在登录或退出期间仍能交付，两个请求入口一致', async () => {
+  for (const invoke of [() => request('/api/team/line'), () => teamRequest('line')]) {
+    loginA(); let release;
+    globalThis.fetch = () => new Promise(done => { release = done; });
+    const pending = invoke();
+    setTeamSessionActor(null, { force: true });
+    release(response({ state: 'stopped' }));
+    assert.deepEqual(await pending, { state: 'stopped' });
+  }
 });
 
 test('同步订阅立即发布当前身份，me确认相同身份不改变epoch而登录必须改变', () => {
@@ -93,7 +104,7 @@ test('初始尚未确认身份时的401也阻止更早me200恢复旧身份', asy
   setTeamSessionActor(null, { force: true }); let releaseMe;
   globalThis.fetch = url => url.endsWith('/me') ? new Promise(done => { releaseMe = done; }) : Promise.resolve(response({ detail: '请先登录' }, 401));
   const pending = teamRequest('me');
-  await assert.rejects(teamRequest('line'), error => error.status === 401);
+  await assert.rejects(teamRequest('reminders'), error => error.status === 401);
   releaseMe(response({ user: actorA })); await assert.rejects(pending, stale);
   assert.equal(getTeamSession().actor, null);
 });

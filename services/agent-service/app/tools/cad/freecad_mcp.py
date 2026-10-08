@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import xml.etree.ElementTree as ET
 
 
 class FreeCADModelError(ValueError):
@@ -16,9 +17,39 @@ class FreeCADModelError(ValueError):
 _scope = ContextVar('freecad_tool_scope', default=None)
 _execution_lock = threading.Lock()
 _FILES = {'model.stl': 'stl', 'model.step': 'step', 'model.FCStd': 'fcstd'}
+ARTIFACT_TYPES = {**{name: ('model/stl' if ext == 'stl' else 'application/step' if ext == 'step' else 'application/octet-stream') for name, ext in _FILES.items()},
+    'drawing.svg': 'image/svg+xml', 'drawing.pdf': 'application/pdf',
+    'unfold.svg': 'image/svg+xml', 'unfold.dxf': 'image/vnd.dxf', 'motion.json': 'application/json'}
 
 
 def validate_spec(spec):
+    """保持旧零件协议，工作台扩展必须逐项验证，不接收任意脚本。"""
+    if not isinstance(spec, dict) or spec.get('units') != 'mm':
+        raise FreeCADModelError('请提供毫米单位的完整结构化规格。')
+    base = {k: v for k, v in spec.items() if k not in {'drawing', 'assembly'}}
+    try:
+        if set(base) == {'units', 'bim'}:
+            from .freecad_workbenches import validate_bim
+            normalized = {'units': 'mm', 'bim': validate_bim(base['bim'])}
+        elif set(base) == {'units', 'sheet_metal'}:
+            from .freecad_sheetmetal import validate_sheet_metal
+            normalized = {'units': 'mm', 'sheet_metal': validate_sheet_metal(base['sheet_metal'])}
+        else:
+            normalized = _validate_geometry(base)
+        if 'assembly' in spec:
+            if 'parts' not in normalized:
+                raise ValueError('装配约束必须同时提供独立零件。')
+            from .freecad_workbenches import validate_assembly
+            normalized['assembly'] = validate_assembly(spec['assembly'], [p['name'] for p in normalized['parts']])
+        if 'drawing' in spec:
+            from .freecad_drawing import validate_drawing
+            normalized['drawing'] = validate_drawing(spec['drawing'])
+        return normalized
+    except (ValueError, TypeError, OverflowError) as error:
+        raise FreeCADModelError(str(error)) from None
+
+
+def _validate_geometry(spec):
     if not isinstance(spec, dict) or set(spec) not in ({'units', 'operations'}, {'units', 'parts'}) or spec.get('units') != 'mm':
         raise FreeCADModelError('请明确毫米单位和 operations 参数；不接受代码或额外字段。')
     if 'parts' in spec:
@@ -129,7 +160,7 @@ def validate_spec(spec):
 
 
 def artifact_path(run_id, name):
-    if not isinstance(run_id, str) or not re.fullmatch(r'FC-[a-f0-9]{64}', run_id) or name not in {*_FILES, 'manifest.json'}:
+    if not isinstance(run_id, str) or not re.fullmatch(r'FC-[a-f0-9]{64}', run_id) or name not in {*ARTIFACT_TYPES, 'manifest.json'}:
         raise FreeCADModelError('无效的建模文件标识。')
     root = Path(os.getenv('FREECAD_ARTIFACT_ROOT') or Path(__file__).resolve().parents[5] / '.runtime' / 'cad-models').resolve()
     target = (root / run_id / name).resolve()
@@ -150,9 +181,20 @@ def freecad_tool_scope(client, run_id):
 
 def _program(spec, directory, run_id):
     """所有可执行语句来自固定模板，用户输入只作为已校验的 JSON 数值。"""
+    extensions = []
+    if 'drawing' in spec:
+        from .freecad_drawing import KERNEL_SOURCE
+        extensions.append(KERNEL_SOURCE)
+    if 'bim' in spec or 'assembly' in spec:
+        from .freecad_workbenches import KERNEL_SOURCE
+        extensions.append(KERNEL_SOURCE)
+    if 'sheet_metal' in spec:
+        from .freecad_sheetmetal import KERNEL_SOURCE
+        extensions.append(KERNEL_SOURCE)
     return f'''import FreeCAD as App
 import Part, Mesh, json, math
 from pathlib import Path
+{chr(10).join(extensions)}
 spec = json.loads({json.dumps(spec, allow_nan=False)!r})
 out = Path({str(directory)!r})
 # 底层 XML-RPC 可能隐式重发；执行端原子认领，禁止再次构造或覆盖同一任务。
@@ -173,10 +215,18 @@ try:
                 if any(i > len(shape.Edges) for i in op["edges"]):
                     raise ValueError("所选边编号不存在，不能替换为其他边")
                 edges = [shape.Edges[i-1] for i in op["edges"]]
-            before = shape.Volume
+            previous = shape
             shape = shape.makeFillet(op["radius"], edges) if op["type"] == "fillet" else shape.makeChamfer(op["distance"], edges)
-            if shape.isNull() or not shape.isValid() or len(shape.Solids) != 1 or shape.Volume <= 0 or shape.Volume >= before:
+            if shape.isNull() or not shape.isValid() or len(shape.Solids) != 1 or shape.Volume <= 0:
                 raise ValueError("圆角/倒角未形成有效修改，不能忽略特征")
+            # 凹边修饰可以增加体积，混合边可能增减抵消；比较双向几何差，不只比较净体积。
+            removed, added = previous.cut(shape), shape.cut(previous)
+            if any(not difference.isNull() and not difference.isValid() for difference in (removed, added)):
+                raise ValueError("圆角/倒角几何变化校验失败")
+            changed = removed.Volume + added.Volume
+            # 仅为布尔运算数值噪声的判别，不是加工公差或生产验收阈值。
+            if not math.isfinite(changed) or changed <= max(1e-9, previous.Volume*1e-12):
+                raise ValueError("圆角/倒角未实际改变实体，不能忽略特征")
             continue
         pos = App.Vector(*op["position"])
         if op["type"] == "cylinder":
@@ -209,11 +259,20 @@ try:
             half = op["depth"]*math.tan(math.radians(op["flank_angle"]/2))
             epsilon = min(1e-5, op["depth"]*1e-4)
             profile = Part.makePolygon([App.Vector(root,0,0), App.Vector(r+epsilon,0,half), App.Vector(r+epsilon,0,-half), App.Vector(root,0,0)])
-            helix = Part.makeHelix(op["pitch"], op["length"], root, 0, op["hand"] == "left")
+            # 长周期扫掠在当前 OCC 中会发生布尔误分类；逐圈扫掠并平移，不放宽校验。
+            helix = Part.makeHelix(op["pitch"], op["pitch"], root, 0, op["hand"] == "left")
             groove = Part.Wire(helix.Edges).makePipeShell([Part.Wire(profile.Edges)], True, True)
-            part = Part.makeCylinder(r, op["length"]).cut(groove).removeSplitter()
+            part = Part.makeCylinder(r, op["length"])
+            for turn in range(-1, int(math.ceil(op["length"]/op["pitch"]))+1):
+                segment = groove.copy()
+                segment.translate(App.Vector(0,0,turn*op["pitch"]))
+                part = part.cut(segment).removeSplitter()
             if not math.pi*root*root*op["length"] < part.Volume < math.pi*r*r*op["length"]:
                 raise ValueError("外螺纹几何未保留完整芯部或螺旋槽未生效")
+            nominal = part.optimalBoundingBox(False, False)
+            if any(abs(actual-expected) > max(1e-6, expected*1e-6) for actual,expected in zip(
+                    [nominal.XLength, nominal.YLength, nominal.ZLength], [2*r, 2*r, op["length"]])):
+                raise ValueError("外螺纹超出指定大径或长度，不能返回为已完成模型")
             part.rotate(App.Vector(0,0,0), App.Vector(0,1,0) if op["axis"] == "x" else App.Vector(1,0,0), 90 if op["axis"] == "x" else (-90 if op["axis"] == "y" else 0))
             part.translate(pos)
         elif op["type"] == "loft":
@@ -247,20 +306,30 @@ try:
         if shape.isNull() or not shape.isValid() or len(shape.Solids) != 1 or shape.Volume <= 0:
             raise ValueError("操作未形成一个有效实体，请核对尺寸和位置")
       return shape
-    groups = spec.get("parts") or [{{"name": "Model", "operations": spec["operations"]}}]
-    shapes = [build(group["operations"]) for group in groups]
+    extra = {{}}
+    objects = []
+    if "bim" in spec:
+        objects, extra = build_bim(doc, spec["bim"])
+    elif "sheet_metal" in spec:
+        objects, extra = build_sheet_metal(doc, spec["sheet_metal"], out)
+    else:
+        groups = spec.get("parts") or [{{"name": "Model", "operations": spec["operations"]}}]
+        for i, group in enumerate(groups):
+            obj = doc.addObject("PartDesign::Feature", "Model" if len(groups)==1 else "Component%d" % (i+1))
+            obj.Label = group["name"]
+            obj.Shape = build(group["operations"])
+            objects.append(obj)
+        if "assembly" in spec:
+            objects, extra = constrain_assembly(doc, objects, spec["assembly"], out)
+    shapes = [obj.Shape for obj in objects]
+    if not shapes or any(s.isNull() or not s.isValid() or len(s.Solids) != 1 or s.Volume <= 0 for s in shapes):
+        raise ValueError("工作台没有返回完整有效的实体对象")
     # 静态装配保留各零件归属和实体，不把多个独立零件伪装为单一零件。
     if "parts" in spec:
         for i, first in enumerate(shapes):
             for second in shapes[i+1:]:
                 if first.common(second).Volume > max(1e-7, min(first.Volume, second.Volume)*1e-9):
                     raise ValueError("静态装配存在实体干涉，请修改明确位置；不会自动移动零件")
-    objects = []
-    for i, (group, geometry) in enumerate(zip(groups, shapes)):
-        obj = doc.addObject("PartDesign::Feature", "Model" if len(groups)==1 else "Component%d" % (i+1))
-        obj.Label = group["name"]
-        obj.Shape = geometry
-        objects.append(obj)
     shape = shapes[0] if len(shapes)==1 else Part.makeCompound(shapes)
     expected_solids = len(shapes)
     doc.recompute()
@@ -275,12 +344,21 @@ try:
     if any(abs(a-b) > max(1e-6, abs(a)*1e-7) for a,b in zip(bounds, check_bounds)):
         raise ValueError("STEP 回读尺寸校验失败")
     Mesh.export(objects, str(out / "model.stl"))
+    if "drawing" in spec:
+        extra.update(make_drawing(doc, objects, spec["drawing"], out))
+    if "assembly" in spec:
+        finalize_workbenches(doc, objects, spec)
     doc.saveAs(str(out / "model.FCStd"))
     evidence = {{"run_id": {run_id!r}, "valid": True, "solid_count": expected_solids, "volume_mm3": shape.Volume,
         "bounds_mm": bounds, "step_roundtrip": True, "units": "mm", "spec": spec}}
-    if "parts" in spec:
-        evidence.update(model_kind="assembly", component_count=len(groups), interference_checked=True,
-            components=[{{"name": group["name"], "solid_count": 1, "volume_mm3": geometry.Volume}} for group,geometry in zip(groups, shapes)])
+    for key in ("drawing", "assembly", "bim", "sheet_metal"):
+        if key in extra:
+            evidence[key] = extra[key]
+    if "parts" in spec or "bim" in spec:
+        evidence.update(model_kind="bim" if "bim" in spec else "assembly", component_count=len(objects), interference_checked="parts" in spec,
+            components=[{{"name": getattr(obj, "IndustryPartName", obj.Label), "solid_count": 1, "volume_mm3": geometry.Volume}} for obj,geometry in zip(objects, shapes)])
+    elif "sheet_metal" in spec:
+        evidence["model_kind"] = "sheet_metal"
     if "operations" in spec and len(spec["operations"]) == 1 and spec["operations"][0]["type"] == "tetrahedron":
         evidence.update(face_count=len(shape.Faces), edge_count=len(shape.Edges),
             edge_lengths_mm=[e.Length for e in shape.Edges], face_areas_mm2=[f.Area for f in shape.Faces])
@@ -336,7 +414,7 @@ def freecad_mcp(spec):
             # 业务校验不能依赖 assert，Python 优化模式下也必须执行。
             if evidence['run_id'] != run_id or evidence['spec'] != normalized or evidence['units'] != 'mm':
                 raise ValueError('实体证据归属或单位不匹配')
-            expected_solids = len(normalized['parts']) if 'parts' in normalized else 1
+            expected_solids = len(normalized['parts']) if 'parts' in normalized else len(normalized['bim']['walls']) + len(normalized['bim']['slabs']) if 'bim' in normalized else 1
             if evidence['valid'] is not True or evidence['step_roundtrip'] is not True or type(evidence['solid_count']) is not int or evidence['solid_count'] != expected_solids:
                 raise ValueError('实体或 STEP 验证未通过')
             if 'parts' in normalized:
@@ -349,17 +427,178 @@ def freecad_mcp(spec):
                 raise ValueError('实体体积无效')
             if not isinstance(evidence['bounds_mm'], list) or len(evidence['bounds_mm']) != 3 or not all(positive_number(v) for v in evidence['bounds_mm']):
                 raise ValueError('实体包围尺寸无效')
-            for name in _FILES:
+            operations = normalized.get('operations', [])
+            if len(operations) == 1 and operations[0]['type'] == 'thread':
+                thread = operations[0]
+                expected = [thread['major_diameter']] * 3
+                expected['xyz'.index(thread['axis'])] = thread['length']
+                if any(abs(a-b) > max(1e-6, b*1e-6) for a,b in zip(evidence['bounds_mm'], expected)):
+                    raise ValueError('外螺纹实体尺寸不符合指定大径与长度')
+            files = _requested_files(normalized)
+            _validate_workbench_evidence(normalized, evidence)
+            for name in files:
                 path = artifact_path(run_id, name)
                 if not path.is_file() or not 0 < path.stat().st_size <= 100 * 1024 * 1024:
                     raise ValueError('导出文件无效')
+                _validate_extra_file(path)
+            if normalized.get('assembly', {}).get('motion'):
+                motion = json.loads(artifact_path(run_id, 'motion.json').read_text(encoding='utf-8'))
+                wanted = normalized['assembly']['motion']
+                if [p['name'] for p in motion['components']] != [p['name'] for p in normalized['parts']] or len(motion['frames']) != wanted['frames']:
+                    raise ValueError('运动数据的零件或帧数不符合请求')
+                if not math.isclose(motion['frames'][-1]['time'], wanted['duration'], abs_tol=1e-8):
+                    raise ValueError('运动时长不符合请求')
         except (ValueError, KeyError, TypeError, OSError):
             error = FreeCADModelError('FreeCAD 未生成完整、有效且属于本任务的实体文件。')
             error.calls = [{'tool': 'execute_code', 'arguments': arguments, 'result': result}]
             raise error from None
         return {'status': 'completed', 'answer': 'FreeCAD 实体及 STEP 回读校验通过，可旋转预览并下载设计文件。',
             'validation': {k: v for k, v in evidence.items() if k not in {'spec', 'run_id'}},
-            'artifacts': [{'name': name, 'format': extension, 'url': f'/api/cad/freecad/runs/{run_id}/artifacts/{name}'} for name, extension in _FILES.items()],
+            'artifacts': [{'name': name, 'format': name.rsplit('.', 1)[1].lower(), 'url': f'/api/cad/freecad/runs/{run_id}/artifacts/{name}'} for name in files],
             'calls': [{'tool': 'execute_code', 'arguments': arguments, 'result': result}]}
     finally:
         _execution_lock.release()
+
+
+def _requested_files(spec):
+    files = list(_FILES)
+    if 'drawing' in spec:
+        files.extend(['drawing.svg', 'drawing.pdf'])
+    if 'sheet_metal' in spec:
+        files.extend(['unfold.svg', 'unfold.dxf'])
+    if spec.get('assembly', {}).get('motion'):
+        files.append('motion.json')
+    return files
+
+
+def _validate_workbench_evidence(spec, evidence):
+    """核对实际工作台证明与用户规格，不接受只有 verified 标记的占位结果。"""
+    def near(actual, expected):
+        return type(actual) in (int, float) and math.isfinite(actual) and math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6)
+
+    def positive(value):
+        return type(value) in (int, float) and math.isfinite(value) and value > 0
+
+    for feature in ('drawing', 'assembly', 'bim', 'sheet_metal'):
+        if feature in spec and (not isinstance(evidence.get(feature), dict) or evidence[feature].get('verified') is not True):
+            raise ValueError('工作台缺少实际执行验证')
+    if 'drawing' in spec:
+        config, proof = spec['drawing'], evidence['drawing']
+        names = ['Front', 'Top', 'Right', 'Isometric'] + (['Section'] if config.get('section') else [])
+        views = proof.get('views')
+        if (proof.get('projection') != config['projection'] or not near(proof.get('scale'), config['scale'])
+                or proof.get('section') is not bool(config.get('section')) or not isinstance(views, list)
+                or any(not isinstance(v, dict) for v in views) or [v.get('name') for v in views] != names
+                or any(not positive(v.get('visible_edges')) for v in views)
+                or any(not positive(proof.get(key)) for key in ('svg_geometry_elements', 'pdf_bytes', 'pdf_graphics_streams'))):
+            raise ValueError('工程视图证明与请求不一致')
+    if 'assembly' in spec:
+        config, proof = spec['assembly'], evidence['assembly']
+        joints = [{key: joint[key] for key in ('name', 'type', 'part1', 'part2')} for joint in config['joints']]
+        if (type(proof.get('solver_status')) is not int or proof['solver_status'] != 0
+                or proof.get('grounded') != config['grounded'] or proof.get('joints') != joints
+                or proof.get('joint_count') != len(joints)
+                or proof.get('motion_frames') != config.get('motion', {}).get('frames', 0)
+                or proof.get('motion_interference_checked') is not False):
+            raise ValueError('装配求解或运动证明与请求不一致')
+    if 'bim' in spec:
+        config, proof = spec['bim'], evidence['bim']
+        if any(proof.get(key) != len(config[key]) for key in ('walls', 'slabs', 'openings')):
+            raise ValueError('建筑对象数量与请求不一致')
+        if config['openings'] and not positive(proof.get('opening_volume_removed')):
+            raise ValueError('建筑开口未实际切除墙体')
+    if 'sheet_metal' in spec:
+        config, proof = spec['sheet_metal'], evidence['sheet_metal']
+        length = config['base_length'] + config['flange_length'] + math.radians(config['bend_angle']) * (config['bend_radius'] + config['k_factor'] * config['thickness'])
+        expected = {'k_factor': config['k_factor'], 'bend_angle_deg': config['bend_angle'],
+            'inner_bend_radius_mm': config['bend_radius'], 'thickness_mm': config['thickness'],
+            'unfold_width_mm': config['width'], 'unfold_length_mm': length,
+            'unfold_area_mm2': config['width'] * length, 'unfold_volume_mm3': config['width'] * length * config['thickness'],
+            'bend_line_length_mm': config['width']}
+        if (proof.get('bend_count') != 1 or proof.get('cylindrical_face_count') != 2
+                or proof.get('k_factor_standard') != 'ansi' or not proof.get('plugin_version')
+                or any(not near(proof.get(key), value) for key, value in expected.items())
+                or not near(proof.get('bent_volume_mm3'), evidence.get('volume_mm3', -1))):
+            raise ValueError('钣金折弯或展开补偿证明与请求不一致')
+
+
+def _validate_extra_file(path):
+    """拓展产物必须是真实可读文件；SVG不允许脚本或外部引用。"""
+    if path.suffix == '.pdf':
+        if not path.read_bytes().startswith(b'%PDF-'):
+            raise ValueError('无效PDF')
+    elif path.suffix == '.svg':
+        try:
+            root = ET.fromstring(path.read_bytes())
+        except ET.ParseError as error:
+            raise ValueError('无效SVG') from error
+        if root.tag.split('}')[-1] != 'svg' or not any(el.tag.split('}')[-1] in {'path', 'line', 'polyline', 'polygon', 'circle', 'ellipse', 'rect'} for el in root.iter()):
+            raise ValueError('SVG缺少实际图形')
+        for el in root.iter():
+            if el.tag.split('}')[-1].lower() in {'script', 'foreignobject'}:
+                raise ValueError('SVG包含不允许的内容')
+            for key, value in el.attrib.items():
+                if key.lower().startswith('on') or (key.split('}')[-1] == 'href' and not value.startswith('#')):
+                    raise ValueError('SVG包含外部引用或事件')
+    elif path.suffix == '.dxf':
+        value = path.read_text(encoding='utf-8', errors='replace')
+        if 'SECTION' not in value or 'ENTITIES' not in value or 'EOF' not in value:
+            raise ValueError('无效DXF')
+    elif path.name == 'motion.json':
+        if path.stat().st_size > 32 * 1024 * 1024:
+            raise ValueError('运动数据超出资源上限')
+        motion = json.loads(path.read_text(encoding='utf-8'))
+        _validate_motion(motion)
+
+
+def _validate_motion(motion):
+    """网格及逐帧零件位姿完整性；不将镜头转动当作机构运动。"""
+    def fields(value, keys):
+        if not isinstance(value, dict) or set(value) != set(keys):
+            raise ValueError('运动数据字段不完整')
+
+    def number(value, limit):
+        return type(value) in (int, float) and math.isfinite(value) and abs(value) <= limit
+
+    def vector(value, length, limit):
+        if not isinstance(value, list) or len(value) != length or not all(number(v, limit) for v in value):
+            raise ValueError('无效运动坐标')
+
+    fields(motion, ('components', 'frames'))
+    components, frames = motion['components'], motion['frames']
+    if not isinstance(components, list) or not 2 <= len(components) <= 8 or not isinstance(frames, list) or not 2 <= len(frames) <= 120:
+        raise ValueError('无效运动零件或帧数')
+    names, count = set(), 0
+    for component in components:
+        fields(component, ('name', 'triangles'))
+        name, mesh = component['name'], component['triangles']
+        if not isinstance(name, str) or not name.strip() or len(name) > 64 or any(ord(c) < 32 for c in name) or name in names:
+            raise ValueError('无效运动零件名称')
+        names.add(name)
+        if not isinstance(mesh, list) or len(mesh) < 36 or len(mesh) % 9:
+            raise ValueError('不完整的运动网格')
+        count += len(mesh) // 9
+        if count > 60000 or not all(number(v, 100000) for v in mesh):
+            raise ValueError('运动网格无效或超出资源上限')
+        if any(max(mesh[axis::3]) - min(mesh[axis::3]) <= 1e-9 for axis in range(3)):
+            raise ValueError('运动网格没有实体范围')
+    previous_time = -1
+    for index, frame in enumerate(frames):
+        fields(frame, ('time', 'placements'))
+        time, placements = frame['time'], frame['placements']
+        if not number(time, 60) or time <= previous_time or (index == 0 and time != 0):
+            raise ValueError('运动帧时间无效')
+        previous_time = time
+        if not isinstance(placements, list) or len(placements) != len(names):
+            raise ValueError('运动帧缺失零件')
+        placed = set()
+        for placement in placements:
+            fields(placement, ('name', 'position', 'quaternion'))
+            name = placement['name']
+            if not isinstance(name, str) or name not in names or name in placed:
+                raise ValueError('运动零件归属不匹配')
+            placed.add(name)
+            vector(placement['position'], 3, 100000)
+            vector(placement['quaternion'], 4, 1.000001)
+            if abs(math.sqrt(sum(v*v for v in placement['quaternion'])) - 1) > 1e-5:
+                raise ValueError('运动旋转不是单位四元数')

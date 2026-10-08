@@ -6,6 +6,7 @@ import os
 from time import monotonic, sleep
 import zlib
 from shared.dispatch_projection import compact_workorder_result, plan_execution_identity, reconcile_plan_workorders, ORDER_FIELDS
+from shared.task_deletion import deleted_entities, event_plan_id
 
 
 class StorageUnavailable(RuntimeError):
@@ -125,6 +126,54 @@ def _decode(payload):
     return json.loads(zlib.decompress(bytes(payload)).decode("utf-8"))
 
 
+def purge_mysql_plans(cursor, plan_ids, actor_id, *, workorder_ids=(), allow_missing=False):
+    """借用调用者事务：删除投影和事件内正文，只保存编号用于防重建。"""
+    ids = sorted(set(str(item) for item in plan_ids))
+    if not ids:
+        return []
+    cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('runtime_records_mysql','maintenance_plan_projection','maintenance_plan_deletions')")
+    table_count = len(cursor.fetchall())
+    if table_count != 3:
+        if allow_missing and table_count == 0:
+            return ids
+        raise StorageUnavailable('维修方案存储尚未初始化')
+    placeholders = ','.join(['%s'] * len(ids))
+    cursor.execute('SELECT event_key_hash,plan_id FROM maintenance_plan_projection WHERE plan_id IN (' + placeholders + ')', tuple(ids))
+    projections = cursor.fetchall()
+    cursor.execute('SELECT plan_id FROM maintenance_plan_deletions WHERE plan_id IN (' + placeholders + ') FOR UPDATE', tuple(ids))
+    markers = {row['plan_id'] for row in cursor.fetchall()}
+    if not allow_missing and {row['plan_id'] for row in projections} | markers != set(ids):
+        raise KeyError('维修方案不存在')
+    for plan_id in ids:
+        cursor.execute('INSERT IGNORE INTO maintenance_plan_deletions(plan_id,actor_id) VALUES (%s,%s)', (plan_id, str(actor_id)))
+    hashes, old_receipts = set(), {}
+    for plan_id in ids:
+        digest = sha256(plan_id.encode()).hexdigest()
+        cursor.execute("SELECT payload FROM runtime_records_mysql WHERE namespace='maintenance_plan_deleted' AND key_hash=%s FOR UPDATE", (digest,))
+        row = cursor.fetchone()
+        receipt = _decode(row['payload']) if row else {}
+        old_receipts[plan_id] = receipt
+        hashes.update(receipt.get('event_key_hashes') or [])
+    cursor.execute('SELECT event_key_hash,plan_id FROM maintenance_plan_projection WHERE plan_id IN (' + placeholders + ') FOR UPDATE', tuple(ids))
+    projections = cursor.fetchall()
+    hashes.update(row['event_key_hash'] for row in projections)
+    orders = set(workorder_ids)
+    for receipt in old_receipts.values():
+        orders.update(receipt.get('workorder_ids') or [])
+    for digest in sorted(hashes):
+        cursor.execute("SELECT payload FROM runtime_records_mysql WHERE namespace='agent_event' AND key_hash=%s FOR UPDATE", (digest,))
+        row = cursor.fetchone()
+        if row:
+            updated = deleted_entities(_decode(row['payload']), ids, orders)
+            cursor.execute("UPDATE runtime_records_mysql SET payload=%s WHERE namespace='agent_event' AND key_hash=%s", (_encode(updated), digest))
+    cursor.execute('DELETE FROM maintenance_plan_projection WHERE plan_id IN (' + placeholders + ')', tuple(ids))
+    for plan_id in ids:
+        receipt = {'plan_id': plan_id, 'actor_id': str(actor_id), 'event_key_hashes': sorted(hashes), 'workorder_ids': sorted(orders)}
+        cursor.execute("INSERT INTO runtime_records_mysql(namespace,key_hash,state_key,payload) VALUES ('maintenance_plan_deleted',%s,%s,%s) ON DUPLICATE KEY UPDATE payload=VALUES(payload)",
+                       (sha256(plan_id.encode()).hexdigest(), plan_id, _encode(receipt)))
+    return list(plan_ids)
+
+
 class MySQLJsonStore:
     def __init__(self, config=None):
         self._config = dict(config or mysql_configuration())
@@ -153,8 +202,19 @@ class MySQLJsonStore:
 
     def _write(self, cursor, namespace, key, value):
         ns, digest, original = self._identity(namespace, key)
+        if ns == 'agent_event':
+            result = value.get('result', {}) if value.get('_event_result_store_version') == 2 else value
+            ids = {event_plan_id(value), str((result.get('workorder') or {}).get('plan_id') or '')} - {''}
+            for plan_id in sorted(ids):
+                cursor.execute('SELECT plan_id FROM maintenance_plan_deletions WHERE plan_id=%s FOR UPDATE', (plan_id,))
+                if cursor.fetchone():
+                    cursor.execute("SELECT payload FROM runtime_records_mysql WHERE namespace='maintenance_plan_deleted' AND key_hash=%s", (sha256(plan_id.encode()).hexdigest(),))
+                    receipt = cursor.fetchone()
+                    orders = (_decode(receipt['payload']).get('workorder_ids') or []) if receipt else []
+                    value = deleted_entities(value, [plan_id], orders)
         cursor.execute("INSERT INTO runtime_records_mysql(namespace,key_hash,state_key,payload) VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE payload=VALUES(payload), updated_at=CURRENT_TIMESTAMP(6)", (ns, digest, original, _encode(value)))
         self._project(cursor, ns, digest, value)
+        return value
 
     def _project(self, cursor, ns, digest, value):
         if ns == "agent_event":
@@ -204,7 +264,7 @@ class MySQLJsonStore:
             if current is None or current.get(str(field)) != expected:
                 return None
             current.update(dict(values))
-            self._write(cursor, namespace, key, current)
+            current = self._write(cursor, namespace, key, current)
             return current
 
     def get_or_create(self, namespace, key, producer):
@@ -241,7 +301,7 @@ class MySQLJsonStore:
                         cursor.execute("UPDATE runtime_claims_mysql SET status='uncertain' WHERE namespace=%s AND key_hash=%s", (ns, digest))
                     raise
                 with self._session() as cursor:
-                    self._write(cursor, namespace, key, value)
+                    value = self._write(cursor, namespace, key, value)
                     cursor.execute("DELETE FROM runtime_claims_mysql WHERE namespace=%s AND key_hash=%s", (ns, digest))
                 return value
             if monotonic() >= deadline:
@@ -279,14 +339,8 @@ class MySQLJsonStore:
         ids = list(dict.fromkeys(str(item).strip() for item in plan_ids))
         if not ids or len(ids) > 100 or any(not item or len(item) > 128 for item in ids) or not str(actor_id).strip():
             raise ValueError("请指定有效的方案编号和已登录操作人，每批最多 100 条")
-        placeholders = ",".join(["%s"] * len(ids))
         with self._session() as cursor:
-            cursor.execute("SELECT plan_id FROM maintenance_plan_projection WHERE plan_id IN (" + placeholders + ") ORDER BY plan_id FOR UPDATE", tuple(ids))
-            found = {row["plan_id"] for row in cursor.fetchall()}
-            if found != set(ids):
-                raise KeyError("维修方案不存在")
-            for plan_id in sorted(ids):
-                cursor.execute("INSERT IGNORE INTO maintenance_plan_deletions(plan_id,actor_id) VALUES (%s,%s)", (plan_id, str(actor_id)))
+            purge_mysql_plans(cursor, ids, actor_id)
         return ids
 
     def import_record(self, namespace, key, value):

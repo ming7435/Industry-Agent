@@ -22,6 +22,58 @@ test('当前事件来自当前设备诊断或触发，不从最后采样的其�
   assert.equal(currentIncident(snapshot,{device_id:'D-1',alarm_code:'700006'}).event_id,'');
 });
 
+function revisionSnapshot(revision = 1) {
+  const event = {device_id:'D-1',alarm_code:'700010',event_id:'E-CURRENT',event_revision:revision,tenant_id:'T',project_id:'P'};
+  return {device_id:'D-1',latest_results:{'D-1':{current_sample:{device_id:'D-1',alarm_code:'700010'}}},
+    trigger_history:[{abnormal_event:event}],diagnosis:{latest_by_device:{'D-1':{...event}}}};
+}
+
+test('同一故障的新方案或工单修订覆盖旧触发版本，原触发与严格匹配规则保留', () => {
+  const snapshot = revisionSnapshot();
+  const original = structuredClone(snapshot);
+  const updated = {...snapshot.trigger_history[0].abnormal_event,event_revision:3,plan_id:'P-NEW'};
+  const incident = currentIncident(snapshot,undefined,[updated]);
+  assert.equal(incident.event_revision,'3');
+  assert.equal(matchesIncident(updated,incident),true);
+  assert.equal(matchesIncident({...updated,event_revision:1},incident),false);
+  assert.deepEqual(snapshot,original);
+  const order = {workorder_id:'W-NEW',device_id:'D-1',event_id:'E-CURRENT',diagnosis_snapshot:{...updated}};
+  assert.equal(currentIncident(snapshot,undefined,[order]).event_revision,'3');
+});
+
+test('已同步诊断或流程中的更高修订也不会被旧触发和旧列表覆盖', () => {
+  const snapshot = revisionSnapshot();
+  const event = snapshot.trigger_history[0].abnormal_event;
+  snapshot.diagnosis.latest_by_device['D-1'] = {...event,event_revision:3};
+  snapshot.diagnosis.pipeline_by_device = {'D-1':{event:{...event,event_revision:4}}};
+  assert.equal(currentIncident(snapshot,undefined,[{...event,event_revision:2}]).event_revision,'4');
+  assert.equal(currentIncident(revisionSnapshot(4),undefined,[{...event,event_revision:1}]).event_revision,'4');
+});
+
+test('新修订候选必须属于同一设备、报警、事件、租户和项目', () => {
+  const snapshot = revisionSnapshot();
+  const event = snapshot.trigger_history[0].abnormal_event;
+  for (const change of [
+    {device_id:'D-OTHER'}, {alarm_code:'700006'}, {event_id:'E-OLD'},
+    {tenant_id:'T-OTHER'}, {tenant_id:''}, {project_id:'P-OTHER'}, {project_id:''},
+  ]) {
+    assert.equal(currentIncident(snapshot,undefined,[{...event,event_revision:99,...change}]).event_revision,'1',JSON.stringify(change));
+  }
+  // 当前锚点没有事件号时，不用历史列表猜测正在发生哪一次故障。
+  assert.equal(currentIncident({device_id:'D-1'}, {device_id:'D-1',alarm_code:'700010'}, [{...event,event_revision:99}]).event_id,'');
+});
+
+test('被删除工单和非法修订不能成为当前故障的新版本', () => {
+  const snapshot = revisionSnapshot();
+  const event = snapshot.trigger_history[0].abnormal_event;
+  const records = [{...event,event_revision:3,workorder_id:'W-LIVE'},
+    {...event,event_revision:8,workorder_id:'W-DELETED',deleted_at:'2026-10-08T00:00:00Z'}];
+  for (const event_revision of [0,-1,1.5,'3.5',true,'Infinity','NaN',Number.MAX_SAFE_INTEGER+1]) {
+    records.push({...event,event_revision});
+  }
+  assert.equal(currentIncident(snapshot,undefined,records).event_revision,'3');
+});
+
 test('方案关联工单要求设备与事件一致，不能只匹配方案编号', () => {
   const plan={device_id:'D-1',event_id:'E-1',plan_id:'P-1'};
   assert.equal(linkedPlanOrder(plan,{...plan,workorder_id:'W-1'}),true);

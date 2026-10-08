@@ -58,6 +58,21 @@ class RuntimeDispatcher:
         self.policy = policy or RuntimePolicy()
         self.resolvers = resolvers or SideEffectResolverRegistry()
 
+    def action_timeout_seconds(self, action: ActionModel) -> float:
+        """期限取自服务端装配，只读诊断使用多轮预算，客户端不能延长写操作。"""
+        default = float(self.execution_manager.timeout_seconds)
+        definition = self.capabilities.metadata_for(action.required_capability or action.target)
+        if action.action_type != ActionType.AGENT or action.side_effect or not definition \
+                or definition.side_effect or definition.agent != "diagnosis":
+            return default
+        harness = self.harnesses.get("diagnosis")
+        return float(getattr(getattr(harness, "config", None), "timeout_seconds", default))
+
+    def step_timeout_seconds(self, action: ActionModel) -> float:
+        """外层等候包括已经允许的只读失败重试；未知副作用始终只执行一次。"""
+        attempts = 1 if action.side_effect else 1 + self.execution_manager.max_retries
+        return self.action_timeout_seconds(action) * attempts
+
     def _emit(self, event: str, state: Mapping[str, Any], **payload: Any) -> None:
         record = {
             "type": "runtime",
@@ -171,13 +186,16 @@ class RuntimeDispatcher:
             action,
             execute_agent,
             state_check=self.resolvers.callback(canonical_capability, action, state),
+            timeout_seconds=self.action_timeout_seconds(action),
             trace_context={"task_id": state.get("task_id", ""), "trace_id": state.get("trace_id", "")},
         )
         if record.status != ExecutionStatus.SUCCESS:
             self._emit("step_failed", state, agent=agent_name, step=runtime_context.get("step", ""), error=record.error or record.status.value)
             return AgentResult(
                 success=False,
-                output={"error": record.error or record.status.value, "status": "blocked", "execution_id": record.execution_id},
+                output={"error": record.error or record.status.value, "status": "blocked",
+                        "execution_id": record.execution_id, "execution_status": record.status.value,
+                        "side_effect_status": record.side_effect_status, "cancel_requested": record.cancel_requested},
             )
         result = AgentResult.from_value(record.result)
         if not result.observations and isinstance(record.result, Mapping):
@@ -215,6 +233,27 @@ class RuntimeDispatcher:
         return "历史对话：%s\n当前问题：%s" % ("\n".join(lines), query)
 
     @staticmethod
+    def _diagnosed_alarm_query(diagnosis: Mapping[str, Any], event: Mapping[str, Any], context: Mapping[str, Any]) -> str:
+        """用同一设备报警的正式名称检索维修依据，不夹带推测或历史对话。"""
+        raw = diagnosis.get("raw")
+        value = {**(raw if isinstance(raw, Mapping) else {}), **diagnosis}
+        definition = value.get("alarm_definition")
+        if not isinstance(definition, Mapping) or definition.get("found") is False or definition.get("success") is False:
+            return ""
+        name = str(definition.get("name") or "").strip()
+        if not name:
+            return ""
+        device_id = str(context.get("device_id") or event.get("device_id") or value.get("device_id") or "").strip()
+        alarm_code = str(context.get("alarm_code") or event.get("alarm_code") or event.get("error_code")
+                         or value.get("alarm_code") or definition.get("alarm_code") or "").strip()
+        for source in (event, value, definition):
+            if any(source.get(key) and str(source[key]).strip() != expected
+                   for key, expected in (("device_id", device_id), ("alarm_code", alarm_code))):
+                return ""
+        model = str(event.get("device_model") or value.get("device_model") or context.get("device_model") or device_id).strip()
+        return " ".join(part for part in (model, alarm_code, name, "检查 维修") if part)
+
+    @staticmethod
     def _task_for_agent(capability: str, state: Mapping[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
         """将规范 Runtime 状态适配为现有 Agent 的请求结构。"""
 
@@ -242,9 +281,12 @@ class RuntimeDispatcher:
         )
         if capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
             context = dict(state.get("context") or {})
-            query = RuntimeDispatcher._conversation_context(context, query)
             event = state.get("event")
             event = event if isinstance(event, Mapping) else {}
+            compact_query = RuntimeDispatcher._diagnosed_alarm_query(diagnosis, event, context) if capability == "document_search" else ""
+            query = (str(payload["query"]) if payload.get("query") else compact_query
+                     or RuntimeDispatcher._conversation_context(context, query))
+            purpose = str(payload.get("purpose") or ("maintenance" if compact_query and not payload.get("query") else ""))
             # 知识检索只限定在活动报警；Runtime 事件执行会携带当前机器/报警作为范围。
             alarm_active = bool(context.get("alarm_active"))
             event_device_id = str(event.get("device_id") or "").strip()
@@ -262,7 +304,7 @@ class RuntimeDispatcher:
                 alarm_label = str(context.get("alarm_label") or event.get("alarm_label") or "").strip()
                 if alarm_label:
                     scoped["alarm_label"] = alarm_label
-            return {"query": query, "diagnosis": diagnosis, "context": context, "alarm_active": alarm_active, **scoped, "filters": dict(scoped)}
+            return {"query": query, "purpose": purpose, "diagnosis": diagnosis, "context": context, "alarm_active": alarm_active, **scoped, "filters": dict(scoped)}
         if capability in {"drawing_search", "bom_query", "component_relation"}:
             context = dict(state.get("context") or {})
             event = state.get("event")
@@ -357,6 +399,9 @@ class RuntimeDispatcher:
 
     @staticmethod
     def _cached_knowledge_result(state: Mapping[str, Any], task: Mapping[str, Any]) -> AgentResult | None:
+        if task.get("purpose") == "maintenance":
+            # 诊断的一次工具查询不能证明已经检索维修所需的互补来源。
+            return None
         diagnosis = state.get("diagnosis")
         if not isinstance(diagnosis, Mapping):
             return None

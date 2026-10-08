@@ -13,7 +13,7 @@ from .graph import build_maintenance_graph
 from .validator import MaintenancePlanValidator
 from app.workorder.policy import inspection_decision, maintenance_decision
 from app.workorder.inspection import inspection_plan_template
-from app.workorder.repair_profile import part_matches_profile, repair_profile
+from app.workorder.repair_profile import part_matches_profile, repair_profile, hydraulic_inspection_template
 
 
 class MaintenanceAgent(BaseAgent):
@@ -75,7 +75,7 @@ class MaintenanceAgent(BaseAgent):
     @staticmethod
     def _requires_cad(diagnosis: DiagnosisView) -> bool:
         # 互锁核查只读取状态，不拆修部件；不能因为报警正文提到主轴就要求主轴图纸。
-        if repair_profile(diagnosis.model_dump(mode="json"))["kind"] == "safety_interlock":
+        if repair_profile(diagnosis.model_dump(mode="json"))["kind"] in {"safety_interlock", "hydraulic"}:
             return False
         text = "%s %s" % (diagnosis.fault, diagnosis.cause)
         return any(token in text for token in ("轴承", "主轴", "冷却", "泵", "振动", "温度", "传感器", "零件", "部件", "拆装", "BOM"))
@@ -183,6 +183,10 @@ class MaintenanceAgent(BaseAgent):
             "target_part": target_part,
             "engineering_context": engineering_context,
         }
+        if profile["kind"] == "hydraulic":
+            # 仅采用已界定的停机核查，不将资料中的试运行或换件建议混入步骤。
+            plan_payload.update(hydraulic_inspection_template())
+            plan_payload["target_part"] = {"part_no": "", "component": "", "part_name": profile["target"]}
         return plan_payload
 
     @staticmethod
@@ -323,7 +327,7 @@ class MaintenanceAgent(BaseAgent):
 
     @staticmethod
     def _parts(profile: Mapping[str, Any], spare_parts: Mapping[str, Any], components: list[Mapping[str, Any]], bom_items: list[Mapping[str, Any]]) -> list[str]:
-        if profile["kind"] == "safety_interlock":
+        if profile["kind"] in {"safety_interlock", "hydraulic"}:
             # 核查工单没有更换动作；库存里存在备件不等于本次需要预留它。
             return []
         parts: list[str] = []

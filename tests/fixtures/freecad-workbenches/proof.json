@@ -1,0 +1,309 @@
+{
+  "freecad_version": "1.1.4",
+  "verified_on": "2026-10-08",
+  "verification_batch": ".runtime/verification/freecad-workbenches-integrated/20261008T030613Z-83bd12",
+  "source_sha256": {
+    "freecad_mcp.py": "89176f1e6d4e7f2a3eca87ec522e37e2cb7dfe20a7ade71e127cc82e3925d022",
+    "freecad_drawing.py": "bcb9eafcdbec8695db068f65cf0fe440f02bd518f8430103f0d46a9cb64c4787",
+    "freecad_workbenches.py": "93fb131f1b2069945b960bbd98498fafcbc92dd965ed641af1e4a953acdcace0",
+    "freecad_sheetmetal.py": "b3393e8ec004b6268544e300ca5b8b9391bfe93cacf3dcd10886966999b69169"
+  },
+  "batch_results": [
+    {
+      "kind": "drawing",
+      "run_id": "FC-69982891704f6e03aa77257256d7076fc7d2d7f23f7143e6f1b99e2eca85344e",
+      "verified": true,
+      "status": "completed"
+    },
+    {
+      "kind": "assembly",
+      "run_id": "FC-e7d183baebf7c476b11f0d789af4f75a3d5891a278300127c46a7c7124cb115e",
+      "verified": true,
+      "status": "completed"
+    },
+    {
+      "kind": "sheet_metal",
+      "run_id": "FC-cdde60ae17f784b7760fd49e66065daf23744ef3359f8da9a7fbee5dec59c338",
+      "verified": true,
+      "status": "completed"
+    },
+    {
+      "kind": "bim",
+      "run_id": "FC-91640eac7f0eeadf166f35d3c5177b7ee46e94adc3780527955f56c1e0657e70",
+      "verified": true,
+      "status": "completed"
+    }
+  ],
+  "sheetmetal": {
+    "run_id": "FC-cdde60ae17f784b7760fd49e66065daf23744ef3359f8da9a7fbee5dec59c338",
+    "valid": true,
+    "solid_count": 1,
+    "volume_mm3": 15405.309649148734,
+    "bounds_mm": [
+      80,
+      65.00000000000001,
+      35
+    ],
+    "step_roundtrip": true,
+    "units": "mm",
+    "spec": {
+      "units": "mm",
+      "sheet_metal": {
+        "thickness": 2,
+        "bend_radius": 3,
+        "base_length": 60,
+        "flange_length": 30,
+        "bend_angle": 90,
+        "k_factor": 0.4,
+        "width": 80
+      },
+      "drawing": {
+        "projection": "third_angle",
+        "scale": 1,
+        "section": null
+      }
+    },
+    "drawing": {
+      "verified": true,
+      "projection": "third_angle",
+      "scale": 1,
+      "paper": "A3",
+      "views": [
+        {
+          "name": "Front",
+          "type": "TechDraw::DrawViewPart",
+          "visible_edges": 10,
+          "position_mm": [
+            146.7347583639753,
+            92.61330877513473
+          ],
+          "bounds_mm": [
+            80,
+            35
+          ],
+          "direction": [
+            0,
+            -1,
+            0
+          ],
+          "scale": 1
+        },
+        {
+          "name": "Top",
+          "type": "TechDraw::DrawViewPart",
+          "visible_edges": 10,
+          "position_mm": [
+            146.7347583639753,
+            178
+          ],
+          "bounds_mm": [
+            80,
+            65
+          ],
+          "direction": [
+            0,
+            0,
+            1
+          ],
+          "scale": 1
+        },
+        {
+          "name": "Right",
+          "type": "TechDraw::DrawViewPart",
+          "visible_edges": 10,
+          "position_mm": [
+            262,
+            92.61330877513473
+          ],
+          "bounds_mm": [
+            65,
+            35
+          ],
+          "direction": [
+            1,
+            0,
+            0
+          ],
+          "scale": 1
+        },
+        {
+          "name": "Isometric",
+          "type": "TechDraw::DrawViewPart",
+          "visible_edges": 21,
+          "position_mm": [
+            262,
+            178
+          ],
+          "bounds_mm": [
+            102.53048327204941,
+            87.77338244973056
+          ],
+          "direction": [
+            1,
+            -1,
+            1
+          ],
+          "scale": 1
+        }
+      ],
+      "section": false,
+      "svg_geometry_elements": 72,
+      "pdf_bytes": 12831,
+      "pdf_graphics_streams": 1
+    },
+    "sheet_metal": {
+      "verified": true,
+      "plugin_version": "0.8.24",
+      "networkx_version": "3.4.2",
+      "bend_count": 1,
+      "cylindrical_face_count": 2,
+      "k_factor": 0.4,
+      "k_factor_standard": "ansi",
+      "bend_angle_deg": 90,
+      "inner_bend_radius_mm": 3,
+      "thickness_mm": 2,
+      "unfold_area_mm2": 7677.522083345648,
+      "unfold_volume_mm3": 15355.044166691298,
+      "unfold_width_mm": 80,
+      "unfold_length_mm": 95.96902604182061,
+      "unfold_bounds_mm": [
+        80,
+        95.96902604182061,
+        2
+      ],
+      "bent_volume_mm3": 15405.309649148734,
+      "bend_line_length_mm": 80,
+      "unfold_object": "SheetMetalUnfold",
+      "files": [
+        "unfold.svg",
+        "unfold.dxf"
+      ]
+    },
+    "model_kind": "sheet_metal"
+  },
+  "assembly": {
+    "run_id": "FC-e7d183baebf7c476b11f0d789af4f75a3d5891a278300127c46a7c7124cb115e",
+    "valid": true,
+    "solid_count": 2,
+    "volume_mm3": 7883.185307179589,
+    "bounds_mm": [
+      60,
+      20,
+      24
+    ],
+    "step_roundtrip": true,
+    "units": "mm",
+    "spec": {
+      "units": "mm",
+      "parts": [
+        {
+          "name": "Base",
+          "operations": [
+            {
+              "type": "cylinder",
+              "mode": "add",
+              "diameter": 20,
+              "length": 20,
+              "axis": "z",
+              "position": [
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Arm",
+          "operations": [
+            {
+              "type": "box",
+              "mode": "add",
+              "length": 50,
+              "width": 8,
+              "height": 4,
+              "position": [
+                0,
+                -4,
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "assembly": {
+        "grounded": "Base",
+        "joints": [
+          {
+            "name": "Hinge",
+            "type": "revolute",
+            "part1": "Base",
+            "part2": "Arm",
+            "connector1": {
+              "position": [
+                0,
+                0,
+                20
+              ],
+              "axis": [
+                0,
+                0,
+                1
+              ]
+            },
+            "connector2": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "axis": [
+                0,
+                0,
+                1
+              ]
+            }
+          }
+        ],
+        "motion": {
+          "joint": "Hinge",
+          "start": 0,
+          "end": 90,
+          "duration": 2,
+          "frames": 25
+        }
+      }
+    },
+    "assembly": {
+      "verified": true,
+      "solver_status": 0,
+      "grounded": "Base",
+      "joint_count": 1,
+      "motion_frames": 25,
+      "motion_interference_checked": false,
+      "joints": [
+        {
+          "name": "Hinge",
+          "type": "revolute",
+          "part1": "Base",
+          "part2": "Arm"
+        }
+      ]
+    },
+    "model_kind": "assembly",
+    "component_count": 2,
+    "interference_checked": true,
+    "components": [
+      {
+        "name": "Base",
+        "solid_count": 1,
+        "volume_mm3": 6283.185307179586
+      },
+      {
+        "name": "Arm",
+        "solid_count": 1,
+        "volume_mm3": 1599.9999999999995
+      }
+    ]
+  }
+}

@@ -59,6 +59,8 @@ class Settings:
     # 一次运行时动作可能包含多轮真实模型/工具往返。旧的 45 秒默认值会在底层 Agent 仍运行时过期，
     # 从而让监控中心错误地显示 ``Agent Service 调用失败``。
     agent_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("AGENT_TIMEOUT_SECONDS", "90")))
+    diagnosis_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("DIAGNOSIS_TIMEOUT_SECONDS", "180")))
+    runtime_step_timeout_grace_seconds: float = field(default_factory=lambda: float(os.getenv("RUNTIME_STEP_TIMEOUT_GRACE_SECONDS", "30")))
     agent_max_retries: int = field(default_factory=lambda: int(os.getenv("AGENT_MAX_RETRIES", "1")))
     trace_max_records: int = field(default_factory=lambda: max(100, int(os.getenv("TRACE_MAX_RECORDS", "5000"))))
     pending_task_store_path: str = field(default_factory=lambda: os.getenv("PENDING_TASK_STORE_PATH", "runtime_pending_task"))

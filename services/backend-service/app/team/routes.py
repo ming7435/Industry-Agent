@@ -31,6 +31,12 @@ class Credentials(BaseModel):
 class Registration(Credentials):
     role: str
     primary_device_id: str = ''
+    responsible_device_ids: list[str] | None = None
+
+
+class Responsibilities(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    responsible_device_ids: list[str]
 
 
 class WorkorderPlanReplacement(BaseModel):
@@ -86,6 +92,17 @@ def create_router(get_service):
     @router.get('/api/team/me')
     def me(request: Request):
         return {'user': actor(request)}
+
+    @router.post('/api/team/responsibilities')
+    def responsibilities(body: Responsibilities, request: Request):
+        same_origin(request)
+        user = actor(request)
+        try:
+            return {'user': get_service().update_team_responsibilities(user['user_id'], body.responsible_device_ids)}
+        except PermissionError as error:
+            raise HTTPException(403, str(error))
+        except ValueError as error:
+            raise HTTPException(409, str(error))
 
     @router.get('/api/team/workorders')
     def orders(request: Request):

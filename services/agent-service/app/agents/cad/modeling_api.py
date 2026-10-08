@@ -320,7 +320,7 @@ def _freecad_public_record(record):
 def build_freecad_router(require_auth, trace=None):
     """本地运行无需 OAuth，仍沿用服务认证、幂等认领及固定文件下载。"""
     from app.clients.freecad import FreeCADClient, FreeCADConnectionError
-    from app.tools.cad.freecad_mcp import artifact_path
+    from app.tools.cad.freecad_mcp import artifact_path, ARTIFACT_TYPES
 
     router = APIRouter(prefix=FREECAD_PREFIX, tags=["FreeCAD"], dependencies=[Depends(require_auth)])
     store_lock = Lock()
@@ -450,7 +450,7 @@ def build_freecad_router(require_auth, trace=None):
 
     @router.get("/runs/{run_id}/artifacts/{name}")
     def download_artifact(run_id: str, name: str, request: Request):
-        if name not in {"model.stl", "model.step", "model.FCStd"}:
+        if name not in ARTIFACT_TYPES:
             raise HTTPException(404, detail="模型文件不存在。")
         record = lookup(request, run_id)
         if record.get("status") != "completed" or not any(
@@ -463,7 +463,9 @@ def build_freecad_router(require_auth, trace=None):
                 raise ValueError("模型文件不存在")
         except (ValueError, OSError):
             raise HTTPException(404, detail="模型文件不存在。") from None
-        media_type = {"model.stl": "model/stl", "model.step": "application/step", "model.FCStd": "application/octet-stream"}[name]
-        return FileResponse(path, media_type=media_type, filename=name, headers={"X-Content-Type-Options": "nosniff"})
+        media_type = ARTIFACT_TYPES[name]
+        return FileResponse(path, media_type=media_type, filename=name,
+            content_disposition_type="inline" if name.endswith((".svg", ".pdf")) else "attachment",
+            headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox"})
 
     return router

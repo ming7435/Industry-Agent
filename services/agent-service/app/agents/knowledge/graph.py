@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+from copy import deepcopy
+
 from app.agents.state import AgentExecutionState
 
 from typing import Any, Dict, List, Mapping
@@ -107,6 +111,12 @@ def plan_retrieval(state: KnowledgeGraphState) -> Dict[str, Any]:
             planned.append("search_manual")
         if any(normalize_source(item) == "case" for item in required) and "search_fault_cases" not in planned:
             planned.append("search_fault_cases")
+    if query_type == "alarm" and request.get("purpose") == "maintenance":
+        # 报警目录可解释编号，但维修步骤也可能在 SOP 或故障卡片中。
+        # 追加检索路径不等于要求每类来源必须有结果。
+        for operation in ("search_sop", "search_fault_cases"):
+            if operation not in planned:
+                planned.append(operation)
     if request.get("chunk_id"):
         planned = ["fetch_chunk"] + [item for item in planned if item != "fetch_chunk"]
     elif request.get("document_id"):
@@ -118,7 +128,6 @@ def retrieve(state: KnowledgeGraphState) -> Dict[str, Any]:
     pending = list(state["pending_tools"] if "pending_tools" in state else state.get("retrieval_plan") or [])
     if not pending or state.get("step_count", 0) >= state.get("max_steps", 4):
         return {"pending_tools": pending, "route": "observe"}
-    operation = pending.pop(0)
     request = state["request"]
     arguments = {
         "query": state["query"],
@@ -130,34 +139,60 @@ def retrieve(state: KnowledgeGraphState) -> Dict[str, Any]:
         "document_id": request.get("document_id", ""),
         "chunk_id": request.get("chunk_id", ""),
     }
-    try:
-        raw = state["agent"].tools.execute(operation, arguments)
-        error = ""
-    except Exception as exc:
-        raw = {"documents": [], "source": "knowledge-tool-error"}
-        error = str(exc)
+    batch_size = 1
+    exact_lookup = any(request.get(key) or arguments["filters"].get(key) for key in ("document_id", "chunk_id"))
+    if request.get("purpose") == "maintenance" and not exact_lookup:
+        available = min(4, state.get("max_steps", 4) - state.get("step_count", 0))
+        searches = []
+        for operation in pending[:available]:
+            if operation not in KNOWLEDGE_TOOLS or not operation.startswith("search_"):
+                break
+            searches.append(operation)
+        batch_size = max(1, len(searches))
+    operations, pending = pending[:batch_size], pending[batch_size:]
+
+    def execute(operation):
+        try:
+            raw = state["agent"].tools.execute(operation, deepcopy(arguments))
+            error = ""
+        except Exception as exc:
+            raw = {"documents": [], "source": "knowledge-tool-error"}
+            error = str(exc)
+        return {"tool": operation, "result": raw, "error": error}
+
+    if len(operations) > 1:
+        # 每路复制独立 Context，继承 Harness 的权限和当前 Skill/Trace；仍走完整共享守卫。
+        with ThreadPoolExecutor(max_workers=len(operations), thread_name_prefix="maintenance-search") as executor:
+            futures = [executor.submit(copy_context().run, execute, operation) for operation in operations]
+            # 按原计划归并，线程完成先后不改变证据排序，也不隐去失败来源。
+            retrieved = [future.result() for future in futures]
+    else:
+        retrieved = [execute(operation) for operation in operations]
     observations = list(state.get("observations") or [])
-    observations.append({"tool": operation, "result": raw, "error": error})
-    new_documents = list(raw.get("documents") or [])
-    if not new_documents and raw.get("found") and raw.get("document_id"):
-        new_documents = [{
-            "document_id": raw.get("document_id"),
-            "title": raw.get("title") or raw.get("document_id"),
-            "content": raw.get("chunk_content") or raw.get("content") or "",
-            "source": raw.get("source") or "rag-service-compatible",
-            "score": 1.0,
-            "metadata": {
-                **dict(raw.get("metadata") or {}),
-                "knowledge_type": (raw.get("metadata") or {}).get("knowledge_type", "manual"),
-                "chunk_id": raw.get("chunk_id", ""),
-            },
-        }]
-    documents = list(state.get("documents") or []) + new_documents
+    documents = list(state.get("documents") or [])
+    for observation in retrieved:
+        observations.append(observation)
+        raw = observation["result"]
+        new_documents = list(raw.get("documents") or [])
+        if not new_documents and raw.get("found") and raw.get("document_id"):
+            new_documents = [{
+                "document_id": raw.get("document_id"),
+                "title": raw.get("title") or raw.get("document_id"),
+                "content": raw.get("chunk_content") or raw.get("content") or "",
+                "source": raw.get("source") or "rag-service-compatible",
+                "score": 1.0,
+                "metadata": {
+                    **dict(raw.get("metadata") or {}),
+                    "knowledge_type": (raw.get("metadata") or {}).get("knowledge_type", "manual"),
+                    "chunk_id": raw.get("chunk_id", ""),
+                },
+            }]
+        documents.extend(new_documents)
     return {
         "pending_tools": pending,
         "observations": observations,
         "documents": documents,
-        "step_count": state.get("step_count", 0) + 1,
+        "step_count": state.get("step_count", 0) + len(operations),
         "route": "observe",
     }
 
