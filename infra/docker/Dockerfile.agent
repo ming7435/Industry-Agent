@@ -1,3 +1,11 @@
+# 构建工作台前端，避免镜像继续使用仓库里提交的旧静态产物。
+FROM node:22-alpine AS frontend-builder
+WORKDIR /build/frontend/monitor-react
+COPY frontend/monitor-react/package.json frontend/monitor-react/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/monitor-react/ ./
+RUN npm run build
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -7,7 +15,7 @@ RUN pip install --no-cache-dir -r /tmp/agent-requirements.txt
 
 COPY services/agent-service /app/services/agent-service
 COPY shared /app/shared
-COPY frontend/monitor /app/frontend/monitor
+COPY --from=frontend-builder /build/frontend/monitor /app/frontend/monitor
 RUN mkdir -p /app/.runtime
 
 ENV PYTHONPATH=/app/services/agent-service:/app
