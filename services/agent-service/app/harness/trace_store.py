@@ -1,6 +1,9 @@
 """长期调用轨迹存于 MySQL：索引查询、短事务，不扫描巨大事件上下文。"""
 import json
-from shared.persistence import mysql_session, mysql_configuration
+from contextlib import contextmanager
+from threading import Lock
+from time import monotonic
+from shared.persistence import StorageUnavailable, mysql_session, mysql_configuration
 from .runs import RUN_INDEX_SHAPE, run_index_record
 
 
@@ -25,6 +28,9 @@ _RUN_INDEX_PROJECTION = _run_index_sql(RUN_INDEX_SHAPE)
 class MySQLTraceStore:
     def __init__(self, config=None):
         self._config = dict(config or mysql_configuration())
+        self._append_lock = Lock()
+        self._append_connection = None
+        self._append_opened_at = self._append_last_used = 0.0
         with mysql_session(self._config) as db:
             cursor = db.cursor()
             try:
@@ -36,8 +42,58 @@ class MySQLTraceStore:
             finally:
                 cursor.close()
 
+    def _discard_append_connection(self):
+        import mysql.connector
+        connection, self._append_connection = self._append_connection, None
+        if connection is not None:
+            try:
+                connection.close()
+            except mysql.connector.Error:
+                pass
+
+    @contextmanager
+    def _append_session(self):
+        """只复用轨迹写连接；逐条同步提交，不重试可能已经提交的记录。"""
+        import mysql.connector
+        with self._append_lock:
+            now = monotonic()
+            if self._append_connection is not None and (
+                now - self._append_last_used >= 30 or now - self._append_opened_at >= 300
+            ):
+                self._discard_append_connection()
+            try:
+                if self._append_connection is None:
+                    self._append_connection = mysql.connector.connect(**self._config, autocommit=False)
+                    self._append_opened_at = monotonic()
+                yield self._append_connection
+                self._append_connection.commit()
+                self._append_last_used = monotonic()
+            except BaseException as error:
+                if self._append_connection is not None:
+                    try:
+                        self._append_connection.rollback()
+                    except mysql.connector.Error:
+                        pass
+                # 断线、提交回执丢失及调用者中断都必须弃用连接，绝不重放该条。
+                self._discard_append_connection()
+                if isinstance(error, mysql.connector.Error):
+                    code = f"（错误码 {error.errno}）" if isinstance(error.errno, int) else ""
+                    raise StorageUnavailable("MySQL 轨迹存储不可用，请检查本地连接和权限" + code) from None
+                raise
+
+    def close(self):
+        """释放本实例拥有的唯一写连接，不影响独立的查询事务。"""
+        with self._append_lock:
+            self._discard_append_connection()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass  # 构造失败或解释器退出时可能已无锁/驱动模块。
+
     def append(self, record):
-        with mysql_session(self._config) as db:
+        with self._append_session() as db:
             cursor = db.cursor()
             try:
                 cursor.execute('INSERT INTO agent_execution_trace(trace_id,task_id,payload) VALUES (%s,%s,%s)',

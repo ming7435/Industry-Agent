@@ -65,6 +65,60 @@ const changeActor = (page, actor) => page.evaluate(value => window.dispatchEvent
 const queue = page => page.locator('.workorder-page [aria-label="工单队列"]');
 const pageText = page => page.locator('.workorder-page').innerText();
 
+test('自动派发后的新任务在一秒轮询内出现，无需手动刷新', async () => {
+  let items = [];
+  const { context, page, openAs, writes, errors } = await pageFor(route => respond(route, { items }));
+  try {
+    await openAs();
+    await page.getByText('暂无可见工单', { exact: false }).waitFor();
+    items = [orderFor(actorA, 'WO-AUTO-NEW')];
+    await page.clock.runFor(1200);
+    await page.getByRole('button', { name: /WO-AUTO-NEW/ }).waitFor();
+    assert.deepEqual(writes, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('工程资料待核实的故障任务自动出现并显示原方案引用与任务范围', async () => {
+  let items=[];
+  const {context,page,openAs,writes,errors}=await pageFor(route=>respond(route,{items}));
+  try {
+    await openAs();
+    await page.getByText('暂无可见工单',{exact:false}).waitFor();
+    items=[{...orderFor(actorA,'WO-FOLLOWUP'),source:'saved-plan-dispatch',plan_id:'P-ORIGINAL',
+      dispatch_mode:'fault_followup',steps:['安全停机后记录送料状态'],
+      dispatch_findings:['CAD/BOM 工程证据校验未通过：未解析到工程部件'],
+      maintenance_plan_snapshot:{plan_id:'P-ORIGINAL',repair_steps:['原方案步骤'],required_parts:['TRAK']}}];
+    await page.clock.runFor(1200);
+    await page.getByRole('button',{name:/WO-FOLLOWUP/}).waitFor();
+    const task=page.getByRole('region',{name:'工单任务范围'});
+    await task.waitFor();
+    assert.match(await task.innerText(),/P-ORIGINAL/);
+    assert.match(await task.innerText(),/安全停机后记录送料状态/);
+    assert.match(await task.innerText(),/CAD\/BOM/);
+    assert.equal(await page.getByText('系统自动派发',{exact:true}).count(),1);
+    assert.deepEqual(writes,[]); assert.deepEqual(errors,[]);
+  } finally {await context.close();}
+});
+
+test('工单页面重进保留列表和选择，后台慢请求不要求再次刷新', async () => {
+  let hold = false;
+  const { context, page, openAs, writes, errors } = await pageFor(route => {
+    if (!hold) return respond(route, { items: [orderFor(actorA, 'WO-CACHED')] });
+  });
+  try {
+    await openAs();
+    await page.getByRole('button', { name: /WO-CACHED/ }).click();
+    hold = true;
+    const nav = page.getByRole('navigation', { name: '功能导航' });
+    await nav.getByRole('button', { name: '智能诊断', exact: true }).click();
+    await nav.getByRole('button', { name: '工单系统', exact: true }).click();
+    assert.ok((await queue(page).innerText()).includes('WO-CACHED'));
+    assert.equal((await queue(page).innerText()).includes('正在读取'), false);
+    assert.ok((await page.locator('.workorder-titlebar').innerText()).includes('WO-CACHED'));
+    assert.deepEqual(writes, []); assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 async function pageFor(handleOrders) {
   const context = await fixture.browser.newContext(), page = await context.newPage();
   page.setDefaultTimeout(3000); await page.clock.install();

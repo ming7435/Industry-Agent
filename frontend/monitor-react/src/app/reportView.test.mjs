@@ -13,6 +13,45 @@ function completeness(report) {
   return reportView.reportCompleteness(report);
 }
 
+test('统一报告展示停机复机时间和所有设备的四个业务章节', () => {
+  const shown = reportView.buildReportDisplaySections({
+    lifecycle: {started_at: '2026-10-08T01:00:00Z', stopped_at: '2026-10-08T01:00:02Z',
+      restarted_at: '2026-10-08T01:05:00Z', duration_seconds: 300, device_ids: ['M1', 'M2'], event_ids: ['E1', 'E2']},
+    diagnosis: {records: [{device_id: 'M1', fault: '液压异常'}, {device_id: 'M2', fault: '振动异常'}]},
+    maintenance_plan: {records: [{plan_id: 'P1', repair_steps: ['检查压力']}, {plan_id: 'P2', repair_steps: ['检查轴承']}]},
+    workorder: {records: [{workorder_id: 'WO1', status: 'closed', assignee_name: '李工',
+      repair_feedback: {feedback: '检查完成'}, inspection_verification: {passed: true, phase: 'inspection'}}]},
+    quality: {status: 'not_tested', records: [], summary: '未关联质检记录'},
+  });
+  assert.match(section(shown, '停机到复机').body, /09:00:00/);
+  assert.match(section(shown, '停机到复机').body, /09:05:00/);
+  assert.match(section(shown, '智能诊断').body, /液压异常[\s\S]*振动异常/);
+  assert.match(section(shown, '维修方案').body, /检查压力[\s\S]*检查轴承/);
+  assert.match(section(shown, '工单执行与检查').body, /WO1[\s\S]*检查完成[\s\S]*检查通过/);
+  assert.match(section(shown, '质检结果').body, /未关联质检/);
+  assert.equal(reportView.reportQualityLabel({status: 'not_tested', records: []}), '未关联质检');
+});
+
+test('报告中的诊断原文时间根据已保存的事件时间显示为北京时间', () => {
+  const shown = reportView.buildReportDisplaySections({lifecycle: {}, diagnosis: {records: [
+    {fault: '设备于2026-10-08 01:00:00触发报警', raw: {triggered_at: '2026-10-08T01:00:00Z'}},
+  ]}});
+  assert.match(section(shown, '智能诊断').body, /2026-10-08 09:00:00（北京时间）/);
+  assert.doesNotMatch(section(shown, '智能诊断').body, /01:00:00/);
+  const event = reportView.buildReportDisplaySections({lifecycle: {}, diagnosis: {records: [
+    {event_id: 'EVT-20261008-010000-510-149', fault: '2026-10-08 01:00:00触发报警',
+      raw: {triggered_at: '2026-10-08T01:00:01.519Z'}},
+  ]}});
+  assert.match(section(event, '智能诊断').body, /09:00:00（北京时间）/);
+});
+
+test('后端质检结论没有 passed 字段时仍保留通过、失败和未检测的区别', () => {
+  assert.equal(reportView.reportQualityLabel({passed: true, records: [{result: 'passed', status: 'passed'}]}), '已通过');
+  assert.equal(reportView.reportQualityLabel({passed: false, records: [{result: 'failed', status: 'failed'}]}), '未通过');
+  assert.equal(reportView.reportQualityLabel({records: [{result: 'passed'}, {result: 'pending'}]}), '有未完成质检');
+  assert.equal(reportView.reportQualityLabel({result: 'passed', passed: false}), '未通过');
+});
+
 test('真实工单没有摘要时仍展示编号、执行状态、负责人和执行步骤', () => {
   const displayed = reportView.buildReportDisplaySections({workorder: {
     workorder_id: 'WO-REAL', status: 'closed', assignee: 'TECH-001',

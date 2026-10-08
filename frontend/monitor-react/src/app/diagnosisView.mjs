@@ -62,22 +62,41 @@ export function buildDiagnosisView(snapshot, sample) {
   const recommendation = cleanDisplayText(embedded.recommendation || latest.recommendation);
   const nextAction = cleanDisplayText(latest.next_action || embedded.next_action);
   const pipeline = isCurrent ? getLatestPipeline(snapshot, sample) : {};
-  let status = isCurrent ? String(latest.status || diagnosis.status || "waiting") : "waiting";
-  const blocked = status === "completed" && (pipeline.status === "blocked" || pipeline.runtime_result?.status === "blocked");
-  if (blocked) status = "blocked";
+  const status = isCurrent ? String(latest.status || diagnosis.status || "waiting") : "waiting";
+  const evidenceInsufficient = latest.evidence_status === "insufficient";
+  const reviewRequired = latest.requires_human_review === true || status === "fallback";
+  const labels = { completed: "诊断已返回", waiting: "等待诊断", running: "正在诊断", recovering: "正在回查结果",
+    blocked: "诊断待核实", failed: "诊断调用失败", unknown: "结果待确认", idle: "等待异常事件", fallback: "诊断待核实" };
+  const resultReturned = ["completed", "fallback"].includes(status);
+  const statusLabel = resultReturned && evidenceInsufficient ? "诊断证据不足，待核实"
+    : resultReturned && reviewRequired ? "诊断待核实"
+    : Object.hasOwn(labels, status) ? labels[status] : "诊断状态待确认";
+  // 诊断结果与整个流程各自保留状态；重试耗尽不能证明诊断本身缺少证据。
+  const workflowStatus = [pipeline.status, pipeline.runtime_result?.status].includes("blocked") ? "blocked"
+    : String(pipeline.status || pipeline.runtime_result?.status || latest.workflow_status || "");
   const stopReason = String(pipeline.stop_reason || pipeline.runtime_result?.stop_reason || "");
-  const evidenceBlocked = blocked && ["replan_limit_exceeded", "knowledge_evidence_gate"].includes(stopReason);
-  const statusHint = evidenceBlocked ? "诊断已返回，但证据不足，未自动派工。请补充报警定义或现场检测数据后核实。"
-    : blocked ? "诊断已返回，但后续流程被门禁拦截。请查看日志中的具体阻塞原因。"
+  const workflowReason = workflowStatus === "blocked"
+    ? stopReason === "replan_limit_exceeded" ? "后续流程重试达到上限，未完成自动派工。请查看日志中的具体阻塞原因。"
+      : stopReason === "knowledge_evidence_gate" ? "维修依据检索未通过，后续流程已停止。请查看日志中的检索与校验结果。"
+      : "后续流程被门禁拦截。请查看日志中的具体阻塞原因。"
+    : ["running", "recovering"].includes(workflowStatus) ? "后续流程仍在处理；维修方案与工单状态以实际执行结果为准。"
+    : workflowStatus === "unknown" ? "后续流程结果尚未确认，请查看日志并对账。"
+    : workflowStatus === "failed" ? "后续流程执行失败，请查看日志中的具体原因。"
+    : workflowStatus && !["completed", "waiting", "idle"].includes(workflowStatus) ? "后续流程状态待确认，请查看日志并对账。" : "";
+  const diagnosisHint = resultReturned && evidenceInsufficient ? "诊断证据不足，请补充依据后核实。"
+    : resultReturned && reviewRequired ? "诊断结果需要人工核实，尚不能作为已确认的故障结论。"
     : status === "recovering" ? "正在只读回查已提交的任务；不会重复运行 Agent 或重复派工。"
     : status === "unknown" ? "后台执行结果尚未确认，请先对账；不要重复提交同一故障。"
-    : ["completed", "fallback"].includes(status) && ["running", "recovering"].includes(latest.workflow_status)
-      ? "诊断已返回，后续流程仍在处理；维修方案与工单状态以实际执行结果为准。"
-    : latest.workflow_status === "unknown" ? "诊断已返回，后续流程结果尚未确认，请查看日志并对账。" : "";
+    : !Object.hasOwn(labels, status) ? "诊断状态尚未确认，请查看日志中的实际执行结果。" : "";
+  const statusHint = [diagnosisHint, workflowReason].filter(Boolean).join(" ");
   return {
     deviceId: String(current?.device_id || snapshot?.device_id || latest.device_id || ""),
     status,
+    statusLabel,
     statusHint,
+    workflowStatus,
+    workflowReason,
+    stopReason,
     error: cleanDisplayText(latest.error),
     summary: isCurrent ? (summary || "等待诊断结果") : (currentAlarm ? `正在等待报警 ${currentAlarm} 的诊断结果` : "等待诊断结果"),
     cause,

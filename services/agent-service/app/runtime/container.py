@@ -66,6 +66,7 @@ class AgentContainer:
                 keys=list(payload), tool_name="", latency=0.0, error="",
             ),
         )
+        self.runtime_step_timeout_grace_seconds = settings.runtime_step_timeout_grace_seconds
         self.planner = Planner(
             capabilities=self.capabilities,
             trace=lambda event, payload: self.trace.record(
@@ -113,7 +114,9 @@ class AgentContainer:
             agent.runtime_trace = self.trace
         self.capabilities.register_agents(self.agents)
         self.harnesses = {
-            name: AgentHarness(agent, timeout_seconds=settings.agent_timeout_seconds, max_retries=settings.agent_max_retries, trace=self.trace)
+            name: AgentHarness(agent,
+                timeout_seconds=settings.diagnosis_timeout_seconds if name == "diagnosis" else settings.agent_timeout_seconds,
+                max_retries=settings.agent_max_retries, trace=self.trace)
             for name, agent in self.agents.items()
         }
         self.endpoints = A2AEndpoints(self.harnesses)

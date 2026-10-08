@@ -19,6 +19,7 @@ from .models import (
     RuleType,
 )
 from .rules import MonitorConfig, classify_metric_detail
+from shared.controlled_stop import expected_stopped_zero_metrics
 
 
 TriggerHandler = Callable[[DiagnosisTrigger], None]
@@ -260,8 +261,11 @@ class DeviceMonitor:
         """检测工厂快照中描述的每一个指标。"""
 
         result: List[AnomalyObservation] = []
+        stopped_zero_metrics = self._expected_stopped_zero_metrics(sample)
         for metric_key, detail in sample.metric_details.items():
             value = sample.metrics.get(metric_key)
+            if metric_key in stopped_zero_metrics and value == 0:
+                continue
             classified = classify_metric_detail(value, detail)
             if classified is None:
                 continue
@@ -295,6 +299,15 @@ class DeviceMonitor:
                 )
             )
         return result
+
+    @staticmethod
+    def _expected_stopped_zero_metrics(sample: DeviceSample) -> frozenset:
+        """Only the provider's explicit no-fault control boundary permits zeros."""
+        return expected_stopped_zero_metrics({
+            'device_id': sample.device_id, 'status': sample.status,
+            'control_state': sample.control_state, 'control_reason': sample.control_reason,
+            'alarm_code': sample.alarm_code, 'fault_evidence': sample.fault_evidence,
+        })
 
     def _detect_legacy_temperature_vibration(
         self,

@@ -75,13 +75,78 @@ test("当前诊断失败必须展示错误，不伪装为等待", () => {
 test("后台已返回低置信度判断时显示结论和待核实门禁", () => {
   const sample = { device_id: "D-1", alarm_code: "700002" };
   const view = buildDiagnosisView({ diagnosis: {
-    latest_by_device: { "D-1": { ...sample, status: "completed", confidence: 0.465, summary: "暂不能确认根因" } },
+    latest_by_device: { "D-1": { ...sample, status: "completed", confidence: 0.465, requires_human_review: true, summary: "暂不能确认根因" } },
     pipeline_by_device: { "D-1": { status: "blocked", stop_reason: "replan_limit_exceeded" } },
   } }, sample);
-  assert.equal(view.status, "blocked");
+  assert.equal(view.status, "completed");
+  assert.equal(view.statusLabel, "诊断待核实");
   assert.equal(view.summary, "暂不能确认根因");
   assert.equal(view.confidence, 0.465);
-  assert.match(view.statusHint, /未自动派工/);
+  assert.match(view.statusHint, /人工核实/);
+  assert.match(view.workflowReason, /未完成自动派工/);
+});
+
+function completedDiagnosis(pipeline = {}, latest = {}) {
+  const sample = { device_id: "D-1", alarm_code: "700010" };
+  return buildDiagnosisView({ diagnosis: {
+    latest_by_device: { "D-1": { ...sample, status: "completed", confidence: 0.916,
+      evidence_status: "ready", requires_human_review: false, summary: "液压压力异常已完成诊断", ...latest } },
+    pipeline_by_device: { "D-1": pipeline },
+  } }, sample);
+}
+
+test("后续重试达到上限不能把已完成诊断改成证据不足", () => {
+  const view = completedDiagnosis({ status: "blocked", stop_reason: "replan_limit_exceeded" });
+  assert.equal(view.status, "completed");
+  assert.equal(view.statusLabel, "诊断已返回");
+  assert.equal(view.confidence, 0.916);
+  assert.equal(view.workflowStatus, "blocked");
+  assert.equal(view.stopReason, "replan_limit_exceeded");
+  assert.match(view.workflowReason, /后续流程重试达到上限/);
+  assert.match(view.statusHint, /未完成自动派工/);
+  assert.doesNotMatch(view.statusHint, /证据不足|补充报警定义/);
+});
+
+test("维修方案门禁与知识检索门禁属于后续流程，不否定诊断结果", () => {
+  const plan = completedDiagnosis({ status: "blocked", stop_reason: "maintenance_plan_invalid" });
+  assert.equal(plan.status, "completed");
+  assert.equal(plan.statusLabel, "诊断已返回");
+  assert.match(plan.workflowReason, /后续流程被门禁拦截/);
+  assert.doesNotMatch(plan.statusHint, /诊断证据不足/);
+  const knowledge = completedDiagnosis({ runtime_result: { status: "blocked", stop_reason: "knowledge_evidence_gate" } });
+  assert.equal(knowledge.status, "completed");
+  assert.equal(knowledge.workflowStatus, "blocked");
+  assert.match(knowledge.workflowReason, /维修依据检索未通过/);
+  assert.doesNotMatch(knowledge.statusHint, /诊断证据不足|补充报警定义/);
+});
+
+test("真实诊断证据不足即使高置信度也必须待核实", () => {
+  const view = completedDiagnosis({ status: "completed" }, { evidence_status: "insufficient" });
+  assert.equal(view.status, "completed");
+  assert.equal(view.statusLabel, "诊断证据不足，待核实");
+  assert.match(view.statusHint, /诊断证据不足/);
+  assert.doesNotMatch(view.statusHint, /诊断已返回/);
+});
+
+test("后续流程运行、回查和未知与诊断完成分别表达", () => {
+  for (const workflowStatus of ["running", "recovering", "unknown", "failed"]) {
+    const view = completedDiagnosis({ status: workflowStatus });
+    assert.equal(view.status, "completed");
+    assert.equal(view.statusLabel, "诊断已返回");
+    assert.equal(view.workflowStatus, workflowStatus);
+    assert.match(view.workflowReason, workflowStatus === "unknown" ? /尚未确认/ : workflowStatus === "failed" ? /执行失败/ : /仍在处理/);
+  }
+  assert.equal(completedDiagnosis({}, { workflow_status: "unknown" }).workflowStatus, "unknown");
+});
+
+test("未知、失败与降级诊断不能借用后续完成状态声称成功", () => {
+  for (const status of ["unknown", "unexpected_status", "failed", "fallback", "blocked"]) {
+    const view = completedDiagnosis({ status: "completed" }, { status });
+    assert.equal(view.status, status);
+    assert.doesNotMatch(view.statusLabel, /已返回|已完成|成功/);
+    assert.doesNotMatch(view.statusHint, /诊断已返回|诊断已完成/);
+  }
+  assert.equal(completedDiagnosis({}, { status: "unexpected_status" }).statusLabel, "诊断状态待确认");
 });
 
 test("选中设备不能借用另一台设备的诊断，即使当前无报警", () => {

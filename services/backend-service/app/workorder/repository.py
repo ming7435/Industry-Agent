@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
+from shared.task_deletion import creation_deletion_key, deletion_records, order_plan_ids
 
 
 class BusinessStoreError(RuntimeError):
@@ -31,6 +32,14 @@ class SQLiteRepository:
         value = dict(order)
         key = str(value.get("idempotency_key") or "") or None
         with self._record_session() as connection:
+            if not connection.in_transaction:
+                connection.execute('BEGIN IMMEDIATE')
+            guards = [('workorder_deleted', value['workorder_id']),
+                      ('workorder_creation_deleted', creation_deletion_key(value)),
+                      *[('maintenance_plan_deleted', plan_id) for plan_id in order_plan_ids(value)]]
+            for kind, identifier in guards:
+                if identifier and connection.execute('SELECT 1 FROM business_records WHERE record_type=? AND record_id=?', (kind, identifier)).fetchone():
+                    raise ValueError('工单或关联方案已删除，不能自动重新创建')
             try:
                 connection.execute("INSERT INTO workorders(workorder_id,idempotency_key,payload) VALUES (?,?,?)", (value["workorder_id"], key, json.dumps(value, ensure_ascii=False, default=str)))
             except sqlite3.IntegrityError:
@@ -86,6 +95,19 @@ class SQLiteRepository:
                 connection.execute('INSERT INTO business_records(record_type,record_id,payload) VALUES (?,?,?) '
                     'ON CONFLICT(record_type,record_id) DO UPDATE SET payload=excluded.payload', (kind, key, json.dumps(payload, ensure_ascii=False)))
         return value
+
+    def purge(self, order, audit, plan_ids):
+        with self._record_session() as connection:
+            if not connection.in_transaction:
+                connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute('SELECT payload FROM workorders WHERE workorder_id=?', (order['workorder_id'],)).fetchone()
+            stored = json.loads(row[0]) if row else None
+            if stored is None or int(stored.get('_revision', 0)) != int(order.get('_revision', 0)):
+                raise ValueError('工单已被其他操作更新，请刷新后重试')
+            connection.execute('DELETE FROM workorders WHERE workorder_id=?', (order['workorder_id'],))
+            for kind, key, payload in deletion_records(order, audit, plan_ids):
+                connection.execute('INSERT INTO business_records(record_type,record_id,payload) VALUES (?,?,?) '
+                    'ON CONFLICT(record_type,record_id) DO UPDATE SET payload=excluded.payload', (kind, key, json.dumps(payload, ensure_ascii=False)))
 
     def save_record(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         value = dict(payload)
@@ -224,6 +246,14 @@ class MySQLRepository:
         key = str(value.get("idempotency_key") or "") or None
         cursor = self.connection.cursor(dictionary=True)
         try:
+            guards = [('workorder_deleted', value['workorder_id']),
+                      ('workorder_creation_deleted', creation_deletion_key(value)),
+                      *[('maintenance_plan_deleted', plan_id) for plan_id in order_plan_ids(value)]]
+            for kind, identifier in guards:
+                if identifier:
+                    cursor.execute('SELECT record_id FROM business_records WHERE record_type=%s AND record_id=%s FOR UPDATE', (kind, identifier))
+                    if cursor.fetchone():
+                        raise ValueError('工单或关联方案已删除，不能自动重新创建')
             if key:
                 cursor.execute("SELECT payload FROM workorders WHERE idempotency_key=%s", (key,))
                 row = cursor.fetchone()
@@ -324,6 +354,24 @@ class MySQLRepository:
         finally:
             cursor.close()
         return value
+
+    @_mysql_operation
+    def purge(self, order, audit, plan_ids):
+        from shared.persistence import purge_mysql_plans
+        cursor = self.connection.cursor(dictionary=True)
+        try:
+            cursor.execute('SELECT payload FROM workorders WHERE workorder_id=%s FOR UPDATE', (order['workorder_id'],))
+            row = cursor.fetchone()
+            stored = json.loads(row['payload']) if row else None
+            if stored is None or int(stored.get('_revision', 0)) != int(order.get('_revision', 0)):
+                raise ValueError('工单已被其他操作更新，请刷新后重试')
+            for kind, key, payload in deletion_records(order, audit, plan_ids):
+                cursor.execute('INSERT INTO business_records(record_type,record_id,payload) VALUES (%s,%s,%s) '
+                    'ON DUPLICATE KEY UPDATE payload=VALUES(payload)', (kind, key, json.dumps(payload, ensure_ascii=False)))
+            purge_mysql_plans(cursor, plan_ids, audit['operator'], workorder_ids=[order['workorder_id']], allow_missing=True)
+            cursor.execute('DELETE FROM workorders WHERE workorder_id=%s', (order['workorder_id'],))
+        finally:
+            cursor.close()
 
     @_mysql_operation
     def get_record(self, record_type: str, record_id: str) -> dict[str, Any] | None:

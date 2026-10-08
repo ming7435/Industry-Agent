@@ -1,5 +1,6 @@
 """Personal list reads use Backend authority without scheduling an Agent execution."""
 from copy import deepcopy
+from datetime import datetime, timezone
 from types import SimpleNamespace
 import logging
 import re
@@ -36,6 +37,8 @@ def read_api(monkeypatch):
 
     class Backend:
         outcome = {'success': True, 'items': orders, 'backend': 'backend-service'}
+        line = None
+        line_reads = 0
 
         def resolve_session(self, token):
             return users.get(token)
@@ -45,6 +48,12 @@ def read_api(monkeypatch):
             if isinstance(self.outcome, Exception):
                 raise self.outcome
             return self.outcome
+
+        def status(self):
+            self.line_reads += 1
+            if isinstance(self.line, Exception):
+                raise self.line
+            return deepcopy(self.line)
 
     backend = Backend()
     monkeypatch.setattr('app.api.server.BackendServiceClient', lambda: backend)
@@ -84,6 +93,17 @@ def test_supervisor_can_read_all_authoritative_records(read_api):
     assert response.json()['count'] == 3
     assert read_api.backend_calls == [('list_workorders', {})]
     assert read_api.agent_calls == []
+
+
+def test_legacy_query_cannot_enable_deleted_record_view(read_api):
+    read_api.orders.append({'workorder_id':'WO-OLD-HIDDEN', 'device_id':'TC', 'assignee':'U-LMY',
+                            'plan_id':'P-OLD-HIDDEN', 'deleted_at':'2026-09-28T10:00:00Z'})
+    response = read_api.client.get('/api/workorders?include_deleted=true',
+                                   headers={'Cookie':'maintenance_session=session-lmy'})
+    assert response.status_code==200
+    assert [o['workorder_id'] for o in response.json()['items']]==['WO-LMY']
+    assert response.json()['deleted_plan_ids']==['P-OLD-HIDDEN']
+    assert read_api.agent_calls==[]
 
 
 def test_request_headers_cannot_expand_personal_scope(read_api):
@@ -153,3 +173,91 @@ def test_successful_read_logs_only_role_counts_and_elapsed_time(read_api, caplog
     assert float(re.search(r'elapsed_ms=(\d+(?:\.\d+)?)', message).group(1)) >= 0
     for private_value in ('U-LMY', 'WO-LMY', 'session-lmy', '700006', '刀塔'):
         assert private_value not in message
+
+
+def completed_order_and_line(read_api):
+    from shared.technician_confirmation import confirmation_digest, trusted_technician_confirmation
+    current = read_api.orders[0]
+    sample = {'device_id': current['device_id'], 'status': 'running', 'alarm_code': '',
+              'metrics': {'pressure': 1}, 'checked_at': datetime.now(timezone.utc).isoformat()}
+    checks = {key: True for key in ('device_identity', 'operational', 'alarms_clear',
+                                   'metrics_available', 'interlocks_clear', 'recovery_fresh')}
+    current.update(status='closed', plan_id='P-LMY', maintenance_confirmed_by=current['assignee'],
+        repair_feedback={'operator': current['assignee'], 'feedback': '现场已处理并复测'},
+        repair_verification={'source': 'device_recovery', 'phase': 'poststart', 'passed': True,
+                             'checks': checks, 'device_recovery': sample})
+    receipt = {'schema_version': 1, 'receipt_id': 'ISOLATED-RECEIPT',
+        'confirmation_method': 'technician_feedback', 'source': 'backend_team_repair_confirmation',
+        'workorder_id': current['workorder_id'], 'device_id': current['device_id'],
+        'event_id': current['event_id'], 'plan_id': current['plan_id'], 'actor_id': current['assignee'],
+        'plan_snapshot_digest': confirmation_digest(current['maintenance_plan_snapshot']),
+        'diagnosis_snapshot_digest': confirmation_digest(current['diagnosis_snapshot']),
+        'feedback_digest': confirmation_digest(current['repair_feedback']),
+        'confirmed_at': sample['checked_at'],
+        'prestart_checks': {**checks, 'ready_to_start': True}}
+    current.update(technician_confirmation=receipt, events=[{'payload': {'technician_confirmation': receipt}}])
+    assert trusted_technician_confirmation(current)
+    outcome = {'state': 'verified', 'device_id': current['device_id'], 'action': 'start', 'snapshot': sample}
+    read_api.backend.line = {'state': 'running', 'generation': 20,
+        'faults': [{'event_id': current['event_id'], 'device_id': current['device_id'], 'resolved': True}],
+        'devices': {current['device_id']: outcome},
+        'completed_cycles': [{'cycle_id': 'CYCLE-VERIFIED', 'generation': 20, 'state': 'running',
+            'device_ids': [current['device_id']], 'event_ids': [current['event_id']],
+            'faults': [{'event_id': current['event_id'], 'device_id': current['device_id']}],
+            'devices': {current['device_id']: deepcopy(outcome)}, 'restarted_at': 1791445404.0}]}
+    return current
+
+
+def test_completed_order_read_returns_authoritative_restart_result_for_old_open_tabs(read_api):
+    current = completed_order_and_line(read_api)
+    before = deepcopy(current)
+    response = read_api.client.get('/api/workorders', headers={'Cookie': 'maintenance_session=session-lmy'})
+    assert response.status_code == 200
+    control = response.json()['items'][0]['machine_control']
+    assert control['state'] == 'running' and control['generation'] == 20
+    assert control['source'] == 'persisted_line_restart' and control['cycle_id'] == 'CYCLE-VERIFIED'
+    assert read_api.backend.line_reads == 1
+    assert current == before and read_api.agent_calls == []
+    assert read_api.backend_calls == [('list_workorders', {})]
+
+
+@pytest.mark.parametrize('issue', ['prestart_only', 'unconfirmed', 'different_event', 'wrong_device',
+                                  'stale_cycle', 'unresolved_fault', 'stopped', 'unverified_readback',
+                                  'wrong_snapshot', 'no_cycle', 'unavailable'])
+def test_read_result_cannot_turn_incomplete_or_unrelated_recovery_into_success(read_api, issue):
+    current = completed_order_and_line(read_api)
+    line = read_api.backend.line
+    if issue == 'prestart_only': current['repair_verification']['phase'] = 'prestart'
+    if issue == 'unconfirmed': current['maintenance_confirmed_by'] = 'other-person'
+    if issue == 'different_event': line['completed_cycles'][0]['event_ids'] = ['OTHER-EVENT']
+    if issue == 'wrong_device': line['completed_cycles'][0]['faults'][0]['device_id'] = 'OTHER'
+    if issue == 'stale_cycle': line['generation'] += 1
+    if issue == 'unresolved_fault': line['faults'].append({'event_id': 'NEW', 'device_id': 'OTHER', 'resolved': False})
+    if issue == 'stopped': line['state'] = 'stopped'
+    if issue == 'unverified_readback': line['completed_cycles'][0]['devices']['TC']['state'] = 'pending'
+    if issue == 'wrong_snapshot': line['completed_cycles'][0]['devices']['TC']['snapshot']['device_id'] = 'OTHER'
+    if issue == 'no_cycle': line['completed_cycles'] = []
+    if issue == 'unavailable': read_api.backend.line = BackendServiceError('isolated line unavailable')
+    response = read_api.client.get('/api/workorders', headers={'Cookie': 'maintenance_session=session-lmy'})
+    assert response.status_code == 200
+    assert response.json()['items'][0].get('machine_control', {}).get('state') != 'running'
+    assert read_api.agent_calls == []
+
+
+def test_restart_projection_is_not_cached_across_a_new_fault(read_api):
+    completed_order_and_line(read_api)
+    first = read_api.client.get('/api/workorders', headers={'Cookie': 'maintenance_session=session-lmy'})
+    read_api.backend.line.update(state='stopped', generation=21)
+    second = read_api.client.get('/api/workorders', headers={'Cookie': 'maintenance_session=session-lmy'})
+    assert first.json()['items'][0]['machine_control']['state'] == 'running'
+    assert second.json()['items'][0].get('machine_control', {}).get('state') != 'running'
+    assert read_api.backend.line_reads == 2 and read_api.agent_calls == []
+
+
+def test_current_restart_projection_overrides_an_old_stored_denial_without_rewriting_it(read_api):
+    current = completed_order_and_line(read_api)
+    current['machine_control'] = {'state': 'blocked', 'reason': '还有未确认完成的故障工单'}
+    before = deepcopy(current)
+    response = read_api.client.get('/api/workorders', headers={'Cookie': 'maintenance_session=session-lmy'})
+    assert response.json()['items'][0]['machine_control']['state'] == 'running'
+    assert current == before and read_api.agent_calls == []

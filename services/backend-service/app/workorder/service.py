@@ -17,6 +17,7 @@ from ..quality import PartInspectionService
 from ..team.service import TeamService
 from shared.repair_recovery import repair_checks
 from shared.technician_confirmation import confirmation_digest, trusted_technician_confirmation
+from shared.workorder_dispatch import validate_followup_order
 
 
 def _quality_operation(method):
@@ -90,6 +91,8 @@ class BackendBusinessService:
                 "source", "event_id", "diagnosis_snapshot", "maintenance_plan_snapshot",
             )
         }
+        if values.get('dispatch_mode'):
+            fields.update(dispatch_mode=values['dispatch_mode'], dispatch_findings=values.get('dispatch_findings'))
         encoded = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -99,6 +102,7 @@ class BackendBusinessService:
         return {**value, "success": True, "workorder": value, "workorder_id": str(value.get("workorder_id") or ""), "backend": "backend-service", **extra}
 
     def create_workorder(self, **values: Any) -> dict[str, Any]:
+        validate_followup_order(values)
         fingerprint = self._idempotency_fingerprint(values)
         order = {
             "workorder_id": "WO-" + uuid4().hex[:10].upper(),
@@ -117,6 +121,8 @@ class BackendBusinessService:
             "created_at": self._now(), "updated_at": self._now(),
             "idempotency_fingerprint": fingerprint,
         }
+        if values.get('dispatch_mode'):
+            order.update(dispatch_mode=values['dispatch_mode'], dispatch_findings=deepcopy(values.get('dispatch_findings') or []))
         existing = self.repository.create(order)
         if str(existing.get("workorder_id") or "") != str(order.get("workorder_id") or ""):
             existing_fingerprint = str(existing.get("idempotency_fingerprint") or self._idempotency_fingerprint(existing))
@@ -144,25 +150,24 @@ class BackendBusinessService:
         if not workorder_id:
             raise ValueError("workorder_id 不能为空")
         order = self.repository.get(workorder_id)
-        if order is None:
+        receipt = self.repository.get_record('workorder_deleted', workorder_id) if order is None else None
+        if order is None and receipt is None:
             return {"success": False, "deleted": False, "found": False, "workorder_id": workorder_id, "backend": "backend-service"}
         if actor_id:
             with self.team.repository.transaction() as db:
                 actor = db.execute("SELECT user_id FROM team_accounts WHERE user_id=? AND enabled=1 AND role='technician'", (actor_id,)).fetchone()
-            if not actor or order.get('assignee') != actor_id:
+            if not actor or (order or receipt).get('assignee') != actor_id:
                 raise PermissionError('只能删除本人被派发的工单')
-        related_ids = [order.get('plan_id'), (order.get('maintenance_plan_snapshot') or {}).get('plan_id')]
-        for revision in order.get('plan_revisions') or []:
-            related_ids.extend((revision.get('previous_plan_id'), revision.get('plan_id')))
-        plan_ids = list(dict.fromkeys(str(value) for value in related_ids if value))
-        if not order.get('deleted_at'):
-            stamp = self._now()
-            order.update(deleted_at=stamp, deleted_by=actor_id, updated_at=stamp)
-            audit = {'audit_id': 'AUDIT-' + uuid4().hex[:10].upper(), 'action': 'workorder_deleted',
-                     'object_id': workorder_id, 'operator': actor_id, 'created_at': stamp, 'deleted_plan_ids': plan_ids}
-            self.repository.archive(order, audit, plan_ids)
+        if receipt:
+            return {'success': True, 'deleted': True, 'found': False, 'workorder_id': workorder_id,
+                    'deleted_plan_ids': receipt['deleted_plan_ids'], 'mode': 'permanent-delete', 'backend': 'backend-service'}
+        from shared.task_deletion import order_plan_ids
+        plan_ids = order_plan_ids(order)
+        audit = {'audit_id': 'AUDIT-' + uuid4().hex[:10].upper(), 'action': 'workorder_deleted',
+                 'object_id': workorder_id, 'operator': actor_id, 'created_at': self._now(), 'deleted_plan_ids': plan_ids}
+        self.repository.purge(order, audit, plan_ids)
         return {"success": True, "deleted": True, "found": True, "workorder_id": workorder_id,
-                "deleted_plan_ids": plan_ids, "mode": "soft-delete", "backend": "backend-service"}
+                "deleted_plan_ids": plan_ids, "mode": "permanent-delete", "backend": "backend-service"}
 
     def list_deleted_maintenance_plan_ids(self, **_: Any) -> dict[str, Any]:
         return {'deleted_plan_ids': sorted({str(item['plan_id']) for item in self._list_records('maintenance_plan_deleted') if item.get('plan_id')})}
@@ -246,7 +251,10 @@ class BackendBusinessService:
                         raise ValueError('派工对象必须是启用且负责该设备的维修人员')
                     if candidate.get('online') is not True or candidate.get('available') is not True:
                         raise ValueError('对应设备维修人员当前未登录，不能派工')
-                    self._reserve_required_parts(current)
+                    if current.get('dispatch_mode') == 'fault_followup':
+                        validate_followup_order(current)
+                    else:
+                        self._reserve_required_parts(current)
                     return self.update_workorder(workorder_id, status="in_progress", assignee=assignee, assignee_name=candidate['name'])
         except Exception:
             if inventory_snapshot is not None:
@@ -556,7 +564,7 @@ class BackendBusinessService:
         tech = next((t for t in self.team.technicians() if t['user_id'] == actor_id), None)
         if not tech or order.get('assignee') != actor_id:
             raise PermissionError('仅被派工维修人员可以确认')
-        checks = repair_checks(order.get('device_id'), snapshot, 'prestart')
+        checks = repair_checks(order.get('device_id'), snapshot, 'prestart', order=order)
         if not str(feedback).strip() or not all(checks.values()) or self._contains_untrusted_flag(snapshot):
             raise ValueError('维修反馈或设备恢复数据不满足预启动验证')
         if (order.get('status') == 'completed' and (order.get('repair_verification') or {}).get('phase') == 'poststart'
@@ -582,7 +590,7 @@ class BackendBusinessService:
 
     def finalize_team_repair(self, workorder_id, snapshot):
         order = self._require(workorder_id)
-        checks = repair_checks(order.get('device_id'), snapshot, 'poststart')
+        checks = repair_checks(order.get('device_id'), snapshot, 'poststart', order=order)
         if order.get('status') != 'completed' or not order.get('maintenance_confirmed_by') or not all(checks.values()):
             raise ValueError('工单或启动后设备证据不满足运行复核')
         verification = {'source': 'device_recovery', 'phase': 'poststart', 'passed': True, 'checks': checks, 'device_recovery': dict(snapshot), 'verified_at': self._now()}
@@ -599,8 +607,32 @@ class BackendBusinessService:
 
     def query_technicians(self, device_id: str = "", **kwargs: Any) -> dict[str, Any]:
         orders = self.repository.list()
-        items = [{"technician_id": user['user_id'], "name": user['username'], "primary_device_id": user['primary_device_id'], "online": user['online'], "available": bool(user['enabled']) and user['online'], "workload": sum(1 for order in orders if order.get('assignee') == user['user_id'] and order.get('status') not in {'completed', 'closed', 'rejected'}), 'registered': True} for user in self.team.technicians(device_id=device_id)]
+        items = [{"technician_id": user['user_id'], "name": user['username'], "primary_device_id": user['primary_device_id'], "responsible_device_ids": list(user['responsible_device_ids']), "online": user['online'], "available": bool(user['enabled']) and user['online'], "workload": sum(1 for order in orders if order.get('assignee') == user['user_id'] and order.get('status') not in {'completed', 'closed', 'rejected'}), 'registered': True} for user in self.team.technicians(device_id=device_id)]
         return {'success': True, 'items': items, 'total': len(items), 'backend': 'backend-service'}
+
+    def update_team_responsibilities(self, user_id, responsible_device_ids):
+        # 与派工使用同一团队锁，避免移除设备与新工单分配交错。
+        with self.team.repository.transaction() as db:
+            self.team.repository.lock(db)
+            account = db.execute("SELECT * FROM team_accounts WHERE user_id=? AND enabled=1 AND role='technician'", (user_id,)).fetchone()
+            if not account:
+                raise PermissionError('只有当前有效维修人员可以修改负责设备')
+            previous = set(self.team.repository.responsible_devices(db, account))
+            updated = self.team.update_responsibilities(user_id, responsible_device_ids)
+            removed = previous - set(updated['responsible_device_ids'])
+            if removed:
+                borrower = getattr(self.repository, 'borrow_transaction', None)
+                team_path = self.team.repository.sqlite_path
+                transaction = borrower(db, team_path) if borrower and team_path else nullcontext()
+                with transaction:
+                    blocked = [order for order in self.repository.list()
+                               if order.get('assignee') == user_id and order.get('device_id') in removed
+                               and order.get('status') not in {'completed', 'closed', 'rejected'}]
+                if blocked:
+                    tasks = '、'.join(f"{order['device_id']}（{order['workorder_id']}）" for order in blocked)
+                    # 即使工单已从列表软删除，其未完成责任仍须保留；异常回滚范围修改。
+                    raise ValueError('以下设备仍有未完成工单，暂不能移除负责范围：' + tasks)
+            return updated
 
     def query_technician_skills(self, technician_id: str = "", **_: Any) -> dict[str, Any]:
         return {'success': True, 'items': [], 'status': 'not_recorded', 'backend': 'backend-service'}
@@ -694,10 +726,19 @@ class BackendBusinessService:
         return dict(value)
 
     def list_reports(self, workorder_id: str = "", **_: Any) -> dict[str, Any]:
+        self.sync_lifecycle_reports()
         records = [self._normalize_report(item) for item in self._list_records("report")]
-        items = [item for item in records if not workorder_id or str(item.get("workorder_id") or (item.get('sections') or {}).get('workorder', {}).get('workorder_id') or "") == workorder_id]
+        items = [item for item in records if not workorder_id or workorder_id in item.get('workorder_ids', []) or str(item.get("workorder_id") or (item.get('sections') or {}).get('workorder', {}).get('workorder_id') or "") == workorder_id]
+        items.sort(key=lambda item: str(item.get('created_at') or item.get('updated_at') or ''), reverse=True)
         return {"success": True, "items": items, "count": len(items), "backend": "backend-service"}
 
+    def sync_lifecycle_reports(self):
+        if not getattr(self.team, 'repository', None):
+            return
+        from .lifecycle_report import LifecycleReports
+        LifecycleReports(self).sync()
+
+    @_quality_operation
     def delete_report(self, report_id: str = "", **_: Any) -> dict[str, Any]:
         report_id = str(report_id or "").strip()
         if not report_id:
@@ -756,6 +797,7 @@ class BackendBusinessService:
             "inspection_type": str(values.get("inspection_type") or "part_quality"),
             'measurements': dict(values.get('measurements') or {}), 'specifications': dict(values.get('specifications') or {}),
             'device_id': str(values.get('device_id') or ''), 'task_id': str(values.get('task_id') or ''), 'trace_id': str(values.get('trace_id') or ''),
+            'event_id': str(values.get('event_id') or ''),
             "score": values.get("score"),
             "result": result,
             "findings": list(values.get("findings") or []),
@@ -1030,7 +1072,7 @@ class BackendBusinessService:
         recovery = verification.get("device_recovery")
         checks = verification.get("checks")
         if verification.get('phase') == 'prestart':
-            return isinstance(recovery, Mapping) and all(repair_checks(order.get('device_id'), recovery, 'prestart').values())
+            return isinstance(recovery, Mapping) and all(repair_checks(order.get('device_id'), recovery, 'prestart', order=order).values())
         return isinstance(recovery, Mapping) and isinstance(checks, Mapping) and all(checks.get(key) is True for key in cls.REQUIRED_RECOVERY_CHECKS) and (not enforce_freshness or cls._recovery_is_fresh(recovery))
 
     @classmethod

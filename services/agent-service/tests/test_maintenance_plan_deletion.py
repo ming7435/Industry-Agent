@@ -43,6 +43,9 @@ def test_single_delete_survives_refresh_and_preserves_event_and_order(plans):
     assert [item["plan_id"] for item in body["items"]] == ["PLAN-B"]
     assert body["deleted_plan_ids"] == ["PLAN-A"]
     assert store.get("agent_event", "PLAN-A")["workorder"]["workorder_id"] == "WO-PLAN-A"
+    assert 'maintenance_plan' not in store.get('agent_event', 'PLAN-A')
+    store.set('agent_event', 'PLAN-A', {'maintenance_plan': {'plan_id': 'PLAN-A', 'repair_steps': ['迟到的旧方案']}})
+    assert 'maintenance_plan' not in store.get('agent_event', 'PLAN-A')
     assert store.get("maintenance_plan_deleted", "PLAN-A")["actor_id"] == "U-1"
 
 

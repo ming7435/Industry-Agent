@@ -61,6 +61,7 @@ class EventResultStore:
         key = scoped_event_key(event)
         if not key:
             return
+        result = self._current_entities(result)
         with self._lock:
             self._stages[key] = (monotonic() + 900, dict(result))
             self._stages.move_to_end(key)
@@ -82,7 +83,7 @@ class EventResultStore:
             return None
         if self._stage_cache is not None:
             value = self._stage_cache.get(scoped_key)
-            return dict(value) if isinstance(value, dict) else None
+            return self._current_entities(value) if isinstance(value, dict) else None
         with self._lock:
             stage = self._stages.get(scoped_key)
             if stage is None:
@@ -91,7 +92,16 @@ class EventResultStore:
             if expires <= monotonic():
                 del self._stages[scoped_key]
                 return None
-            return dict(value)
+            return self._current_entities(value)
+
+    def _current_entities(self, value):
+        from shared.task_deletion import event_plan_id, deleted_entities
+        plan_id = event_plan_id(value) or str((value.get('workorder') or {}).get('plan_id') or '')
+        if self._durable is not None and plan_id:
+            receipt = self._durable.get('maintenance_plan_deleted', plan_id)
+            if receipt:
+                return deleted_entities(value, [plan_id], receipt.get('workorder_ids') or [])
+        return dict(value)
 
     def has_unmigrated_legacy_result(self, event_id: str, scoped_key: str) -> bool:
         """旧版仅按事件 ID 保存的结果不能被新作用域静默重放。"""
@@ -147,18 +157,27 @@ class EventResultStore:
             return self._durable.deleted_plan_ids()
         return self._durable.keys("maintenance_plan_deleted") if self._durable else []
 
-    def delete_plans(self, ids, actor_id):
+    def delete_plans(self, ids, actor_id, *, workorder_ids=(), allow_missing=False):
+        ids = list(dict.fromkeys(str(item).strip() for item in ids))
+        if not ids or len(ids) > 100 or any(not item or len(item) > 128 for item in ids) or not str(actor_id).strip():
+            raise ValueError('请指定有效的方案编号和已登录操作人，每批最多 100 条')
         if isinstance(self._durable, MySQLJsonStore):
-            return self._durable.delete_plans(ids, actor_id)
-        # SQLite 删除兼容只在隔离测试中启用；线上固定走 MySQL 原子批次。
-        ids = list(dict.fromkeys(ids))
-        results = self.list_results(limit=5000)
-        available = {item.get("maintenance_plan", {}).get("plan_id") for item in results}
-        if not set(ids).issubset(available):
-            raise KeyError("维修方案不存在")
-        from datetime import datetime, timezone
-        for plan_id in ids:
-            self._durable.get_or_create("maintenance_plan_deleted", plan_id, lambda: {"actor_id": actor_id, "deleted_at": datetime.now(timezone.utc).isoformat()})
+            # 线上关联删除已由 Backend 同一事务执行；此调用也支持独立方案删除。
+            with self._durable._session() as cursor:
+                from shared.persistence import purge_mysql_plans
+                purge_mysql_plans(cursor, ids, actor_id, workorder_ids=workorder_ids, allow_missing=allow_missing)
+        else:
+            self._durable.delete_plans(ids, actor_id, workorder_ids=workorder_ids, allow_missing=allow_missing)
+        from shared.task_deletion import deleted_entities
+        with self._lock:
+            self._results = OrderedDict((key, deleted_entities(value, ids, workorder_ids)) for key, value in self._results.items())
+            for key, (expires, value) in list(self._stages.items()):
+                updated = deleted_entities(value, ids, workorder_ids)
+                self._stages[key] = (expires, updated)
+                if self._stage_cache is not None and updated != value:
+                    self._stage_cache.delete(key)
+        if self._plan_reader is not None:
+            self._plan_reader.invalidate()
         return ids
 
     def close(self):

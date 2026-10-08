@@ -1,7 +1,9 @@
+import {localizeIncidentText} from './incidentIdentity.mjs';
+
 function textOf(value) {
   if (typeof value === "string") return value.trim();
   if (!value || typeof value !== "object") return "";
-  for (const key of ["summary", "conclusion", "diagnosis", "fault", "feedback", "result", "content"]) {
+  for (const key of ["summary", "conclusion", "diagnosis", "fault", "feedback", "result", "content", "description", "title", "instruction"]) {
     if (typeof value[key] === "string" && value[key].trim()) return value[key].trim();
   }
   return "";
@@ -60,17 +62,27 @@ export function reportCompleteness(report = {}) {
 }
 
 export function reportQualityLabel(quality = {}) {
+  if (Array.isArray(quality.records)) {
+    if (!quality.records.length) return '未关联质检';
+    const labels = quality.records.map(record => reportQualityLabel(record));
+    if (labels.some(label => ['未检测或数据不足', '待确认'].includes(label))) return '有未完成质检';
+    if (typeof quality.passed === 'boolean') return quality.passed ? '已通过' : '未通过';
+    return labels.join('；');
+  }
   const reinspection = quality.reinspection || {};
   if (['released', 'closed'].includes(quality.status) && reinspection.passed === true && reinspection.reinspection_check_id) {
     return `${quality.passed === true ? '初检通过' : '初检未通过'}；复检通过，${quality.status === 'closed' ? '已关闭' : '已放行'}`;
   }
   if (['review', 'pending', 'not_tested', 'insufficient_data'].includes(quality.result || quality.status)) return '未检测或数据不足';
   if (typeof quality.passed === 'boolean') return quality.passed ? '已通过' : '未通过';
+  if (quality.result === 'passed') return '已通过';
+  if (['failed', 'minor_issue', 'major_issue', 'high_risk'].includes(quality.result)) return '未通过';
   return '待确认';
 }
 
 export function buildReportDisplaySections(sections) {
   const source = sections && typeof sections === "object" ? sections : {};
+  if (source.lifecycle) return lifecycleSections(source);
   const result = [];
   const diagnosis = source.diagnosis || source.diagnosis_result || {};
   const diagnosisBody = textOf(diagnosis);
@@ -108,4 +120,54 @@ export function buildReportDisplaySections(sections) {
   qualityParts.push(...listOf(quality, ["findings", "defects"]));
   if (qualityParts.length) result.push({ title: "质量结果", body: qualityParts.join("；") });
   return result;
+}
+
+function lifecycleSections(source) {
+  const cycle = source.lifecycle;
+  const time = value => {
+    const date = new Date(value);
+    return value && Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    }).format(date) : '未记录';
+  };
+  const records = name => Array.isArray(source[name]?.records) ? source[name].records : [];
+  const eventTime = record => {
+    if (record.event_timestamp) return record.event_timestamp;
+    // Monitor 以 UTC 样本时间生成事件编号；它比诊断开始时间更早。
+    const match = /^EVT-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-\d{3}-\d+$/.exec(record.event_id || '');
+    return match ? `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z` : '';
+  };
+  const timeline = [`故障停机开始：${time(cycle.started_at)}`, `停机确认：${time(cycle.stopped_at)}`,
+    `复机核验通过：${time(cycle.restarted_at)}`];
+  if (Number.isFinite(cycle.duration_seconds)) timeline.push(`停机处理时长：${cycle.duration_seconds} 秒`);
+  timeline.push(`整线设备：${(cycle.device_ids || []).join('、') || '未记录'}`, `故障事件：${(cycle.event_ids || []).join('、') || '未记录'}`);
+  const diagnosis = records('diagnosis').map(record => [record.device_id, record.event_id,
+    localizeIncidentText(textOf(record), {event_timestamp: eventTime(record), diagnosis: {...record, triggered_at: record.triggered_at || record.raw?.triggered_at}}),
+    ...(record.created_at || record.raw?.created_at ? [`诊断完成：${time(record.created_at || record.raw.created_at)}`] : []),
+  ].filter(Boolean).join(' · '));
+  const plans = records('maintenance_plan').map(record => [record.plan_id,
+    ...(record.created_at ? [`方案生成：${time(record.created_at)}`] : []), textOf(record),
+    ...listOf(record, ['repair_steps', 'steps', 'checks'])].filter(Boolean).join('\n'));
+  const orders = records('workorder').map(order => {
+    const check = order.inspection_verification || order.repair_verification || {};
+    return [`${order.workorder_id} · ${order.device_id || ''} · ${statusLabels[order.status] || order.status || '未记录状态'}`,
+      `负责人：${order.assignee_name || order.assignee || '未记录'}`,
+      `处理说明：${textOf(order.repair_feedback) || '未记录'}`,
+      ...(typeof check.passed === 'boolean' ? [check.phase === 'inspection'
+        ? (check.passed ? '检查通过' : '检查未通过') : verificationText(check)] : []),
+      ...(order.created_at ? [`工单创建：${time(order.created_at)}`] : []),
+      ...(check.verified_at || check.checked_at ? [`检查时间：${time(check.verified_at || check.checked_at)}`] : []),
+    ].filter(Boolean).join('\n');
+  });
+  const qualities = records('quality').map(record => [record.quality_check_id, record.device_id,
+    reportQualityLabel(record), ...listOf(record, ['findings', 'defects']),
+    ...(record.created_at ? [`检测时间：${time(record.created_at)}`] : [])].filter(Boolean).join(' · '));
+  return [
+    {title: '停机到复机', body: timeline.join('\n')},
+    {title: '智能诊断', body: diagnosis.join('\n\n') || '未关联智能诊断记录'},
+    {title: '维修方案', body: plans.join('\n\n') || '未关联维修方案记录'},
+    {title: '工单执行与检查', body: orders.join('\n\n') || '未关联工单记录'},
+    {title: '质检结果', body: qualities.join('\n\n') || '未关联质检记录'},
+  ].map(section => ({...section, lines: section.body.split('\n').filter(Boolean)}));
 }

@@ -14,7 +14,7 @@ Agent；Agent Service、RAG Service 和前端仍然由各自的源码模型负�
 | `contracts/rag-experience.schema.json` | `memory/extractor.py`、`memory/validator.py`、`memory/writer.py`、`rag/client.py` | 关闭工单后的经验质量门禁、写入与检索元数据 |
 
 这些 JSON Schema 是接口边界文档，不替代服务端校验。修改服务模型时，应同时
-更新对应 Schema 和 `docs/contracts/runtime-contracts.md`，并运行：
+更新对应 Schema。核心执行机制见[多智能体协同](../docs/项目说明书.md)；修改后运行：
 
 ```powershell
 python scripts/test_all.py

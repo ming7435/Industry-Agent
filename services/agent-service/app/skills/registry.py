@@ -228,8 +228,11 @@ class SkillRegistry:
         ).lower()
         specialized = [
             item for item in available
-            if not item.is_default and not item.is_always
-            and item.matches(context, text)
+            if not item.is_always and any(
+                _trigger_matches(condition, context, text)
+                for condition in item.conditions
+                if condition.strip().lower() not in {"", "default", "always"}
+            )
         ]
         if specialized:
             return [
@@ -301,6 +304,9 @@ def _trigger_matches(trigger: str, context: Mapping[str, Any], text: str) -> boo
     if normalized == "production_modeling":
         # 查询文字不能自行激活建模工具；建模分支必须有明确操作类型。
         return context.get("operation") == "production_modeling"
+    if normalized == "maintenance_evidence":
+        # 仅结构化维修检索意图可补充混合资料源；普通报警文本不扩大工具范围。
+        return context.get("purpose") == "maintenance"
     if normalized in {'learn', 'search', 'recent'} and context.get('action'):
         # 检索文本可描述“学习”，不能因此选择写入路径的 Skill。
         return str(context['action']).strip().lower() == normalized

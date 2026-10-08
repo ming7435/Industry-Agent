@@ -59,7 +59,7 @@ test("plan loading preserves readable plans when personal workorders are unautho
   assert.equal(typeof workspace.loadMaintenanceWorkspace, "function", "Independent plan loading is missing");
   const result = await workspace.loadMaintenanceWorkspace(async path => {
     if (path === "/api/maintenance/plans") return { items: [{ plan_id: "PLAN-1", workorder_ready: false }], count: 1 };
-    if (path === "/api/workorders?include_deleted=true") throw new Error("维修会话已失效，请重新登录");
+    if (path === "/api/workorders") throw new Error("维修会话已失效，请重新登录");
     throw new Error(`Unexpected route: ${path}`);
   }, { user_id: "U-1" });
   assert.deepEqual(result.items, [{ plan_id: "PLAN-1", workorder_ready: false }]);

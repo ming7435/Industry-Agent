@@ -61,7 +61,8 @@ class EventPlanReader:
                     self.results = []
                     self.total = len(rows)
                 # SQLite 只返回必要子树；一次仅加载一个历史结果，及时展示最新方案。
-                fields = ("maintenance_plan", "diagnosis", "event", "task_id", "trace_id", "status", "stop_reason")
+                fields = ("maintenance_plan", "diagnosis", "event", "task_id", "trace_id", "status", "stop_reason",
+                          "workorder", "requires_approval", "dispatch_reason")
                 paths = ("$._event_result_store_version", *(f"$.result.{field}" for field in fields), *(f"$.{field}" for field in fields))
                 query = "SELECT json_extract(payload," + ",".join("?" for _ in paths) + ") FROM runtime_state WHERE namespace=? AND rowid=?"
                 for (row_id,) in rows:
@@ -70,7 +71,8 @@ class EventPlanReader:
                     row = connection.execute(query, (*paths, "agent_event", row_id)).fetchone()
                     if row is not None:
                         values = json.loads(row[0])
-                        selected = values[1:8] if values[0] == 2 else values[8:15]
+                        size = len(fields)
+                        selected = values[1:1 + size] if values[0] == 2 else values[1 + size:1 + 2 * size]
                         result = dict(zip(fields, selected))
                         with self.lock:
                             self.results.append(result)

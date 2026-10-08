@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 from pydantic import BaseModel, Field
 
@@ -37,5 +37,9 @@ class MaintenanceQuery(BaseModel):
         if not values.get("diagnosis_result") and values.get("diagnosis"):
             values["diagnosis_result"] = values["diagnosis"]
         if not values.get("query"):
-            values["query"] = values.get("user_text") or values.get("fault") or "设备维修"
+            diagnosis = values.get("diagnosis_result") or values.get("diagnosis") or {}
+            diagnosis = diagnosis if isinstance(diagnosis, Mapping) else {}
+            values["query"] = (values.get("user_text") or values.get("fault")
+                               or diagnosis.get("fault") or diagnosis.get("summary")
+                               or diagnosis.get("diagnosis") or diagnosis.get("cause") or "设备维修")
         return cls(**values)

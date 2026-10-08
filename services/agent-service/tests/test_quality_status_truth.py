@@ -31,6 +31,24 @@ def test_quality_persistence_preserves_actual_inspection_state(status, passed, e
     assert check["status"] == ("passed" if expected == "passed" else "failed" if expected == "failed" else "open")
 
 
+def test_online_quality_preserves_case_identity_without_separate_report():
+    class Requests:
+        def inspect_quality(self, *args, **kwargs):
+            return {'part_id': 'PART-1', 'device_id': 'M1', 'status': 'not_tested', 'passed': False}
+    class Backend:
+        backend = 'backend-service'
+        def record_part_quality(self, payload, operator):
+            assert payload['workorder_id'] == 'WO-1' and payload['event_id'] == 'E1'
+            return {'quality_check_id': 'QC-1', **payload}
+    class Report:
+        def execute_agent(self, *args):
+            raise AssertionError('复机周期报告不能按单个质检记录另行生成')
+    result = RuntimeOperations(Requests(), Backend(), report_harness=Report()).inspect_quality({},
+        quality_payload={'workorder_id': 'WO-1', 'event_id': 'E1'}, persist=True)
+    assert result['quality_check_id'] == 'QC-1'
+    assert 'report' not in result
+
+
 @pytest.mark.parametrize("status", ["not_tested", "insufficient_data", "review"])
 def test_quality_recommendation_does_not_declare_unmeasured_parts_defective(status):
     recommendation = QualityAgent._recommendation({"status": status, "passed": False})

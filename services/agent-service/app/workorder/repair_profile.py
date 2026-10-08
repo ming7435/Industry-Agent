@@ -25,6 +25,7 @@ def repair_profile(diagnosis: Mapping[str, Any]) -> dict[str, Any]:
     profiles = [
         ("safety_interlock", "安全门与接料器互锁系统", 60,
          ("开门被禁止", "开门禁止", "安全门", "门锁", "互锁", "接料器未下降")),
+        ("hydraulic", "液压系统停机核查", 30, ("液压", "Hydraulic pressure", "hydraulic pressure")),
         ("lubrication", "润滑系统", 60, ("润滑", "供油", "油路", "注油")),
         ("thermal", "主轴冷却系统", 60, ("温度", "过热", "过温", "冷却")),
         ("vibration", "主轴传动与轴承系统", 90, ("振动", "轴承")),
@@ -72,8 +73,63 @@ def interlock_inspection_steps() -> list[str]:
     ]
 
 
+def hydraulic_inspection_steps() -> list[str]:
+    """报警卡片的停机核查范围；故障未确认前不指定任何换件或复机操作。"""
+    return [
+        "保持设备安全停机，遵守现场隔离要求；不得启动液压泵或执行运动指令",
+        "读取原液压报警、压力反馈及报警发生前的压力趋势，与本机配置标准核对；停机后的压力下降不能单独作为新的故障依据",
+        "在安全位置观察液压油位和外部可见渗漏，记录异常位置；不接触受压管路",
+        "记录压力显示与反馈是否一致，保持现有设定；不得调节压力阀、拆装管路或更换部件",
+        "记录核查结果并报告确认的故障点；需要具体部件维修时补齐相应工程依据和维修方案后处理",
+        "仅在实际维修完成后申请恢复核验；由系统核对原报警和液压指标，核查完成本身不代表可以复机",
+    ]
+
+
+def hydraulic_inspection_template() -> dict[str, Any]:
+    safety = ["保持安全停机并遵守现场 LOTO 隔离要求", "佩戴现场要求的防护用品",
+              "禁止带压拆装、试漏或调阀；不得旁路互锁", "恢复运行须经过独立的实时报警和液压指标核验"]
+    return {
+        "repair_target": "液压系统停机核查", "repair_steps": hydraulic_inspection_steps(),
+        "pre_checks": ["核对设备身份和原液压报警，确认整线处于安全停机状态",
+                       "确认本机报警检查资料可用，从安全位置进行外观和状态核对"],
+        "post_checks": ["记录油位、可见渗漏、报警与压力反馈的实际核查结果",
+                        "故障未解决或液压恢复数据不完整时保持停机并补充维修依据"],
+        "tools": ["本机压力显示和监控趋势", "现场记录工具"],
+        "required_tools": ["本机压力显示和监控趋势", "现场记录工具"],
+        "safety": safety, "safety_requirements": list(safety),
+        "parts": [], "required_parts": [], "cad_required": False, "cad_components": [],
+    }
+
+
+def hydraulic_inspection_plan_matches(plan: Mapping[str, Any]) -> bool:
+    # 精确限定全套步骤，禁令中的“拆装/更换”不代表授权执行这些动作。
+    return all(plan.get(key) == value for key, value in hydraulic_inspection_template().items())
+
+
+def hydraulic_checking_evidence(knowledge: Mapping[str, Any]) -> bool:
+    """要求实际来源正文中的液压检查依据，目录标题或无关旧经验不够。"""
+    if knowledge.get("synthetic") is True:
+        return False
+    for item in list(knowledge.get("documents") or []) + list(knowledge.get("evidence") or []):
+        if not isinstance(item, Mapping):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), Mapping) else {}
+        if item.get("synthetic") is True or metadata.get("synthetic") is True:
+            continue
+        source = item.get("document_id") or item.get("id") or item.get("chunk_id") or item.get("source") or metadata.get("source_name")
+        content = " ".join(str(item.get(key) or "") for key in ("content", "text", "excerpt", "snippet")).lower()
+        # 同一来源正文须涵盖本模板三类核查；跨报警目录中碰巧有“液压”和
+        # “油位”不能支撑失压核查，更不能让无关润滑条目代替液压依据。
+        coverage = (("油位", "油液位", "oil level"), ("泄漏", "渗漏", "leak"),
+                    ("压力", "pressure"))
+        if source and ("液压" in content or "hydraulic" in content) and all(
+            any(token in content for token in group) for group in coverage):
+            return True
+    return False
+
+
 def plan_profile_findings(plan: Mapping[str, Any], diagnosis: Mapping[str, Any] | None = None) -> list[str]:
-    """只读发现已保存互锁固定模板与明确主故障的错配，不改变历史方案。"""
+    """只读发现已保存的固定核查模板与主故障错配，不改变历史方案。"""
     value = diagnosis if isinstance(diagnosis, Mapping) else plan.get("diagnosis")
     if not isinstance(value, Mapping):
         return []
@@ -89,6 +145,13 @@ def plan_profile_findings(plan: Mapping[str, Any], diagnosis: Mapping[str, Any] 
     target = target.get("part_name") if isinstance(target, Mapping) else target
     target_part = plan.get("target_part")
     target_part = target_part.get("part_name") if isinstance(target_part, Mapping) else ""
+    hydraulic_target = "液压系统停机核查"
+    if plan.get("repair_steps") == hydraulic_inspection_steps() or target == hydraulic_target or target_part == hydraulic_target:
+        if repair_profile(value)["kind"] != "hydraulic":
+            return ["维修方案模板与主故障不匹配：主故障为%s，当前方案却使用液压停机核查模板；请重新生成并校验维修方案" % primary]
+        if not hydraulic_inspection_plan_matches(plan):
+            return ["液压停机核查范围已改变，请重新生成并校验维修方案"]
+        return []
     interlock_target = "安全门与接料器互锁系统"
     fixed_steps = plan.get("repair_steps") == interlock_inspection_steps()
     if not fixed_steps and target != interlock_target and target_part != interlock_target:
@@ -102,6 +165,7 @@ def part_matches_profile(profile: Mapping[str, Any], item: Mapping[str, Any]) ->
     text = " ".join(str(item.get(key) or "") for key in ("part_id", "part_no", "component_id", "name")).upper()
     terms = {
         "safety_interlock": ("DOOR", "INTERLOCK", "CATCHER", "安全门", "门锁", "互锁", "接料器"),
+        "hydraulic": ("HYDRAULIC", "液压"),
         "lubrication": ("LUB", "润滑", "供油", "注油", "油路"),
         "thermal": ("TEMP", "温度", "PT100", "COOLANT", "COOLING", "冷却", "散热"),
         "vibration": ("BEARING", "轴承", "VIB", "振动"),

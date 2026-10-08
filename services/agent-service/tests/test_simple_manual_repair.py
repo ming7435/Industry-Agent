@@ -501,7 +501,8 @@ def retire_old_task(backend, workorder_id, label='owner'):
                         operator='isolated-user-request', reason='用户明确撤销历史任务并删除')
     backend.call('update_workorder', {'workorder_id': workorder_id, 'status': 'rejected',
         'administrative_cancellation': cancellation})
-    backend.call('delete_workorder', {'workorder_id': workorder_id, 'actor_id': backend.actors[label]['user_id']})
+    # Legacy hidden rows are fixture data, not the current permanent Delete action.
+    backend.patch(workorder_id, values={'deleted_at': '2026-09-28T10:00:00+00:00', 'deleted_by': backend.actors[label]['user_id']})
 
 
 @pytest.mark.parametrize('controlled_current_fault', [False, True])
@@ -530,7 +531,7 @@ def test_rejected_task_without_explicit_cancellation_still_blocks_restart(contex
     previous_id = create_wrong_order(backend, event='REJECTED-NOT-ARCHIVED')
     backend.call('update_workorder', {'workorder_id': previous_id, 'status': 'rejected'})
     if deleted:
-        backend.call('delete_workorder', {'workorder_id': previous_id, 'actor_id': backend.actors['owner']['user_id']})
+        backend.patch(previous_id, values={'deleted_at': '2026-09-28T10:00:00+00:00'})
     result = complete(order_id)
     assert result['machine_control']['state'] == 'blocked'
     assert result['machine_control']['workorder_ids'] == [previous_id]
@@ -548,6 +549,46 @@ def test_rejected_archived_order_cannot_resolve_an_actual_controlled_fault(conte
     assert result['machine_control']['event_id'] == 'ACTUAL-FAULT'
     assert backend.status()['state'] == 'stopped'
     assert not any(action == 'start' for _, action in factory.controls)
+
+
+def test_permanently_deleting_task_does_not_resolve_its_controlled_fault(context):
+    backend, factory, controller, order_id = context
+    previous_id = create_wrong_order(backend, 'M2', 'ACTUAL-DELETED-FAULT', 'other')
+    controller.handle_fault('E1', 'M1', 'current actual fault')
+    controller.handle_fault('ACTUAL-DELETED-FAULT', 'M2', 'another actual fault')
+    backend.call('delete_workorder', {'workorder_id':previous_id, 'actor_id':backend.actors['other']['user_id']})
+    assert backend.call('get_workorder', {'workorder_id':previous_id})['found'] is False
+    result = complete(order_id)
+    assert result['machine_control']['state']=='blocked'
+    assert result['machine_control']['event_id']=='ACTUAL-DELETED-FAULT'
+    assert not any(action=='start' for _, action in factory.controls)
+
+
+def test_explicit_orphan_fault_review_persists_then_normal_user_completion_restores_line(context):
+    backend, factory, controller, order_id = context
+    factory.overrides['M1'] = {'metric_details': {'pressure': {'normal_range': [0, 2]}}}
+    controller.handle_fault('OLD-NO-ORDER', 'M1', 'isolated old fault')
+    controller.handle_fault('E1', 'M1', 'current actual fault')
+    before = order(backend, order_id)
+    blocked = complete(order_id)
+    assert blocked['machine_control']['state'] == 'blocked'
+    assert blocked['machine_control']['fault_blockers'][0]['kind'] == 'missing_workorder'
+    controller.review_untracked_faults(['OLD-NO-ORDER'], {
+        'request_id': 'ISOLATED-EXPLICIT-USER-RECOVERY', 'operator': 'fixture-human-request',
+        'feedback': '用户明确确认旧故障已处理完，要求核验设备后解除'})
+    line = backend.status()
+    assert line['state'] == 'stopped' and not any(f['resolved'] for f in line['faults'])
+    proof = line['controls']['OLD-NO-ORDER:M1:fault_recovery_review']
+    assert proof['source'] == 'explicit_user_fault_recovery'
+    assert proof['checks']['original_fault_metrics'] is True
+    assert controller.try_restart(order_id, backend.actors['owner']['user_id'])['state'] == 'running'
+    after = order(backend, order_id)
+    assert after['repair_verification']['phase'] == 'poststart'
+    assert trusted_technician_confirmation(after)
+    assert after['maintenance_plan_snapshot'] == before['maintenance_plan_snapshot']
+    assert after['diagnosis_snapshot'] == before['diagnosis_snapshot']
+    assert all(f['resolved'] for f in backend.status()['faults'])
+    assert len(backend.call('list_workorders', {})['items']) == 1
 
 
 @pytest.mark.parametrize('invalid', ['identity', 'audit_missing', 'reopened'])

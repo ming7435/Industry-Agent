@@ -1,7 +1,23 @@
 import { assertTeamSessionCurrent, getTeamSession, invalidateTeamSession, isTeamSessionPath } from './teamSession.mjs';
 
-export function registrationPayload(username, password, primaryDeviceId) {
-  return { username: username.trim(), password, role: 'technician', primary_device_id: primaryDeviceId };
+function normalizeDeviceIds(value) {
+  const items = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+  return [...new Set(items.filter(item => typeof item === 'string').map(item => item.trim()).filter(Boolean))];
+}
+
+export function responsibleDeviceIds(actor) {
+  return normalizeDeviceIds(Array.isArray(actor?.responsible_device_ids) ? actor.responsible_device_ids : actor?.primary_device_id);
+}
+
+export function responsibilityPayload(deviceIds) {
+  const selected = normalizeDeviceIds(deviceIds);
+  if (!selected.length) throw new Error('请至少选择一台负责设备');
+  return { responsible_device_ids: selected };
+}
+
+export function registrationPayload(username, password, deviceIds) {
+  const scope = responsibilityPayload(deviceIds);
+  return { username: username.trim(), password, role: 'technician', primary_device_id: scope.responsible_device_ids[0], ...scope };
 }
 
 export async function teamRequest(path, body) {

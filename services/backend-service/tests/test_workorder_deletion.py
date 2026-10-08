@@ -1,4 +1,4 @@
-"""删除只移除业务列表，工单与方案删除标记原子保存，不制造维修完成。"""
+"""真正删除工单内容；失败回滚，旧提交与自动派工不能重新创建。"""
 from copy import deepcopy
 import sqlite3
 import pytest
@@ -14,23 +14,20 @@ def assigned(service):
     return owner, service.repository.get(order_id)
 
 
-def test_assigned_order_with_feedback_can_be_deleted_with_its_plan_without_losing_repair_facts(service):
+def test_assigned_order_and_its_saved_contents_are_permanently_deleted(service):
     owner, before = assigned(service)
     result = service.delete_workorder(before['workorder_id'], actor_id=owner['user_id'])
     assert result['deleted'] is True
     assert result['deleted_plan_ids'] == ['P1']
-    after = service.repository.get(before['workorder_id'])
-    for field in ('status', 'assignee', 'event_id', 'maintenance_plan_snapshot', 'repair_feedback', 'repair_verification'):
-        assert after[field] == before[field]
-    assert after['deleted_by'] == owner['user_id'] and after['deleted_at']
-    assert not after.get('completed_at') and not after.get('maintenance_confirmed_by')
+    assert service.repository.get(before['workorder_id']) is None
+    assert service.get_workorder(before['workorder_id'])['found'] is False
+    assert result['mode'] == 'permanent-delete'
     assert service.list_deleted_maintenance_plan_ids()['deleted_plan_ids'] == ['P1']
-    # Internal safety reconciliation must continue to see this unfinished order.
-    assert service.list_workorders()['items'][0]['status'] == 'in_progress'
+    assert service.list_workorders()['items'] == []
     assert len(service.list_audit_logs(object_id=before['workorder_id'], action='workorder_deleted')['items']) == 1
     repeated = service.delete_workorder(before['workorder_id'], actor_id=owner['user_id'])
     assert repeated['deleted'] is True
-    assert service.repository.get(before['workorder_id']) == after
+    assert service.repository.get(before['workorder_id']) is None
     assert len(service.list_audit_logs(object_id=before['workorder_id'])['items']) == 1
 
 
@@ -73,4 +70,19 @@ def test_stale_repair_response_cannot_overwrite_a_saved_deletion(service):
     stale['repair_feedback'] = {'feedback': '晚到的旧提交'}
     with pytest.raises(ValueError, match='更新'):
         service.repository.update(stale)
-    assert service.repository.get(before['workorder_id'])['deleted_at']
+    assert service.repository.get(before['workorder_id']) is None
+
+
+def test_deleted_task_cannot_be_recreated_by_stale_dispatch_or_other_actor(service):
+    owner, before = assigned(service)
+    service.delete_workorder(before['workorder_id'], actor_id=owner['user_id'])
+    with pytest.raises(ValueError, match='已删除'):
+        service.repository.create({**before, 'workorder_id': 'WO-RETRY'})
+    with pytest.raises(ValueError, match='已删除'):
+        service.repository.create({**before, 'workorder_id': 'WO-RETRY', 'idempotency_key': 'different'})
+    with pytest.raises(ValueError, match='已删除'):
+        service.repository.create({**before, 'workorder_id': 'WO-RETRY', 'idempotency_key': 'different', 'plan_id':''})
+    other, _ = registered(service, 'other')
+    with pytest.raises(PermissionError):
+        service.delete_workorder(before['workorder_id'], actor_id=other['user_id'])
+    assert service.list_workorders()['items'] == []

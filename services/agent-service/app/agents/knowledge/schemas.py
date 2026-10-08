@@ -15,6 +15,7 @@ class KnowledgeQuery(BaseModel):
     device_id: str = ""
     query: str = ""
     query_type: str = "hybrid"
+    purpose: str = ""
     alarm_code: str = ""
     component: str = ""
     document_id: str = ""

@@ -225,6 +225,11 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     runtime = orchestrator or build_orchestrator()
     event_results = EventResultStore()
     runtime.container.event_results = event_results
+    if os.getenv('APP_ENV', 'development').lower() != 'testing':
+        from app.workorder.saved_dispatch import SavedPlanDispatcher
+        workorder_dispatcher = SavedPlanDispatcher(event_results, BackendServiceClient(), runtime.container.registry)
+        app.add_event_handler('startup', workorder_dispatcher.start)
+        app.add_event_handler('shutdown', workorder_dispatcher.close)
     app.add_event_handler("shutdown", event_results.close)
 
     def closure_call(callable_: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
@@ -455,7 +460,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             raise HTTPException(404, "维修方案不存在，未删除任何方案") from None
         except ValueError as error:
             raise HTTPException(422, str(error)) from None
-        return {"deleted_plan_ids": removed, "count": len(removed), "mode": "soft-delete", "message": "方案已从列表移除，关联工单和审计记录保留"}
+        return {"deleted_plan_ids": removed, "count": len(removed), "mode": "permanent-delete", "message": "维修方案已删除"}
 
     @app.delete("/api/maintenance/plans/{plan_id}", dependencies=[Depends(require_write_auth)])
     def delete_maintenance_plan(plan_id: str, request: Request):
@@ -466,12 +471,13 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return remove_maintenance_plans(body.plan_ids, request)
 
     @app.get("/api/workorders")
-    def workorders(request: Request, include_deleted: bool = False) -> Dict[str, Any]:
+    def workorders(request: Request) -> Dict[str, Any]:
         started = perf_counter()
         actor = team_actor(request)
         # 列表读取不执行 Agent；权威工单仍来自同一个 Backend 数据源。
+        backend = BackendServiceClient()
         try:
-            result = BackendServiceClient().call('list_workorders', {})
+            result = backend.call('list_workorders', {})
         except BackendServiceError:
             raise HTTPException(502, '工单读取失败，请稍后重试；已有工单未删除') from None
         if (not isinstance(result, Mapping) or result.get('success') is False
@@ -479,12 +485,15 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
                 or any(not isinstance(order, Mapping) for order in result['items'])):
             raise HTTPException(502, '工单读取失败，请稍后重试；已有工单未删除')
         from app.workorder.review import reviewed_workorder
-        items = [o for o in result.get('items', []) if (include_deleted or not o.get('deleted_at'))
+        items = [o for o in result.get('items', []) if not o.get('deleted_at')
                  and (actor['role'] == 'supervisor' or o.get('assignee') == actor['user_id'])]
-        visible = [reviewed_workorder(o) for o in items]
+        from app.workorder.recovery_result import with_current_restart_results
+        visible = with_current_restart_results([reviewed_workorder(o) for o in items], backend)
         logging.getLogger('uvicorn.error').info(
-            'workorder_list_read role=%s visible_count=%d source_count=%d elapsed_ms=%.3f',
-            actor['role'], len(visible), len(result['items']), (perf_counter() - started) * 1000,
+            'workorder_list_read role=%s visible_count=%d source_count=%d restart_result_count=%d elapsed_ms=%.3f',
+            actor['role'], len(visible), len(result['items']),
+            sum((o.get('machine_control') or {}).get('source') == 'persisted_line_restart' for o in visible),
+            (perf_counter() - started) * 1000,
         )
         deleted_plans = set()
         for order in result['items']:
@@ -511,9 +520,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.delete("/api/workorders/{workorder_id}", dependencies=[Depends(require_write_auth)])
     def delete_workorder(workorder_id: str, request: Request) -> Dict[str, Any]:
+        actor = team_actor(request)
         backend = BackendServiceClient()
-        actor = team_actor(request, backend)
-        require_assignee(workorder_id, actor, backend)
         try:
             result = backend.call('delete_workorder', {'workorder_id': workorder_id, 'actor_id': actor['user_id']})
         except BackendServiceError as error:
@@ -521,14 +529,14 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             raise HTTPException(status, '工单删除未完成，请核对权限和最新工单状态后重试；工单与方案仍保留') from None
         if not result.get("deleted") or result.get('workorder_id') != workorder_id:
             raise HTTPException(status_code=404, detail="工单不存在：%s" % workorder_id)
-        # The Backend receipt already committed both removals atomically. Projecting
-        # the event-store marker is best effort; reads also consult the durable receipt.
+        # Online Backend deletes both entities in one MySQL transaction. Clear local
+        # projections too; a repeated receipt permits retry after a cleanup failure.
         plan_ids = result.get('deleted_plan_ids') or []
         if plan_ids:
             try:
-                event_results.delete_plans(plan_ids, actor['user_id'])
+                event_results.delete_plans(plan_ids, actor['user_id'], workorder_ids=[workorder_id], allow_missing=True)
             except Exception:
-                result['projection_sync_pending'] = True
+                raise HTTPException(502, '工单已删除，但关联方案清理未完成，请重试删除以完成清理') from None
         return result
 
     @app.get("/api/reports")

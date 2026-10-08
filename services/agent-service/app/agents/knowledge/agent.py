@@ -65,6 +65,7 @@ class KnowledgeAgent(BaseAgent):
             total=len(documents),
             backend_status=raw.get("connection_status", "unknown"),
             degraded=bool(raw.get("degraded", False)),
+            synthetic=raw.get("synthetic") is True,
             warning=str(raw.get("warning") or ""),
             source=raw.get("source", "rag-service-compatible"),
             confidence_details=confidence_details,
@@ -116,11 +117,17 @@ class KnowledgeAgent(BaseAgent):
     @staticmethod
     def _deduplicate_documents(items: list[Mapping[str, Any]]) -> list[KnowledgeDocument]:
         best: dict[str, Mapping[str, Any]] = {}
+        synthetic_sources: set[str] = set()
         for item in items:
             key = str(item.get("document_id") or "%s|%s" % (item.get("title"), item.get("source")))
+            if item.get("synthetic") is True or (item.get("metadata") or {}).get("synthetic") is True:
+                synthetic_sources.add(key)
             previous = best.get(key)
             if previous is None or KnowledgeAgent._nonnegative_score(item.get("score")) > KnowledgeAgent._nonnegative_score(previous.get("score")):
                 best[key] = item
+        # 契约只保留 metadata 中的来源标记，同一来源去重后也不能丢失已知演示身份。
+        for key in synthetic_sources:
+            best[key] = {**best[key], "metadata": {**dict(best[key].get("metadata") or {}), "synthetic": True}}
         ordered = sorted(best.values(), key=lambda value: KnowledgeAgent._nonnegative_score(value.get("score")), reverse=True)
         if not ordered:
             return []
@@ -157,6 +164,7 @@ class KnowledgeAgent(BaseAgent):
                 "knowledge_type": doc.metadata.get("knowledge_type", ""),
                 "component": doc.metadata.get("component", ""),
                 "content": doc.content,
+                **({"synthetic": True} if doc.metadata.get("synthetic") is True else {}),
             })
         return evidence
 
@@ -417,6 +425,7 @@ class KnowledgeAgent(BaseAgent):
             total=len(normalized),
             backend_status=backend_status,
             degraded=degraded,
+            synthetic=any(item.get("synthetic") is True for item in raw_results),
             warning="；".join(self._dedupe(warning_items)),
             source=source,
             validation_findings=list(validation_findings),

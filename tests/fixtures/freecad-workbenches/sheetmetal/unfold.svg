@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="81.6mm" height="97.5690260418206mm" viewBox="0 0 81.6 97.5690260418206" xmlns="http://www.w3.org/2000/svg" version="1.1">
+<g id="SheetMetalUnfoldOutline" transform="translate(0.800000,96.769026) scale(1,-1)">
+<path id="SheetMetalUnfoldOutline_w0000"  d="M 80.0 65.96902604182061 L 80.0 60.0 L 80.0 0.0 L 0.0 0.0 L 0.0 60.0 L 0.0 65.9690260418206 L 0.0 95.96902604182061 L 80.0 95.96902604182061 L 80.0 65.96902604182061 " stroke="#191919" stroke-width="0.7 px" style="stroke-width:0.7;stroke-miterlimit:4;stroke-dasharray:none;stroke-linecap:square;fill:none;fill-opacity:1;fill-rule: evenodd"/>
+<title>b'Unfold outline (mm)'</title>
+</g>
+<g id="SheetMetalUnfoldBendLine" transform="translate(0.800000,96.769026) scale(1,-1)">
+<path id="SheetMetalUnfoldBendLine_nwe0000"  d="M 80.0 62.984513020910306 L 0.0 62.984513020910306 " stroke="#191919" stroke-width="0.7 px" style="stroke-width:0.7;stroke-miterlimit:4;stroke-dasharray:none;stroke-linecap:square;fill:none;fill-opacity:1;fill-rule: evenodd"/>
+<title>b'Bend centerline'</title>
+</g>
+</svg>

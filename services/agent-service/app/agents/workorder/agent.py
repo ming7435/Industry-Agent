@@ -87,10 +87,18 @@ class WorkOrderAgent(BaseAgent):
     @staticmethod
     def rank_candidates(context: Mapping[str, Any], request: Mapping[str, Any], plan: Mapping[str, Any]) -> list[dict[str, Any]]:
         device_id = str(context.get('device_id') or '')
+        def handles_device(item):
+            # Missing scope is a legacy single-device account. An explicitly
+            # empty or malformed new scope must never widen eligibility.
+            scope = item.get('responsible_device_ids', [item.get('primary_device_id')])
+            return (isinstance(scope, list) and bool(scope)
+                    and all(isinstance(value, str) and value.strip() for value in scope)
+                    and device_id in scope)
+
         candidates = [dict(item) for item in context.get('candidates') or []
                       if device_id and item.get('technician_id') and item.get('registered') is True
                       and item.get('available') is True and item.get('online') is True
-                      and item.get('primary_device_id') == device_id]
+                      and handles_device(item)]
         for item in candidates:
             item['dispatch_score'] = 100
             item['dispatch_reasons'] = ['该设备已登录且可用的登记负责人']

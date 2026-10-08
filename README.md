@@ -2,6 +2,10 @@
 
 本项目是一个面向工业设备运维和生产零件质检的本地演示平台，包含模拟工厂、实时监控工作台、Agent 编排服务、RAG 检索服务和 CAD 工程数据服务。
 
+## 项目文档
+
+- [项目说明书](docs/项目说明书.md)：项目背景、建设目标、总体架构、技术栈及核心业务流程。
+
 当前主链路：
 
 ~~~text
@@ -44,7 +48,7 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - SiliconFlow BGE-M3 向量化、bge-reranker-v2-m3 重排、DeepSeek 生成。
 - Milvus 向量集合、Whoosh BM25 索引和 MySQL 文档/分块元数据。
 - CAD 图纸、BOM、部件、装配关系和部件位置查询；配置 CAD MySQL 后从工程元数据表读取，开发环境才使用显式 Demo fallback。
-- CAD 生成仅保留 BuildCAD MCP：生产建模页面 → `model_3d` 节点 → 中文 `production_modeling_skill` → `buildcad_mcp` → BuildCAD。旧本地几何内核和虚拟加工入口已停用；维修工程查询不受影响。操作见 [BuildCAD 建模说明](docs/cad-modeling-operation-guide.md)。
+- CAD 活动生成链为本地 FreeCAD MCP：生产建模页面 → `model_3d` 节点 → 中文 Markdown `production_modeling_skill` → `freecad_mcp` → FreeCAD。支持交互 STL 预览及 STEP/STL/FCStd 导出；已扩展球体、圆锥、渐开线直齿轮、圆角/倒角、圆截面放样及静态装配。外螺纹仍是实验功能，校验失败时不会提供成功文件。历史 BuildCAD 生成入口未挂载，维修工程查询不受影响。操作见 [CAD 技术设计](docs/项目说明书.md)。
 - 维修计划中的 target_part、drawing_context 和 viewer_context 数据契约。
 - WorkOrder 生命周期、维修反馈、维修完成、派工和 MySQL 持久化幂等；临时上下文与登录会话使用 Redis。
 - 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。
@@ -116,7 +120,7 @@ Model Service 的聊天请求只转发到 DeepSeek 官方 OpenAI 兼容地址 `h
 
 ### P2 本地基础设施
 
-需要联调 MySQL、Redis、Milvus 或 MinIO 时，可先启动 [P2 本地基础设施说明](docs/deployment/p2-local-infra.md) 中的 Compose 栈：
+需要联调 MySQL、Redis、Milvus 或 MinIO 时，可启动以下 Compose 栈；服务关系见[总体架构](docs/项目说明书.md)：
 
 ```powershell
 docker compose -f infra/docker/docker-compose.yml up -d
@@ -228,8 +232,8 @@ RC/生产部署使用 `infra/docker/docker-compose.yml`（生产覆盖层为
 `infra/docker/docker-compose.production.yml`），当前运行时包包含 Agent、Backend、
 Model、RAG、CAD 和 Monitor；Gateway 只负责入口，不算业务服务。Agent 是智能决策
 与 Runtime 控制中心，Backend 负责确定性业务数据，RAG 负责知识检索，CAD 负责
-工程数据，Model 负责统一推理。完整的密钥注入、持久化卷、健康检查和 fallback 策略见
-[`docs/deployment/rc-packaging.md`](docs/deployment/rc-packaging.md)。
+工程数据，Model 负责统一推理。服务划分与调用关系见
+[总体架构](docs/项目说明书.md)。
 
 ### 1. 启动 RAG Service
 
@@ -458,7 +462,7 @@ API / Monitor
 - WorkOrder Agent 负责工单生命周期；Quality Agent 只负责生产零件质量检测。
 - Memory Agent 负责有效维修经验的检索和沉淀，工单关闭且存在有效维修反馈后才允许学习。
 - RAG_SERVICE_BASE_URL 配置远程 RAG；MCP_RAG_URL 是可选 MCP 风格地址，二者不是同一个配置项。
-- 在线运行统一使用 `BACKEND_STORAGE=mysql`、`WORKORDER_BACKEND=mysql` 和 `REDIS_URL`。旧 `*_STORE_PATH` 不启用 SQLite；隔离测试仍保留显式 SQLite 适配器。旧数据迁移见 `docs/mysql-redis-maintenance-storage.md`，不删除原库。
+- 在线运行统一使用 `BACKEND_STORAGE=mysql`、`WORKORDER_BACKEND=mysql` 和 `REDIS_URL`。旧 `*_STORE_PATH` 不启用 SQLite；隔离测试仍保留显式 SQLite 适配器。存储分工见[数据存储](docs/项目说明书.md)。
 
 ### Runtime 最终控制流
 
@@ -507,10 +511,10 @@ npm run build:monitor
 
 测试不要求调用真实大模型；联调 RAG、Milvus、MySQL、模拟工厂时，需要分别启动对应依赖并配置相应 .env。
 
-Runtime 和跨服务契约说明见：
+核心技术与共享契约见：
 
-- [Runtime 契约](docs/contracts/runtime-contracts.md)
-- [Runtime 验证手册](docs/runbooks/runtime-validation.md)
+- [多智能体协同](docs/项目说明书.md)
+- [业务执行控制](docs/项目说明书.md)
 - [共享 JSON Schema](shared/contracts/)
 
 ## 常见问题

@@ -7,7 +7,8 @@ from math import isfinite
 
 from app.workorder.policy import inspection_decision, maintenance_decision
 from app.workorder.inspection import inspection_plan_findings
-from app.workorder.repair_profile import part_matches_profile, repair_profile
+from app.workorder.repair_profile import (part_matches_profile, repair_profile,
+    hydraulic_inspection_plan_matches, hydraulic_checking_evidence)
 
 
 class MaintenancePlanValidator:
@@ -44,6 +45,12 @@ class MaintenancePlanValidator:
             findings.append("诊断证据不足，不能生成可派工维修方案")
         if diagnosis.get("evidence_validated") is False or diagnosis.get("validated") is False:
             findings.append("诊断证据尚未通过校验")
+
+        if repair_profile(diagnosis)["kind"] == "hydraulic" and plan.get("cad_required") is False:
+            if not hydraulic_inspection_plan_matches(plan):
+                findings.append("液压停机核查范围不完整或已改变，需重新生成并校验维修依据")
+            if not hydraulic_checking_evidence(knowledge):
+                findings.append("缺少液压油位、泄漏或压力反馈的实际检查依据，请补充对应报警卡片或维修手册")
 
         if plan.get("plan_kind") == "inspection":
             findings.extend(inspection_plan_findings(plan))
@@ -133,6 +140,8 @@ class MaintenancePlanValidator:
     def requires_cad(plan: Mapping[str, Any]) -> bool:
         """Runtime 和方案校验共用工程依据规则，明确拆修动作不能声明豁免。"""
         if plan.get("plan_kind") == "inspection" and not inspection_plan_findings(plan):
+            return False
+        if hydraulic_inspection_plan_matches(plan):
             return False
         steps_text = " ".join(str(item) for item in plan.get("repair_steps") or [])
         declared = bool(plan.get("cad_required")) if "cad_required" in plan else any(

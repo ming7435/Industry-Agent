@@ -16,7 +16,7 @@ export async function loadMaintenancePlans(request, options = {}) {
 
 export async function loadMaintenanceOrders(request, actor = null, options = {}) {
   if (!actor?.user_id) return [];
-  const orders = await request("/api/workorders?include_deleted=true", options);
+  const orders = await request("/api/workorders", options);
   rememberDeletedMaintenancePlans(orders?.deleted_plan_ids || []);
   return Array.isArray(orders?.items) ? orders.items : [];
 }

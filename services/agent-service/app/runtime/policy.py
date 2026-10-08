@@ -96,7 +96,7 @@ class RuntimePolicy:
                 if not allowed:
                     return PolicyDecision(PolicyStatus.DENY, "invalid_inspection_plan: " + reason, risk_level)
                 required = ("diagnosis", "knowledge", "maintenance_plan")
-            elif self._non_invasive_interlock_plan(current):
+            elif self._non_invasive_interlock_plan(current) or self._non_invasive_hydraulic_plan(current):
                 required = ("diagnosis", "knowledge", "maintenance_plan")
             missing = tuple(name for name in required if not self._workorder_evidence_ready(name, current))
             if missing:
@@ -209,6 +209,28 @@ class RuntimePolicy:
             and not (plan.get("required_parts") or plan.get("parts"))
             and not MaintenancePlanValidator.requires_cad(plan)
             and repair_profile(diagnosis)["kind"] == "safety_interlock"
+        )
+
+    @staticmethod
+    def _non_invasive_hydraulic_plan(state: Mapping[str, Any]) -> bool:
+        """液压故障仅固定停机核查可免 CAD，步骤或前后检查变化后恢复工程门禁。"""
+        from app.agents.maintenance.validator import MaintenancePlanValidator
+        from app.workorder.repair_profile import hydraulic_inspection_plan_matches, repair_profile
+
+        plan = state.get("maintenance_plan")
+        diagnosis = state.get("diagnosis")
+        if not isinstance(plan, Mapping) or not isinstance(diagnosis, Mapping):
+            return False
+        return (
+            plan.get("plan_kind") == "repair"
+            and plan.get("maintenance_required") is True
+            and plan.get("cad_required") is False
+            and plan.get("workorder_ready") is True
+            and not (plan.get("validation_findings") or plan.get("validation_errors"))
+            and not (plan.get("required_parts") or plan.get("parts"))
+            and hydraulic_inspection_plan_matches(plan)
+            and not MaintenancePlanValidator.requires_cad(plan)
+            and repair_profile(diagnosis)["kind"] == "hydraulic"
         )
 
     @staticmethod

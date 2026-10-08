@@ -93,10 +93,11 @@ def test_assignment_rechecks_eligibility_after_candidate_list(service, change):
     assert service.query_technicians(device_id="M1")["items"][0]["available"] is True
     if change == "logout":
         service.team.logout(token)
+    elif change == "device":
+        service.team.update_responsibilities(user['user_id'], ['M2'])
     else:
         with service.team.repository.transaction() as db:
-            sql = "UPDATE team_accounts SET primary_device_id='M2' WHERE user_id=?" if change == "device" else "UPDATE team_accounts SET enabled=0 WHERE user_id=?"
-            db.execute(sql, (user["user_id"],))
+            db.execute("UPDATE team_accounts SET enabled=0 WHERE user_id=?", (user["user_id"],))
     order = service.create_workorder(device_id="M1")["workorder"]
     with pytest.raises(ValueError):
         service.assign_workorder(order["workorder_id"], user["user_id"])

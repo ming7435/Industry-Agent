@@ -4,4 +4,15 @@
 .team-access form { display: flex; flex-direction: column; gap: 12px; }
 .team-access label { display: flex; flex-direction: column; gap: 6px; }
 .team-access input, .team-access select { border: 1px solid #c6d8df; background: white; padding: 10px; border-radius: 8px; }
+.team-device-scope { margin: 0; padding: 12px; border: 1px solid #c6d8df; border-radius: 8px; min-width: 0; }
+.team-device-scope legend { padding: 0 5px; font-weight: 600; }
+.team-device-options { display: grid; gap: 8px; }
+.team-access .team-device-option { flex-direction: row; align-items: flex-start; gap: 10px; padding: 9px; background: #fff; border: 1px solid #d9e7e3; border-radius: 7px; cursor: pointer; }
+.team-access .team-device-option input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; padding: 0; accent-color: #087f75; }
+.team-device-option span { overflow-wrap: anywhere; }
+.team-device-option small { display: block; margin-top: 3px; color: #5c747c; }
+.team-device-hint { margin: 10px 0 0; color: #5c747c; font-size: 13px; }
+.team-assigned-devices { margin: 8px 0 14px; padding-left: 22px; overflow-wrap: anywhere; }
+.team-assigned-devices li + li { margin-top: 5px; }
+.team-scope-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .monitor-canvas-shell .team-access { position: absolute; z-index: 20; top: 80px; right: 18px; max-width: min(520px, 80%); max-height: 75vh; overflow: auto; box-shadow: 0 6px 20px #13323b12; }

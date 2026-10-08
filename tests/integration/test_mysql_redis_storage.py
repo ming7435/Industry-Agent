@@ -243,8 +243,90 @@ def test_plan_deletion_batch_is_atomic_and_does_not_delete_event(mysql_config):
     assert "PLAN-KEEP-AUDIT" not in store.deleted_plan_ids()
     assert store.delete_plans(["PLAN-KEEP-AUDIT"], actor_id="USER-1") == ["PLAN-KEEP-AUDIT"]
     assert store.delete_plans(["PLAN-KEEP-AUDIT"], actor_id="USER-1") == ["PLAN-KEEP-AUDIT"]
-    assert store.get("agent_event", "delete-event")["maintenance_plan"]["plan_id"] == "PLAN-KEEP-AUDIT"
+    assert store.get("agent_event", "delete-event")=={'event':{'device_id':'M-DELETE'}}
     assert "PLAN-KEEP-AUDIT" in store.deleted_plan_ids()
+
+
+def test_permanent_workorder_delete_removes_mysql_row_projection_and_nested_plan_in_one_transaction(mysql_config, monkeypatch):
+    from shared.persistence import mysql_session, _decode
+    module = load_local_module('hard_delete_backend_repository', 'services/backend-service/app/workorder/repository.py')
+    for key, value in mysql_config.items():
+        if key != 'connection_timeout':
+            monkeypatch.setenv('MYSQL_' + key.upper(), str(value))
+    store = storage_class()(mysql_config)
+    repository = module.MySQLRepository()
+    original = {'workorder_id':'WO-PURGE','plan_id':'PLAN-PURGE','idempotency_key':'DELETE-EVENT','status':'in_progress',
+                'assignee':'USER-1','maintenance_plan_snapshot':{'plan_id':'PLAN-PURGE','repair_steps':['原方案正文']}}
+    order = repository.create(original)
+    event = {'_event_result_store_version':2,'fingerprint':'fp','result':{'event':{'event_id':'DELETE-EVENT'},
+             'diagnosis':{'fault':'保留独立诊断'},'maintenance_plan':original['maintenance_plan_snapshot'],'workorder':original,
+             'nested':{'maintenance_plan':original['maintenance_plan_snapshot'],'workorder':original}}}
+    store.set('agent_event','purge-event',event)
+    audit = {'audit_id':'PURGE-AUDIT','operator':'USER-1','created_at':'2026-10-08T00:00:00Z'}
+    repository.purge(order,audit,['PLAN-PURGE'])
+    assert repository.get('WO-PURGE') is None
+    saved = storage_class()(mysql_config).get('agent_event','purge-event')
+    assert saved=={'_event_result_store_version':2,'fingerprint':'fp','result':{'event':{'event_id':'DELETE-EVENT'},'diagnosis':{'fault':'保留独立诊断'},'nested':{}}}
+    with mysql_session(mysql_config) as db, db.cursor(dictionary=True) as cursor:
+        cursor.execute("SELECT COUNT(*) AS n FROM maintenance_plan_projection WHERE plan_id='PLAN-PURGE'")
+        assert cursor.fetchone()['n']==0
+    store.set('agent_event','purge-event',event)
+    assert store.get('agent_event','purge-event')==saved
+    with pytest.raises(ValueError, match='已删除'):
+        repository.create({**original,'workorder_id':'WO-STALE'})
+
+
+def test_mysql_delete_failure_rolls_back_workorder_plan_and_receipt(mysql_config, monkeypatch):
+    import shared.persistence as persistence
+    module = load_local_module('rollback_delete_backend_repository', 'services/backend-service/app/workorder/repository.py')
+    for key, value in mysql_config.items():
+        if key != 'connection_timeout':
+            monkeypatch.setenv('MYSQL_' + key.upper(), str(value))
+    store = storage_class()(mysql_config)
+    repository = module.MySQLRepository()
+    order = repository.create({'workorder_id':'WO-ROLLBACK','plan_id':'PLAN-ROLLBACK','status':'open'})
+    original = {'maintenance_plan':{'plan_id':'PLAN-ROLLBACK'},'event':{'event_id':'ROLLBACK'}}
+    store.set('agent_event','rollback-event',original)
+    purge = persistence.purge_mysql_plans
+    def fail_after_purge(*args, **kwargs):
+        purge(*args, **kwargs)
+        raise RuntimeError('isolated failure after plan deletion')
+    monkeypatch.setattr(persistence,'purge_mysql_plans',fail_after_purge)
+    with pytest.raises(RuntimeError, match='isolated'):
+        repository.purge(order,{'audit_id':'ROLLBACK-AUDIT','operator':'USER-1','created_at':'now'},['PLAN-ROLLBACK'])
+    assert repository.get('WO-ROLLBACK')==order
+    assert repository.get_record('workorder_deleted','WO-ROLLBACK') is None
+    assert store.get('agent_event','rollback-event')==original
+    assert 'PLAN-ROLLBACK' not in store.deleted_plan_ids()
+
+
+def test_late_producer_and_plan_first_deletion_cannot_retain_deleted_task_body(mysql_config, monkeypatch):
+    module = load_local_module('late_delete_backend_repository', 'services/backend-service/app/workorder/repository.py')
+    for key, value in mysql_config.items():
+        if key != 'connection_timeout':
+            monkeypatch.setenv('MYSQL_' + key.upper(), str(value))
+    store = storage_class()(mysql_config)
+    repository = module.MySQLRepository()
+    order = repository.create({'workorder_id':'WO-LATE','plan_id':'PLAN-LATE','status':'in_progress'})
+    event = {'maintenance_plan':{'plan_id':'PLAN-LATE','repair_steps':['不可恢复的正文']},'workorder':order,'event':{'event_id':'LATE'}}
+    store.set('agent_event','late-original',event)
+    store.delete_plans(['PLAN-LATE'],'USER-1')
+    assert store.get('agent_event','late-original')['workorder']==order
+    started, release = Event(), Event()
+    def produce():
+        started.set()
+        assert release.wait(15)
+        return event
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        future = workers.submit(store.get_or_create,'agent_event','late-new',produce)
+        assert started.wait(15)
+        try:
+            repository.purge(order,{'audit_id':'LATE-AUDIT','operator':'USER-1','created_at':'now'},['PLAN-LATE'])
+        finally:
+            release.set()
+        assert future.result(timeout=15)=={'event':{'event_id':'LATE'}}
+    assert storage_class()(mysql_config).get('agent_event','late-original')=={'event':{'event_id':'LATE'}}
+    assert store.get('agent_event','late-new')=={'event':{'event_id':'LATE'}}
 
 
 def test_existing_different_record_cannot_be_overwritten_by_migration(mysql_config):

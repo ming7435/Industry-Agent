@@ -263,6 +263,25 @@ class RuntimeCoordinator:
         def step(current: dict[str, Any], _context: Any) -> dict[str, Any]:
             nonlocal plan, replan_count
             index = int(current.get("runtime_next_index") or 0)
+            while index < len(plan.actions):
+                optional_reason = self._optional_drawing_reason(
+                    plan.actions[index], current, plan.actions[index + 1:], evaluator)
+                if not optional_reason:
+                    break
+                skipped = plan.actions[index]
+                self.container.trace.record(
+                    type="runtime", name="runtime", node="runtime", agent="runtime",
+                    event="optional_action_skipped", task_id=initial.get("task_id", ""),
+                    trace_id=initial.get("trace_id", ""),
+                    state_change={"capability": skipped.required_capability, "reason": optional_reason},
+                    keys=["capability", "reason"], tool_name="", latency=0.0, error="",
+                )
+                index += 1
+                # 跳过查询不是 CAD 验证成功；不写 cad 结果或完成证据。
+                current = {**current, "runtime_next_index": index, "step_history": [
+                    *list(current.get("step_history") or []),
+                    {"step_id": skipped.required_capability, "status": "skipped", "reason": optional_reason},
+                ]}
             if index >= len(plan.actions):
                 return {"state": current, "action": ActionModel.final(), "evidence_score": 1.0, "done": True}
             action = self._enrich_action(plan.actions[index], current)
@@ -410,6 +429,18 @@ class RuntimeCoordinator:
                         "error": str(result.output.get("error") or "Runtime Action failed"),
                     },
                 ]
+                if result.output.get("execution_id"):
+                    # 超时回执不能因抛异常丢失，也不能进入重规划重放未知写操作。
+                    execution = dict(result.output)
+                    execution_status = str(execution.get("execution_status") or "FAILED").lower()
+                    terminal_status = "timeout" if execution_status == "timeout" else "blocked"
+                    reason = "execution_" + execution_status
+                    return {
+                        "state": {**current, "runtime_execution": execution,
+                                  "status": terminal_status, "stop_reason": reason},
+                        "action": action, "terminal_status": terminal_status,
+                        "terminal_reason": reason, "done": False,
+                    }
                 raise RuntimeError(str(result.output.get("error") or "Runtime Action failed"))
             capability = action.required_capability or action.target
             canonical_capability = self.capabilities.canonical_name(capability)
@@ -648,11 +679,17 @@ class RuntimeCoordinator:
 
         execution_manager = getattr(self.container, "execution_manager", None)
         execution_timeout = float(getattr(execution_manager, "timeout_seconds", 30.0))
+        step_timeout = getattr(self.container.dispatcher, "step_timeout_seconds", None)
+        if callable(step_timeout):
+            execution_timeout = max([execution_timeout, *(step_timeout(action) for action in plan.actions)])
+        # LoopEngine 按每步计时，外层须留出内层回执和轨迹落库的收尾时间。
+        # 该余量不改变 ExecutionManager 对工单等写操作的单次期限。
+        grace = max(1.0, float(getattr(self.container, "runtime_step_timeout_grace_seconds", 1.0)))
         result: LoopResult = LoopEngine(
             LoopPolicy(
                 max_iterations=max(1, len(plan.actions) * 3 + 2),
                 min_evidence_score=min_evidence_score,
-                timeout_seconds=max(1.0, execution_timeout + 1.0),
+                timeout_seconds=max(1.0, execution_timeout + grace),
             ),
         ).run(
             runtime_state,
@@ -676,6 +713,42 @@ class RuntimeCoordinator:
             final_state["stop_reason"] = result.stop_reason
         return final_state
 
+    def _optional_drawing_reason(self, action: ActionModel, state: Mapping[str, Any],
+                                 remaining: list[ActionModel], evaluator: RuntimeEvaluator) -> str:
+        """只跳过事件固定核查前的可选查询，维修方案及派工仍执行全部领域门禁。"""
+        if state.get("entry") != "trigger" or action.action_type.value != "AGENT" or action.side_effect \
+                or self.capabilities.canonical_name(action.required_capability or action.target) != "drawing_search" \
+                or not any(self.capabilities.canonical_name(item.required_capability or item.target)
+                           in {"repair_plan", "repair_planning", "maintenance_replan"} for item in remaining):
+            return ""
+        diagnosis, knowledge, event = (state.get(key) or {} for key in ("diagnosis", "knowledge", "event"))
+        if not all(isinstance(value, Mapping) for value in (diagnosis, knowledge, event)):
+            return ""
+        if not event.get("device_id") or diagnosis.get("device_id") != event.get("device_id") \
+                or not event.get("alarm_code") or str(diagnosis.get("alarm_code")) != str(event.get("alarm_code")):
+            return ""
+        if diagnosis.get("status") != "completed" or knowledge.get("status") != "completed" \
+                or not (knowledge.get("documents") or knowledge.get("evidence") or knowledge.get("items")) or any(
+            value.get("synthetic") is True or value.get("requires_human_review") is True
+            or value.get("evidence_validated") is False or value.get("validated") is False
+            for value in (diagnosis, knowledge, event)
+        ) or knowledge.get("degraded") is True:
+            return ""
+        if any(evaluator.evaluate({"domain": domain, "result": value}).status.value != "final"
+               for domain, value in (("diagnosis", diagnosis), ("knowledge", knowledge))):
+            return ""
+        from app.workorder.policy import inspection_decision
+        from app.workorder.repair_profile import hydraulic_checking_evidence, repair_profile
+
+        if inspection_decision(diagnosis, event)[0]:
+            return "validated_warning_inspection_does_not_require_cad"
+        profile = repair_profile(diagnosis)["kind"]
+        if profile == "hydraulic" and hydraulic_checking_evidence(knowledge):
+            return "validated_hydraulic_check_does_not_require_cad"
+        if profile == "safety_interlock":
+            return "validated_interlock_check_does_not_require_cad"
+        return ""
+
     def _enrich_action(self, action: ActionModel, state: Mapping[str, Any]) -> ActionModel:
         """把 Skill 派生的执行元数据附加到标准 Action 上。"""
 
@@ -695,16 +768,25 @@ class RuntimeCoordinator:
             if key not in {"allowed_tools", "active_skills", "skills", "skill", "step"}
         }
         try:
-            selected = registry.select(
-                agent,
-                context={
-                    **dict(state.get("context") or {}),
-                    **dict(state.get("event") or {}),
-                    **trigger_payload,
-                    "capability": capability,
-                    "user_text": str(state.get("user_text") or ""),
-                },
-            )
+            trigger_context = {
+                **dict(state.get("context") or {}),
+                **dict(state.get("event") or {}),
+                **trigger_payload,
+                "capability": capability,
+                "user_text": str(state.get("user_text") or ""),
+            }
+            canonical = self.capabilities.canonical_name(capability)
+            if agent == "knowledge" and canonical in {"document_search", "historical_case_search", "evidence_retrieval"}:
+                from .dispatcher import RuntimeDispatcher
+
+                # 使用与执行端相同的任务适配器，保留已核对诊断派生的维修检索意图。
+                # 只取业务检索字段，诊断全文及调用者的授权元数据不参与技能选择。
+                task = RuntimeDispatcher._task_for_agent(canonical, state, trigger_payload)
+                trigger_context.update({
+                    key: task[key] for key in ("query", "purpose", "device_id", "alarm_code", "filters")
+                    if key in task
+                })
+            selected = registry.select(agent, context=trigger_context)
         except Exception:
             selected = []
         skill_names = [item.name for item in selected]
