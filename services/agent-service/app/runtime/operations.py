@@ -20,6 +20,12 @@ class _IncompleteLearningStage(RuntimeError):
 
 
 class RuntimeOperations:
+    def execute_virtual_production(self, action, arguments, context):
+        return self.requests.execute_virtual_production(action, arguments, context)
+
+    def inspect_virtual_output(self, part_id, output_digest, context):
+        return self.requests.inspect_virtual_output(part_id, output_digest, context)
+
     def __init__(
         self,
         requests: A2ARequests,

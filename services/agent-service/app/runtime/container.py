@@ -144,3 +144,18 @@ class AgentContainer:
             factory_client=FactoryApiClient(settings.factory_api_base_url),
         )
         self.tracing = NodeTrace(self.trace)
+        self.virtual_production = None
+        self.virtual_production_reconciler = None
+        self.virtual_production_error = ''
+        if settings.backend_service_base_url:
+            from app.production_simulation.backend import VirtualProductionBackend
+            from app.production_simulation.factory import VirtualFactoryClient, VirtualFactoryError
+            from app.production_simulation.coordinator import VirtualProductionCoordinator
+            from app.production_simulation.reconciler import VirtualProductionReconciler
+            try:
+                backend = VirtualProductionBackend(BackendServiceClient(settings.backend_service_base_url))
+                factory = VirtualFactoryClient(settings.factory_api_base_url)
+                self.virtual_production = VirtualProductionCoordinator(backend, factory, self.operations, self.trace)
+                self.virtual_production_reconciler = VirtualProductionReconciler(self.virtual_production, backend)
+            except VirtualFactoryError as error:
+                self.virtual_production_error = str(error)

@@ -225,6 +225,11 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     runtime = orchestrator or build_orchestrator()
     event_results = EventResultStore()
     runtime.container.event_results = event_results
+    production_worker = getattr(runtime.container, 'virtual_production_reconciler', None)
+    if production_worker is not None and os.getenv('APP_ENV', 'development').lower() != 'testing':
+        app.state.virtual_production_reconciler = production_worker
+        app.add_event_handler('startup', production_worker.start)
+        app.add_event_handler('shutdown', production_worker.close)
     if os.getenv('APP_ENV', 'development').lower() != 'testing':
         from app.workorder.saved_dispatch import SavedPlanDispatcher
         workorder_dispatcher = SavedPlanDispatcher(event_results, BackendServiceClient(), runtime.container.registry)
