@@ -19,6 +19,7 @@ import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs
 import { createMotionClock, getMachineMotionState, getWorkshopMotionState } from "./workshopMotion.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
+import QualitySourceWorkspace from "./QualitySourceWorkspace.jsx";
 import "../workbench.css";
 import TeamAccess from '../TeamAccess.jsx';
 import SupervisorQueue from '../SupervisorQueue.jsx';
@@ -3689,8 +3690,12 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
   );
 }
 
-function QualityWorkspace() {
+function DemoQualityWorkspace() {
   return <section className="workspace-view active quality-workspace" aria-label="质检系统" />;
+}
+
+function QualityWorkspace(props) {
+  return <QualitySourceWorkspace {...props} Demo={DemoQualityWorkspace} />;
 }
 
 function ModuleHero({ eyebrow, title, text, action = null }) {
