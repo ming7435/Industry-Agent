@@ -79,6 +79,10 @@ class Pending(Strict):
     limit: int = Field(default=50, ge=1, le=50)
 
 
+class RunFacts(Actor):
+    job_ids: list[str] = Field(max_length=200)
+
+
 class SessionActor(Strict):
     token: str = Field(min_length=1, max_length=1024)
 
@@ -86,7 +90,7 @@ class SessionActor(Strict):
 MODELS = {'prepare': Prepare, 'get': Get, 'by_command': ByCommand, 'list_jobs': Jobs,
           'record_receipt': ActorReceipt, 'record_sync_error': ActorError, 'output': Output,
           'inspect': Inspect, 'quality': Quality, 'pending': Pending, 'sync_receipt': Receipt, 'sync_error': SyncError,
-          'session_actor': SessionActor}
+          'session_actor': SessionActor, 'run_facts': RunFacts}
 RUNTIME = {'pending', 'sync_receipt', 'sync_error'}
 
 

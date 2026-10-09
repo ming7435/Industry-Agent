@@ -34,6 +34,7 @@ class VirtualProductionBackend:
     def quality(self, actor, design_run_id, batch_id, owner_job_id=''):
         return self._call('quality', actor, design_run_id=design_run_id, batch_id=batch_id, owner_job_id=owner_job_id)
     def pending(self, now, cursor='', limit=50): return self._call('pending', now=float(now), cursor=cursor, limit=limit)
+    def run_facts(self, actor, job_ids): return self._call('run_facts', actor, job_ids=job_ids)
     def sync_receipt(self, job_id, expected_revision, receipt):
         return self._call('sync_receipt', job_id=job_id, expected_revision=expected_revision, receipt=receipt)
     def sync_error(self, job_id, expected_revision, code):

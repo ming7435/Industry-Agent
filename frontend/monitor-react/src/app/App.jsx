@@ -12,6 +12,7 @@ import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { request } from "./apiRequest.mjs";
+import { getTeamSession, subscribeTeamSession } from "../teamSession.mjs";
 import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, executionReviewView, inspectionWorkorderView, loadMaintenancePlans, loadMaintenanceOrders, maintenanceDispatchView, maintenanceHistoryNotice, maintenanceReferenceDrawings, maintenanceWorkType, retryMaintenancePlan } from "./maintenanceWorkspace.mjs";
 import { publishMaintenanceChange, subscribeMaintenanceChanges, rememberDeletedMaintenancePlans } from './maintenanceChanges.mjs';
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
@@ -2517,6 +2518,21 @@ function LogsWorkspace({ snapshot, active = true }) {
   const selectedRunRef = useRef(selectedRunId);
   selectedRunRef.current = selectedRunId;
 
+  useEffect(() => {
+    let sessionVersion = getTeamSession().version;
+    return subscribeTeamSession(value => {
+      if (value.version === sessionVersion) return;
+      sessionVersion = value.version;
+      indexRequest.current?.controller.abort(); indexRequest.current = null;
+      detailGeneration.current++; detailRequest.current?.controller.abort(); detailRequest.current = null;
+      setDetails({ runId: '', records: [] });
+      setRunRecords(values => values.filter(item => item.run_type !== 'production_simulation'));
+      setSelectedRunId(value => value.startsWith('production_simulation:') ? '' : value);
+      indexLoaded.current = false;
+      loadTraceIndex(true);
+    });
+  }, []);
+
   function loadTraceIndex(manual = false) {
     if (!activeRef.current) return Promise.resolve(null);
     if (manual || !indexLoaded.current) setLoading(true);
@@ -2623,6 +2639,7 @@ function LogsWorkspace({ snapshot, active = true }) {
   }).slice().reverse();
   const traceCount = runRecords.length;
   const qualityRunCount = runRecords.filter((run) => run.run_type === "quality").length;
+  const productionRunCount = runRecords.filter((run) => run.run_type === "production_simulation").length;
   const toolCount = records.filter((record) => record.type === "tool" || record.tool_name || record.tool).length;
   const errorCount = records.filter((record) => Boolean(record.error) || /error|failed|timeout/i.test(String(record.event || ""))).length;
   const agentInvocations = useMemo(() => buildAgentInvocations(records), [records]);
@@ -2635,7 +2652,8 @@ function LogsWorkspace({ snapshot, active = true }) {
       {error && <div className="workspace-notice logs-notice" role="status">日志读取提示：{error}</div>}
       <div className="module-grid logs-stat-grid">
         <ModuleStat label="事件总数" value={records.length} text="Trace Recorder 保留记录" />
-        <ModuleStat label="运行记录" value={traceCount} text="故障闭环、RAG 问答与质检" />
+        <ModuleStat label="运行记录" value={traceCount} text="故障闭环、RAG 问答、质检与模拟生产" />
+        {productionRunCount > 0 && <ModuleStat label="生产运行" value={productionRunCount} text="生产准备 → 模拟加工 → 模拟检测" />}
         <ModuleStat label="独立质检" value={qualityRunCount} text="不会并入故障闭环" />
         <ModuleStat label="工具调用" value={toolCount} text="含输入参数与返回体" />
         <ModuleStat label="异常事件" value={errorCount} text={errorCount ? "需要进一步检查" : "当前没有错误记录"} />

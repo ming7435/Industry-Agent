@@ -124,6 +124,24 @@ class VirtualProductionService:
     def _revision(job, expected):
         require(type(expected) is int and expected == job['revision'], 'revision_conflict', '任务已有新事实，请重新读取')
 
+    def run_facts(self, actor, job_ids):
+        owner = self._actor(actor)
+        require(isinstance(job_ids, list) and len(job_ids) <= 200 and all(isinstance(value, str)
+                and re.fullmatch(r'SIM-JOB-[a-f0-9]{64}', value) for value in job_ids), 'invalid_run_jobs', status=422)
+        facts = {}
+        for job_id in dict.fromkeys(job_ids):
+            raw = self.repository.get_record(JOB, job_id)
+            if raw is None or (raw.get('actor_id') != owner and actor['role'] != 'supervisor'): continue
+            identity = {key: raw.get(key) for key in ('job_id', 'actor_id', 'design_run_id', 'batch_id', 'part_id')}
+            try:
+                job = self.get(actor, job_id)
+                facts[job_id] = {**identity, 'status': job['status'], 'sync_status': job['sync_status'],
+                    'output_saved': bool(job.get('output')), 'inspection_status': (job.get('inspection') or {}).get('status'),
+                    'updated_at': job.get('updated_at'), 'error_code': job.get('error_code')}
+            except (VirtualProductionError, KeyError, TypeError):
+                facts[job_id] = {**identity, 'status': 'unknown', 'sync_status': 'review', 'output_saved': False, 'inspection_status': None}
+        return facts
+
     def _save(self, job, actor_id, **changes):
         updated = {**job, **changes, 'revision': job['revision'] + 1, 'updated_at': time.time(), 'last_sync_actor': actor_id}
         self.repository.save_record(JOB, job['job_id'], updated)

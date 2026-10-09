@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
+from app.production_simulation.run_facts import is_production_record, build_production_runs
 
 
 FAULT_PHASES = (
@@ -24,7 +25,7 @@ QUALITY_PHASES = (("quality", "质检"),)
 RAG_PHASES = (("rag", "RAG 问答"),)
 
 # 索引仅保留归组、状态判定所需值；输入、工具返回正文按 Trace 单独读取。
-_IDENTITY_FIELDS = ('event_id', 'source_event_id', 'incident_id', 'device_id', 'alarm_code', 'alarm',
+_IDENTITY_FIELDS = ('event_id', 'source_event_id', 'incident_id', 'device_id', 'alarm_code', 'alarm', 'job_id', 'actor_id',
                     'run_type', 'quality_check_id', 'check_id', 'object_id', 'target_id')
 _IDENTITY_SHAPE = dict.fromkeys(_IDENTITY_FIELDS)
 _CONTEXT_SHAPE = {**_IDENTITY_SHAPE, **dict.fromkeys(('agent',)),
@@ -62,12 +63,13 @@ def _as_dict(value: Any) -> Mapping[str, Any]:
 
 def _timestamp(value: Any) -> datetime:
     if isinstance(value, datetime):
-        return value
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
     text = str(value or "")
     try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        result = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return result.astimezone(timezone.utc) if result.tzinfo else result.replace(tzinfo=timezone.utc)
     except ValueError:
-        return datetime.min
+        return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _first(record: Mapping[str, Any], keys: Iterable[str]) -> Any:
@@ -324,6 +326,8 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
     """
 
     source_records = [dict(item) for item in records if isinstance(item, Mapping)]
+    production_runs = build_production_runs(item for item in source_records if is_production_record(item))
+    source_records = [item for item in source_records if not is_production_record(item)]
     # 监控事件 ID 通常只出现在第一条目标/上下文事件中。将它传递给
     # 同一 Trace 的其余事件，避免整个生命周期拆成监控卡和 Agent 卡。
     event_ids_by_identity: dict[tuple[str, str], str] = {}
@@ -408,8 +412,8 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
             for phase_id, label in phase_defs
         ]
         timestamps = [_timestamp(item.get("timestamp")) for item in items]
-        first_at = min(timestamps) if timestamps else datetime.min
-        last_at = max(timestamps) if timestamps else datetime.min
+        first_at = min(timestamps) if timestamps else datetime.min.replace(tzinfo=timezone.utc)
+        last_at = max(timestamps) if timestamps else datetime.min.replace(tzinfo=timezone.utc)
         run_id = group["run_key"]
         terminal_status, stop_reason = _runtime_terminal(items)
         result.append({
@@ -426,12 +430,13 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
             "task_ids": group["task_ids"],
             "device_id": group["device_id"],
             "alarm_code": group["alarm_code"],
-            "started_at": "" if first_at == datetime.min else first_at.isoformat(),
-            "ended_at": "" if last_at == datetime.min else last_at.isoformat(),
+            "started_at": "" if first_at == datetime.min.replace(tzinfo=timezone.utc) else first_at.isoformat(),
+            "ended_at": "" if last_at == datetime.min.replace(tzinfo=timezone.utc) else last_at.isoformat(),
             "event_count": len(items),
             "tool_count": sum(1 for item in items if str(item.get("type") or "").lower() == "tool"),
             "error_count": sum(1 for item in items if _is_error(item)),
             "phases": phases,
         })
+    result.extend(production_runs)
     result.sort(key=lambda item: _timestamp(item.get("started_at")), reverse=True)
     return result

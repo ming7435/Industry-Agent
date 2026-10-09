@@ -359,21 +359,41 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.get("/api/trace", deprecated=True)
     @app.get("/api/v1/trace")
-    def trace(trace_id: str | None = None, task_id: str | None = None, limit: int = 100, summary: bool = False) -> Dict[str, Any]:
+    def trace(request: Request, trace_id: str | None = None, task_id: str | None = None, limit: int = 100, summary: bool = False) -> Dict[str, Any]:
         records = runtime.container.trace.list(trace_id=trace_id, task_id=task_id, limit=max(1, min(limit, 5000)))
+        records, _, production_warning = saved_production_records(request, records)
         return {"trace": compact_trace_summary(records) if summary else records,
-                'storage_warning':getattr(runtime.container.trace,'storage_error','')}
+                'storage_warning':'；'.join(filter(None, (getattr(runtime.container.trace,'storage_error',''), production_warning)))}
+
+    def saved_production_records(request, records):
+        from app.production_simulation.run_facts import is_production_record, production_job_id, production_run_facts
+        identities = list(dict.fromkeys(production_job_id(item) for item in records if is_production_record(item)))
+        if not identities: return records, {}, ''
+        facts, warning = {}, ''
+        if request.cookies.get('maintenance_session'):
+            try:
+                production = getattr(runtime.container, 'virtual_production', None)
+                if production is None: raise ValueError('production unavailable')
+                actor = team_actor(request, production.backend)
+                facts = production_run_facts(production.backend, actor, identities)
+            except Exception:
+                warning = '生产记录授权或保存事实暂不可核对'
+        return [item for item in records if not is_production_record(item) or production_job_id(item) in facts], facts, warning
+
 
     @app.get("/api/runs", deprecated=True)
     @app.get("/api/v1/runs")
-    def runs(limit: int = 5000) -> Dict[str, Any]:
+    def runs(request: Request, limit: int = 5000) -> Dict[str, Any]:
         """每次故障、独立 RAG 问答或质检运行返回一条记录。"""
 
         recorder = runtime.container.trace
         query = getattr(recorder, 'list_run_index', recorder.list)
         records = query(limit=max(1, min(limit, 5000)))
+        records, production_facts, production_warning = saved_production_records(request, records)
         items = build_run_records(records)
-        return {"runs": items, "count": len(items), 'storage_warning': getattr(recorder, 'storage_error', '')}
+        from app.production_simulation.run_facts import reconcile_production_runs
+        items = reconcile_production_runs(items, production_facts)
+        return {"runs": items, "count": len(items), 'storage_warning': '；'.join(filter(None, (getattr(recorder, 'storage_error', ''), production_warning)))}
 
     @app.get("/api/v1/runtime/approvals")
     def runtime_approvals(status: str = "") -> Dict[str, Any]:
