@@ -14,7 +14,7 @@ from .schemas import CADQuery
 
 class CADAgent(BaseAgent):
     name = "cad"
-    capabilities = ("bom_query", "drawing_search", "component_relation")
+    capabilities = ("bom_query", "drawing_search", "component_relation", "virtual_production")
 
     def __init__(self, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()
@@ -61,6 +61,8 @@ class CADAgent(BaseAgent):
             "step_history": list(output.get("step_history") or [])}}
 
     def run(self, task: Any) -> CADResult:
+        if isinstance(task, dict) and task.get('operation') == 'virtual_production':
+            return self.graph.invoke({'agent': self, 'request': task, 'operation': 'virtual_production'})['result']
         request = CADQuery.from_payload(task)
         output = self.graph.invoke({"agent": self, "request": request.model_dump(mode="json")})
         result = output.get("result")

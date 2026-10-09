@@ -49,6 +49,8 @@ class Capability:
 
 
 CAPABILITY_DEFINITIONS: tuple[CapabilityDefinition, ...] = (
+    CapabilityDefinition('virtual_production', 'cad', 'cad', 'virtual_production', 'execute authorized simulated machining', side_effect=True),
+    CapabilityDefinition('virtual_size_inspection', 'quality', 'quality', 'virtual_size_inspection', 'compare immutable factory output', side_effect=True),
     CapabilityDefinition("intent_routing", "router", "routing", "route", "classify and route a request", default_reason="route request"),
     CapabilityDefinition("fault_analysis", "diagnosis", "diagnosis", "diagnosis", "analyze abnormal event", default_reason="analyze abnormal event", aliases=("fault_diagnosis",), replan_capabilities=("document_search", "diagnosis_review")),
     CapabilityDefinition("hypothesis_generation", "diagnosis", "diagnosis", "diagnosis", "generate diagnostic hypotheses", default_reason="generate diagnostic hypotheses"),

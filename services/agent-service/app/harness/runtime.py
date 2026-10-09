@@ -117,6 +117,8 @@ class AgentHarness:
         # 超时的 Python 线程无法被强制停止。如果重试带副作用的 Agent，
         # 可能会并发执行两次写入；这类 Agent 必须依赖幂等边界并只执行一次。
         max_retries = 0 if agent_name_for_policy in {"workorder", "memory", "quality", "report"} else self.config.max_retries
+        if isinstance(abnormal_event, dict) and abnormal_event.get('operation') == 'virtual_production':
+            max_retries = 0
         for attempt in range(max_retries + 1):
             record, started = self._begin_attempt(abnormal_event, attempt + 1)
             # 每次尝试使用独立线程池，使单次超时不会阻塞后续重试。

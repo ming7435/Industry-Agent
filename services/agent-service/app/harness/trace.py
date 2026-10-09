@@ -176,6 +176,8 @@ def safe_trace_value(value: Any) -> Any:
             result = {}
             for key, val in list(item.items())[:80]:
                 name = str(key)
+                if name in {'_virtual_context', 'virtual_context'}:
+                    continue
                 if re.search(r'(?i)password|secret|token|api[_-]?key|authorization|cookie', name):
                     result[name] = '[已隐藏]'
                 elif name in {'trace', 'step_history', 'completed_steps', 'records'} and isinstance(val, (list, tuple)):

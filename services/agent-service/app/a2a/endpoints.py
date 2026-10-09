@@ -80,6 +80,16 @@ class A2AEndpoints:
         )
 
     def _cad_endpoint(self, request: CADRequest) -> CADResponse:
+        if request.operation == 'virtual_production':
+            from app.production_simulation.context import validate_virtual_context
+            context = validate_virtual_context(request.virtual_context, request.production_action, request.production_arguments)
+            task = {**request.model_dump(mode='json'), '_virtual_context': context,
+                    'runtime_context': {'run_type': 'production_simulation', 'actor_id': context.actor['user_id']}}
+            result = self.harnesses['cad'].execute_agent(task)
+            return CADResponse(request_id=request.request_id, task_id=request.task_id, trace_id=request.trace_id,
+                reply_to=request.message_id, from_agent='cad', to_agent=request.from_agent,
+                status=result.get('status', ''), success=result.get('sync_status') not in {'review', 'outcome_unknown', 'unavailable'},
+                result=result, payload=result)
         result = self.harnesses["cad"].execute_agent(request.model_dump(mode="json"))
         payload = _serialize_agent_result(result)
         return CADResponse(
@@ -136,6 +146,15 @@ class A2AEndpoints:
         )
 
     def _quality_endpoint(self, request: QualityRequest) -> QualityResponse:
+        if request.inspection_type == 'virtual_profile_dimensions_v1':
+            from app.production_simulation.context import validate_virtual_context
+            context = validate_virtual_context(request.virtual_context, 'inspect', {'part_id': request.part_id, 'output_digest': request.output_digest})
+            task = {**request.model_dump(mode='json'), '_virtual_context': context,
+                    'runtime_context': {'run_type': 'production_simulation', 'actor_id': context.actor['user_id']}}
+            result = self.harnesses['quality'].execute_agent(task)
+            return QualityResponse(request_id=request.request_id, task_id=request.task_id, trace_id=request.trace_id,
+                reply_to=request.message_id, from_agent='quality', to_agent=request.from_agent, quality_result=result,
+                inspection_type=request.inspection_type, passed=False, qualified=False, rework_required=False, payload=result)
         result = self.harnesses["quality"].execute_agent(request.model_dump(mode="json"))
         payload = _serialize_agent_result(result)
         passed = bool(payload.get("passed"))

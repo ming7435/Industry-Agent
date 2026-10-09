@@ -155,7 +155,9 @@ def fallback(state: QualityWorkflowState) -> Dict[str, Any]:
 
 
 def build_quality_graph():
+    from app.production_simulation.agents import virtual_execution_node
     workflow = StateGraph(QualityWorkflowState)
+    workflow.add_node('virtual_size_inspection', virtual_execution_node('quality'))
     node_skill_steps = {
         "initialize": "identify_part",
         "load_skill": "select_skills",
@@ -189,7 +191,10 @@ def build_quality_graph():
     workflow.add_node('inspect', inspect)
     workflow.add_node("validate_part", steps["validate_part"])
     workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
-    workflow.add_edge(START, "prepare")
+    workflow.add_conditional_edges(START, lambda state: 'virtual_size_inspection'
+        if (state.get('request') or {}).get('inspection_type') == 'virtual_profile_dimensions_v1' else 'prepare',
+        {'virtual_size_inspection': 'virtual_size_inspection', 'prepare': 'prepare'})
+    workflow.add_edge('virtual_size_inspection', END)
     workflow.add_edge("prepare", "load_input")
     workflow.add_conditional_edges(
         "load_input",

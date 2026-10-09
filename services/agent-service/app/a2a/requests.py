@@ -13,6 +13,22 @@ class A2ARequests:
     def __init__(self, client: A2AClient) -> None:
         self.a2a = client
 
+    def execute_virtual_production(self, action, arguments, context):
+        from app.production_simulation.context import validate_virtual_context
+        validate_virtual_context(context, action, arguments)
+        request = CADRequest(request_id=self.a2a.new_request_id(), task_id=context.trace_id, trace_id=context.trace_id,
+            from_agent='router', to_agent='cad', action=action, operation='virtual_production',
+            production_action=action, production_arguments=dict(arguments), virtual_context=context)
+        return self.a2a.request(request, CADResponse).result
+
+    def inspect_virtual_output(self, part_id, output_digest, context):
+        from app.production_simulation.context import validate_virtual_context
+        validate_virtual_context(context, 'inspect', {'part_id': part_id, 'output_digest': output_digest})
+        request = QualityRequest(request_id=self.a2a.new_request_id(), task_id=context.trace_id, trace_id=context.trace_id,
+            from_agent='router', to_agent='quality', inspection_type='virtual_profile_dimensions_v1',
+            part_id=part_id, output_digest=output_digest, virtual_context=context)
+        return self.a2a.request(request, QualityResponse).quality_result
+
     def retrieve_knowledge(self, state: Mapping[str, Any], query: str) -> Dict[str, Any]:
         context = state.get("context") or {}
         return self._knowledge_a2a(
@@ -244,6 +260,7 @@ class A2ARequests:
                 repair_verification=state.get("repair_verification") or {},
                 quality=state.get("quality") or {},
                 report=state.get("report") or {},
+                context=dict(context),
             ),
             MemoryResponse,
         )

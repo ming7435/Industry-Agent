@@ -18,7 +18,7 @@ QUALITY_CLOSURE_AUTHORITY = object()
 
 class QualityAgent(BaseAgent):
     name = "quality"
-    capabilities = ("quality_inspection", "quality_review")
+    capabilities = ("quality_inspection", "quality_review", "virtual_size_inspection")
 
     def __init__(self, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()

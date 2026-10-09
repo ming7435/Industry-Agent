@@ -207,6 +207,7 @@ class MemoryRequest(A2ARequest):
     repair_verification: Dict[str, Any] = Field(default_factory=dict)
     quality: Dict[str, Any] = Field(default_factory=dict)
     report: Dict[str, Any] = Field(default_factory=dict)
+    context: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MemoryResponse(A2AResponse):
@@ -218,6 +219,16 @@ class MemoryResponse(A2AResponse):
 
 
 class QualityRequest(A2ARequest):
+    virtual_context: Any = Field(default=None, exclude=True, repr=False)
+    output_digest: str = ''
+
+    @model_validator(mode='after')
+    def validate_virtual_authority(self):
+        if self.virtual_context is not None:
+            from app.production_simulation.context import validate_virtual_context
+            validate_virtual_context(self.virtual_context, 'inspect', {'part_id': self.part_id, 'output_digest': self.output_digest})
+        return self
+
     inspection_type: str = "part_quality"
     device_id: str = ""
     part_id: str = ""
@@ -245,6 +256,18 @@ class QualityResponse(A2AResponse):
 
 
 class CADRequest(A2ARequest):
+    virtual_context: Any = Field(default=None, exclude=True, repr=False)
+    operation: str = ''
+    production_action: str = ''
+    production_arguments: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode='after')
+    def validate_virtual_authority(self):
+        if self.virtual_context is not None:
+            from app.production_simulation.context import validate_virtual_context
+            validate_virtual_context(self.virtual_context, self.production_action, self.production_arguments)
+        return self
+
     device_model: str = ""
     component: str = ""
     part_no: str = ""

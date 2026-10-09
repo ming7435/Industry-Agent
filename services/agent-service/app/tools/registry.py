@@ -168,8 +168,11 @@ class ToolRegistry:
 
     def _build_definitions(self) -> dict[str, ToolDefinition]:
         """集中定义所有工具；副作用名称和模型暴露范围保持独立。"""
+        from app.production_simulation.tools import TOOLS as virtual_tools
         generic_parameters = {"type": "object", "additionalProperties": True}
         definitions = [
+            *[ToolDefinition(name, handler, '执行已授权的模拟生产或尺寸比较', 'local', name,
+                             generic_parameters, False, local_only=True) for name, handler in virtual_tools.items()],
             *[ToolDefinition(name, self._formal_quality_action, '执行正式质检闭环操作', 'mes', name, generic_parameters, False) for name in (
                 'create_closure_task','complete_closure_task','submit_quality_appeal','resolve_quality_appeal',
                 'reinspect_quality_check','release_quality_check','close_quality_check')],

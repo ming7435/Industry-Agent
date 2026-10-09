@@ -526,7 +526,9 @@ def fallback(state: CADGraphState) -> Dict[str, Any]:
 
 
 def build_cad_graph():
+    from app.production_simulation.agents import virtual_execution_node
     workflow = StateGraph(CADGraphState)
+    workflow.add_node('virtual_production', virtual_execution_node('cad'))
     node_skill_steps = {
         "initialize": "normalize_query",
         "load_skill": "classify_engineering_request",
@@ -548,7 +550,10 @@ def build_cad_graph():
     workflow.add_node("query", chain_nodes(steps["query"], steps["observe"], stop_routes=("validate_relation", "fallback")))
     workflow.add_node("validate_relation", steps["validate_relation"])
     workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
-    workflow.add_edge(START, "prepare")
+    workflow.add_conditional_edges(START, lambda state: 'virtual_production'
+        if (state.get('request') or {}).get('operation') == 'virtual_production' else 'prepare',
+        {'virtual_production': 'virtual_production', 'prepare': 'prepare'})
+    workflow.add_edge('virtual_production', END)
     workflow.add_conditional_edges("prepare", _route, {"model_3d": "model_3d", "plan_engineering_query": "plan_engineering_query"})
     workflow.add_edge("model_3d", "finish")
     workflow.add_conditional_edges("plan_engineering_query", _route, {"query": "query", "validate_relation": "validate_relation"})
