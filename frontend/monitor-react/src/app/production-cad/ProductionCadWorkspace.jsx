@@ -3,6 +3,7 @@ import { freeCadArtifacts, freeCadRequest, freeCadRunId, freeCadStatus, freeCadW
 import DesignParameterEditor from './DesignParameterEditor.jsx';
 import { appendDesignVersion, designParameterGroups, designTemplates } from './designEditor.mjs';
 import InlineDimensionEditor from './InlineDimensionEditor.jsx';
+import SimulatedProductionPanel from "./SimulatedProductionPanel.jsx";
 import "./productionCad.css";
 
 const FreeCadModelViewer = lazy(() => import("./FreeCadModelViewer.jsx"));
@@ -282,6 +283,7 @@ export default function ProductionCadWorkspace() {
         {run.spec?.assembly?.motion && !motion && <p className="cad-run-error" role="alert">本轮未返回通过求解校验的运动帧，无法播放关节运动。</p>}
         <div className="cad-downloads" aria-label="模型导出">{artifacts.map((item) => <a key={item.name} href={item.url} download={item.name}>下载 {artifactLabels[item.name]}</a>)}</div>
       </> : terminal.has(run.status) && <p className="cad-no-model" role={run.status === 'completed' ? 'alert' : undefined}>本轮没有可展示的 STL 模型。{run.status === "needs_input" ? "请补充上方所需参数后再次生成。" : run.status === 'completed' ? "实体证据或模型产物不完整，不能将二维图纸作为建模成功结果。" : "请查看执行结果和实际工具调用。"}</p>}
+      <SimulatedProductionPanel run={run} draftPending={Boolean(revision) || locked || Boolean(run.prompt && prompt.trim() !== run.prompt.trim()) || Boolean(specText.trim() && JSON.stringify(draftSpec) !== JSON.stringify(run.spec))} />
       <details className="cad-call-details"><summary>技术记录</summary><p className="cad-identifier">运行编号：{run.run_id}</p>
         {run.spec && <details><summary>建模参数</summary><pre>{JSON.stringify(run.spec, null, 2)}</pre></details>}
         {run.validation && <details><summary>几何检查详情</summary><pre>{JSON.stringify(run.validation, null, 2)}</pre></details>}

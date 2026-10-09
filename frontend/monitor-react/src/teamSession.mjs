@@ -39,6 +39,7 @@ export function assertTeamSessionCurrent(version) {
 export function isTeamSessionPath(path) {
   const pathname = new URL(path, 'http://session.local').pathname;
   if (/^\/api\/workorders(?:\/|$)/.test(pathname)) return true;
+  if (/^\/api\/production\/virtual(?:\/|$)/.test(pathname)) return true;
   if (/^\/api\/maintenance\/plans\/(?:delete(?:\/|$)|[^/]+\/retry(?:\/|$))/.test(pathname)) return true;
   if (pathname.startsWith('/api/team/')) return !['devices', 'line', 'register', 'login'].includes(pathname.slice('/api/team/'.length));
   return false;
