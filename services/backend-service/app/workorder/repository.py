@@ -178,6 +178,12 @@ class SQLiteRepository:
         with self.quality_transaction():
             yield self.get_record('production_part', str(part_id)) or {}
 
+    @contextmanager
+    def simulation_transaction(self, lock_id: str):
+        """Serialize virtual production facts without borrowing formal quality rows."""
+        with self.quality_transaction():
+            yield
+
 
 def _mysql_operation(method):
     @wraps(method)
@@ -234,6 +240,22 @@ class MySQLRepository:
                 yield
             finally:
                 cursor.close()
+
+    @contextmanager
+    def simulation_transaction(self, lock_id: str):
+        """Use a stable virtual-job guard; network calls never run in this scope."""
+        with self._session():
+            cursor = self.connection.cursor()
+            try:
+                cursor.execute('INSERT INTO business_records(record_type,record_id,payload) VALUES (%s,%s,%s) '
+                               'ON DUPLICATE KEY UPDATE record_id=record_id', ('sim_production_lock', str(lock_id), '{}'))
+                cursor.execute('SELECT payload FROM business_records WHERE record_type=%s AND record_id=%s FOR UPDATE',
+                               ('sim_production_lock', str(lock_id)))
+                cursor.fetchone()
+                yield
+            finally:
+                cursor.close()
+
 
     @contextmanager
     def production_part_transaction(self, part_id):

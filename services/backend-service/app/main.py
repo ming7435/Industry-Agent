@@ -12,6 +12,7 @@ from .workorder import BackendBusinessService
 from .workorder.repository import BusinessStoreError
 from .team.routes import create_router, internal_auth
 from .line_control.routes import create_router as create_line_router
+from .production_simulation.routes import create_router as create_production_simulation_router
 
 
 class ToolCall(BaseModel):
@@ -55,6 +56,7 @@ def get_service() -> BackendBusinessService:
 
 app.include_router(create_router(get_service))
 app.include_router(create_line_router(get_service))
+app.include_router(create_production_simulation_router(get_service))
 
 
 @app.get("/health")
