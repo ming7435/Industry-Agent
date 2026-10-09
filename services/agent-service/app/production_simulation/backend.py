@@ -7,6 +7,8 @@ class VirtualProductionBackend:
     def __init__(self, client=None):
         self.client = client or BackendServiceClient()
 
+    def resolve_session(self, token): return self._call('session_actor', token=token)
+
     def _call(self, operation, actor=None, **arguments):
         if actor is not None:
             require(isinstance(actor, dict) and actor.get('user_id'), 'invalid_actor', status=401)

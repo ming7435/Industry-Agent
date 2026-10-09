@@ -813,6 +813,9 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
     def _should_proxy(path: str) -> bool:
         """判断是否需要转发给 Agent Service。"""
 
+        if path == '/api/production/virtual' or path.startswith('/api/production/virtual/'):
+            return True
+
         return path.startswith((
             "/api/agent/",
             "/api/rag/",
@@ -843,7 +846,8 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             and path_parts[:2] == ["api", "cad"]
             and len(path_parts) > 2 and path_parts[2] in {"buildcad", "freecad"}
         )
-        if cad_write:
+        production_write = method != 'GET' and path_parts[:3] == ['api', 'production', 'virtual']
+        if cad_write or production_write:
             body = self._read_local_cad_body()
             if body is None:
                 return

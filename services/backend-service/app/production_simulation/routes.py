@@ -1,5 +1,6 @@
 """Internal-only operations; account authority is always resolved from the directory."""
 import os
+from hashlib import sha256
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -78,9 +79,14 @@ class Pending(Strict):
     limit: int = Field(default=50, ge=1, le=50)
 
 
+class SessionActor(Strict):
+    token: str = Field(min_length=1, max_length=1024)
+
+
 MODELS = {'prepare': Prepare, 'get': Get, 'by_command': ByCommand, 'list_jobs': Jobs,
           'record_receipt': ActorReceipt, 'record_sync_error': ActorError, 'output': Output,
-          'inspect': Inspect, 'quality': Quality, 'pending': Pending, 'sync_receipt': Receipt, 'sync_error': SyncError}
+          'inspect': Inspect, 'quality': Quality, 'pending': Pending, 'sync_receipt': Receipt, 'sync_error': SyncError,
+          'session_actor': SessionActor}
 RUNTIME = {'pending', 'sync_receipt', 'sync_error'}
 
 
@@ -101,6 +107,13 @@ def create_router(get_service):
         try:
             backend = get_service()
             service = VirtualProductionService(backend.repository)
+            if operation == 'session_actor':
+                directory = backend.team.repository
+                identity = directory.session_user(sha256(arguments['token'].encode()).hexdigest())
+                if identity is None: return {'result': None}
+                with directory.transaction() as db:
+                    row = db.execute("SELECT user_id,username,role,enabled FROM team_accounts WHERE user_id=? AND enabled=1 AND role IN ('technician','supervisor')", (identity,)).fetchone()
+                return {'result': dict(row) if row is not None else None}
             if operation in RUNTIME:
                 return {'result': getattr(service, operation)(**arguments)}
             identity = arguments.pop('actor_id')

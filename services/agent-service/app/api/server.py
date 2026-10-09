@@ -748,6 +748,9 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     from app.api.business_returns import build_business_return_router
 
     app.include_router(build_business_return_router(runtime, event_results, require_write_auth))
+    from app.api.production_simulation import build_virtual_production_router
+    production = getattr(runtime.container, 'virtual_production', None)
+    app.include_router(build_virtual_production_router(production, production.backend if production else None, require_write_auth))
     app.include_router(build_freecad_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
     return app
 
