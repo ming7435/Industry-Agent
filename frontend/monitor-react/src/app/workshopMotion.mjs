@@ -16,12 +16,12 @@ export function getWorkshopMotionState({ machines = [], line, runner = {}, unava
   if (unavailable || runner.last_error) return paused('画面已暂停', '运行状态暂不可用，等待重新连接');
   if (runner.enabled === false || runner.running === false) return paused('画面已暂停', '实时监控已暂停');
   // Read the shared line ledger, not the monitor process's last stop callback:
-  // restart verification is performed by another service.
+  // restart control is performed by another service.
   const lineStatus = normalize(line?.state);
   if (!['running', 'unknown'].includes(lineStatus)) {
-    if (lineStatus === 'starting') return paused('整线画面已暂停', '复机核验中，通过后自动恢复运动');
+    if (lineStatus === 'starting') return paused('整线画面已暂停', '正在启动全部设备，启动后自动恢复运动');
     if (lineStatus === 'stopping') return paused('整线画面已暂停', '正在停止全部设备');
-    if (lineStatus === 'stopped') return paused('整线画面已暂停', '等待维修完成并通过复机核验');
+    if (lineStatus === 'stopped') return paused('整线画面已暂停', '等待维修人员确认完成并启动设备');
     return paused('画面已暂停', '等待整线运行状态确认');
   }
   const physical = machines.filter(machine => !machine.visualOnly);

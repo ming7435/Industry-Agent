@@ -174,6 +174,7 @@ class ToolRegistry:
                 'create_closure_task','complete_closure_task','submit_quality_appeal','resolve_quality_appeal',
                 'reinspect_quality_check','release_quality_check','close_quality_check')],
             ToolDefinition('register_production_part', self._register_production_part, '保存登录人员录入的实测数据和设计规格', 'qms', 'register_production_part', generic_parameters, False),
+            ToolDefinition('get_batch_quality', self._formal_quality_action, '读取正式批次优良率、生产追溯及整改建议', 'qms', 'get_batch_quality', generic_parameters, False),
             ToolDefinition('create_quality_check', self._create_quality_check, '保存 Agent 的真实质检证据和数据结果', 'mes', 'create_quality_check', generic_parameters, False),
             ToolDefinition("get_alarm_definition", self._get_alarm_definition, "查询设备所属报警定义", "knowledge", "get_alarm_definition", {"type":"object","properties":{"alarm_code":{"type":"string","description":"报警代码"}},"required":["alarm_code"],"additionalProperties":False}, True),
             ToolDefinition("get_device_status", self.get_device_status, "查询设备状态", "plc", "get_device_status", generic_parameters, True),

@@ -14,6 +14,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from .store import build_closure_store
+from shared.part_design_quality import SCOPE, design_evidence_is_complete
 
 
 def _quality_operation(method):
@@ -33,6 +34,8 @@ def _contains_untrusted_flag(value: Any) -> bool:
 
 
 def _quality_evidence_is_complete(values: Mapping[str, Any]) -> bool:
+    if values.get('comparison_scope') == SCOPE:
+        return design_evidence_is_complete(values)
     checks = values.get("quality_validation") or values.get("inspection_summary") or values.get("checks")
     if not isinstance(checks, Mapping):
         return False
@@ -111,6 +114,10 @@ class ClosureService:
             "batch_id": str(values.get("batch_id") or ""),
             "production_order_id": str(values.get("production_order_id") or ""),
             "inspection_type": "part_quality",
+            'comparison_scope': str(values.get('comparison_scope') or ''),
+            'design_reference': deepcopy(values.get('design_reference') or {}),
+            'measurements': deepcopy(values.get('measurements') or {}),
+            'specifications': deepcopy(values.get('specifications') or {}),
             "score": values.get("score"),
             "result": result,
             "findings": list(values.get("findings") or []),
@@ -358,6 +365,12 @@ class ClosureService:
             raise KeyError("质检记录不存在：%s" % check_id)
         if check.get("status") != "released":
             raise ValueError("只有 Release 后的质检记录才能 Close")
+        if check.get('comparison_scope') == SCOPE:
+            self._completed_quality_tasks(check_id)
+            if (check.get('reinspection') or {}).get('passed') is True:
+                self._validated_reinspection(check, str(check['reinspection'].get('reinspection_check_id') or ''))
+            elif not self._quality_record_is_trusted(check):
+                raise ValueError('图纸参数检验证据已失效，不能关闭质检任务')
         result = self._set_quality_status(check_id, "closed", operator, {"note": note})
         self._audit("quality_closed", check_id, operator, {"note": note})
         return result
@@ -391,6 +404,9 @@ class ClosureService:
         batch_id = str(item.get("batch_id") or "").strip()
         if not part_id or not batch_id or part_id != str(source.get("part_id") or source.get("target_id") or "").strip() or batch_id != str(source.get("batch_id") or "").strip():
             raise ValueError("复检记录必须属于同一零件和非空生产批次")
+        if item.get('comparison_scope') != source.get('comparison_scope') or (item.get('comparison_scope') == SCOPE
+                and (item.get('design_reference') or {}).get('digest') != (source.get('design_reference') or {}).get('digest')):
+            raise ValueError('复检记录必须使用同一设计版本和检验范围')
         try:
             inspected_at = datetime.fromisoformat(str(source.get("created_at") or "").replace("Z", "+00:00"))
             completed_at = [datetime.fromisoformat(str(task["completed_at"]).replace("Z", "+00:00")) for task in tasks]

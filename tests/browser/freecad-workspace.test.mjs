@@ -14,6 +14,21 @@ const prompt = "设计长 40 mm、宽 20 mm、高 10 mm 的长方体";
 const connected = { connected: true, provider: "freecad", tools: [{ name: "execute_code", description: "执行 FreeCAD 代码", inputSchema: { type: "object", properties: { code: { type: "string" } }, required: ["code"] } }] };
 const artifacts = ["stl", "step", "fcstd"].map((format) => ({ name: `model.${format}`, format, url: `${prefix}/runs/${id}/artifacts/model.${format}` }));
 const completed = { run_id: id, prompt, status: "completed", answer: "已创建并校验实体。", artifacts, validation: { valid: true, solid_count: 1, volume_mm3: 8000, bounds_mm: [40, 20, 10] }, execution: { agent: "cad", node: "model_3d", skill: "production_modeling_skill", tool: "freecad_mcp" }, calls: [{ tool: "execute_code", arguments: { code: "shape = Part.makeBox(40, 20, 10)" }, result: { content: [{ type: "text", text: "实体校验通过" }] } }] };
+
+test('清空质检页面后零件和装配结果不再显示旧质检快捷入口，建模结果仍保留', async()=>{
+  const spec={units:'mm',operations:[{type:'box',mode:'add',length:40,width:20,height:10,position:[0,0,0]}]};
+  const first=await setup({saved:true,record:{...completed,spec}});
+  try {
+    await first.page.getByRole('heading',{name:'模型与图纸',exact:true}).waitFor();
+    assert.equal(await first.page.getByRole('link',{name:'按此图纸检验生产零件',exact:true}).count(),0);
+    assert.equal(first.posts.length,0);
+  } finally {await first.context.close();}
+  const assembly=await setup({saved:true,record:{...completed,spec:{units:'mm',parts:[]}}});
+  try {
+    await assembly.page.getByRole('heading',{name:'模型与图纸',exact:true}).waitFor();
+    assert.equal(await assembly.page.getByRole('link',{name:'按此图纸检验生产零件',exact:true}).count(),0);
+  } finally {await assembly.context.close();}
+});
 // 手工定义的闭合长方体：12 个三角面，尺寸 40 × 20 × 10 mm。
 function boxStl() {
   const vertices = [[0,0,0],[40,0,0],[40,20,0],[0,20,0],[0,0,10],[40,0,10],[40,20,10],[0,20,10]];

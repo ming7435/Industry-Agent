@@ -141,7 +141,7 @@ def create_router(get_service):
     def confirm(body: dict, request: Request):
         internal_auth(request)
         try:
-            return get_service().confirm_team_repair(str(body.get('workorder_id') or ''), str(body.get('actor_id') or ''), str(body.get('feedback') or ''), body.get('snapshot') or {})
+            return get_service().confirm_team_repair(str(body.get('workorder_id') or ''), str(body.get('actor_id') or ''), str(body.get('feedback') or ''), body.get('snapshot') or {}, manual_restart=body.get('manual_restart') is True)
         except PermissionError as error:
             raise HTTPException(403, str(error))
         except (ValueError, KeyError) as error:

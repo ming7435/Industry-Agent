@@ -258,6 +258,10 @@ class QualityResult(BaseModel):
     batch_id: str = ""
     production_order_id: str = ""
     device_id: str = ""
+    device_name: str = ""
+    line_id: str = ""
+    line_name: str = ""
+    part_recorded_at: str = ""
     passed: bool = False
     status: Literal["pass", "fail", "review", "not_tested", "insufficient_data"] = "not_tested"
     qualified: bool = False
@@ -265,9 +269,11 @@ class QualityResult(BaseModel):
     inspection_items: List[Dict[str, Any]] = Field(default_factory=list)
     measurements: Dict[str, Any] = Field(default_factory=dict)
     specifications: Dict[str, Any] = Field(default_factory=dict)
+    comparison_scope: str = ''
+    design_reference: Dict[str, Any] = Field(default_factory=dict)
     defects: List[Dict[str, Any]] = Field(default_factory=list)
     failed_checks: List[str] = Field(default_factory=list)
-    # 五个检测维度的结构化结果，供后端原样持久化和复核。
+    # 适用检验范围的结构化结果，供后端原样持久化和复核。
     quality_validation: Dict[str, Any] = Field(default_factory=dict)
     evidence: List[Dict[str, Any]] = Field(default_factory=list)
     recommendation: str = ""

@@ -34,6 +34,7 @@ class _DeviceState:
     last_timestamp: Optional[datetime] = None
     incident_id: Optional[str] = None
     incident_alarm_codes: set = field(default_factory=set)
+    last_start_time: float = 0
 
 
 class DeviceMonitor:
@@ -61,6 +62,15 @@ class DeviceMonitor:
             _DeviceState(samples=deque(maxlen=self.config.history_size)),
         )
         self._validate_timestamp(state, sample.timestamp)
+        if (sample.control_state == 'running' and sample.control_updated_at
+                and sample.control_updated_at > state.last_start_time):
+            # A new start begins a new fault lifecycle even when the same alarm
+            # recurs before the next poll can observe a normal sample.
+            state.last_start_time = sample.control_updated_at
+            state.anomalies.clear()
+            state.samples.clear()
+            state.incident_id = None
+            state.incident_alarm_codes.clear()
         state.samples.append(sample)
 
         # 先清理过期状态，再把当前观测写回状态机，避免旧窗口影响本次触发。

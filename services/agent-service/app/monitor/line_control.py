@@ -278,7 +278,7 @@ class LineController:
                 self._unpersisted[event_id] = (device_id, reason)
                 return {**result, 'state': 'unreconciled'}
 
-    def confirm_and_restart(self, workorder_id, actor_id, feedback):
+    def confirm_and_restart(self, workorder_id, actor_id, feedback, *, manual_restart=False):
         order = self.ledger.call('get_workorder', {'workorder_id': workorder_id}).get('workorder') or {}
         if not actor_id or order.get('assignee') != actor_id:
             raise PermissionError('仅被派工维修人员可以确认维修')
@@ -286,6 +286,13 @@ class LineController:
             raise ValueError('现场检查工单不能确认维修或申请复机，请提交检查记录')
         if not str(feedback or '').strip():
             raise ValueError('请填写实际维修反馈')
+        if manual_restart is True and self.enabled():
+            completed = self.ledger.request('/internal/team/repair/confirm', {
+                'workorder_id': workorder_id, 'actor_id': actor_id,
+                'feedback': str(feedback).strip(), 'manual_restart': True})
+            control = self._restart_after_manual_confirmation(workorder_id, actor_id)
+            return {**completed, 'workorder': self.ledger.call('get_workorder', {
+                'workorder_id': workorder_id}).get('workorder'), 'machine_control': control}
         # 自动控制关闭时仍可保存本人维修确认；只读取恢复数据，不发送设备控制。
         if self.enabled():
             # 新的人工确认才触发待停机事件对账；绝不自动重试启动写操作。
@@ -313,6 +320,66 @@ class LineController:
         control = self.try_restart(workorder_id, actor_id)
         updated = self.ledger.call('get_workorder', {'workorder_id': workorder_id}).get('workorder')
         return {**completed, 'workorder': updated, 'machine_control': control}
+
+    def _restart_after_manual_confirmation(self, workorder_id, actor_id):
+        """Execute explicit virtual starts; normal monitoring handles later faults."""
+        if not self.enabled():
+            return {'state': 'blocked', 'reason': '人工确认直接启动仅适用于虚拟工厂'}
+        order = self.ledger.call('get_workorder', {'workorder_id': workorder_id}).get('workorder') or {}
+        if not actor_id or order.get('assignee') != actor_id or not _verified_completion(order):
+            raise PermissionError('仅被派工人员确认维修后可以启动')
+        line = self.ledger.status()
+        generation = line['generation']
+        last = next((cycle for cycle in reversed(line.get('completed_cycles') or [])
+                     if cycle.get('generation') == generation and cycle.get('restart_method') == 'manual_confirmation'
+                     and workorder_id in (cycle.get('workorder_ids') or [])), None)
+        if line['state'] == 'running' and last:
+            return {'state': 'running', 'already_running': True, 'restart_method': 'manual_confirmation'}
+        ids = sorted({str(d.get('device_id') or d.get('id') or '') for d in self.factory.devices()} - {''})
+        if not ids or order.get('device_id') not in ids:
+            return {'state': 'failed', 'reason': '工单设备不在模拟工厂设备目录中'}
+        claim = self.ledger.begin_restart(generation, manual_confirmation=True,
+                                         workorder_id=workorder_id, device_ids=ids)
+        if not claim.get('claimed'):
+            return {'state': 'blocked', 'reason': '整线正在执行启动或停止，请稍后再次确认'}
+        attempt = claim.get('restart_attempt', 1)
+        results = {}
+        try:
+            for device_id in ids:
+                latest = self.ledger.status()
+                if latest['generation'] != generation or latest['state'] != 'starting':
+                    raise ValueError('启动过程中出现新的故障报警')
+                command_id = 'manual-restart-%s-%s' % (generation, attempt)
+                claimed = self.ledger.claim_control(command_id, device_id, 'start').get('claimed')
+                if not claimed or not self._claim_local(command_id, device_id, 'start'):
+                    raise ValueError('启动指令已发送或结果未确认，请勿重复发送')
+                response = self.factory.control_device(device_id, 'start', '维修人员人工确认后启动', manual_confirmed=True)
+                if (not isinstance(response, dict) or response.get('ok') is not True
+                        or response.get('action') != 'start'
+                        or (response.get('device') or {}).get('device_id') != device_id):
+                    raise ValueError(device_id + '：模拟工厂未确认启动指令')
+                outcome = {'state': 'applied', 'device_id': device_id, 'action': 'start',
+                           'restart_method': 'manual_confirmation', 'response': response,
+                           'snapshot': response['device']}
+                self.ledger.record_device_control(command_id, device_id, 'start', outcome)
+                results[device_id] = outcome
+            final = self.ledger.finish_restart(generation, {'state': 'running', 'devices': results,
+                'restart_method': 'manual_confirmation', 'reason': '维修人员已人工确认，整线启动指令已执行'})
+            if final['generation'] != generation or final['state'] != 'running':
+                raise ValueError('启动过程中出现新的故障报警')
+            return {'state': 'running', 'devices': results, 'restart_method': 'manual_confirmation'}
+        except Exception as error:
+            # A failed command is not a successful start. Stop partial starts;
+            # repair metrics never decide whether the human-confirmed task is done.
+            stopped = {device_id: self._control('manual-rollback-%s-%s' % (generation, attempt),
+                       device_id, 'emergency_stop', '启动指令执行失败', persist=False) for device_id in ids}
+            result = {'state': 'failed', 'reason': str(error), 'devices': results, 'rollback': stopped,
+                      'restart_method': 'manual_confirmation'}
+            try:
+                self.ledger.finish_restart(generation, result)
+            except Exception:
+                result['state'] = 'unreconciled'
+            return result
 
     def try_restart(self, workorder_id, actor_id):
         return self._try_restart(workorder_id, actor_id)

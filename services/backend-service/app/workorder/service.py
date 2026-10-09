@@ -18,6 +18,7 @@ from ..team.service import TeamService
 from shared.repair_recovery import repair_checks
 from shared.technician_confirmation import confirmation_digest, trusted_technician_confirmation
 from shared.workorder_dispatch import validate_followup_order
+from shared.part_design_quality import SCOPE, design_evidence_is_complete
 
 
 def _quality_operation(method):
@@ -557,13 +558,42 @@ class BackendBusinessService:
                 return {**self._order_result(stored), 'inspection_result': {
                     'passed': passed, 'checks': checks, 'validation_findings': findings}}
 
-    def confirm_team_repair(self, workorder_id, actor_id, feedback, snapshot):
+    def confirm_team_repair(self, workorder_id, actor_id, feedback, snapshot, manual_restart=False):
         order = self._require(workorder_id)
         if (order.get('maintenance_plan_snapshot') or {}).get('plan_kind') == 'inspection':
             raise ValueError('现场检查工单不能提供维修确认或复机授权')
         tech = next((t for t in self.team.technicians() if t['user_id'] == actor_id), None)
         if not tech or order.get('assignee') != actor_id:
             raise PermissionError('仅被派工维修人员可以确认')
+        if manual_restart is True:
+            if os.getenv('FACTORY_CONTROL_MODE', '').lower() != 'virtual':
+                raise ValueError('人工确认直接启动仅适用于虚拟工厂')
+            if not isinstance(feedback, str) or not feedback.strip():
+                raise ValueError('请填写实际维修处理结果')
+            if order.get('status') not in {'in_progress', 'awaiting_verification', 'completed'}:
+                raise ValueError('工单必须已派发且尚未关闭')
+            if (order.get('repair_verification') or {}).get('phase') == 'manual_confirmation' and trusted_technician_confirmation(order):
+                return self._order_result(order, already_confirmed=True)
+            previous = order['status']
+            now = self._now()
+            actual_feedback = {'feedback': feedback.strip(), 'operator': actor_id}
+            receipt = {'schema_version': 2, 'receipt_id': 'TCF-' + uuid4().hex[:16].upper(),
+                       'source': 'backend_team_repair_confirmation',
+                       'confirmation_method': 'technician_feedback_direct_restart',
+                       **{key: str(order.get(key) or '') for key in ('workorder_id', 'device_id', 'event_id', 'plan_id')},
+                       'actor_id': actor_id, 'confirmed_at': now,
+                       'plan_snapshot_digest': confirmation_digest(order.get('maintenance_plan_snapshot') or {}),
+                       'diagnosis_snapshot_digest': confirmation_digest(order.get('diagnosis_snapshot') or {}),
+                       'feedback_digest': confirmation_digest(actual_feedback)}
+            order.update(status='completed', repair_feedback=actual_feedback,
+                         maintenance_confirmed_by=actor_id, technician_confirmation=receipt,
+                         repair_verification={'source': 'technician_confirmation', 'phase': 'manual_confirmation',
+                                              'confirmed': True, 'automatic_verification': False, 'confirmed_at': now},
+                         updated_at=now, completed_at=now)
+            self._record_event(order, 'manual_repair_confirmed', previous, 'completed', {
+                'repair_feedback': actual_feedback, 'technician_confirmation': receipt,
+                'repair_verification': order['repair_verification']})
+            return self._order_result(self.repository.update(order))
         checks = repair_checks(order.get('device_id'), snapshot, 'prestart', order=order)
         if not str(feedback).strip() or not all(checks.values()) or self._contains_untrusted_flag(snapshot):
             raise ValueError('维修反馈或设备恢复数据不满足预启动验证')
@@ -795,8 +825,13 @@ class BackendBusinessService:
             "batch_id": str(values.get("batch_id") or ""),
             "production_order_id": str(values.get("production_order_id") or ""),
             "inspection_type": str(values.get("inspection_type") or "part_quality"),
+            'comparison_scope': str(values.get('comparison_scope') or ''),
+            'design_reference': deepcopy(values.get('design_reference') or {}),
             'measurements': dict(values.get('measurements') or {}), 'specifications': dict(values.get('specifications') or {}),
             'device_id': str(values.get('device_id') or ''), 'task_id': str(values.get('task_id') or ''), 'trace_id': str(values.get('trace_id') or ''),
+            'device_name': str(values.get('device_name') or ''),
+            'line_id': str(values.get('line_id') or ''), 'line_name': str(values.get('line_name') or ''),
+            'part_recorded_at': str(values.get('part_recorded_at') or ''),
             'event_id': str(values.get('event_id') or ''),
             "score": values.get("score"),
             "result": result,
@@ -957,6 +992,12 @@ class BackendBusinessService:
             raise KeyError("质检记录不存在：%s" % check_id)
         if item.get("status") != "released":
             raise ValueError("只有 Release 后的质检记录才能 Close")
+        if item.get('comparison_scope') == SCOPE:
+            self._completed_quality_tasks(check_id)
+            if (item.get('reinspection') or {}).get('passed') is True:
+                self._validated_reinspection(item, str(item['reinspection'].get('reinspection_check_id') or ''))
+            elif not self._quality_record_is_trusted(item):
+                raise ValueError('图纸参数检验证据已失效，不能关闭质检任务')
         item["status"] = "closed"
         item["close_note"] = note
         item["updated_at"] = self._now()
@@ -997,6 +1038,11 @@ class BackendBusinessService:
         batch_id = str(item.get("batch_id") or "").strip()
         if not part_id or not batch_id or part_id != str(source.get("part_id") or source.get("target_id") or "").strip() or batch_id != str(source.get("batch_id") or "").strip():
             raise ValueError("复检记录必须属于同一零件和非空生产批次")
+        if item.get('comparison_scope') != source.get('comparison_scope') or (
+            item.get('comparison_scope') == SCOPE and
+            (item.get('design_reference') or {}).get('digest') != (source.get('design_reference') or {}).get('digest')
+        ):
+            raise ValueError('复检记录必须使用同一设计版本和检验范围')
         try:
             inspected_at = datetime.fromisoformat(str(source.get("created_at") or "").replace("Z", "+00:00"))
             completed_at = [datetime.fromisoformat(str(task["completed_at"]).replace("Z", "+00:00")) for task in tasks]
@@ -1051,6 +1097,8 @@ class BackendBusinessService:
         checks = values.get("quality_validation") or values.get("inspection_summary") or values.get("checks")
         if not isinstance(checks, Mapping):
             return False
+        if values.get('comparison_scope') == SCOPE:
+            return design_evidence_is_complete(values)
         required = ("dimensions", "appearance", "material", "function", "process")
         return all(
             isinstance(checks.get(key), Mapping)

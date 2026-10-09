@@ -1,4 +1,4 @@
-"""Project a saved, verified line restart into workorder reads without control writes."""
+"""Project a saved line restart into workorder reads without control writes."""
 from collections.abc import Mapping
 
 from app.clients.backend import BackendServiceError
@@ -8,8 +8,9 @@ from shared.technician_confirmation import trusted_technician_confirmation
 
 def _poststart_confirmed(order):
     verification = order.get('repair_verification') or {}
-    return (verification.get('phase') == 'poststart' and verification.get('passed') is True
-            and trusted_technician_confirmation(order))
+    return (trusted_technician_confirmation(order) and
+            (verification.get('phase') == 'manual_confirmation'
+             or verification.get('phase') == 'poststart' and verification.get('passed') is True))
 
 
 def _verified_devices(cycle):
@@ -20,6 +21,13 @@ def _verified_devices(cycle):
         if not isinstance(outcome, Mapping):
             return False
         sample = outcome.get('snapshot') or {}
+        if cycle.get('restart_method') == 'manual_confirmation':
+            response = outcome.get('response') or {}
+            if (outcome.get('state') != 'applied' or outcome.get('device_id') != device_id
+                    or response.get('ok') is not True or response.get('action') != 'start'
+                    or (response.get('device') or {}).get('device_id') != device_id):
+                return False
+            continue
         if (outcome.get('state') != 'verified' or outcome.get('device_id') != device_id
                 or sample.get('device_id') != device_id
                 or str(sample.get('status') or sample.get('control_state') or '').lower() not in RUNNING
@@ -45,15 +53,19 @@ def with_current_restart_results(orders, backend):
     for order in confirmed:
         cycle = next((c for c in reversed(line.get('completed_cycles') or [])
             if c.get('state') == 'running' and c.get('generation') == line.get('generation')
-            and order.get('event_id') in (c.get('event_ids') or [])
-            and any(f.get('event_id') == order.get('event_id') and f.get('device_id') == order.get('device_id')
-                    for f in c.get('faults') or [])
+            and (c.get('restart_method') == 'manual_confirmation' and order.get('workorder_id') in (c.get('workorder_ids') or [])
+                 or order.get('event_id') in (c.get('event_ids') or [])
+                 and any(f.get('event_id') == order.get('event_id') and f.get('device_id') == order.get('device_id')
+                         for f in c.get('faults') or []))
             and _verified_devices(c)), None)
         if cycle:
             updates[order['workorder_id']] = {
                 'state': 'running', 'source': 'persisted_line_restart',
                 'generation': line['generation'], 'cycle_id': cycle['cycle_id'],
-                'verified_at': cycle.get('restarted_at'),
             }
+            if cycle.get('restart_method') == 'manual_confirmation':
+                updates[order['workorder_id']].update(restart_method='manual_confirmation', restarted_at=cycle.get('restarted_at'))
+            else:
+                updates[order['workorder_id']]['verified_at'] = cycle.get('restarted_at')
     return [{**order, 'machine_control': updates[order['workorder_id']]}
             if order.get('workorder_id') in updates else order for order in orders]

@@ -65,6 +65,7 @@ class DeviceSample:
     metrics: Dict[str, Any] = field(default_factory=dict)
     metric_details: Dict[str, Any] = field(default_factory=dict)
     equipment_states: Dict[str, Any] = field(default_factory=dict)
+    control_updated_at: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为可 JSON 序列化的字典，供接口和前端展示使用。"""
@@ -87,6 +88,7 @@ class DeviceSample:
             "cycle_state_label": self.cycle_state_label,
             "control_state": self.control_state,
             "control_reason": self.control_reason,
+            "control_updated_at": self.control_updated_at,
             "health_score": self.health_score,
             "fault_evidence": dict(self.fault_evidence),
             "metrics": dict(self.metrics),

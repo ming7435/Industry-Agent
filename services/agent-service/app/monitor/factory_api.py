@@ -67,15 +67,21 @@ class FactoryApiClient:
             raise FactoryApiError("factory devices response must be a JSON array")
         return [item for item in result if isinstance(item, dict)]
 
-    def control_device(self, device_id: str, action: str, reason: str = "") -> Dict[str, Any]:
+    def control_device(self, device_id: str, action: str, reason: str = "", *, manual_confirmed: bool = False) -> Dict[str, Any]:
         """向指定工厂设备发送明确的启动或停止命令。
 
         是否接受命令以工厂服务为准。只有工厂接口返回 JSON 对象，
         且其中的 ``ok`` 为真，才将此次控制操作视为成功。
         """
 
+        values = {"action": str(action or "").strip().lower(), "reason": str(reason or "")}
+        if manual_confirmed is True:
+            import os
+            if os.getenv('FACTORY_CONTROL_MODE', '').lower() != 'virtual' or values['action'] != 'start':
+                raise FactoryApiError('manual start is only available in virtual control mode')
+            values['manual_confirmed'] = True
         payload = json.dumps(
-            {"action": str(action or "").strip().lower(), "reason": str(reason or "")},
+            values,
             ensure_ascii=False,
         ).encode("utf-8")
         request = Request(
@@ -206,6 +212,7 @@ class FactorySnapshotProvider:
             cycle_state_label=cycle_state_label(cycle_state),
             control_state=control_state,
             control_reason=control_reason,
+            control_updated_at=self._to_optional_number(monitor.get('control_updated_at') or device.get('control_updated_at')),
             health_score=self._to_optional_number(source_health),
             fault_evidence=fault_evidence,
             metrics=metrics,

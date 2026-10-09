@@ -46,6 +46,7 @@ function verificationText(value) {
   }
   if (verification.phase === "prestart") parts.push("开机前验证");
   if (verification.phase === "poststart") parts.push("开机后验证");
+  if (verification.phase === "manual_confirmation") parts.push("维修人员人工确认后直接启动");
   return parts.filter(Boolean).join("；");
 }
 
@@ -139,7 +140,7 @@ function lifecycleSections(source) {
     return match ? `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z` : '';
   };
   const timeline = [`故障停机开始：${time(cycle.started_at)}`, `停机确认：${time(cycle.stopped_at)}`,
-    `复机核验通过：${time(cycle.restarted_at)}`];
+    `${cycle.restart_method === 'manual_confirmation' ? '人工确认复机' : '复机核验通过'}：${time(cycle.restarted_at)}`];
   if (Number.isFinite(cycle.duration_seconds)) timeline.push(`停机处理时长：${cycle.duration_seconds} 秒`);
   timeline.push(`整线设备：${(cycle.device_ids || []).join('、') || '未记录'}`, `故障事件：${(cycle.event_ids || []).join('、') || '未记录'}`);
   const diagnosis = records('diagnosis').map(record => [record.device_id, record.event_id,

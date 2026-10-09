@@ -3,14 +3,16 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
-export async function centerFixture({ actor = null, snapshot = { devices: [] }, sample = { device_id: 'D-MOCK' } } = {}) {
+export async function centerFixture({ actor = null, snapshot = { devices: [] }, sample = { device_id: 'D-MOCK' }, fullApp = false } = {}) {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const { build } = await import(pathToFileURL(resolve(root, 'frontend/monitor-react/node_modules/esbuild/lib/main.js')));
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE_PATH
     ? pathToFileURL(process.env.PLAYWRIGHT_MODULE_PATH).href
     : 'playwright-core');
   const compiled = await build({
-    stdin: { resolveDir: resolve(root, 'frontend/monitor-react/src/app'), contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import {LogsWorkspace, ReportWorkspace, QualityWorkspace, MaintenancePlanWorkspace, WorkorderView, DiagnosisWorkspace} from './App.jsx'; const view=new URL(location.href).searchParams.get('view'); createRoot(document.getElementById('root')).render(React.createElement(({logs:LogsWorkspace,report:ReportWorkspace,quality:QualityWorkspace,maintenance:MaintenancePlanWorkspace,workorder:WorkorderView,diagnosis:DiagnosisWorkspace})[view],${JSON.stringify({ actor, snapshot, sample })}));` },
+    stdin: { resolveDir: resolve(root, 'frontend/monitor-react/src/app'), contents: fullApp
+      ? `import React from 'react'; import {createRoot} from 'react-dom/client'; import {App} from './App.jsx'; createRoot(document.getElementById('root')).render(React.createElement(App));`
+      : `import React from 'react'; import {createRoot} from 'react-dom/client'; import {LogsWorkspace, ReportWorkspace, QualityWorkspace, MaintenancePlanWorkspace, WorkorderView, DiagnosisWorkspace} from './App.jsx'; const view=new URL(location.href).searchParams.get('view'); createRoot(document.getElementById('root')).render(React.createElement(({logs:LogsWorkspace,report:ReportWorkspace,quality:QualityWorkspace,maintenance:MaintenancePlanWorkspace,workorder:WorkorderView,diagnosis:DiagnosisWorkspace})[view],${JSON.stringify({ actor, snapshot, sample })}));` },
     plugins: [{ name: 'center-components', setup(builder) { builder.onLoad({ filter: /[\\/]App\.jsx$/ }, async ({ path }) => ({ contents: `${await readFile(path, 'utf8')}\nexport {LogsWorkspace, ReportWorkspace, QualityWorkspace, MaintenancePlanWorkspace, WorkorderView, DiagnosisWorkspace};`, loader: 'jsx' })); } }],
     bundle: true, write: false, format: 'iife', platform: 'browser', loader: { '.css': 'empty', '.png': 'dataurl' }, define: { 'process.env.NODE_ENV': '"production"' },
   });

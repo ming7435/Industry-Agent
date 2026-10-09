@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from app.tools.registry import ToolRegistry
 from app.contracts import QualityResult
 from app.agents.base import BaseAgent
+from shared.part_design_quality import SCOPE
 
 from .graph import build_quality_graph
 from app.agents.base import trace_skill_node
@@ -56,6 +57,8 @@ class QualityAgent(BaseAgent):
                 ("process", "process_check"),
             )
         }
+        if part.get('comparison_scope') == SCOPE:
+            quality_validation = {'dimensions': dict(state.get('dimension_check') or {})}
         result_payload = {
             "inspection_type": "part_quality",
             "part_id": str(part.get("part_id") or request.get("part_id") or ""),
@@ -64,6 +67,10 @@ class QualityAgent(BaseAgent):
             "batch_id": str(part.get("batch_id") or request.get("batch_id") or ""),
             "production_order_id": str(part.get("production_order_id") or request.get("production_order_id") or ""),
             "device_id": str(part.get("device_id") or request.get("device_id") or ""),
+            "device_name": str(part.get("device_name") or ""),
+            "line_id": str(part.get("line_id") or ""),
+            "line_name": str(part.get("line_name") or ""),
+            "part_recorded_at": str(part.get("recorded_at") or ""),
             "inspection_items": list(decision.get("inspection_items") or []),
             "measurements": dict(part.get("measurements") or request.get("measurements") or {}),
             "specifications": dict(decision.get("specifications") or state.get("inspection_plan") or {}),
@@ -109,7 +116,7 @@ class QualityAgent(BaseAgent):
     def _evidence(state: Mapping[str, Any]) -> list[dict[str, Any]]:
         request = dict(state.get("request") or {})
         part = dict(state.get("part") or request.get("part") or {})
-        return [
+        evidence = [
             {
                 "type": "part_identity",
                 "part_id": part.get("part_id", ""),
@@ -124,10 +131,21 @@ class QualityAgent(BaseAgent):
             {"type": "function", **dict(state.get("function_check") or {})},
             {"type": "process", **dict(state.get("process_check") or {})},
         ]
+        if part.get('comparison_scope') == SCOPE:
+            return evidence[:2] + [{'type': 'design_reference', **dict(part.get('design_reference') or {})},
+                {'type': 'actual_measurements', 'source': part.get('source'), 'recorded_by': part.get('recorded_by'),
+                 'recorded_at': part.get('recorded_at'), 'measurements': dict(part.get('measurements') or {})}]
+        return evidence
 
     @staticmethod
     def _recommendation(decision: Mapping[str, Any]) -> str:
         status = str(decision.get("status") or "").lower()
+        if decision.get('comparison_scope') == SCOPE:
+            if status == 'pass':
+                return '生产后的实测参数与所选图纸版本数值一致；本次仅检验图纸参数，不代表材料、外观等其他项目已检测。'
+            if status == 'fail':
+                return '生产后零件参数与图纸不一致，请按差异项整改，并重新测量后复检。'
+            return '请补齐生产后实测值并重新检验，不会用图纸值代替实测值。'
         if status == "pass" and decision.get("passed") is True:
             return "零件质量检测合格，可进入入库或装配流程。"
         if status == "fail":

@@ -1,7 +1,8 @@
-"""Read-only proof of Backend-issued technician feedback and device verification.
+"""Read-only proof of Backend-issued technician feedback and confirmation.
 
 The public API never accepts this receipt. It is issued by Backend after its
-own actor and prestart checks and retained in the order's audit history.
+own actor checks and retained in the order's audit history. Manual virtual
+restarts record human confirmation separately from device verification.
 """
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -26,8 +27,10 @@ def trusted_technician_confirmation(order):
     verification = order.get('repair_verification')
     if not all(isinstance(value, Mapping) for value in (receipt, plan, feedback, verification)):
         return False
-    if (receipt.get('schema_version') != 1 or not receipt.get('receipt_id')
-            or receipt.get('confirmation_method') != 'technician_feedback'
+    manual = (receipt.get('schema_version') == 2
+              and receipt.get('confirmation_method') == 'technician_feedback_direct_restart')
+    if ((not manual and (receipt.get('schema_version') != 1
+                         or receipt.get('confirmation_method') != 'technician_feedback')) or not receipt.get('receipt_id')
             or receipt.get('source') != 'backend_team_repair_confirmation'
             or plan.get('plan_kind', 'repair') != 'repair'):
         return False
@@ -58,6 +61,12 @@ def trusted_technician_confirmation(order):
                and event['payload'].get('technician_confirmation') == receipt
                for event in events):
         return False
+    if manual:
+        return (verification.get('source') == 'technician_confirmation'
+                and verification.get('phase') == 'manual_confirmation'
+                and verification.get('confirmed') is True
+                and verification.get('automatic_verification') is False
+                and verification.get('confirmed_at') == receipt['confirmed_at'])
     phase = verification.get('phase')
     recovery, stored_checks = verification.get('device_recovery'), verification.get('checks')
     if (verification.get('passed') is not True or verification.get('source') != 'device_recovery'

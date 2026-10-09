@@ -75,6 +75,7 @@ def get_device_status(
         ),
         None,
     )
+    original_device = device
     monitor = payload.get("monitor") or {}
     if isinstance(monitor, Mapping) and str(monitor.get("device_id") or "") == normalized_device_id:
         merged: Dict[str, Any] = dict(device or {})
@@ -103,6 +104,11 @@ def get_device_status(
     parsed_alarm = AlarmCodeParser.parse(
         device.get("alarm_code") or device.get("alarm_message") or device.get("alarm")
     )
+    trust_sources = [payload, device]
+    if isinstance(original_device, Mapping):
+        trust_sources.append(original_device)
+    if isinstance(monitor, Mapping) and str(monitor.get('device_id') or '') == normalized_device_id:
+        trust_sources.append(monitor)
     return {
         "found": True,
         "success": True,
@@ -122,6 +128,10 @@ def get_device_status(
         "metric_details": dict(device.get("metric_details") or {}),
         "equipment_states": dict(device.get("equipment_states") or {}),
         "checked_at": _normalize_timestamp(checked_at),
+        "source_timestamp_provided": bool(checked_at),
+        "synthetic": any(item.get('synthetic') is True or item.get('is_synthetic') is True for item in trust_sources),
+        "degraded": any(item.get('degraded') is True for item in trust_sources),
+        "evidence_status": 'untrusted' if any(item.get('evidence_status') == 'untrusted' for item in trust_sources) else 'observed',
         "source": "plc-mcp",
     }
 

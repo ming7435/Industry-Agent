@@ -4,6 +4,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+from urllib.error import HTTPError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from app.api.team_auth import team_actor, require_assignee
@@ -13,11 +14,13 @@ from app.runtime.durable_store import PendingResultError
 from app.runtime.policy import RuntimePolicy
 from app.api.maintenance_plans import deleted_maintenance_plan_ids
 from app.clients.backend import BackendServiceError
+from shared.part_design_quality import SCOPE, build_design_reference
 
 
 class InspectionInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     part: dict[str, Any]
+    design_run_id: str = Field(default='', max_length=67)
 
 
 class SavedReportRequest(BaseModel):
@@ -122,6 +125,28 @@ def build_business_return_router(runtime, event_results, require_write_auth):
             raise HTTPException(result['http_status'],{'message':result['message'],'execution_started':False})
         return result
 
+    @router.get('/api/quality/designs/{run_id}', dependencies=[Depends(require_write_auth)])
+    def get_inspection_design(run_id: str, request: Request):
+        from app.agents.cad.modeling_api import get_freecad_run_record
+        try:
+            reference = build_design_reference(get_freecad_run_record(request, run_id))
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from None
+        return {'design_reference': reference}
+
+    @router.get('/api/quality/batches/{batch_id}')
+    def get_batch_quality(batch_id: str, request: Request):
+        team_actor(request)
+        if not batch_id.strip() or len(batch_id) > 256:
+            raise HTTPException(422, '请提供明确的生产批次')
+        try:
+            from app.agents.quality.batch_evidence import enrich_batch_report
+            report = runtime.container.registry.execute('get_batch_quality', {'batch_id': batch_id.strip()},
+                context={'agent': 'runtime', 'step': 'read_batch_quality'})
+            return enrich_batch_report(report, base_url=runtime.container.registry.base_url)
+        except Exception:
+            raise HTTPException(503, '批次统计暂不可用，请检查 Backend 连接；不会默认显示100%或认定机器故障') from None
+
     @router.get('/api/quality/parts/{part_id}/input')
     def get_inspection_input(part_id: str, request: Request):
         team_actor(request)
@@ -135,10 +160,38 @@ def build_business_return_router(runtime, event_results, require_write_auth):
         actor = team_actor(request)
         if body.part.get('part_id') and body.part['part_id'] != part_id:
             raise HTTPException(422, '录入数据的零件编号与目标不一致')
+        if {'design_reference', 'comparison_scope'} & set(body.part):
+            raise HTTPException(422, '图纸基准只能从生产建模的服务端版本读取，不能由客户端声明')
         registry = runtime.container.registry
+        part = {**body.part, 'part_id': part_id}
+        if body.design_run_id:
+            from app.agents.cad.modeling_api import get_freecad_run_record
+            try:
+                record = get_freecad_run_record(request, body.design_run_id)
+            except HTTPException as error:
+                if error.status_code != 404:
+                    raise
+                # 已绑定的长期记录不依赖临时 CAD 缓存存活，不能用此分支绑定新的版本。
+                try:
+                    stored = registry.execute('get_production_part', {'part_id': part_id})
+                except Exception:
+                    raise HTTPException(503, '已保存的图纸版本暂无法核对') from None
+                record = (stored.get('part') or {}).get('design_reference') or {}
+                if stored.get('identity_verified') is not True or record.get('run_id') != body.design_run_id:
+                    raise error
+            try:
+                reference = build_design_reference(record)
+            except ValueError as error:
+                raise HTTPException(409, str(error)) from None
+            part.update(comparison_scope=SCOPE, design_reference=reference)
         try:
-            return registry.execute('register_production_part', {'part':{**body.part, 'part_id':part_id}, 'operator':actor['user_id']},
+            return registry.execute('register_production_part', {'part':part, 'operator':actor['user_id']},
                                     context={'agent':'runtime','step':'record_inspection_input','task_id':'INPUT-' + uuid4().hex,'trace_id':'INPUT-' + uuid4().hex})
+        except (BackendServiceError, HTTPError) as error:
+            code = getattr(error, 'status_code', None) or getattr(error, 'code', None)
+            if code in {409, 422}:
+                raise HTTPException(code, '保存被业务规则拒绝，请核对数据；同一生产零件不能更换图纸版本，另一件零件或不同设计请使用新的零件编号') from None
+            raise HTTPException(502, '质检数据保存失败，请检查 Backend 连接；未执行检测，勿反复提交') from None
         except Exception:
             raise HTTPException(502, '质检数据保存失败，请检查 Backend 连接或数据格式；未执行检测') from None
 

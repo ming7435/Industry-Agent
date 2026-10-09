@@ -96,13 +96,21 @@ class LineControlRepository:
             return dict(line)
         return self._mutate(update)
 
-    def begin_restart(self, generation):
+    def begin_restart(self, generation, manual_confirmation=False, workorder_id='', device_ids=None):
         def update(line):
             rollback = line.get('rollback') or {}
             safe_retry = line['state'] == 'failed' and bool(rollback) and all(v.get('state') == 'verified' for v in rollback.values())
-            if line['generation'] != generation or (line['state'] != 'stopped' and not safe_retry):
+            manual = manual_confirmation is True and bool(workorder_id) and bool(device_ids)
+            allowed = line['state'] not in {'starting', 'stopping'} if manual else line['state'] == 'stopped' or safe_retry
+            if line['generation'] != generation or not allowed:
                 return {'claimed': False, **line}
             self._ensure_existing_cycle(line)
+            if manual:
+                if not line.get('active_cycle'):
+                    line['active_cycle'] = {'cycle_id': 'CYCLE-MANUAL-' + workorder_id + '-' + str(line.get('restart_attempt', 0) + 1),
+                                            'started_at': time.time(), 'device_ids': sorted(set(device_ids))}
+                line['active_cycle'].update(restart_method='manual_confirmation', workorder_ids=[workorder_id],
+                                            device_ids=sorted(set(device_ids)))
             line['state'] = 'starting'
             line['restart_attempt'] = line.get('restart_attempt', 0) + 1
             return {'claimed': True, **line}

@@ -26,6 +26,26 @@ PREFIX = "/api/cad/buildcad"
 COOKIE = "buildcad_oauth"
 RUN_TTL_SECONDS = 86400
 RUN_DEADLINE_SECONDS = 300
+_FREECAD_STORE_LOCK = Lock()
+
+
+def get_freecad_run_record(request: Request, run_id: str):
+    """只读服务端建模版本，供质检绑定；不触发模型或 CAD 工具调用。"""
+    if not re.fullmatch(r'FC-[a-f0-9]{64}', run_id):
+        raise HTTPException(404, '建模版本不存在或已过期')
+    try:
+        with _FREECAD_STORE_LOCK:
+            if getattr(request.app.state, 'freecad_run_store', None) is None:
+                request.app.state.freecad_run_store = FreeCADRunStore()
+            storage = request.app.state.freecad_run_store
+        record = storage.get(run_id)
+    except Exception:
+        raise HTTPException(503, '建模版本暂无法读取，请检查 Redis；不会重新执行建模') from None
+    if record is None:
+        raise HTTPException(404, '建模版本不存在或已过期')
+    if record.get('run_id') != run_id:
+        raise HTTPException(409, '建模记录的设计版本不一致，不能作为检验依据')
+    return record
 
 
 class StrictRequest(BaseModel):
@@ -112,7 +132,7 @@ def _public_record(record):
 
 def build_modeling_router(require_auth, trace=None):
     router = APIRouter(prefix=PREFIX, tags=["BuildCAD"], dependencies=[Depends(require_auth)])
-    store_lock = Lock()
+    store_lock = _FREECAD_STORE_LOCK
     slots = BoundedSemaphore(2)
 
     def store(request):
@@ -352,12 +372,7 @@ def build_freecad_router(require_auth, trace=None):
                 pass
 
     def lookup(request, run_id):
-        if not re.fullmatch(r"FC-[a-f0-9]{64}", run_id):
-            raise HTTPException(404, detail="FreeCAD 临时运行记录不存在或已过期。")
-        record = read(store(request), run_id)
-        if record is None:
-            raise HTTPException(404, detail="FreeCAD 临时运行记录不存在或已过期。")
-        return record
+        return get_freecad_run_record(request, run_id)
 
     def execute_run(storage, record, client_factory, model_factory):
         client = None

@@ -66,8 +66,8 @@ class BackendServiceClient:
     def set_stop_result(self, generation, result):
         return self.line_call('set_stop_result', generation=generation, result=result)
 
-    def begin_restart(self, generation):
-        return self.line_call('begin_restart', generation=generation)
+    def begin_restart(self, generation, **options):
+        return self.line_call('begin_restart', generation=generation, **options)
 
     def finish_restart(self, generation, result):
         return self.line_call('finish_restart', generation=generation, result=result)
@@ -85,6 +85,9 @@ class BackendServiceClient:
 
     def get_quality_check(self, check_id: str) -> dict[str, Any] | None:
         return self.call("get_quality_check", {"check_id": check_id}).get("quality_check")
+
+    def get_batch_quality(self, batch_id: str) -> dict[str, Any]:
+        return self.call('get_batch_quality', {'batch_id': batch_id})
 
     def submit_appeal(self, check_id: str, payload: Mapping[str, Any], operator: str = "") -> dict[str, Any]:
         return self.call("submit_quality_appeal", {"check_id": check_id, **dict(payload), "operator": operator})

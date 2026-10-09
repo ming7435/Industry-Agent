@@ -3,10 +3,43 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+from shared.part_design_quality import SCOPE, build_design_reference, compare_design_parameters
 
 
 class QualityValidator:
     """按生产零件的五类质量门禁形成确定性 PASS/FAIL。"""
+
+    @classmethod
+    def validate_design(cls, part: Mapping[str, Any], check: Mapping[str, Any]) -> dict[str, Any]:
+        """仅核对绑定图纸的零件参数；重新验证工具证据与实测记录一致。"""
+        try:
+            reference = build_design_reference(part.get('design_reference') or {})
+            expected = compare_design_parameters(reference, part.get('measurements'))
+        except (ValueError, TypeError):
+            return {'passed': False, 'qualified': False, 'status': 'review', 'comparison_scope': SCOPE,
+                    'findings': ['生产零件尚未绑定有效的图纸版本'], 'failed_checks': ['design_missing']}
+        trusted = (check.get('success') is True and check.get('synthetic') is not True and check.get('degraded') is not True
+            and check.get('design_digest') == reference['digest'] and check.get('items') == expected['items']
+            and check.get('status') == expected['status'] and check.get('passed') is expected['passed']
+            and check.get('sufficient_data') is expected['sufficient_data'] and bool(part.get('part_id')))
+        status = expected['status'] if trusted else 'review'
+        passed = status == 'pass'
+        findings = list(expected['findings'])
+        if not trusted:
+            findings.append('参数检测返回体与保存的图纸或实测值不一致，不能判定通过')
+        elif passed:
+            findings.append('所有已定义的生产零件参数与该图纸版本数值一致')
+        else:
+            findings.extend(row['name'] + ('：缺少有效实测值' if row['actual'] is None else '：与图纸不一致')
+                            for row in expected['items'] if not row['passed'])
+        return {'inspection_type': 'part_quality', 'comparison_scope': SCOPE, 'design_reference': reference,
+            'passed': passed, 'qualified': passed, 'status': status,
+            'quality_grade': {'pass': '参数一致', 'fail': '参数不一致', 'not_tested': '未检测',
+                             'insufficient_data': '数据不足', 'review': '待复核'}[status],
+            'inspection_items': expected['items'] if trusted else [{**row, 'passed': False, 'status': 'review',
+                'evidence_status': 'untrusted'} for row in expected['items']], 'defects': expected['defects'], 'findings': findings,
+            'failed_checks': [] if passed else ['design_parameters_not_verified'],
+            'specifications': {row['key']: {'expected': row['expected'], 'unit': row['unit']} for row in reference['parameters']}}
 
     @classmethod
     def validate_part(

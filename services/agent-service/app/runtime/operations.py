@@ -128,7 +128,12 @@ class RuntimeOperations:
                     'evidence': list(result.get('evidence') or []),
                     'measurements': dict(result.get('measurements') or {}),
                     'specifications': dict(result.get('specifications') or {}),
+                    'comparison_scope': str(result.get('comparison_scope') or ''),
+                    'design_reference': dict(result.get('design_reference') or {}),
                     'device_id': str(result.get('device_id') or values.get('device_id') or ''),
+                    'device_name': str(result.get('device_name') or ''),
+                    'line_id': str(result.get('line_id') or ''), 'line_name': str(result.get('line_name') or ''),
+                    'part_recorded_at': str(result.get('part_recorded_at') or ''),
                     'workorder_id': str(values.get('workorder_id') or ''),
                     'event_id': str(values.get('event_id') or ''),
                     'task_id': str(state.get('task_id') or ''), 'trace_id': str(state.get('trace_id') or ''),
@@ -146,6 +151,19 @@ class RuntimeOperations:
                 check = self.closure_service.record_part_quality(record_payload,operator=str(values.get('reviewer') or 'quality-agent'))
             result["quality_check_id"] = check["quality_check_id"]
             result['quality_check'] = check
+            if result.get('batch_id') and hasattr(self.closure_service, 'get_batch_quality'):
+                try:
+                    batch = self.closure_service.get_batch_quality(str(result['batch_id']))
+                    if batch.get('success') is not True or not isinstance(batch.get('batch_quality'), Mapping):
+                        raise ValueError('Invalid batch statistics response')
+                    from app.agents.quality.batch_evidence import enrich_batch_report
+                    batch = enrich_batch_report(batch, base_url=getattr(self.factory_client, 'base_url', None))
+                    result.update(batch_quality=batch['batch_quality'], problem_analysis=batch.get('problem_analysis') or {})
+                except Exception:
+                    # Inspection is already committed. A read failure must never invite resubmission.
+                    result['batch_quality'] = {'batch_id': result['batch_id'], 'status': 'unavailable',
+                        'rate_percent': None, 'error': '本次检测已保存；批次统计暂不可用，请刷新查询，不要重复提交检测。'}
+                    result['problem_analysis'] = {'status': 'unavailable', 'note': '批次问题分析暂不可用'}
             if self.report_harness is not None and not self.lifecycle_reporting:
                 try:
                     result['report'] = _serialize_agent_result(self.report_harness.execute_agent({
@@ -169,7 +187,7 @@ class RuntimeOperations:
             if isinstance(feedback, Mapping):
                 feedback = feedback.get('feedback') or feedback.get('result') or ''
             controller = self.repair_controller or LineController(self.factory_client or FactoryApiClient(os.getenv('FACTORY_API_BASE_URL', 'http://127.0.0.1:4529')), BackendServiceClient())
-            return controller.confirm_and_restart(str(values.get('workorder_id') or ''), actor_id, str(feedback))
+            return controller.confirm_and_restart(str(values.get('workorder_id') or ''), actor_id, str(feedback), manual_restart=True)
         values["action"] = action
         if action == "create" and not values.get("maintenance_plan"):
             values["maintenance_plan"] = {

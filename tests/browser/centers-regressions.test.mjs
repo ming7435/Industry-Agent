@@ -9,6 +9,7 @@ after(async () => { await fixture?.close(); });
 const run = id => ({ run_id: `fault:${id}`, label: `Audit Run ${id}`, run_type: 'fault', status: 'running', trace_id: `TRACE-${id}`, trace_ids: [`TRACE-${id}`], task_ids: [`TASK-${id}`], event_count: 1, phases: [] });
 const agent = id => ({ type: 'agent', event: 'agent_completed', name: `AuditAgent${id}`, agent: `AuditAgent${id}`, agent_run_id: `AGENT-${id}`, trace_id: `TRACE-${id}`, task_id: `TASK-${id}`, output: { summary: `Result-${id}` } });
 
+
 test('Memory 检索的完整生命周期和负责人明细在日志页可见', async () => {
   const context = await fixture.browser.newContext();
   const page = await context.newPage();
@@ -79,62 +80,6 @@ test('慢日志轮询只保留一个在途索引请求且不读取全库正文�
   } finally { await context.close(); }
 });
 
-test('质检切换零件后旧检测不能覆盖当前结果和历史', async () => {
-  const context = await fixture.browser.newContext();
-  const page = await context.newPage();
-  const started = deferred();
-  let held;
-  const a = { quality_check_id: 'QC-A', target_id: 'PART-001', part_id: 'PART-001', status: 'passed', result: 'passed', findings: ['ONLY-A'] };
-  const b = { quality_check_id: 'QC-B', target_id: 'PART-B', part_id: 'PART-B', status: 'failed', result: 'failed', findings: ['ONLY-B'] };
-  try {
-    await page.route('**/api/**', route => {
-      const url = new URL(route.request().url());
-      if (url.pathname === '/api/quality/parts/PART-001') { held = route; started.resolve(); return; }
-      if (url.pathname === '/api/v1/quality/checks') return respond(route, { items: [url.searchParams.get('target_id') === 'PART-B' ? b : a] });
-      return respond(route, { items: [] });
-    });
-    await page.goto(`${fixture.base}/?view=quality`);
-    await page.getByRole('button', { name: /QC-A/ }).waitFor();
-    await page.getByRole('button', { name: '执行质量检测', exact: true }).click();
-    await started.promise;
-    await page.locator('#quality-part-id').fill('PART-B');
-    await page.getByRole('button', { name: /QC-B/ }).waitFor();
-    await page.getByRole('button', { name: /QC-B/ }).click();
-    await respond(held, a);
-    await page.waitForLoadState('networkidle');
-    assert.equal(await page.locator('#quality-part-id').inputValue(), 'PART-B');
-    assert.equal(await page.getByRole('button', { name: /QC-A/ }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: /QC-B/ }).getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.getByText('ONLY-A', { exact: true }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: '校验并放行', exact: true }).count(), 0);
-  } finally { await context.close(); }
-});
-
-test('质检切换历史记录后旧检测不能改变当前选择', async () => {
-  const context = await fixture.browser.newContext();
-  const page = await context.newPage();
-  const started = deferred();
-  let held;
-  const check = id => ({ quality_check_id: `QC-${id}`, target_id: 'PART-001', status: 'failed', result: 'failed', findings: [`ONLY-${id}`] });
-  try {
-    await page.route('**/api/**', route => {
-      const url = new URL(route.request().url());
-      if (url.pathname === '/api/quality/parts/PART-001') { held = route; started.resolve(); return; }
-      if (url.pathname === '/api/v1/quality/checks') return respond(route, { items: [check('A'), check('B')] });
-      return respond(route, { items: [] });
-    });
-    await page.goto(`${fixture.base}/?view=quality`);
-    await page.getByRole('button', { name: /QC-A/ }).click();
-    await page.getByRole('button', { name: '执行质量检测', exact: true }).click();
-    await started.promise;
-    await page.getByRole('button', { name: /QC-B/ }).click();
-    await respond(held, check('NEW'));
-    await page.waitForLoadState('networkidle');
-    assert.equal(await page.getByRole('button', { name: /QC-B/ }).getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.getByText('ONLY-NEW', { exact: true }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: '执行质量检测', exact: true }).isEnabled(), true);
-  } finally { await context.close(); }
-});
 
 test('报告显示完整性和所有校验缺失原因', async () => {
   const context = await fixture.browser.newContext();

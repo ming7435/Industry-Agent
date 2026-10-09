@@ -10,6 +10,7 @@ from app.skills import get_skill_registry
 from app.agents.base import chain_nodes, prepare_skill_node, result_node, trace_skill_node
 from .schemas import QualityQuery, QualityWorkflowState
 from .validator import QualityValidator
+from shared.part_design_quality import SCOPE
 
 
 def initialize(state: QualityWorkflowState) -> Dict[str, Any]:
@@ -63,6 +64,14 @@ def load_part(state: QualityWorkflowState) -> Dict[str, Any]:
     )
     if not part or not trusted or not identity_matches:
         return {"part": {}, "validation_findings": ["生产零件身份或数据来源未核实，不能判定质量合格"], "route": "fallback"}
+    if (request.get('production_context') or {}).get('comparison_scope') == SCOPE and part.get('comparison_scope') != SCOPE:
+        return {'part': {}, 'validation_findings': ['请先选择生产建模的图纸版本，保存生产后实测值再检测'], 'route': 'fallback'}
+    context = request.get('production_context') or {}
+    reference = part.get('design_reference') or {}
+    expected = {'expected_design_run_id': reference.get('run_id'), 'expected_design_digest': reference.get('digest'),
+                'expected_recorded_at': part.get('recorded_at')}
+    if any(context.get(key) and context[key] != value for key, value in expected.items()):
+        return {'part': {}, 'validation_findings': ['当前图纸版本或实测记录已改变，请重新读取并保存后检测'], 'route': 'fallback'}
     return {"part": part, "route": "load_inspection_plan"}
 
 
@@ -119,6 +128,9 @@ def inspect_process(state: QualityWorkflowState) -> Dict[str, Any]:
 
 
 def validate_part(state: QualityWorkflowState) -> Dict[str, Any]:
+    if (state.get('part') or {}).get('comparison_scope') == SCOPE:
+        decision = QualityValidator.validate_design(state['part'], state.get('dimension_check') or {})
+        return {'decision': decision, 'validation_findings': list(decision.get('findings') or [])}
     decision = QualityValidator.validate_part(
         state.get("part") or {},
         state.get("inspection_plan") or {},
@@ -166,9 +178,15 @@ def build_quality_graph():
     ):
         steps[name] = trace_skill_node("quality", name, node, skill_step=node_skill_steps.get(name, name))
     workflow.add_node("load_input", chain_nodes(steps["load_part"], steps["load_inspection_plan"], stop_routes=("fallback",)))
-    workflow.add_node("inspect", chain_nodes(*(steps[name] for name in (
+    legacy_inspection = chain_nodes(*(steps[name] for name in (
         "inspect_dimensions", "inspect_appearance", "inspect_material", "inspect_function", "inspect_process",
-    ))))
+    )))
+    def inspect(state):
+        # 分支由已核实的生产零件记录决定，客户端不能把五项检验改成只检尺寸。
+        if (state.get('part') or {}).get('comparison_scope') == SCOPE:
+            return steps['inspect_dimensions'](state)
+        return legacy_inspection(state)
+    workflow.add_node('inspect', inspect)
     workflow.add_node("validate_part", steps["validate_part"])
     workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
     workflow.add_edge(START, "prepare")

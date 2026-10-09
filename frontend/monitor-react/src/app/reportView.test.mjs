@@ -13,6 +13,19 @@ function completeness(report) {
   return reportView.reportCompleteness(report);
 }
 
+test('人工确认启动记录不会展示为自动核验通过', () => {
+  const shown = reportView.buildReportDisplaySections({
+    repair_verification: {phase: 'manual_confirmation', confirmed: true, automatic_verification: false},
+  });
+  assert.match(section(shown, '维修复核').body, /人工确认后直接启动/);
+  assert.doesNotMatch(section(shown, '维修复核').body, /核验通过|开机后复核/);
+  const lifecycle = reportView.buildReportDisplaySections({
+    lifecycle: {restart_method: 'manual_confirmation', restarted_at: '2026-10-08T01:05:00Z', device_ids: ['M1'], event_ids: ['E1']},
+  });
+  assert.match(section(lifecycle, '停机到复机').body, /人工确认复机/);
+  assert.doesNotMatch(section(lifecycle, '停机到复机').body, /复机核验通过/);
+});
+
 test('统一报告展示停机复机时间和所有设备的四个业务章节', () => {
   const shown = reportView.buildReportDisplaySections({
     lifecycle: {started_at: '2026-10-08T01:00:00Z', stopped_at: '2026-10-08T01:00:02Z',

@@ -66,7 +66,8 @@ class LifecycleReports:
         else:
             identities = {(f['event_id'], f['device_id']) for f in cycle['faults']}
             orders = [deepcopy(o) for o in self.business.repository.list()
-                      if (o.get('event_id'), o.get('device_id')) in identities]
+                      if (o.get('event_id'), o.get('device_id')) in identities
+                      or o.get('workorder_id') in (cycle.get('workorder_ids') or [])]
             orders.sort(key=lambda o: o['workorder_id'])
             diagnoses = [{'device_id': o['device_id'], 'event_id': o['event_id'], **o['diagnosis_snapshot'], 'workorder_id': o['workorder_id']}
                          for o in orders if o.get('diagnosis_snapshot')]
@@ -131,9 +132,10 @@ class LifecycleReports:
                 record = order.get(key) or {}
                 if any(record.get(field) and record[field] != order.get(field) for field in ('event_id', 'device_id')):
                     findings.append(order['workorder_id'] + '关联记录的设备或故障事件不一致')
+        manual = cycle.get('restart_method') == 'manual_confirmation'
         report.update(status='incomplete' if findings else 'completed', validation_findings=findings,
-                      stop_reason='restart_verified',
-                      summary='本次停机处理已完成，整线复机核验通过。已汇总 %s 张工单的智能诊断、维修方案及处理检查记录；%s。' % (
+                      stop_reason='restart_confirmed' if manual else 'restart_verified',
+                      summary=('本次停机处理已完成，维修人员人工确认后整线启动指令已执行。' if manual else '本次停机处理已完成，整线复机核验通过。') + '已汇总 %s 张工单的智能诊断、维修方案及处理检查记录；%s。' % (
                           len(orders), quality['summary']))
         return report
 

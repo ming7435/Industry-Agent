@@ -14,10 +14,16 @@ def create_router(get_service):
         if operation not in allowed:
             raise HTTPException(404, '未知账本操作')
         try:
+            if operation == 'begin_restart' and body.get('manual_confirmation') is True:
+                import os
+                from shared.technician_confirmation import trusted_technician_confirmation
+                order = get_service().repository.get(str(body.get('workorder_id') or '')) or {}
+                if os.getenv('FACTORY_CONTROL_MODE', '').lower() != 'virtual' or not trusted_technician_confirmation(order):
+                    raise ValueError('直接启动必须来自虚拟工厂中的维修人员确认')
             ledger = LineControlRepository(get_service().team.repository)
             result = getattr(ledger, operation)(**body)
             if operation == 'finish_restart' and result.get('state') == 'running' and result.get('generation') == body.get('generation'):
-                # 控制结果先持久化；报告失败不会改变已核验通过的复机结果。
+                # 控制结果先持久化；报告失败不会改变已执行的复机结果。
                 try:
                     get_service().sync_lifecycle_reports()
                 except Exception:

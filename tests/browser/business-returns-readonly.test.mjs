@@ -20,12 +20,18 @@ try {
   });
   for (const [view, heading, label] of [
     ['maintenance', '选择维修方案', '维修方案'], ['report', '报告中心', '从已有业务记录生成报告'],
-    ['quality', '生产零件质量检测', '实测数据与检验规格（需登录）'], ['logs', '日志系统', '运行记录'],
+    ['quality', null, null], ['logs', '日志系统', '运行记录'],
   ]) {
     await page.goto(`http://127.0.0.1:8001/?view=${view}`, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('heading', { name: heading, exact: true }).waitFor();
-    if (view === 'quality') await page.locator('.quality-input-panel summary').waitFor();
-    else await page.getByText(label, { exact: false }).first().waitFor();
+    if (view === 'quality') {
+      const workspace = page.getByRole('region', { name: '质检系统', exact: true });
+      await workspace.waitFor({ state: 'attached' });
+      assert.equal((await workspace.textContent()).trim(), '');
+      await page.getByRole('button', { name: '质检系统', exact: true }).waitFor();
+    } else {
+      await page.getByRole('heading', { name: heading, exact: true }).waitFor();
+      await page.getByText(label, { exact: false }).first().waitFor();
+    }
     if (view === 'report') await page.locator('.report-list-select').first().waitFor();
     if (view === 'maintenance') await page.locator('.maintenance-plan-list-row').first().waitFor();
     await page.screenshot({ path: `${output}/${view}.png`, fullPage: false });

@@ -6,6 +6,7 @@ import math
 from datetime import datetime, timezone
 from copy import deepcopy
 from typing import Any, Mapping
+from shared.part_design_quality import SCOPE, build_design_reference, compare_design_parameters
 
 
 class PartInspectionService:
@@ -32,6 +33,13 @@ class PartInspectionService:
         }
 
     def call(self, operation: str, **arguments: Any) -> dict[str, Any]:
+        if operation == 'get_batch_quality':
+            if self.repository is None:
+                raise ValueError('批次统计需要正式业务存储，不使用演示数据')
+            from .batch_analysis import build_batch_report
+            with self.repository.quality_transaction():
+                return build_batch_report(arguments.get('batch_id'), self.repository.list_records('production_part'),
+                                          self.repository.list_records('quality'), self)
         if operation == 'register_production_part':
             if self.repository is None:
                 raise ValueError('正式质检数据存储未配置')
@@ -41,14 +49,32 @@ class PartInspectionService:
                 raise ValueError('录入必须有登录人员和零件编号')
             # 保存原始观测和设计规格，不接受用户宣称 passed 或 identity_verified。
             allowed = ('part_id', 'part_no', 'part_name', 'batch_id', 'production_order_id', 'device_id',
-                       'measurements', 'specifications', 'appearance', 'material', 'function', 'process')
+                       'measurements', 'specifications', 'appearance', 'material', 'function', 'process',
+                       'comparison_scope', 'design_reference', 'device_name', 'line_id', 'line_name')
             item = {key: supplied[key] for key in allowed if key in supplied}
+            for key in ('part_id', 'part_no', 'part_name', 'batch_id', 'production_order_id', 'device_id', 'device_name', 'line_id', 'line_name'):
+                if key in item:
+                    if not isinstance(item[key], str) or len(item[key]) > 256:
+                        raise ValueError('%s 必须是长度不超过256的文本' % key)
+                    item[key] = item[key].strip()
             for key in ('measurements', 'specifications', 'appearance', 'material', 'function', 'process'):
                 if not isinstance(item.get(key, {}), Mapping):
                     raise ValueError('%s 必须是检测数据对象' % key)
             item.update(source='manual-inspection', synthetic=False, degraded=False, recorded_by=operator,
                         recorded_at=datetime.now(timezone.utc).isoformat())
-            self.repository.save_record('production_part', str(item['part_id']), item)
+            with self.repository.production_part_transaction(str(item['part_id'])) as previous:
+                reference = item.get('design_reference') or previous.get('design_reference')
+                if reference:
+                    reference = build_design_reference(reference)
+                    old = previous.get('design_reference')
+                    if old and build_design_reference(old)['digest'] != reference['digest']:
+                        raise ValueError('同一生产零件不能更换设计版本，请使用新的生产零件编号')
+                    item.update(comparison_scope=SCOPE, design_reference=reference,
+                                specifications={parameter['key']: {'expected': parameter['expected'], 'unit': parameter['unit']}
+                                                for parameter in reference['parameters']})
+                elif item.get('comparison_scope') == SCOPE:
+                    raise ValueError('缺少生产建模设计版本')
+                self.repository.save_record('production_part', str(item['part_id']), item)
             return {'success': True, 'part': item, 'source': 'manual-inspection'}
         if operation == "get_production_part":
             supplied = dict(arguments.get("part") or {})
@@ -77,6 +103,8 @@ class PartInspectionService:
                 specifications = dict(found.get("specifications") or {})
             return {"success": bool(specifications), "found": bool(specifications), "specifications": specifications, "source": "backend-qms"}
         if operation == "inspect_part_dimensions":
+            if part.get('comparison_scope') == SCOPE:
+                return compare_design_parameters(part.get('design_reference'), part.get('measurements'))
             actual = dict(arguments.get("measurements") or part.get("measurements") or {})
             items = []
             for key, rule in specifications.items():
