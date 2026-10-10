@@ -1,3 +1,4 @@
+import {reportFieldLabels, reportValueLabels} from './reportFields.mjs';
 import {localizeIncidentText} from './incidentIdentity.mjs';
 
 function textOf(value) {
@@ -20,6 +21,59 @@ function listOf(value, keys = []) {
 
 function mapping(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+export function buildReportArticle(report = {}) {
+  if (typeof report.article_text === 'string' && report.article_text.trim()) return report.article_text.trim();
+  const source = mapping(report.sections);
+  const records = name => Array.isArray(source[name]?.records) ? source[name].records : [source[name] || {}];
+  const orders = records('workorder'), diagnoses = records('diagnosis'), plans = records('maintenance_plan');
+  const cycle = mapping(source.lifecycle);
+  const clip = (value, limit) => {
+    const chars = [...String(value || '').replace(/\s+/g, ' ').trim().replace(/[。；，]+$/, '')];
+    return chars.length <= limit ? chars.join('') : chars.slice(0, limit - 1).join('') + '…';
+  };
+  const concise = buildConciseReportSections(report);
+  const diagnosis = diagnoses.map(textOf).filter(Boolean).join('；') || concise.find(s => s.title === '智能诊断')?.body;
+  const plan = plans.flatMap(p => listOf(p, ['repair_steps', 'steps', 'checks'])).join('、') || concise.find(s => s.title === '维修方案')?.body;
+  const device = orders[0]?.device_id || diagnoses[0]?.device_id || '相关设备';
+  const first = `本次报告汇总${clip(device, 40)}的故障处理过程。智能诊断记录显示，${clip(diagnosis || '诊断结论未记录', 65)}。` + (plan && plan !== '维修方案未记录' ? `维修方案建议${clip(plan, 45)}。` : '当前未记录维修方案。');
+  const feedback = [...new Set([...orders.map(o => textOf(o.repair_feedback)), ...records('repair_feedback').map(textOf)].filter(Boolean))].join('；');
+  const people = [...new Set(orders.map(o => textOf(o.assignee_name)).filter(Boolean))].join('、');
+  let second = (people ? `维修任务由${clip(people, 24)}处理，` : '工单处理过程中，') + (feedback ? `处理说明记录为“${clip(feedback, 40)}”。` : '实际处理说明尚未记录。');
+  const stamp = new Date(cycle.restarted_at);
+  if (cycle.restarted_at && Number.isFinite(stamp.getTime())) second += `整线于${stamp.toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}恢复运行。`;
+  else second += '当前尚无整线复机记录。';
+  if (cycle.restart_method === 'manual_confirmation' || records('repair_verification').some(r => r.phase === 'manual_confirmation') || orders.some(o => o.repair_verification?.phase === 'manual_confirmation')) second += '此次采用人工确认流程，未进行自动恢复核验。';
+  const lesson = concise.find(s => s.title === '经验总结')?.body || '经验总结尚未生成';
+  const third = `关于本次处理的知识沉淀，${clip(lesson, 45)}。后续应结合现场情况补充实际操作与检测数据，为同类故障处理提供参考。`;
+  return [first, second, third].join('\n\n');
+}
+
+export function buildConciseReportSections(report = {}) {
+  const source = mapping(report.sections);
+  const records = name => Array.isArray(source[name]?.records) ? source[name].records : [source[name] || {}];
+  const diagnoses = records('diagnosis'), plans = records('maintenance_plan'), orders = records('workorder');
+  const cycle = source.lifecycle || {};
+  const fallback = [
+    {title: '停机到复机', body: [orders[0]?.device_id || diagnoses[0]?.device_id,
+      cycle.restarted_at ? `${cycle.restart_method === 'manual_confirmation' ? '人工确认复机' : '复机'}：${new Date(cycle.restarted_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'})}` : '尚无复机记录'].filter(Boolean).join('；')},
+    {title: '智能诊断', body: diagnoses.map(textOf).filter(Boolean).join('；') || '诊断结论未记录'},
+    {title: '维修方案', body: plans.flatMap(plan => listOf(plan, ['repair_steps', 'steps', 'checks'])).join('；') || '维修方案未记录'},
+    {title: '工单执行与检查', body: orders.map(order => textOf(order.repair_feedback)).filter(Boolean).join('；') || '处理说明未记录'},
+    {title: '经验总结', body: records('experience').some(item => item.experience_id) ? '经验已保存，可供后续检索参考。' : '经验总结尚未生成。'},
+  ];
+  const selected = Array.isArray(report.concise_sections) && report.concise_sections.length ? report.concise_sections : fallback;
+  const selectedSections = selected.slice(0, 5).map(section => ({...section, title: String(section.title || '').slice(0, 20)}));
+  let remaining = 500 - selectedSections.reduce((count, section) => count + [...section.title].length, 0);
+  return selectedSections.map(section => {
+    const title = section.title;
+    const budget = Math.max(0, Math.min(remaining, 135));
+    const chars = [...String(section.body || '')];
+    const body = !budget ? '' : chars.length <= budget ? chars.join('') : chars.slice(0, budget - 1).join('') + '…';
+    remaining -= [...body].length;
+    return {title, body};
+  });
 }
 
 const statusLabels = {
@@ -47,6 +101,7 @@ function verificationText(value) {
   if (verification.phase === "prestart") parts.push("开机前验证");
   if (verification.phase === "poststart") parts.push("开机后验证");
   if (verification.phase === "manual_confirmation") parts.push("维修人员人工确认后直接启动");
+  if (verification.phase === 'inspection' && typeof verification.passed === 'boolean') parts.push(verification.passed ? '检查通过' : '检查未通过');
   return parts.filter(Boolean).join("；");
 }
 
@@ -81,8 +136,13 @@ export function reportQualityLabel(quality = {}) {
   return '待确认';
 }
 
-export function buildReportDisplaySections(sections) {
-  const source = sections && typeof sections === "object" ? sections : {};
+export function buildReportDisplaySections(sections, reportType = '') {
+  let source = sections && typeof sections === "object" ? sections : {};
+  if (reportType === 'quality_report') source = {quality: source.quality || source.quality_result || {}};
+  else if (reportType) {
+    const {quality, quality_result, ...faultSections} = source;
+    source = faultSections;
+  }
   if (source.lifecycle) return lifecycleSections(source);
   const result = [];
   const diagnosis = source.diagnosis || source.diagnosis_result || {};
@@ -143,32 +203,43 @@ function lifecycleSections(source) {
     `${cycle.restart_method === 'manual_confirmation' ? '人工确认复机' : '复机核验通过'}：${time(cycle.restarted_at)}`];
   if (Number.isFinite(cycle.duration_seconds)) timeline.push(`停机处理时长：${cycle.duration_seconds} 秒`);
   timeline.push(`整线设备：${(cycle.device_ids || []).join('、') || '未记录'}`, `故障事件：${(cycle.event_ids || []).join('、') || '未记录'}`);
-  const diagnosis = records('diagnosis').map(record => [record.device_id, record.event_id,
-    localizeIncidentText(textOf(record), {event_timestamp: eventTime(record), diagnosis: {...record, triggered_at: record.triggered_at || record.raw?.triggered_at}}),
-    ...(record.created_at || record.raw?.created_at ? [`诊断完成：${time(record.created_at || record.raw.created_at)}`] : []),
-  ].filter(Boolean).join(' · '));
-  const plans = records('maintenance_plan').map(record => [record.plan_id,
-    ...(record.created_at ? [`方案生成：${time(record.created_at)}`] : []), textOf(record),
-    ...listOf(record, ['repair_steps', 'steps', 'checks'])].filter(Boolean).join('\n'));
-  const orders = records('workorder').map(order => {
-    const check = order.inspection_verification || order.repair_verification || {};
-    return [`${order.workorder_id} · ${order.device_id || ''} · ${statusLabels[order.status] || order.status || '未记录状态'}`,
-      `负责人：${order.assignee_name || order.assignee || '未记录'}`,
-      `处理说明：${textOf(order.repair_feedback) || '未记录'}`,
-      ...(typeof check.passed === 'boolean' ? [check.phase === 'inspection'
-        ? (check.passed ? '检查通过' : '检查未通过') : verificationText(check)] : []),
-      ...(order.created_at ? [`工单创建：${time(order.created_at)}`] : []),
-      ...(check.verified_at || check.checked_at ? [`检查时间：${time(check.verified_at || check.checked_at)}`] : []),
-    ].filter(Boolean).join('\n');
-  });
-  const qualities = records('quality').map(record => [record.quality_check_id, record.device_id,
-    reportQualityLabel(record), ...listOf(record, ['findings', 'defects']),
-    ...(record.created_at ? [`检测时间：${time(record.created_at)}`] : [])].filter(Boolean).join(' · '));
-  return [
+  if (Array.isArray(cycle.devices)) for (const device of cycle.devices) {
+    timeline.push(`设备启动回执：${device.device_id} · ${reportValueLabels[device.state] || device.state || '未记录'} · ${reportValueLabels[device.returned_state] || device.returned_state || '未记录返回状态'}`);
+  }
+  const skipped = new Set(['_revision','idempotency_key','idempotency_fingerprint','learning_idempotency_key',
+    'feedback_digest','plan_snapshot_digest','diagnosis_snapshot_digest']);
+  const label = key => reportFieldLabels[key] || key.replaceAll('_', ' ');
+  const valueText = (value, key) => typeof value === 'boolean' ? (value ? '是' : '否')
+    : key.endsWith('_at') ? time(value) : reportValueLabels[value] || statusLabels[value] || String(value);
+  const linesOf = (value, prefix = '') => {
+    if (value === null || value === undefined || value === '' || (typeof value === 'object' && !Object.keys(value).length)) return [];
+    if (Array.isArray(value)) return value.flatMap((item,index) => linesOf(item, `${prefix || '记录'} ${index + 1}`));
+    if (typeof value === 'object') return [prefix, ...Object.entries(value).flatMap(([key,item]) => {
+      if (skipped.has(key)) return [];
+      if (typeof item === 'object') return linesOf(item, label(key));
+      return item === null || item === undefined || item === '' ? [] : [`${label(key)}：${valueText(item,key)}`];
+    })].filter(Boolean);
+    return [`${prefix ? prefix + '：' : ''}${String(value)}`];
+  };
+  const details = (name, omit = []) => records(name).map((record,index) => {
+    const copy = Object.fromEntries(Object.entries(record).filter(([key]) => !omit.includes(key)));
+    if (name === 'diagnosis') for (const key of ['summary','fault','diagnosis']) {
+      if (typeof copy[key] === 'string') copy[key] = localizeIncidentText(copy[key],
+        {event_timestamp: eventTime(record), diagnosis: {...record, triggered_at: record.triggered_at || record.raw?.triggered_at}});
+    }
+    const check = name === 'workorder' ? record.inspection_verification || record.repair_verification : null;
+    return [ ...linesOf(copy, `记录 ${index + 1}`), ...(check ? [verificationText(check)] : []) ].filter(Boolean).join('\n');
+  }).join('\n\n');
+  const result = [
     {title: '停机到复机', body: timeline.join('\n')},
-    {title: '智能诊断', body: diagnosis.join('\n\n') || '未关联智能诊断记录'},
-    {title: '维修方案', body: plans.join('\n\n') || '未关联维修方案记录'},
-    {title: '工单执行与检查', body: orders.join('\n\n') || '未关联工单记录'},
-    {title: '质检结果', body: qualities.join('\n\n') || '未关联质检记录'},
-  ].map(section => ({...section, lines: section.body.split('\n').filter(Boolean)}));
+    {title: '智能诊断', body: details('diagnosis', ['tool_calls','active_skill','active_skills','cached']) || '未关联智能诊断记录'},
+    {title: '维修方案', body: details('maintenance_plan', ['diagnosis','workorder_draft']) || '未关联维修方案记录'},
+    {title: '工单执行与检查', body: details('workorder', ['diagnosis_snapshot','maintenance_plan_snapshot','diagnosis_context']) || '未关联工单记录'},
+  ];
+  for (const [name,title] of [['repair_feedback','实际处理说明'],['repair_verification','维修确认与检查记录'],
+      ['experience','经验总结与知识沉淀'],['references','来源与追溯依据']]) {
+    const body = details(name);
+    if (body) result.push({title,body});
+  }
+  return result.map(section => ({...section, lines: section.body.split('\n').filter(Boolean)}));
 }

@@ -193,7 +193,10 @@ class RuntimeOperations:
             if isinstance(feedback, Mapping):
                 feedback = feedback.get('feedback') or feedback.get('result') or ''
             controller = self.repair_controller or LineController(self.factory_client or FactoryApiClient(os.getenv('FACTORY_API_BASE_URL', 'http://127.0.0.1:4529')), BackendServiceClient())
-            return controller.confirm_and_restart(str(values.get('workorder_id') or ''), actor_id, str(feedback), manual_restart=True)
+            result = controller.confirm_and_restart(str(values.get('workorder_id') or ''), actor_id, str(feedback), manual_restart=True)
+            if (result.get('machine_control') or {}).get('state') == 'running' and self.requests is not None:
+                result['memory_result'] = self.summarize_repair(str(values.get('workorder_id') or ''))
+            return result
         values["action"] = action
         if action == "create" and not values.get("maintenance_plan"):
             values["maintenance_plan"] = {
@@ -351,6 +354,39 @@ class RuntimeOperations:
                     )
         return result
 
+    def summarize_repair(self, workorder_id: str, *, sync_knowledge: bool = False) -> Dict[str, Any]:
+        """Summarize a saved completed incident; never send equipment commands."""
+        from shared.repair_experience import manual_restart_cycle
+        state = {}
+        try:
+            backend = self.closure_service
+            order = backend.call('get_workorder', {'workorder_id': workorder_id}).get('workorder') or {}
+            cycle = manual_restart_cycle(order, backend.status().get('completed_cycles') or [])
+            key = 'workorder-summary:' + workorder_id
+            state = {'entry': 'event', 'task_id': order.get('task_id') or 'TASK-SUM-' + uuid4().hex[:12].upper(),
+                     'trace_id': order.get('trace_id') or 'TRACE-SUM-' + uuid4().hex[:12].upper(),
+                     'context': {'event_id': order.get('event_id'), 'device_id': order.get('device_id'),
+                                 'sync_knowledge': sync_knowledge},
+                     'workorder': {**order, 'learning_idempotency_key': key},
+                     'diagnosis': order.get('diagnosis_snapshot') or {},
+                     'maintenance_plan': order.get('maintenance_plan_snapshot') or {},
+                     'repair_feedback': order.get('repair_feedback') or {}, 'report': cycle}
+            def produce():
+                result = self.requests.access_memory(state, action='summarize', from_agent='workorder')
+                if not result.get('success') or not (result.get('experience') or {}).get('memory_saved'):
+                    raise _IncompleteLearningStage(result, '经验总结尚未保存')
+                return result
+            # Summary persistence is a stable-ID upsert of saved facts. Retrying
+            # it is safe, unlike the equipment writes guarded by durable claims.
+            return produce()
+        except Exception as error:
+            # Completion and startup have already committed. A summary failure
+            # must not turn their successful response into an invitation to restart.
+            self._learning_trace(state, 'summary_failed', {'workorder_id': workorder_id,
+                'event_id': (state.get('context') or {}).get('event_id'), 'error': str(error)})
+            return {'action': 'summarize', 'success': False, 'stop_reason': 'summary_pending',
+                    'error': str(error), 'experience': {}}
+
     def execute_memory(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router") -> Dict[str, Any]:
         """API/事件入口：所有经验检索和学习动作都通过 Memory Agent。"""
 
@@ -366,6 +402,7 @@ class RuntimeOperations:
             "workorder": dict(values.get("workorder") or {}),
             "repair_feedback": values.get("repair_feedback") or {},
             "quality": dict(values.get("quality") or {}),
+            'experience': dict(values.get('experience') or {}),
             "report": dict(values.get("report") or {}),
         }
         return self.requests.access_memory(state, action=action, query=str(values.get("query") or ""), from_agent=from_agent)

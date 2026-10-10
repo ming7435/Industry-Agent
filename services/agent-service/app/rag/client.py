@@ -291,7 +291,7 @@ class RAGServiceClient:
             raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
         return self.fallback.ingest_jsonl(path, collection=collection)
 
-    def upsert(self, record: Mapping[str, Any], collection: str = "") -> Dict[str, Any]:
+    def upsert(self, record: Mapping[str, Any], collection: str = "", *, require_remote: bool = False) -> Dict[str, Any]:
         """写入一条经验记录；远程 RAG 不支持时按配置回退到本地索引。"""
 
         if self.base_url:
@@ -303,8 +303,10 @@ class RAGServiceClient:
                 normalized["collection"] = collection or normalized.get("collection") or "maint_fault_events"
                 return self._post("/documents/upsert", normalized)
             except Exception:
-                if not self.allow_fallback:
+                if require_remote or not self.allow_fallback:
                     raise
+        if require_remote:
+            raise RuntimeError('知识沉淀要求远程 RAG 索引，服务地址未配置')
         if not self.allow_fallback:
             raise RuntimeError("RAG_SERVICE_BASE_URL 未配置且已禁止本地回退")
         loaded = self.fallback.upsert([record], collection=collection)

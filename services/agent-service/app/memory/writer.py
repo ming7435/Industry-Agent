@@ -16,8 +16,8 @@ class ExperienceWriter:
         self.long_memory = long_memory
         self.rag = rag
         self.deduplicator = deduplicator or ExperienceDeduplicator()
-        # 重试状态只保存在当前写入器中。RAG 文档 ID 稳定，因此进程重启后
-        # 可以安全地重试未完成的远程写入。
+        # 此集合只缓存本进程的成功写入；同步回执和重试时间另存数据库。
+        # RAG 文档 ID 稳定，后台任务重启后可以继续重试。
         self._rag_synced: set[str] = set()
         self._lock = Lock()
 
@@ -36,7 +36,7 @@ class ExperienceWriter:
             with self._lock:
                 if experience_id and experience_id in self._rag_synced:
                     return False, True, True
-            rag_saved = self._upsert_rag(existing_item or experience)
+            rag_saved = bool(self.sync(existing_item or experience).get('rag_saved'))
             if rag_saved:
                 with self._lock:
                     if experience_id:
@@ -45,7 +45,7 @@ class ExperienceWriter:
         payload = dict(experience)
         self.short_memory.add({"type": "experience", **payload})
         self.long_memory.save(payload)
-        rag_saved = self._upsert_rag(payload)
+        rag_saved = bool(self.sync(payload).get('rag_saved'))
         if rag_saved:
             with self._lock:
                 self._rag_synced.add(str(payload.get("experience_id") or ""))
@@ -64,3 +64,31 @@ class ExperienceWriter:
             return bool(rag_result.get("loaded", 0) or rag_result.get("success", False))
         except Exception:
             return False
+
+    def sync(self, experience: Mapping[str, Any]) -> dict[str, Any]:
+        """Index stable saved facts and persist the receipt, including partial success."""
+        payload = dict(experience)
+        metadata = {key: value for key, value in payload.items() if key not in
+                    {'content', 'knowledge_sync', 'rag_saved', 'memory_saved', 'duplicate'}}
+        metadata.update(corpus='cases', knowledge_type='case', record_category='case')
+        document = {**payload, 'id': payload['experience_id'], 'metadata': metadata}
+        # Online knowledge must never claim success from an in-process fallback.
+        # Preserve the remote failure for the durable retry worker.
+        document['content'] = ('经验编号：' + payload['experience_id'] + '；来源工单：' + str(payload.get('source_workorder') or '')
+            + '；确认方式：' + ('维修人员人工确认' if payload.get('validation_status') == 'manual_confirmed' else '设备恢复核验')
+            + '\n' + str(payload.get('content') or ''))
+        try:
+            if getattr(self.rag, 'base_url', ''):
+                result = self.rag.upsert(document, collection=str(payload.get('collection') or 'maint_fault_events'), require_remote=True)
+            else:
+                result = self.rag.upsert(document, collection=str(payload.get('collection') or 'maint_fault_events'))
+        except Exception as error:
+            result = {'success': False, 'pipeline_ready': False, 'metadata_saved': False,
+                      'error': type(error).__name__, 'backends': {}}
+        result = {**result, 'document_revision': payload.get('content_revision')}
+        if hasattr(self.long_memory, 'record_index'):
+            payload = self.long_memory.record_index(payload['experience_id'], result)
+        else:
+            payload.update(rag_saved=bool(result.get('pipeline_ready', result.get('loaded', 0))))
+            self.long_memory.save(payload)
+        return {**payload, 'memory_saved': True}

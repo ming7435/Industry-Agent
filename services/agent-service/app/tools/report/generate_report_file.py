@@ -27,12 +27,14 @@ _SECTION_LABELS = {
     "knowledge": "知识依据",
     "event": "故障事件",
     "trace_summary": "运行记录",
+    'experience': '经验总结与知识沉淀',
+    'references': '来源与追溯依据',
 }
 _FIELD_LABELS = {
     "cycle_id": "停机处理编号",
     "started_at": "故障停机开始",
     "stopped_at": "停机确认时间",
-    "restarted_at": "复机核验通过时间",
+    "restarted_at": "复机时间",
     "duration_seconds": "停机处理时长（秒）",
     "device_ids": "整线设备",
     "event_ids": "故障事件",
@@ -160,6 +162,57 @@ _FIELD_LABELS = {
     "min": "下限",
     "max": "上限",
     "item": "检测项目",
+    'evidence': '诊断依据', 'evidence_records': '证据明细', 'evidence_id': '证据编号',
+    'source_documents': '参考资料', 'memory_evidence': '历史经验依据',
+    'source_name': '来源名称', 'source_path': '资料位置', 'source_format': '资料格式',
+    'document_id': '文档编号', 'chunk_id': '片段编号', 'page_numbers': '页码',
+    'source_ref': '来源引用', 'source_refs': '来源引用', 'metadata': '来源信息',
+    'experience_id': '经验编号', 'source_workorder': '来源工单', 'source_event_id': '来源故障事件',
+    'source_plan': '来源方案', 'source_report': '来源报告', 'source_basis': '经验依据',
+    'validation_status': '确认方式', 'limitations': '记录局限', 'knowledge_sync': '知识同步回执',
+    'rag_saved': '关键词与向量索引全部完成', 'memory_saved': '经验数据库已保存',
+    'pipeline_ready': '检索链路全部就绪', 'searchable': '支持关键词检索',
+    'bm25_indexed': '关键词索引已保存', 'dense_indexed': '向量索引已保存',
+    'attempts': '同步尝试次数', 'next_retry_at': '下次重试时间', 'last_attempt_at': '最近同步时间',
+    'indexed_at': '索引完成时间', 'backends': '索引明细', 'metadata_saved': '检索文档已保存',
+    'automatic_verification': '自动恢复核验', 'phase': '确认阶段', 'confirmed': '人工已确认',
+    'confirmed_by': '确认人员', 'confirmed_at': '维修确认时间', 'restart_method': '复机方式',
+    'receipt_id': '确认回执', 'confirmation_receipt_id': '确认回执', 'actor_id': '确认人员',
+    'assignee_name': '负责人姓名', 'completed_at': '维修完成时间', 'accepted_by': '接单人员',
+    'dispatch_mode': '派发方式', 'dispatch_findings': '派发提示', 'events': '工单操作记录',
+    'status_history': '状态变更记录', 'operator': '操作人员', 'technician_confirmation': '维修确认回执',
+    'tools_required': '所需工具', 'text': '内容', 'description': '说明', 'excerpt': '依据摘录',
+    'knowledge_note': '知识沉淀状态', 'learning_scope': '经验范围', 'treatment': '实际处理说明',
+    'recommended_steps': '方案建议步骤', 'diagnosis_summary': '诊断摘要',
+    'whoosh': '关键词索引', 'milvus': '向量索引', 'written': '写入片段数', 'required': '启用此索引',
+    'repair_feedback': '实际处理说明', 'repair_verification': '维修确认记录',
+    'evidence_status': '证据状态', 'confidence_details': '置信度组成', 'knowledge_warning': '知识依据提示',
+    'maintenance_reason': '维修原因', 'maintenance_required': '需要维修', 'requires_human_review': '需要现场核实',
+    'alarm_definition': '报警定义', 'name': '名称', 'severity': '严重等级', 'severity_label': '严重等级说明',
+    'recommended_action': '建议操作', 'raw_alarm_text': '报警原文', 'plan_kind': '方案用途',
+    'engineering_context': '工程图纸依据', 'inventory_status': '备件库存信息', 'part_availability': '备件可用性',
+    'drawing_refs': '参考图纸', 'available_drawings': '可用图纸', 'drawing_ref_details': '图纸信息',
+    'retrieval_match': '检索匹配度', 'knowledge_degraded': '知识检索降级', 'warning': '提示',
+    'historical_resolution': '历史解决记录权重', 'llm_probability': '模型置信度', 'overall': '综合置信度',
+    'raw': '来源原始记录', 'model_metadata': '推理模型信息', 'result': '结果',
+    'items': '明细', 'stock': '库存数量', 'synthetic': '演示数据', 'devices': '设备恢复记录',
+    'state': '运行状态', 'restart_method': '复机方式', 'reason': '处理说明',
+    'sample_count': '采样数量', 'series_summary': '历史曲线统计', 'history_summary': '历史采样统计',
+    'mean': '均值', 'first': '首个值', 'latest': '最新值', 'ended_at': '采样结束时间',
+    'direction': '变化趋势', 'trend': '历史趋势', 'metric_keys': '监测指标',
+    'metric_definitions': '指标说明及阈值', 'returned_state': '设备返回状态', 'section': '报告章节',
+    'spindle_rpm': '主轴转速（rpm）', 'spindle_load_percent': '主轴负载（%）',
+    'spindle_temp_c': '主轴温度（℃）', 'hydraulic_pressure_psi': '液压总压力（psi）',
+    'turret_servo_load_percent': '刀塔伺服负载（%）', 'turret_rotating_signal': '刀塔旋转信号',
+    'live_tool_speed_rpm': '动力刀转速（rpm）', 'live_tool_load_percent': '动力刀负载（%）',
+    'chuck_pressure_psi': '卡盘夹紧压力（psi）', 'quill_pressure_psi': '尾座套筒压力（psi）',
+    'tailstock_clamp_pressure_psi': '尾座夹紧压力（psi）', 'lube_pressure_psi': '润滑压力（psi）',
+    'coolant_pressure_psi': '冷却压力（psi）', 'coolant_level_percent': '冷却液位（%）',
+    'barfeed_ready_signal': '送料机就绪信号', 'part_catcher_position_percent': '接料器位置（%）',
+    'spindle_vibration_mm_s': '主轴振动（mm/s）', 'live_tool_vibration_mm_s': '动力刀振动（mm/s）',
+    'x_axis_vibration_mm_s': 'X轴振动（mm/s）', 'z_axis_vibration_mm_s': 'Z轴振动（mm/s）',
+    'normal_range': '正常范围', 'warn_range': '预警范围', 'alarm_range': '报警范围',
+    'label': '指标名称', 'unit': '单位', 'group': '指标分组', 'timestamp': '记录时间',
 }
 _VALUE_LABELS = {
     "completed": "已完成",
@@ -214,31 +267,17 @@ _VALUE_LABELS = {
     "production_part": "生产零件",
     "manual-inspection": "人工实测录入",
     "pending": "待处理",
+    'manual_confirmed': '维修人员人工确认', 'manual_confirmation': '人工确认后直接启动',
+    'manual_case_summary': '人工确认维修案例', 'retry': '待自动重试', 'indexed': '全部索引已完成',
+    'automatic': '系统自动派发', 'system_auto': '系统自动派发',
+    'running': '运行中', 'stopped': '已停止', 'applied': '启动指令已执行',
+    'start': '启动', 'stop': '停止', 'cases': '维修案例', 'case': '维修案例',
+    'backend-persisted-record': '业务数据库保存记录', 'line-control-ledger': '产线启停回执',
+    'inspection': '工单检查', 'prestart': '开机前检查', 'poststart': '开机后检查',
 }
-_PDF_SKIP_FIELDS = {
-    "evidence",
-    "evidence_records",
-    "documents",
-    "sources",
-    "retrieval_trace",
-    "memory_evidence",
-    "source_documents",
-    "cad_components",
-    "items",
-    "candidates",
-    "dispatch_context",
-    "workorder",
-    "payload",
-    "filters",
-    "confidence_details",
-    "required_capabilities",
-    "realtime_snapshot",
-    "abnormal_metrics",
-    "engineering_context",
-    "inventory_status",
-    "part_availability",
-    "recommended_checks",
-}
+_PDF_SKIP_FIELDS = {'_revision', 'idempotency_key', 'idempotency_fingerprint',
+    'learning_idempotency_key', 'feedback_digest', 'plan_snapshot_digest', 'diagnosis_snapshot_digest'}
+
 
 
 def _safe_report_id(report_id: Any) -> str:
@@ -276,17 +315,21 @@ def _lifecycle_pdf_sections(sections):
     result = {'lifecycle': {key: lifecycle[key] for key in (
         'cycle_id', 'started_at', 'stopped_at', 'restarted_at', 'duration_seconds', 'device_ids', 'event_ids', 'reason'
     ) if key in lifecycle}}
-    fields = {
-        'diagnosis': ('device_id', 'event_id', 'fault', 'summary', 'confidence', 'possible_causes', 'recommended_checks'),
-        'maintenance_plan': ('plan_id', 'workorder_id', 'plan_kind', 'repair_target', 'repair_steps', 'safety_requirements'),
-        'workorder': ('workorder_id', 'device_id', 'status', 'assignee_name', 'assignee', 'created_at', 'updated_at',
-                      'repair_feedback', 'inspection_verification', 'repair_verification'),
-        'quality': ('quality_check_id', 'workorder_id', 'device_id', 'part_id', 'part_no', 'batch_id', 'result', 'status',
-                    'created_at', 'findings', 'quality_validation', 'reinspection'),
+    timeline_fields = ('cycle_id', 'started_at', 'stopped_at', 'restarted_at', 'duration_seconds',
+                       'restart_method', 'device_ids', 'event_ids', 'reason', 'devices')
+    result['lifecycle'] = {key: lifecycle[key] for key in timeline_fields if key in lifecycle}
+    # All substantive facts and evidence are retained. Nested copies of the same
+    # diagnosis/plan and implementation-only fields stay in the JSON source.
+    omitted = {
+        'diagnosis': {'tool_calls', 'active_skill', 'active_skills', 'cached'},
+        'maintenance_plan': {'diagnosis', 'workorder_draft'},
+        'workorder': {'diagnosis_snapshot', 'maintenance_plan_snapshot', 'diagnosis_context'},
     }
-    for name, keys in fields.items():
+    for name in ('diagnosis', 'maintenance_plan', 'workorder', 'repair_feedback',
+                 'repair_verification', 'experience', 'references'):
         records = (sections.get(name) or {}).get('records') or []
-        result[name] = [{key: record[key] for key in keys if key in record} for record in records] or {'summary': '未关联记录'}
+        result[name] = [{key: value for key, value in record.items() if key not in omitted.get(name, set())}
+                        for record in records] or {'summary': '未关联记录'}
         if name == 'diagnosis' and records:
             for record, display in zip(records, result[name]):
                 event = re.match(r'^EVT-(\d{8})-(\d{6})-\d{3}-\d+$', str(record.get('event_id') or ''))
@@ -337,48 +380,32 @@ def _display_value(value: Any, key: str = "") -> str:
     return text
 
 
-def _value_lines(value: Any, prefix: str = "", depth: int = 0, limit: int = 80) -> list[str]:
-    """将字典、列表和标量转换为适合报告阅读的分层文本。"""
-
-    if value is None or value == "":
+def _value_lines(value: Any, prefix: str = "", depth: int = 0, limit: int | None = None) -> list[str]:
+    """Render complete nested facts without record, line, or character truncation."""
+    if value is None or value == "" or value == [] or value == {}:
         return []
-    if depth >= 4:
-        compact = str(value).replace("\r", " ").replace("\n", " ").strip()
-        return [f"{prefix}: {compact[:400]}".strip()]
+    indent = '  ' * min(depth, 5)
     if isinstance(value, Mapping):
-        lines: list[str] = []
+        lines = [indent + prefix] if prefix else []
         for key, child in value.items():
             if str(key) in _PDF_SKIP_FIELDS:
                 continue
-            key_text = _display_key(key)
-            if str(key).endswith('_at') and isinstance(child, str):
-                child = _display_value(child, str(key))
-            if key in {"success", "found"} and child is True:
-                continue
-            child_lines = _value_lines(child, key_text, depth + 1, limit)
-            lines.extend(child_lines or [f"{key_text}: {_display_value(child, str(key))}"])
-            if len(lines) >= limit:
-                break
-        omitted = max(0, len(value) - len(lines))
-        if omitted:
-            lines.append(f"{prefix or '本节'}：其余 {omitted} 个字段已保留在原始报告中")
-        return lines[:limit]
+            if isinstance(child, (Mapping, list, tuple, set)):
+                lines.extend(_value_lines(child, _display_key(key), depth + 1))
+            elif child is not None and child != '':
+                lines.extend(indent + _display_key(key) + '：' + part for part in
+                             _display_value(child, str(key)).splitlines() if part.strip())
+        return lines
     if isinstance(value, (list, tuple, set)):
-        lines: list[str] = []
-        values = list(value)
-        for index, child in enumerate(values[:24], 1):
-            child_lines = _value_lines(child, f"{prefix} {index}".strip(), depth + 1, limit)
-            lines.extend(child_lines or [f"{prefix} {index}: {_display_value(child)}".strip()])
-            if len(lines) >= limit:
-                break
-        omitted = len(values) - min(len(values), 24)
-        if omitted:
-            lines.append(f"{prefix or '本节'}：其余 {omitted} 项已保留在原始报告中")
-        return lines[:limit]
-    text = _display_value(value, prefix).replace("\r\n", "\n").replace("\r", "\n").strip()
-    if "\n" in text:
-        return [f"{prefix}: {line}" if prefix else line for line in text.splitlines() if line.strip()][:limit]
-    return [f"{prefix}: {text}" if prefix else text]
+        lines = []
+        for index, child in enumerate(value, 1):
+            label = f'{prefix or "记录"} {index}'
+            if isinstance(child, (Mapping, list, tuple, set)):
+                lines.extend(_value_lines(child, label, depth + 1))
+            else:
+                lines.extend(indent + label + '：' + part for part in _display_value(child).splitlines() if part.strip())
+        return lines
+    return [indent + (prefix + '：' if prefix else '') + line for line in _display_value(value, prefix).splitlines() if line.strip()]
 
 
 def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
@@ -393,7 +420,7 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
     document = pymupdf.open()
     page = document.new_page(width=595, height=842)
     margin = 42
-    y = margin
+    y = margin + 18
     font_name = "china-s"
     font = pymupdf.Font(fontname=font_name)
     latin_font = pymupdf.Font(fontname="helv")
@@ -405,13 +432,13 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
     def add_page() -> None:
         nonlocal page, y
         page = document.new_page(width=595, height=842)
-        y = margin
+        y = margin + 18
         if font_path:
             page.insert_font(fontname=font_name, fontfile=font_path)
 
-    def add_text(text: str, size: float = 10.5, color: tuple[float, float, float] = (0.12, 0.2, 0.23), bold: bool = False) -> None:
+    def add_text(text: str, size: float = 10.5, color: tuple[float, float, float] = (0.12, 0.2, 0.23), bold: bool = False, leading: float = 1.55, first_indent: bool = False) -> None:
         nonlocal y
-        line_height = size * 1.55
+        line_height = size * leading
         text = str(text or "").strip()
         if not text:
             return
@@ -424,22 +451,28 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
         words: list[str] = []
         current = ""
         for char in text:
+            if char == '\n':
+                if current:
+                    words.append(current)
+                current = ''
+                continue
             candidate = current + char
             width = measure(candidate)
-            if current and width > 511:
+            available_width = 511 - (size * 2 if first_indent and not words else 0)
+            if current and width > available_width:
                 words.append(current)
                 current = char
             else:
                 current = candidate
         if current:
             words.append(current)
-        for line in words:
+        for line_index, line in enumerate(words):
             if y + line_height > 790:
                 add_page()
+            x = float(margin) + (size * 2 if first_indent and line_index == 0 else 0)
             if font_path:
-                page.insert_text((margin, y), line, fontsize=size, fontname=font_name, color=color)
+                page.insert_text((x, y), line, fontsize=size, fontname=font_name, color=color)
             else:
-                x = float(margin)
                 start = 0
                 is_ascii = line[0].isascii()
                 for index in range(1, len(line) + 1):
@@ -462,29 +495,52 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
     report_status = _VALUE_LABELS.get(str(report.get("status") or ""), str(report.get("status") or "待确认"))
     add_text(f"停机处理汇总    报告状态：{report_status}" if (report.get('sections') or {}).get('lifecycle') else f"报告类型：{report_type}    报告状态：{report_status}", size=10, color=(0.35, 0.43, 0.46))
     add_text(f"生成时间：{_display_value(report.get('created_at') or report.get('updated_at') or '未记录', 'created_at')}", size=10, color=(0.35, 0.43, 0.46))
-    y += 8
-    add_text("报告摘要", size=13, color=(0.02, 0.32, 0.38), bold=True)
-    add_text(str(report.get("summary") or "暂无摘要"), size=11)
-    sections = report.get("sections") or {}
-    if sections.get('lifecycle'):
-        sections = _lifecycle_pdf_sections(sections)
-    if isinstance(sections, Mapping):
-        for key, value in sections.items():
+    article = str(report.get('article_text') or '').strip()
+    concise = report.get('concise_sections') or []
+    if article:
+        y += 18
+        for paragraph in article.split('\n\n'):
+            add_text(paragraph, size=11.5, leading=1.55, first_indent=True)
             y += 8
-            add_text(_SECTION_LABELS.get(str(key), _display_key(key)), size=13, color=(0.02, 0.32, 0.38), bold=True)
+    elif not concise:
+        y += 8
+        add_text("报告摘要", size=13, color=(0.02, 0.32, 0.38), bold=True)
+        add_text(str(report.get("summary") or "暂无摘要"), size=11)
+        if report.get('knowledge_note'):
+            add_text('知识沉淀：' + report['knowledge_note'], size=10, color=(0.35, 0.43, 0.46))
+    sections = report.get('presentation_sections') or report.get("sections") or {}
+    if concise:
+        sections = {item['title']: item['body'] for item in concise}
+    elif sections.get('lifecycle'):
+        from shared.report_presentation import report_presentation
+        if not report.get('presentation_sections'):
+            sections = report_presentation(sections)
+        sections = _lifecycle_pdf_sections(sections)
+    elif report.get('report_type') in {'full_case_report', 'maintenance_report', 'diagnosis_report', 'incident_report'}:
+        sections = {key: value for key, value in sections.items() if key not in {'quality', 'quality_result'}}
+    if not article and isinstance(sections, Mapping):
+        for section_number, (key, value) in enumerate(sections.items(), 1):
+            if y + 64 > 790:
+                add_page()
+            y += 14
+            page.draw_line((margin, y - 8), (553, y - 8), color=(0.72, 0.83, 0.82), width=0.5)
+            add_text(f'{section_number:02d}  ' + _SECTION_LABELS.get(str(key), _display_key(key)), size=13, color=(0.02, 0.32, 0.38), bold=True)
             lines = _value_lines(value)
             if not lines:
                 add_text("暂无记录", size=10, color=(0.4, 0.46, 0.48))
             for line in lines:
-                add_text(f"• {line}", size=10.2)
-    findings = report.get("validation_findings") or []
+                add_text(line, size=10.2)
+    findings = [] if article or concise else report.get("validation_findings") or []
     if findings:
         y += 8
         add_text("校验结果", size=13, color=(0.62, 0.2, 0.16), bold=True)
         for line in _value_lines(findings):
             add_text(f"• {line}", size=10.2, color=(0.5, 0.2, 0.16))
+    document.set_metadata({'title': title, 'author': 'IND-Agent', 'subject': '故障处理全过程与知识沉淀'})
     for index, item in enumerate(document, 1):
-        item.insert_text((margin, 818), f"报告中心 · 第 {index} 页", fontsize=8, fontname=font_name, color=(0.45, 0.52, 0.54))
+        item.draw_line((margin, 805), (553, 805), color=(0.72, 0.83, 0.82), width=0.5)
+        item.insert_text((margin, 30), 'IND-Agent  |  ' + report_id, fontsize=8, fontname='helv', color=(0.45, 0.52, 0.54))
+        item.insert_text((margin, 818), f"报告中心 · 第 {index} / {len(document)} 页", fontsize=8, fontname=font_name, color=(0.45, 0.52, 0.54))
     target.parent.mkdir(parents=True, exist_ok=True)
     document.save(str(target), garbage=4, deflate=True)
     document.close()

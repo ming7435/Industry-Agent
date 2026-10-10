@@ -34,7 +34,7 @@ class ExperienceLearningModule:
 
     def search(self, device_id: str = "", limit: int = 20, **filters: Any) -> dict[str, Any]:
         self._trace("module_started", action="search", device_id=device_id, filters=filters)
-        items = self.long_memory.search(device_id=device_id, limit=limit, **filters)
+        items = list(self.long_memory.search(device_id=device_id, limit=limit, **filters))
         self._trace("module_completed", action="search", count=len(items))
         return {"action": "search", "device_id": device_id, "items": items, "backend": self.long_memory.backend}
 

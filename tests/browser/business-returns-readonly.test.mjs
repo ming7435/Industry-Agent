@@ -26,7 +26,14 @@ try {
     if (view === 'quality') {
       const workspace = page.getByRole('region', { name: '质检系统', exact: true });
       await workspace.waitFor({ state: 'attached' });
-      assert.equal((await workspace.textContent()).trim(), '');
+      await page.getByRole('heading', { name: '质量检测', exact: true }).waitFor();
+      await page.getByRole('heading', { name: '检测零件', exact: true }).waitFor();
+      assert.equal(await workspace.getByRole('region', { name: '检测零件', exact: true }).locator('dt').count(), 2);
+      assert.equal(await workspace.locator('input, form, table').count(), 0);
+      assert.equal(await workspace.getByRole('button', { name: '开始检测', exact: true }).count(), 1);
+      const result = workspace.getByRole('region', { name: '检测结果', exact: true });
+      assert.equal(await result.getByText('待检测', { exact: true }).count(), 1);
+      assert.deepEqual(await result.locator('.quality-rate-fields dd').allTextContents(), ['—', '—', '—']);
       await page.getByRole('button', { name: '质检系统', exact: true }).waitFor();
     } else {
       await page.getByRole('heading', { name: heading, exact: true }).waitFor();

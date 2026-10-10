@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class MemoryQuery(BaseModel):
     task_id: str = ""
     trace_id: str = ""
-    action: Literal["search", "recent", "learn"] = "search"
+    action: Literal["search", "recent", "learn", "summarize", "sync"] = "search"
     device_id: str = ""
     device_model: str = ""
     alarm_code: str = ""
@@ -29,6 +29,7 @@ class MemoryQuery(BaseModel):
     quality: Dict[str, Any] = Field(default_factory=dict)
     report: Dict[str, Any] = Field(default_factory=dict)
     context: Dict[str, Any] = Field(default_factory=dict)
+    experience: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_payload(cls, payload: Any) -> "MemoryQuery":

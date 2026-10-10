@@ -72,6 +72,11 @@ class SQLiteRepository:
             rows = connection.execute("SELECT payload FROM workorders ORDER BY rowid").fetchall()
         return [dict(json.loads(row[0])) for row in rows]
 
+    def list_run_facts(self, event_ids):
+        from .run_facts import read_run_facts
+        with self._record_session() as connection:
+            return read_run_facts(lambda sql, params: connection.execute(sql, params).fetchall(), event_ids)
+
     def delete(self, workorder_id: str) -> bool:
         with self._record_session() as connection:
             cursor = connection.execute("DELETE FROM workorders WHERE workorder_id=?", (str(workorder_id),))
@@ -179,6 +184,11 @@ class SQLiteRepository:
             yield self.get_record('production_part', str(part_id)) or {}
 
     @contextmanager
+    def simulated_quality_transaction(self, request_key, basis_key):
+        with self.quality_transaction():
+            yield
+
+    @contextmanager
     def simulation_transaction(self, lock_id: str):
         """Serialize virtual production facts without borrowing formal quality rows."""
         with self.quality_transaction():
@@ -206,6 +216,18 @@ class MySQLRepository:
     @property
     def connection(self):
         return self._active_connection.get()
+
+    @_mysql_operation
+    def list_run_facts(self, event_ids):
+        from .run_facts import read_run_facts
+        cursor = self.connection.cursor()
+        try:
+            def query(sql, params):
+                cursor.execute(sql, params)
+                return cursor.fetchall()
+            return read_run_facts(query, event_ids, mysql=True)
+        finally:
+            cursor.close()
 
     @contextmanager
     def _session(self):
@@ -256,7 +278,6 @@ class MySQLRepository:
             finally:
                 cursor.close()
 
-
     @contextmanager
     def production_part_transaction(self, part_id):
         """首次插入也锁住唯一键；冲突或无效输入回滚，不留下空业务记录。"""
@@ -269,6 +290,21 @@ class MySQLRepository:
                                ('production_part', str(part_id)))
                 row = cursor.fetchone()
                 yield dict(json.loads(row[0])) if row else {}
+            finally:
+                cursor.close()
+
+    @contextmanager
+    def simulated_quality_transaction(self, request_key, basis_key):
+        """独立命名空间、固定请求→基准锁序；首次插入也锁唯一键。"""
+        with self._session():
+            cursor = self.connection.cursor()
+            try:
+                for kind, key in [('simulated_quality_request', request_key), ('simulated_quality_basis', basis_key)]:
+                    cursor.execute('INSERT INTO business_records(record_type,record_id,payload) VALUES (%s,%s,%s) '
+                                   'ON DUPLICATE KEY UPDATE record_id=record_id', (kind, key, '{}'))
+                    cursor.execute('SELECT payload FROM business_records WHERE record_type=%s AND record_id=%s FOR UPDATE', (kind, key))
+                    cursor.fetchone()
+                yield
             finally:
                 cursor.close()
 

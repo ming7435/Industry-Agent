@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const prefix = "/api/cad/freecad";
 const id = `FC-${"a".repeat(64)}`;
 const prompt = "设计长 40 mm、宽 20 mm、高 10 mm 的长方体";
-const connected = { connected: true, provider: "freecad", tools: [{ name: "execute_code", description: "执行 FreeCAD 代码", inputSchema: { type: "object", properties: { code: { type: "string" } }, required: ["code"] } }] };
+const connected = { connected: true, part_identity_supported: true, provider: "freecad", tools: [{ name: "execute_code", description: "执行 FreeCAD 代码", inputSchema: { type: "object", properties: { code: { type: "string" } }, required: ["code"] } }] };
 const artifacts = ["stl", "step", "fcstd"].map((format) => ({ name: `model.${format}`, format, url: `${prefix}/runs/${id}/artifacts/model.${format}` }));
 const completed = { run_id: id, prompt, status: "completed", answer: "已创建并校验实体。", artifacts, validation: { valid: true, solid_count: 1, volume_mm3: 8000, bounds_mm: [40, 20, 10] }, execution: { agent: "cad", node: "model_3d", skill: "production_modeling_skill", tool: "freecad_mcp" }, calls: [{ tool: "execute_code", arguments: { code: "shape = Part.makeBox(40, 20, 10)" }, result: { content: [{ type: "text", text: "实体校验通过" }] } }] };
 
@@ -88,6 +88,140 @@ async function setup({ record = completed, saved = false, stl = boxStl(), status
   return { context, page, posts, reads, errors, artifactReads };
 }
 
+async function openDesignInput(page) {
+  const input = page.locator('.cad-input-details');
+  if (await input.count() && !await input.evaluate((element) => element.open)) await input.locator(':scope > summary').click();
+}
+
+async function openTemplates(page) {
+  await openDesignInput(page);
+  await page.getByText('模板与示例', { exact: true }).click();
+}
+
+test('零件名称和编号随实际建模请求提交，生成后收起需求并显示明确标识', async () => {
+  const named = { ...completed, part_name: '带通孔销轴', part_number: '00123' };
+  const { context, page, posts, errors } = await setup({ record: named });
+  try {
+    await page.getByLabel('零件名称', { exact: true }).fill(named.part_name);
+    await page.getByLabel('零件编号（选填）', { exact: true }).fill(named.part_number);
+    await page.getByLabel('描述零件、尺寸和设计要求').fill(prompt);
+    assert.equal(await page.getByLabel('选择设计模板').isVisible(), false);
+    assert.equal(await page.getByLabel('结构化参数（JSON，优先于文字描述）').isVisible(), false);
+    await page.getByRole('button', { name: '生成 3D 模型', exact: true }).click();
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].part_name, named.part_name);
+    assert.equal(posts[0].part_number, named.part_number);
+    assert.equal(posts[0].prompt, prompt);
+    const identity = page.getByRole('region', { name: '当前零件标识', exact: true });
+    assert.match(await identity.innerText(), /带通孔销轴.*零件编号.*00123/s);
+    assert.equal(await page.getByLabel('描述零件、尺寸和设计要求').isVisible(), false);
+    assert.equal(await page.locator('.cad-call-details').evaluate((element) => element.open), false);
+    assert.equal(await page.getByRole('link', { name: '下载 STEP', exact: true }).isVisible(), true);
+    await captureWorkbench(page, 'compact-named-design');
+    await page.reload();
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    assert.match(await identity.innerText(), /带通孔销轴.*00123/s);
+    assert.equal(posts.length, 1);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test('修改新零件草稿不能改旧模型名称，应用图上修改沿用当前零件标识', async () => {
+  const named = { ...completed, part_name: '带通孔销轴', part_number: 'PIN-001',
+    spec: { units: 'mm', operations: [{ type: 'box', mode: 'add', length: 40, width: 20, height: 10, position: [0,0,0] }] } };
+  const { context, page, posts } = await setup({ saved: true, record: named });
+  try {
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    await openDesignInput(page);
+    await page.getByLabel('零件名称', { exact: true }).fill('下一零件');
+    await page.getByLabel('零件编号（选填）', { exact: true }).fill('00234');
+    const identity = page.getByRole('region', { name: '当前零件标识', exact: true });
+    assert.match(await identity.innerText(), /带通孔销轴.*设计短号.*11530/s);
+    await page.getByRole('button', { name: '修改设计', exact: true }).click();
+    await page.getByRole('region', { name: '修改当前设计', exact: true }).getByRole('spinbutton', { name: '主体 · 长方体 · 长度', exact: true }).fill('65');
+    await page.getByLabel('我已核对修改后的尺寸与特征').check();
+    await page.getByRole('button', { name: '应用修改，生成新版本', exact: true }).click();
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    assert.equal(posts[0].part_name, named.part_name);
+    assert.equal(posts[0].part_number, named.part_number);
+    assert.equal(posts[0].spec.operations[0].length, 65);
+    await page.reload();
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    await openDesignInput(page);
+    assert.equal(await page.getByLabel('零件名称', { exact: true }).inputValue(), '下一零件');
+    assert.equal(await page.getByLabel('零件编号（选填）', { exact: true }).inputValue(), '00234');
+    assert.match(await identity.innerText(), /带通孔销轴.*11530/s);
+    await page.getByText('技术记录', { exact: true }).click();
+    assert.match(await page.locator('.cad-call-details').innerText(), /原始零件编号：PIN-001/);
+  } finally { await context.close(); }
+});
+
+test('历史未命名设计显示五位短号，查询下载仍使用完整编号，模板不会自动执行', async () => {
+  const { context, page, posts, reads } = await setup({ saved: true });
+  try {
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    const identity = page.getByRole('region', { name: '当前零件标识', exact: true });
+    assert.match(await identity.innerText(), /设计短号.*11530/s);
+    assert.equal(await identity.locator('strong').innerText(), '11530');
+    assert.equal(await page.getByRole('link', { name: '下载 STEP', exact: true }).getAttribute('href'), `${prefix}/runs/${id}/artifacts/model.step`);
+    assert.ok(reads.includes(`${prefix}/runs/${id}`));
+    await page.getByText('技术记录', { exact: true }).click();
+    assert.match(await page.locator('.cad-call-details').innerText(), new RegExp(id));
+    await openDesignInput(page);
+    assert.equal(await page.getByLabel('选择设计模板').isVisible(), false);
+    await openTemplates(page);
+    await page.getByRole('button', { name: '填入带通孔销轴示例', exact: true }).click();
+    assert.equal(await page.getByLabel('零件名称', { exact: true }).inputValue(), '带通孔销轴');
+    assert.equal(await page.getByRole('region', { name: '当前零件标识', exact: true }).getByText('带通孔销轴', { exact: true }).count(), 0);
+    assert.equal(posts.length, 0);
+  } finally { await context.close(); }
+});
+
+test('旧版建模服务不支持标识字段时仍能生成，名称只按当前版本保存到浏览器会话', async () => {
+  const { context, page, posts } = await setup({ status: { ...connected, part_identity_supported: false } });
+  try {
+    await page.getByLabel('零件名称', { exact: true }).fill('长方体试件');
+    await page.getByLabel('零件编号（选填）', { exact: true }).fill('00345');
+    await page.getByLabel('描述零件、尺寸和设计要求').fill(prompt);
+    await page.getByRole('button', { name: '生成 3D 模型', exact: true }).click();
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    assert.equal(posts.length, 1);
+    assert.equal(Object.hasOwn(posts[0], 'part_name'), false);
+    assert.equal(Object.hasOwn(posts[0], 'part_number'), false);
+    const identity = page.getByRole('region', { name: '当前零件标识', exact: true });
+    assert.match(await identity.innerText(), /长方体试件.*00345/s);
+    await page.reload();
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    assert.match(await identity.innerText(), /长方体试件.*00345/s);
+    assert.equal(posts.length, 1);
+  } finally { await context.close(); }
+});
+
+test('新编号只接受五位数字，非法草稿不能发起建模，前导零不丢失', async () => {
+  const { context, page, posts } = await setup();
+  try {
+    await page.getByLabel('描述零件、尺寸和设计要求').fill(prompt);
+    const number = page.getByLabel('零件编号（选填）', { exact: true });
+    const generate = page.getByRole('button', { name: '生成 3D 模型', exact: true });
+    assert.equal(await number.getAttribute('maxlength'), '5');
+    assert.equal(await number.getAttribute('inputmode'), 'numeric');
+    for (const invalid of ['1234', '12a45']) {
+      await number.fill(invalid);
+      assert.equal(await generate.isDisabled(), true);
+      assert.equal(await number.getAttribute('aria-invalid'), 'true');
+      assert.equal(posts.length, 0);
+    }
+    await number.fill('00123');
+    assert.equal(await generate.isDisabled(), false);
+    await generate.click();
+    await page.getByText('模型已加载', { exact: false }).waitFor();
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].part_number, '00123');
+    assert.equal(await page.getByRole('region', { name: '当前零件标识', exact: true }).locator('strong').innerText(), '00123');
+  } finally { await context.close(); }
+});
+
 // 检查实际 WebGL 像素，防止材质或灯光使零件重新偏绿、偏蓝。
 async function assertNeutralPreview(canvas) {
   const pixels = await canvas.evaluate((element) => new Promise((done) => requestAnimationFrame(() => {
@@ -147,6 +281,7 @@ test("提交本地 FreeCAD 后加载真实 STL，旋转/缩放/复位有效并�
 test("填入示例只编辑需求，不会自动执行，并说明人工修改与生产边界", async () => {
   const { context, page, posts } = await setup();
   try {
+    await openTemplates(page);
     await page.getByRole("button", { name: "填入带通孔销轴示例", exact: true }).click();
     assert.equal(await page.getByRole("heading", { name: "FreeCAD MCP 连接", exact: true }).count(), 0);
     assert.equal(await page.getByText(/可用工具 ·/).count(), 0);
@@ -161,6 +296,7 @@ test("填入示例只编辑需求，不会自动执行，并说明人工修改�
 test("高级放样示例保留完整参数，人工核对后才提交到唯一 MCP 接口", async () => {
   const { context, page, posts } = await setup();
   try {
+    await openTemplates(page);
     await page.getByLabel('选择设计模板').selectOption('loft');
     await page.getByText('专业设置', { exact: true }).click();
     const input = page.getByLabel('结构化参数（JSON，优先于文字描述）');
@@ -181,6 +317,7 @@ test("高级放样示例保留完整参数，人工核对后才提交到唯一 M
 test("结构化 JSON 错误不能发送，编辑参数后需要重新人工核对", async () => {
   const { context, page, posts } = await setup();
   try {
+    await openTemplates(page);
     await page.getByLabel('选择设计模板').selectOption('assembly');
     await page.getByText('专业设置', { exact: true }).click();
     const checkbox = page.getByLabel('我已核对设计尺寸与参数');
@@ -199,6 +336,7 @@ test("正四面体示例可编辑边长，仍经唯一 MCP 接口提交并显示
   const { context, page, posts } = await setup({ record: { ...completed, prompt: tetraPrompt,
     validation: { ...completed.validation, face_count: 4, edge_count: 6, edge_lengths_mm: [120,120,120,120,120,120] } } });
   try {
+    await openTemplates(page);
     await page.getByRole("button", { name: "填入正四面体示例", exact: true }).click();
     assert.equal(await page.getByLabel("描述零件、尺寸和设计要求").inputValue(), "正四面体（立体三角形、四面相同、边长100mm）");
     assert.equal(posts.length, 0);
@@ -220,6 +358,7 @@ test("刷新页面恢复原始需求和结果，手动刷新只读且保留未�
   try {
     await page.getByText("模型已加载", { exact: false }).waitFor();
     const draft = "下一件零件的待编辑草稿";
+    await openDesignInput(page);
     await page.getByLabel("描述零件、尺寸和设计要求").fill(draft);
     await page.getByRole("region", { name: "模型与图纸", exact: true }).getByRole("button", { name: "刷新结果", exact: true }).click();
     await page.reload();
@@ -331,6 +470,7 @@ function verifiedFiles(entries) {
 test('工作台示例完整填入JSON并保持人工确认门禁，编辑后重新核对', async () => {
   const { context, page, posts, errors } = await setup();
   try {
+    await openTemplates(page);
     const select = page.getByLabel('选择设计模板');
     await page.getByText('专业设置', { exact: true }).click();
     const input = page.getByLabel('结构化参数（JSON，优先于文字描述）');
@@ -488,6 +628,7 @@ test('用户默认看到中文设计工作台，内部执行术语和原始JSON�
     await page.getByRole('heading', { name: '零件设计工作台', exact: true }).waitFor();
     const visible = await page.locator('body').innerText();
     assert.doesNotMatch(visible, /model_3d|production_modeling_skill|freecad_mcp|JSON|MCP/);
+    await openTemplates(page);
     await page.getByLabel('选择设计模板').selectOption('flange');
     await page.getByRole('spinbutton', { name: '主体 · 圆柱体 · 直径', exact: true }).waitFor();
     assert.equal(await page.locator('.cad-parameter-editor .cad-feature[open]').count(), 1, '复杂模板只展开主体，其他特征按需展开');
@@ -541,6 +682,7 @@ test('保留初始需求表单时点击模型尺寸仍定位当前版本编辑�
   const { context, page } = await setup({ saved: true, record });
   try {
     await page.getByText('模型已加载', { exact: false }).waitFor();
+    await openTemplates(page);
     await page.getByLabel('选择设计模板').selectOption('drawing');
     await page.getByRole('button', { name: '修改长度，当前40mm', exact: true }).click();
     const editor = page.getByRole('region', { name: '修改当前设计', exact: true });
@@ -601,6 +743,7 @@ test('修改版本保留原图，切换版本和刷新只读取对应记录，�
 test('模板尺寸有明确优先提示，切换文字建模清除旧参数且不自动执行', async () => {
   const { context, page, posts } = await setup();
   try {
+    await openTemplates(page);
     await page.getByLabel('选择设计模板').selectOption('drawing');
     await page.getByText('使用下方参数生成，文字描述用于说明用途。', { exact: true }).waitFor();
     await page.getByRole('button', { name: '仅按文字建模', exact: true }).click();
@@ -670,6 +813,7 @@ test('三维尺寸端点可拖动，松手只保存草稿，空输入阻止确�
     const layer = viewer.getByRole('region', { name: '三维图内编辑', exact: true });
     const handle = layer.getByRole('button', { name: '拖动长度尺寸', exact: true });
     await handle.waitFor();
+    await handle.scrollIntoViewIfNeeded();
     const bounds = await handle.boundingBox();
     await page.mouse.move(bounds.x+bounds.width/2, bounds.y+bounds.height/2);
     await page.mouse.down(); await page.mouse.move(bounds.x+bounds.width/2+35, bounds.y+bounds.height/2, { steps: 8 }); await page.mouse.up();
@@ -769,6 +913,7 @@ test('真实法兰厚度标注不能挡住拖动端点，命中圆点后实际�
     await viewer.getByRole('button', { name: '图上编辑', exact: true }).click();
     const handle = viewer.getByRole('button', { name: '拖动长度尺寸', exact: true });
     await handle.waitFor();
+    await handle.scrollIntoViewIfNeeded();
     const bounds = await handle.boundingBox(), x = bounds.x+bounds.width/2, y = bounds.y+bounds.height/2;
     assert.equal(await page.evaluate(({ x,y }) => document.elementFromPoint(x,y)?.getAttribute('aria-label'), { x,y }), '拖动长度尺寸');
     await page.mouse.move(x,y); await page.mouse.down(); await page.mouse.move(x,y-25,{ steps: 8 }); await page.mouse.up();

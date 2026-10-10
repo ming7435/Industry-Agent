@@ -7,12 +7,12 @@ import machineImage from "../assets/trak-tc820-machine-transparent.png";
 import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getDeviceDisplayName, getWorkorderAlarmCode, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
 import { buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLatestPipeline } from "./diagnosisView.mjs";
 import { currentIncident, incidentIdentity, matchesIncident, linkedPlanOrder, recordTimes, formatRecordTime } from './incidentIdentity.mjs';
-import { buildReportDisplaySections, reportCompleteness, reportQualityLabel } from "./reportView.mjs";
+import { buildReportArticle, buildReportDisplaySections, reportCompleteness, reportQualityLabel } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { request } from "./apiRequest.mjs";
-import { getTeamSession, subscribeTeamSession } from "../teamSession.mjs";
+import { getTeamSession, subscribeTeamSession } from '../teamSession.mjs';
 import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, executionReviewView, inspectionWorkorderView, loadMaintenancePlans, loadMaintenanceOrders, maintenanceDispatchView, maintenanceHistoryNotice, maintenanceReferenceDrawings, maintenanceWorkType, retryMaintenancePlan } from "./maintenanceWorkspace.mjs";
 import { publishMaintenanceChange, subscribeMaintenanceChanges, rememberDeletedMaintenancePlans } from './maintenanceChanges.mjs';
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
@@ -20,7 +20,10 @@ import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs
 import { createMotionClock, getMachineMotionState, getWorkshopMotionState } from "./workshopMotion.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
+import { freeCadRequest } from "./production-cad/freecad.mjs";
+import DemoQualityWorkspace from "./QualityWorkspace.jsx";
 import QualitySourceWorkspace from "./QualitySourceWorkspace.jsx";
+import RepairCadPanel from './WorkorderDrawingPanel.jsx';
 import "../workbench.css";
 import TeamAccess from '../TeamAccess.jsx';
 import SupervisorQueue from '../SupervisorQueue.jsx';
@@ -752,7 +755,7 @@ function App() {
     <div className={`platform-shell ${bigScreen ? "big-screen" : "workbench"}`}>
       {!bigScreen && <WorkbenchSidebar activeView={activeView} onChange={setActiveView} hasError={Boolean(error || runner.last_error)} connected={Boolean(snapshot)} />}
       <main className={`app-shell ${!bigScreen && activeView === "monitor" ? "monitor-canvas-shell" : !bigScreen ? "content-shell" : ""}`}>
-        {!bigScreen && activeView !== "quality" && <TeamAccess actor={teamActor} onActor={setTeamActor} line={monitorLine || lineState} onLine={setLineState} />}
+        {!bigScreen && <TeamAccess actor={teamActor} onActor={setTeamActor} line={monitorLine || lineState} onLine={setLineState} />}
         {bigScreen ? (
           <Topbar
             snapshot={snapshot}
@@ -2643,6 +2646,20 @@ function LogsWorkspace({ snapshot, active = true }) {
   const toolCount = records.filter((record) => record.type === "tool" || record.tool_name || record.tool).length;
   const errorCount = records.filter((record) => Boolean(record.error) || /error|failed|timeout/i.test(String(record.event || ""))).length;
   const agentInvocations = useMemo(() => buildAgentInvocations(records), [records]);
+  const experienceSummaries = useMemo(() => {
+    const saved = new Map();
+    for (const invocation of agentInvocations) {
+      const result = invocation.output;
+      const experience = result?.experience;
+      if (result?.success && experience?.experience_id && experience?.content && experience?.memory_saved !== false) {
+        const previous = saved.get(experience.experience_id);
+        if (!previous || Number(experience.knowledge_sync?.attempts || 0) >= Number(previous.knowledge_sync?.attempts || 0)) {
+          saved.set(experience.experience_id, experience);
+        }
+      }
+    }
+    return [...saved.values()];
+  }, [agentInvocations]);
   const error = [indexError, detailError].filter(Boolean).join("；");
   const statusText = (status) => ({ completed: "已完成", running: "进行中", error: "异常", pending: "待执行", blocked: "待补充或处理" }[status] || status || "待执行");
 
@@ -2665,9 +2682,19 @@ function LogsWorkspace({ snapshot, active = true }) {
           <div className="logs-run-card-title">{run.device_id ? getDeviceDisplayName(run.device_id, { snapshot }) : "未绑定设备"}{run.alarm_code ? ` · 报警 ${run.alarm_code}` : ""}</div>
           <div className="logs-run-card-meta"><span>{run.started_at ? formatTime(run.started_at) : "--"}</span><span>{run.event_count || 0} 个事件</span><span>{run.error_count || 0} 个异常</span></div>
           <div className="logs-run-phases">{(run.phases || []).map((phase) => <span key={phase.id} className={`logs-phase logs-phase-${phase.status}`}><i />{phase.label} · {statusText(phase.status)}</span>)}</div>
+          {run.status_reason && <div className="logs-run-hint">{run.status_reason}</div>}
           <div className="logs-run-id">{run.run_id}</div>
         </button>)}</div> : <div className="empty-state logs-empty">暂无运行记录；监控确认故障或执行质检后，这里会生成生命周期记录。</div>}
       </section>
+      {experienceSummaries.length > 0 && <section className="panel module-panel logs-panel" aria-label="故障经验总结">
+        <div className="panel-heading"><div><span className="eyebrow">Repair Experience</span><h2>经验总结</h2></div></div>
+        <div className="document-list logs-experience-summaries">{experienceSummaries.map((experience) => <article key={experience.experience_id}>
+          <strong>{cleanDisplayText(experience.title) || "维修经验总结"}</strong>
+          <p>关联工单：{experience.source_workorder || "--"}{experience.validation_status === "manual_confirmed" ? " · 依据维修人员人工确认" : ""}</p>
+          <p>{experience.rag_saved === true ? '知识沉淀：经验已保存，关键词与向量索引均已完成。' : experience.knowledge_sync?.searchable ? '知识沉淀：经验已保存并可通过关键词检索；向量索引待后台自动重试。' : '知识沉淀：经验已保存；检索索引待后台自动同步。'}</p>
+          <FormattedText value={cleanDisplayText(experience.content).replace(/\n/g, "\n\n")} />
+        </article>)}</div>
+      </section>}
       <section className="panel module-panel logs-panel" aria-label="执行日志">
         <div className="panel-heading logs-panel-heading">
           <div><span className="eyebrow">Execution Timeline</span><h2>执行明细</h2></div>
@@ -2765,7 +2792,11 @@ function ReportWorkspace({ snapshot, active = true }) {
   const pdfReady = pdfReportIds.includes(report.report_id);
   const completeness = reportCompleteness(report);
   const sections = report.sections || {};
-  const displaySections = buildReportDisplaySections(sections);
+  const qualityReport = report.report_type === 'quality_report';
+  const displaySections = qualityReport ? buildReportDisplaySections(sections, report.report_type) : [];
+  const article = qualityReport ? '' : buildReportArticle(report);
+  const workorderCount = new Set([...(report.workorder_ids || []), ...(sections.workorder?.records || []).map(order => order.workorder_id),
+    sections.workorder?.workorder_id].filter(Boolean)).size;
   const hasReport = Boolean(report.report_id || report.title || report.summary || Object.keys(sections).length);
   const pdfUrl = report.report_id ? `/api/reports/${encodeURIComponent(report.report_id)}/pdf` : "";
   async function generatePdf() {
@@ -2798,7 +2829,7 @@ function ReportWorkspace({ snapshot, active = true }) {
   if (!active) return null;
   return (
     <section className="workspace-view active module-board report-workspace" aria-label="报告中心">
-      <ModuleHero eyebrow="Report Agent" title="报告中心" text="每次故障停机处理完成、工单检查与整线复机核验通过后，自动汇总智能诊断、维修方案、工单和质检结果，生成一份故障处理报告。" action={<button className="button" type="button" onClick={() => loadReports()} disabled={loadingReports}>{loadingReports ? "同步中…" : "同步报告"}</button>} />
+      <ModuleHero eyebrow="Report Agent" title="报告中心" text="设备故障处理完成后，自动汇总诊断、维修方案、工单执行和复机记录。产品质检报告按独立检测流程生成。" action={<button className="button" type="button" onClick={() => loadReports()} disabled={loadingReports}>{loadingReports ? "同步中…" : "同步报告"}</button>} />
       {reportError && <div className="inline-error" role="status">报告服务暂不可用：{reportError}</div>}
       <section className="panel module-panel report-list-panel" aria-label="已持久化报告列表">
         <div className="panel-heading"><div><span className="eyebrow">持久化记录 · {reportItems.length} 份</span><h2>报告列表</h2></div></div>
@@ -2809,8 +2840,8 @@ function ReportWorkspace({ snapshot, active = true }) {
       </section>
       {hasReport ? (
         <>
-          <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text="故障处理汇总报告" /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质检结果" value={reportQualityLabel(sections.quality)} text="关联质检的实际结果" /></div>
-          <section className="panel module-panel report-panel"><div className="panel-heading"><div><span className="eyebrow">报告摘要</span><h2>{report.title || "运维报告"}</h2><span className={`severity-pill ${completeness.tone}`}>{completeness.label}</span></div><div className="report-file-actions"><button className="button" type="button" onClick={generatePdf} disabled={!report.report_id || Boolean(generatingPdf)}>{generatingPdf === report.report_id ? "生成中…" : "生成 PDF"}</button>{pdfReady && <><a className="button" href={pdfUrl} target="_blank" rel="noreferrer">打开 PDF</a><a className="button" href={`${pdfUrl}?download=1`} download={`report-${report.report_id}.pdf`}>下载 PDF</a></>}</div></div>{completeness.findings.length > 0 && <div className="workspace-notice" role="status"><ul>{completeness.findings.map((finding, index) => <li key={`${index}-${finding}`}>{finding}</li>)}</ul></div>}<FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</section>
+          {qualityReport && <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text="产品质检报告" /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质检结果" value={reportQualityLabel(sections.quality)} text="产品的实际检测结果" /></div>}
+          <section className="panel module-panel report-panel"><div className="panel-heading"><div><h2>{report.title || "运维报告"}</h2><span className={`severity-pill ${completeness.tone}`}>{completeness.label}</span></div><div className="report-file-actions"><button className="button" type="button" onClick={generatePdf} disabled={!report.report_id || Boolean(generatingPdf)}>{generatingPdf === report.report_id ? "生成中…" : "生成 PDF"}</button>{pdfReady && <><a className="button" href={pdfUrl} target="_blank" rel="noreferrer">打开 PDF</a><a className="button" href={`${pdfUrl}?download=1`} download={`report-${report.report_id}.pdf`}>下载 PDF</a></>}</div></div>{completeness.findings.length > 0 && <div className="workspace-notice" role="status"><ul>{completeness.findings.map((finding, index) => <li key={`${index}-${finding}`}>{finding}</li>)}</ul></div>}{qualityReport ? <><FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</> : <><p className="report-byline">{formatTime(report.created_at || report.updated_at)} · {report.report_id} · {workorderCount} 张工单</p><article className="report-article" aria-label="故障处理报告正文">{article.split(/\n\s*\n/).filter(Boolean).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</article></>}</section>
         </>
       ) : <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="工单检查通过并确认整线恢复运行后，报告会自动显示，无需选择来源或手动生成。" />}
     </section>
@@ -3364,7 +3395,7 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
       </section>}
 
       <div className="workorder-bigscreen-grid cad-only">
-        <RepairCadPanel order={order} target={target} />
+        <RepairCadPanel key={`${order.workorder_id}:${order.device_id}`} order={order} target={target} />
       </div>
       <WorkorderSheet sheet={sheet} workType={workType} inspectionResult={inspectionResult} review={review} confirmationRevision={revalidation?.revision || 0} busy={busy} error={error} onUpdate={onUpdate} readOnly={readOnly} />
     </section>
@@ -3423,17 +3454,6 @@ function MaintenancePlanPanel({ plan, record, hasCurrentDiagnosis }) {
 function PlanList({ title, items = [], ordered = false }) {
   const values = items.filter(Boolean);
   return <section className="maintenance-plan-section"><div className="maintenance-plan-section-head"><h3>{title}</h3><span>{values.length} 项</span></div>{values.length ? (ordered ? <ol>{values.map((item, index) => <li key={`${item}-${index}`}><FormattedText value={item} /></li>)}</ol> : <ul>{values.map((item, index) => <li key={`${item}-${index}`}><FormattedText value={item} /></li>)}</ul>) : <p className="maintenance-plan-muted">暂无记录</p>}</section>;
-}
-
-function resolveWorkorderDrawing(order = {}, target = {}) {
-  const identity = [order.device_id, order.drawing_context?.drawing_url, target.component, target.part_name]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  if (identity.includes("qls80") || identity.includes("ql-servo") || identity.includes("lns")) return "/drawings/QLS80S2.html";
-  if (identity.includes("equator") || identity.includes("renishaw")) return "/drawings/Equator300.html";
-  if (identity.includes("tc820") || identity.includes("trak") || identity.includes("lubrication-pump") || identity.includes("cooling-pump")) return "/drawings/TC820si.html";
-  return "";
 }
 
 function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionResult = inspectionWorkorderView(), review = executionReviewView(), confirmationRevision = 0, busy, error, onUpdate, readOnly = false }) {
@@ -3523,51 +3543,6 @@ function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionRes
             {!workType.inspection && sheet.status === 'completed' && sheet.verificationPhase === 'poststart' && <button className="button" disabled={busy || readOnly || (review.required && !review.humanConfirmed)} onClick={() => onUpdate('closed')}>{review.required ? '关闭工单' : '关闭工单并生成总结'}</button>}
           </div>
         </section>
-      </div>
-    </section>
-  );
-}
-
-function RepairCadPanel({ order, target }) {
-  const [cad, setCad] = useState(null);
-  const [cadError, setCadError] = useState("");
-  const sceneMountRef = useRef(null);
-  const targetComponent = target.component || target.part_no || target.part_name || "";
-  const drawingUrl = resolveWorkorderDrawing(order, target);
-
-  useEffect(() => {
-    let cancelled = false;
-    setCad(null);
-    setCadError("");
-    if (!targetComponent) return undefined;
-    request(`/api/cad/resolve?component=${encodeURIComponent(targetComponent)}&part_no=${encodeURIComponent(target.part_no || "")}&device_id=${encodeURIComponent(order?.device_id || "")}`)
-      .then((body) => { if (!cancelled) setCad(body); })
-      .catch((error) => { if (!cancelled) setCadError(error.message); });
-    return () => { cancelled = true; };
-  }, [targetComponent, target.part_no, order?.device_id]);
-
-  function openFullscreen() {
-    sceneMountRef.current?.requestFullscreen?.();
-  }
-
-  return (
-    <section className="repair-visual-panel" aria-label="3D 故障定位">
-      <div className="repair-visual-head">
-        <div>
-          <span className="eyebrow">3D 故障定位</span>
-          <h2>{target.part_name}</h2>
-          <p>{target.location} · 工单目标：{targetComponent}</p>
-        </div>
-        <div className="repair-visual-actions">
-          <button className="button ghost-button" type="button" onClick={openFullscreen}>全屏</button>
-        </div>
-      </div>
-      <div className="repair-visual-body">
-        <div className="repair-cad-scene" ref={sceneMountRef} aria-label="CAD 结构定位视图">
-          {drawingUrl ? <iframe className="repair-drawing-frame" title={`${target.part_name || order?.device_id || "设备"} 工单图纸`} src={drawingUrl} /> : <div className="cad-scene-status is-error"><strong>未匹配到工单图纸</strong><span>当前设备：{order?.device_id || "未知"}</span><small>没有可确认的机器图纸，不显示虚构模型。</small></div>}
-          {cadError && <div className="cad-scene-status is-error repair-cad-notice"><strong>CAD 部件关系暂不可用</strong><span>{cadError}</span><small>工单图纸仍保留；部件定位请以图纸和现场核验为准。</small></div>}
-          {cad?.part && <div className="cad-scene-status repair-cad-notice"><strong>已匹配：{cad.part.name} · {cad.part.part_no}</strong><span>{cad.part.position}</span><small>CAD 来源：{cad.source}。图纸为本工单对应机器的真实离线查看器。</small></div>}
-        </div>
       </div>
     </section>
   );
@@ -3708,10 +3683,6 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
   );
 }
 
-function DemoQualityWorkspace() {
-  return <section className="workspace-view active quality-workspace" aria-label="质检系统" />;
-}
-
 function QualityWorkspace(props) {
   return <QualitySourceWorkspace {...props} Demo={DemoQualityWorkspace} />;
 }
@@ -3788,7 +3759,9 @@ function ReportDisplaySections({ sections }) {
   return <div className="report-display-sections">{sections.map((section) => (
     <section className="report-display-section" key={section.title}>
       <h3>{section.title}</h3>
-      {section.lines?.length ? section.lines.map((line, index) => <FormattedText key={index} value={line} />) : section.body && <FormattedText value={section.body} />}
+        {section.lines?.length ? section.lines.map((line, index) => /^记录 \d+$/.test(line)
+          ? <h4 className="report-record-heading" key={index}>{line}</h4>
+          : <FormattedText key={index} value={line} />) : section.body && <FormattedText value={section.body} />}
       {section.items?.length > 0 && <StepList steps={section.items} />}
     </section>
   ))}</div>;

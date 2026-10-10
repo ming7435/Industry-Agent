@@ -17,7 +17,7 @@ class MemoryAgentValidator:
     @staticmethod
     def validate_action(request: Mapping[str, Any]) -> list[str]:
         action = str(request.get("action") or "search")
-        if action not in {"search", "recent", "learn"}:
+        if action not in {"search", "recent", "learn", "summarize", "sync"}:
             return ["不支持的记忆动作：%s" % action]
         return []
 

@@ -261,6 +261,7 @@ class A2ARequests:
                 quality=state.get("quality") or {},
                 report=state.get("report") or {},
                 context=dict(context),
+                experience=dict(state.get('experience') or {}),
             ),
             MemoryResponse,
         )

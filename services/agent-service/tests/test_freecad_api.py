@@ -74,6 +74,46 @@ def test_original_prompt_survives_lookup_and_idempotency_without_oauth():
     assert len(store.rows) == 1
     assert client.post(PREFIX + "/auth/start", json={}).status_code == 404
     assert client.get(PREFIX + "/status").json()["connected"] is True
+    assert client.get(PREFIX + "/status").json()["part_identity_supported"] is True
+
+
+def test_part_identity_is_stored_with_run_and_not_added_to_geometry_prompt():
+    client, store = api()
+    body = {"prompt": "销轴，孔径待定", "command_id": "named-part",
+        "part_name": "  带通孔销轴  ", "part_number": "  PIN-001  "}
+    created = client.post(PREFIX + "/runs", json=body)
+    assert created.status_code == 202, created.text
+    run_id = created.json()["run_id"]
+    record = client.get(PREFIX + "/runs/" + run_id).json()
+    assert record["part_name"] == "带通孔销轴"
+    assert record["part_number"] == "PIN-001"
+    assert record["prompt"] == body["prompt"]
+    assert store.rows[run_id]["part_number"] == "PIN-001"
+    assert client.post(PREFIX + "/runs", json=body).json() == record
+    for changed in ({"part_name": "另一零件"}, {"part_number": "PIN-002"}):
+        assert client.post(PREFIX + "/runs", json={**body, **changed}).status_code == 409
+    assert len(store.rows) == 1
+
+
+def test_empty_identity_remains_compatible_with_legacy_command_digest():
+    client, store = api()
+    body = {"prompt": "销轴", "command_id": "legacy-part"}
+    created = client.post(PREFIX + "/runs", json=body)
+    assert created.status_code == 202
+    run_id = created.json()["run_id"]
+    store.rows[run_id].pop("part_name", None)
+    store.rows[run_id].pop("part_number", None)
+    assert client.post(PREFIX + "/runs", json={**body, "part_name": "", "part_number": ""}).status_code == 202
+    assert len(store.rows) == 1
+
+
+@pytest.mark.parametrize("extra", [{"part_name": "零件\n下一行"}, {"part_number": "PIN\x00-1"},
+    {"part_name": "零" * 121}, {"part_number": "P" * 81}, {"part_name": []}])
+def test_invalid_part_identity_does_not_claim_a_command(extra):
+    client, store = api()
+    response = client.post(PREFIX + "/runs", json={"prompt": "销轴", "command_id": "invalid-name", **extra})
+    assert response.status_code == 422
+    assert not store.rows
 
 
 @pytest.mark.parametrize("extra", [{"code": "exec('x')"}, {"endpoint": "http://evil"}, {"spec": {"code": "evil"}}])

@@ -1,4 +1,4 @@
-"""从持久化的停机、诊断、方案、执行和质检事实汇总一份复机报告。"""
+"""从设备停机、诊断、维修执行和复机事实汇总故障处理报告。"""
 from copy import deepcopy
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -7,6 +7,7 @@ import logging
 from ..line_control.repository import LineControlRepository
 
 log = logging.getLogger(__name__)
+COMPOSITION_VERSION = 7
 
 
 def iso(timestamp):
@@ -27,7 +28,7 @@ class LifecycleReports:
         if not cycles:
             return
         reports = {r['report_id']: self.business._normalize_report(r) for r in self.business._list_records('report')}
-        qualities = self.business._list_records('quality')
+        experiences = self.business._list_records('experience')
         for cycle in cycles:
             report_id = 'RPT-CYCLE-' + sha256(cycle['cycle_id'].encode()).hexdigest()[:16].upper()
             try:
@@ -35,8 +36,10 @@ class LifecycleReports:
                 if cycle.get('report_status') == 'generated':
                     if not preview:
                         continue
-                    matched = self.matched_quality(qualities, preview['sections']['workorder'].get('records', []), cycle)
-                    if matched == preview['sections']['quality'].get('records', []):
+                    current_experiences = [item for item in experiences if item.get('cycle_id') == cycle['cycle_id']
+                        or item.get('source_workorder') in (preview.get('workorder_ids') or [])]
+                    if (preview.get('composition_version') == COMPOSITION_VERSION
+                            and (preview.get('sections', {}).get('experience') or {}).get('records') == current_experiences):
                         continue  # 未变化的历史报告不重新汇总或写库。
                 # 与质检写入和报告删除串行化；锁释放后才更新产线报告回执。
                 with self.business.repository.quality_transaction():
@@ -96,22 +99,24 @@ class LifecycleReports:
                 for record in records:
                     report['source_refs'].append({'section': section, 'source': 'backend-persisted-record',
                         **{key: record[key] for key in ('workorder_id', 'plan_id', 'event_id', 'device_id', 'trace_id') if record.get(key)}})
-        qualities = self.matched_quality(self.business._list_records('quality'), orders, cycle)
-        quality = aggregate(qualities, status='not_tested', result='not_tested', summary='未关联质检记录')
-        quality.pop('passed', None)
-        if qualities:
-            quality['summary'] = '已关联 %s 份质检记录' % len(qualities)
-            # 内容完整与产品合格是两个独立事实，任何未检/失败都不能变成通过。
-            if all(q.get('result') in {'passed', 'failed', 'minor_issue', 'major_issue', 'high_risk'} for q in qualities):
-                quality['passed'] = all(q.get('result') == 'passed' or (
-                    q.get('status') in {'released', 'closed'} and (q.get('reinspection') or {}).get('passed') is True
-                    and (q.get('reinspection') or {}).get('reinspection_check_id')) for q in qualities)
-            else:
-                quality.update(status='pending', result='pending')
-        report['sections']['quality'] = quality
-        report['source_refs'] = [r for r in report['source_refs'] if r['section'] != 'quality'] + [
-            {'section': 'quality', 'source': 'backend-quality-record', 'quality_check_id': q['quality_check_id'],
-             'workorder_id': q.get('workorder_id', ''), 'device_id': q.get('device_id', '')} for q in qualities]
+        # 旧报告移除误纳入的产品质检，保留原故障与维修事实和报告编号。
+        report['sections'].pop('quality', None)
+        report['sections'].pop('quality_result', None)
+        report['source_refs'] = [r for r in report['source_refs'] if r['section'] not in {'quality', 'quality_result', 'experience'}]
+        experiences = [deepcopy(item) for item in self.business._list_records('experience')
+                       if item.get('cycle_id') == cycle['cycle_id']
+                       or item.get('source_workorder') in report['workorder_ids']]
+        report['sections']['experience'] = aggregate(experiences)
+        for item in experiences:
+            report['source_refs'].append({'section': 'experience', 'source': 'backend-persisted-record',
+                'experience_id': item['experience_id'], 'workorder_id': item.get('source_workorder')})
+        report['sections']['references'] = {'records': deepcopy(report['source_refs'])}
+        report['knowledge_status'] = ('indexed' if experiences and all(e.get('rag_saved') is True for e in experiences)
+            else 'searchable' if experiences and all((e.get('knowledge_sync') or {}).get('searchable') for e in experiences)
+            else 'pending')
+        report['knowledge_note'] = ('经验已保存并同步至关键词与向量检索索引' if report['knowledge_status'] == 'indexed'
+            else '经验可通过关键词检索；向量同步尚未完成，后台自动重试' if report['knowledge_status'] == 'searchable'
+            else '经验总结或检索索引待后台自动保存与同步')
         findings = []
         if not cycle.get('started_at'):
             findings.append('历史停机开始时间未记录')
@@ -119,10 +124,6 @@ class LifecycleReports:
                                ('repair_feedback', '处理说明'), ('repair_verification', '检查核验')]:
             if not report['sections'][section].get('records'):
                 findings.append('未关联' + label + '记录')
-        if not qualities:
-            findings.append('未关联质检记录')
-        elif 'passed' not in quality:
-            findings.append('关联质检记录尚未完成检测')
         for order in orders:
             for key, label in [('diagnosis_snapshot', '智能诊断'), ('maintenance_plan_snapshot', '维修方案'),
                                ('repair_feedback', '处理说明')]:
@@ -133,39 +134,12 @@ class LifecycleReports:
                 if any(record.get(field) and record[field] != order.get(field) for field in ('event_id', 'device_id')):
                     findings.append(order['workorder_id'] + '关联记录的设备或故障事件不一致')
         manual = cycle.get('restart_method') == 'manual_confirmation'
-        report.update(status='incomplete' if findings else 'completed', validation_findings=findings,
+        report.update(composition_version=COMPOSITION_VERSION,
+                      status='incomplete' if findings else 'completed', validation_findings=findings,
                       stop_reason='restart_confirmed' if manual else 'restart_verified',
-                      summary=('本次停机处理已完成，维修人员人工确认后整线启动指令已执行。' if manual else '本次停机处理已完成，整线复机核验通过。') + '已汇总 %s 张工单的智能诊断、维修方案及处理检查记录；%s。' % (
-                          len(orders), quality['summary']))
+                      summary=('本次停机处理已完成，维修人员人工确认后整线启动指令已执行。' if manual else '本次停机处理已完成，整线复机核验通过。') + '已汇总 %s 张工单的智能诊断、维修方案及处理检查记录。' % len(orders))
+        from shared.report_presentation import concise_report_sections, report_article, report_presentation
+        report['presentation_sections'] = report_presentation(report['sections'])
+        report['concise_sections'] = concise_report_sections(report)
+        report['article_text'] = report_article(report)
         return report
-
-    @classmethod
-    def matched_quality(cls, records, orders, cycle):
-        return sorted((q for q in records if cls.quality_matches(q, orders, cycle)),
-                      key=lambda q: (q.get('created_at', ''), q.get('quality_check_id', '')))
-
-    @staticmethod
-    def quality_matches(quality, orders, cycle):
-        for order in orders:
-            if quality.get('device_id') and quality['device_id'] != order['device_id']:
-                continue
-            if quality.get('event_id') and quality['event_id'] != order['event_id']:
-                continue
-            if quality.get('workorder_id'):
-                if quality['workorder_id'] == order['workorder_id']:
-                    return True
-                continue
-            if quality.get('event_id') and quality['event_id'] == order['event_id']:
-                return True
-            if quality.get('trace_id') and quality['trace_id'] == order.get('trace_id'):
-                return True
-        # 没有显式工单/事件绑定时，仅汇总该次停机期间、整线设备上的检测。
-        # 相同设备的历史检测或明确属于其他任务的检测不得混入。
-        if not quality.get('workorder_id') and not quality.get('event_id') and quality.get('device_id') in cycle['device_ids']:
-            try:
-                checked_at = datetime.fromisoformat(str(quality.get('created_at') or '').replace('Z', '+00:00'))
-                if checked_at.tzinfo is not None:
-                    return cycle['started_at'] <= checked_at.timestamp() <= cycle['restarted_at']
-            except (ValueError, TypeError):
-                pass
-        return False

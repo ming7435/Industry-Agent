@@ -44,7 +44,16 @@ class LongMemoryStore:
 
     def save(self, item: Dict[str, Any]) -> None:
         with self._lock:
+            identity = item.get('experience_id')
+            if identity:
+                self._items = [old for old in self._items if old.get('experience_id') != identity]
             self._items.append(dict(item))
+
+    def record_index(self, experience_id, result):
+        existing = next(item for item in self.search(limit=100) if item.get('experience_id') == experience_id)
+        ready = bool(result.get('pipeline_ready', result.get('loaded', 0)))
+        self.save({**existing, 'rag_saved': ready, 'knowledge_sync': {'status': 'indexed' if ready else 'retry', 'pipeline_ready': ready}})
+        return next(item for item in self.search(limit=100) if item.get('experience_id') == experience_id)
 
     def search(self, device_id: str = "", limit: int = 20, **filters: Any) -> List[Dict[str, Any]]:
         with self._lock:
@@ -172,6 +181,12 @@ class BackendLongMemoryStore:
 
     def recent(self, limit: int = 20) -> List[Dict[str, Any]]:
         return self.search(limit=limit)
+
+    def record_index(self, experience_id, result):
+        receipt = self.client.call('record_experience_index', {'experience_id': experience_id, 'result': dict(result)})
+        if receipt.get('success') is not True:
+            raise MemoryBackendError('知识索引回执未保存，后台将重试')
+        return receipt['experience']
 
 
 def _matches(item: Dict[str, Any], device_id: str = "", **filters: Any) -> bool:

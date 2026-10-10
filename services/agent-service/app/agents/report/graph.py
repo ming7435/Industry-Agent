@@ -105,6 +105,10 @@ def check_completeness(state: ReportWorkflowState) -> Dict[str, Any]:
         "event": state.get("event") or {},
         "trace_summary": state.get("trace_summary") or {},
     }.items() if value}
+    if report_type == 'quality_report':
+        sections = {key: value for key, value in sections.items() if key in {'quality', 'knowledge', 'trace_summary'}}
+    else:
+        sections.pop('quality', None)
     findings = agent._completeness_findings(sections, report_type)
     return {"report_type": report_type, "sections": sections, "completeness_findings": findings, "route": "compose" if sections else "fallback"}
 

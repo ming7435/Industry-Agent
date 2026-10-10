@@ -62,7 +62,21 @@ def query_bom(query: str = "", component: str = "", part_no: str = "", device_id
     return {"query": query or component or part_no, "bom_items": [_bom(item) for item in matched], "engineering_status": "ready" if any(item.get("bom_items") for item in matched) else "insufficient_engineering_data", **_response_meta()}
 
 
-def query_drawing(query: str = "", component: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, tenant_id: str = "", project_id: str = "", **_: Any) -> Dict[str, Any]:
+def query_drawing(query: str = "", component: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, tenant_id: str = "", project_id: str = "", reference_only: bool = False, **_: Any) -> Dict[str, Any]:
+    if not isinstance(reference_only, bool):
+        raise HTTPException(status_code=400, detail='reference_only 必须为布尔值')
+    if reference_only:
+        try:
+            repository = get_repository()
+            if repository.backend == 'demo-catalog' or not hasattr(repository, 'search_device_drawings'):
+                raise CADRepositoryError('整机图纸目录不可用，不能使用演示部件代替')
+            # 整机文件不带部件或租户归属；这些限定不能悄悄忽略。
+            drawings = [] if any((component, part_no, tenant_id, project_id, _.get('component_id'))) else repository.search_device_drawings(
+                device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version)
+            return {'drawings':drawings, 'device_id':device_id, 'catalog_backend':'mysql-device-drawings',
+                    'engineering_status':'reference_only' if drawings else 'insufficient_engineering_data', **_response_meta()}
+        except CADRepositoryError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
     matched = _match(query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history, component_id=component, part_no=part_no, tenant_id=tenant_id, project_id=project_id)
     drawings = [_drawing(item) for item in matched] if matched else _reference_drawings(
         device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version,

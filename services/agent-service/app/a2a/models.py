@@ -208,6 +208,7 @@ class MemoryRequest(A2ARequest):
     quality: Dict[str, Any] = Field(default_factory=dict)
     report: Dict[str, Any] = Field(default_factory=dict)
     context: Dict[str, Any] = Field(default_factory=dict)
+    experience: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MemoryResponse(A2AResponse):

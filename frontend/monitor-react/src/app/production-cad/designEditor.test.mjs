@@ -99,3 +99,14 @@ test('版本记录只接受当前固定运行标识，重复记录不会重复�
   assert.equal(editor.appendDesignVersion(history, { run_id: '../fake', status: 'completed' }).length, 1);
   assert.equal(history[0].spec.operations[0].length, 60);
 });
+
+test('不同设计版本保留自己的零件名称和编号，旧返回不覆盖已有标识', () => {
+  const id = `FC-${'a'.repeat(64)}`, next = `FC-${'b'.repeat(64)}`;
+  let history = editor.appendDesignVersion([], { run_id: id, status: 'completed', part_name: '销轴', part_number: 'PIN-001' });
+  history = editor.appendDesignVersion(history, { run_id: next, status: 'completed', part_name: '底板', part_number: 'PLATE-002' });
+  history = editor.appendDesignVersion(history, { run_id: id, status: 'completed', prompt: '回查销轴' });
+  assert.equal(history[0].part_name, '销轴');
+  assert.equal(history[0].part_number, 'PIN-001');
+  assert.equal(history[1].part_name, '底板');
+  assert.equal(history[1].part_number, 'PLATE-002');
+});

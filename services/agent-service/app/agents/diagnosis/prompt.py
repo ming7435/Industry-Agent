@@ -23,6 +23,8 @@ def build_diagnosis_messages(event: Mapping[str, Any]) -> List[Dict[str, Any]]:
                 "如果需要判断报警前后的状态切换、启停、通信异常或PLC日志，调用 get_device_logs 查询设备日志；"
                 "只有用户主动诊断且事件缺少 realtime_snapshot 时，才允许调用 get_device_status 查询实时状态。"
                 "所有结论必须基于 AbnormalEvent 和 Tool Result，不要编造不存在的设备事实。"
+                "历史维修经验必须引用经验编号或来源工单；人工确认案例不能当作自动核验通过或当前故障已修复。"
+                "区分方案建议与实际操作，处理说明只有完成时不得推断具体换件、根因或维修效果。"
                 "如果证据不足以确定具体根因，必须明确说明需要进一步检查，不要给出确定性根因。"
                 "所有工具结果返回后再进行诊断。"
                 "最终必须返回 JSON，字段为：summary、diagnosis、confidence、next_action、evidence、recommendation。"

@@ -1,4 +1,4 @@
-"""一次受控停机至复机的报告，与重试、并发故障及质检关联边界。"""
+"""设备故障报告的汇总、重试和产品质检独立边界。"""
 from types import SimpleNamespace
 
 from app.line_control.repository import LineControlRepository
@@ -12,6 +12,25 @@ def setup(tmp_path):
     service = BackendBusinessService(repository=SQLiteRepository(str(tmp_path / 'business.db')),
                                      team_service=SimpleNamespace(repository=team))
     return service, LineControlRepository(team)
+
+
+def test_knowledge_retry_queue_resumes_only_due_admitted_saved_cases(tmp_path):
+    service, _ = setup(tmp_path)
+    for key, overrides in {
+        'due': {},
+        'backoff': {'knowledge_sync': {'next_retry_at': '2099-01-01T00:00:00+00:00'}},
+        'indexed': {'rag_saved': True},
+        'rejected': {'validation_status': 'rejected'},
+        'low-quality': {'experience_quality_score': .4},
+        'manual': {'validation_status': 'manual_confirmed'},
+    }.items():
+        service.repository.save_record('experience', key, {
+            'experience_id': key, 'validation_status': 'accepted',
+            'experience_quality_score': .9, 'rag_saved': False, **overrides,
+        })
+    # A fresh service reads the durable queue instead of depending on a local cache.
+    reopened = BackendBusinessService(repository=service.repository, team_service=service.team)
+    assert [item['experience_id'] for item in reopened.search_experience(sync_pending=True)['items']] == ['due']
 
 
 def order(service, event='E1', device='M1', key='WO-1', kind='inspection'):
@@ -32,7 +51,7 @@ def complete(ledger, generation):
     return ledger.finish_restart(generation, {'state': 'running', 'devices': {'M1': {'state': 'verified'}}})
 
 
-def test_completed_cycle_unifies_records_once_and_missing_quality_is_explicit(tmp_path):
+def test_completed_cycle_unifies_fault_records_without_requiring_product_quality(tmp_path):
     service, ledger = setup(tmp_path)
     ledger.claim_fault_event('E1', 'M1', ['M1', 'M2'])
     order(service)
@@ -47,11 +66,16 @@ def test_completed_cycle_unifies_records_once_and_missing_quality_is_explicit(tm
     assert report['sections']['lifecycle']['state'] == 'running'
     assert report['sections']['lifecycle']['event_ids'] == ['E1', 'E2']
     assert report['workorder_ids'] == ['WO-1', 'WO-2']
-    assert set(report['sections']) >= {'diagnosis', 'maintenance_plan', 'workorder', 'quality', 'lifecycle'}
-    assert report['sections']['quality']['status'] == 'not_tested'
-    assert 'passed' not in report['sections']['quality']
-    assert report['status'] == 'incomplete'
-    assert '未关联质检记录' in report['validation_findings']
+    assert set(report['sections']) >= {'diagnosis', 'maintenance_plan', 'workorder', 'lifecycle'}
+    assert 'quality' not in report['sections']
+    assert report['status'] == 'completed'
+    assert report['composition_version'] == 7
+    assert len(report['article_text'].split('\n\n')) == 6
+    assert all(identity in report['article_text'] for identity in ('WO-1', 'WO-2'))
+    assert report['concise_sections']
+    assert sum(len(item['title'] + item['body']) for item in report['concise_sections']) <= 500
+    assert report['validation_findings'] == []
+    assert '质检' not in report['summary']
     complete(ledger, 2)
     assert service.list_reports()['items'] == reports
     # 删除的是报告列表项，不应被轮询恢复。
@@ -71,7 +95,7 @@ def test_failed_and_stale_restart_never_complete_a_cycle(tmp_path):
     assert service.list_reports()['items'] == []
 
 
-def test_quality_matches_workorder_and_device_and_updates_same_report(tmp_path):
+def test_product_quality_results_do_not_change_the_fault_report(tmp_path):
     service, ledger = setup(tmp_path)
     ledger.claim_fault_event('E1', 'M1', ['M1'])
     order(service)
@@ -85,10 +109,9 @@ def test_quality_matches_workorder_and_device_and_updates_same_report(tmp_path):
     service.repository.save_record('quality', 'QC-1', dict(quality_check_id='QC-1',
         workorder_id='WO-1', device_id='M1', result='failed', status='failed', findings=['尺寸异常']))
     updated = service.list_reports()['items'][0]
-    assert updated['report_id'] == report['report_id']
-    assert updated['sections']['quality']['records'][0]['quality_check_id'] == 'QC-1'
-    assert updated['sections']['quality']['passed'] is False
-    assert updated['status'] == 'completed'  # 内容完整不等于质量通过。
+    assert updated == report
+    assert updated['status'] == 'completed'
+    assert service.repository.get_record('quality', 'QC-1')['result'] == 'failed'
     assert len(service.list_reports()['items']) == 1
 
 
@@ -124,7 +147,7 @@ def test_next_cycle_excludes_previous_events_and_orders(tmp_path):
     assert second['sections']['lifecycle']['event_ids'] == ['E2']
 
 
-def test_quality_in_cycle_time_window_is_included_but_old_same_device_is_not(tmp_path):
+def test_product_quality_in_the_same_cycle_is_not_included_in_a_fault_report(tmp_path):
     from datetime import datetime, timezone
     service, ledger = setup(tmp_path)
     line = ledger.claim_fault_event('E1', 'M1', ['M1', 'M2'])
@@ -138,9 +161,49 @@ def test_quality_in_cycle_time_window_is_included_but_old_same_device_is_not(tmp
     sleep(.01)
     complete(ledger, 1)
     report = service.list_reports()['items'][0]
-    assert [q['quality_check_id'] for q in report['sections']['quality']['records']] == ['QC-NOW']
-    assert 'passed' not in report['sections']['quality']
-    assert '关联质检记录尚未完成检测' in report['validation_findings']
+    assert 'quality' not in report['sections']
+    assert report['status'] == 'completed'
+    assert report['validation_findings'] == []
+
+
+def test_legacy_fault_report_is_revalidated_without_quality_and_keeps_its_identity(tmp_path):
+    service, ledger = setup(tmp_path)
+    ledger.claim_fault_event('E1', 'M1', ['M1'])
+    order(service)
+    complete(ledger, 1)
+    saved = service.list_reports()['items'][0]
+    saved.pop('composition_version', None)
+    saved['sections']['quality'] = {'status': 'not_tested', 'records': []}
+    saved['source_refs'].append({'section': 'quality', 'quality_check_id': 'QC-OLD'})
+    saved.update(status='incomplete', validation_findings=['未关联质检记录'])
+    service.repository.save_record('report', saved['report_id'], saved)
+    service.repository.save_record('report', 'RPT-QC', {'report_id': 'RPT-QC', 'report_type': 'quality_report',
+        'status': 'incomplete', 'sections': {'quality': {'result': 'pending'}},
+        'validation_findings': ['缺少实测数据']})
+
+    refreshed = next(r for r in service.list_reports()['items'] if r['report_id'] == saved['report_id'])
+    assert refreshed['report_id'] == saved['report_id']
+    assert refreshed['created_at'] == saved['created_at']
+    assert refreshed['status'] == 'completed'
+    assert refreshed['validation_findings'] == []
+    assert 'quality' not in refreshed['sections']
+    assert all(ref['section'] != 'quality' for ref in refreshed['source_refs'])
+    assert service.get_report('RPT-QC')['report']['status'] == 'incomplete'
+    assert service.get_report('RPT-QC')['report']['validation_findings'] == ['缺少实测数据']
+    assert next(r for r in service.list_reports()['items'] if r['report_id'] == saved['report_id']) == refreshed
+
+
+def test_missing_repair_records_still_prevent_fault_report_completion(tmp_path):
+    service, ledger = setup(tmp_path)
+    ledger.claim_fault_event('E1', 'M1', ['M1'])
+    value = order(service)
+    value.pop('repair_feedback')
+    service.repository.update(value)
+    complete(ledger, 1)
+    report = service.list_reports()['items'][0]
+    assert report['status'] == 'incomplete'
+    assert any('处理说明' in finding for finding in report['validation_findings'])
+    assert not any('质检' in finding for finding in report['validation_findings'])
 
 
 def test_success_route_generates_without_opening_report_page(tmp_path, monkeypatch):

@@ -8,6 +8,8 @@ import re
 from threading import Lock, RLock
 from typing import Any, Mapping
 
+from shared.local_drawings import device_reference_drawings, known_drawing_device, local_drawing_file
+
 
 DEMO_CATALOG = [
     {"component_id": "SPINDLE-ASSY", "part_no": "SP-ASSY-TC820-001", "name": "主轴电机组件", "position": "Z轴上方主轴箱", "assembly_relation": "上级为主轴箱总成，下接主轴轴承、温度传感器与冷却回路", "drawing_ref": "DWG-TC820-SPINDLE-001", "quantity": 1, "material": "装配件"},
@@ -19,6 +21,25 @@ DEMO_CATALOG = [
 
 class CADRepositoryError(RuntimeError):
     pass
+
+
+def validate_device_drawing_registration(record: Mapping[str, Any]) -> dict[str, Any]:
+    """登记和命令行预核查使用同一套无数据库副作用的元数据校验。"""
+    keys = ('drawing_id', 'version_id', 'device_id', 'device_model', 'drawing_name', 'filename', 'version_label', 'source_kind')
+    value = {key: record.get(key, '') for key in keys}
+    if any(not isinstance(item, str) for item in value.values()):
+        raise CADRepositoryError('图纸登记字段必须是文本')
+    value = {key: item.strip() for key, item in value.items()}
+    if not all(value[key] for key in ('drawing_id', 'device_id', 'drawing_name', 'filename')) or local_drawing_file(value['filename']) is None:
+        raise CADRepositoryError('图纸登记需要设备编号、图纸编号、名称及有效的本地 HTML 文件')
+    known_device = known_drawing_device(value['filename'])
+    if known_device and value['device_id'] != known_device:
+        raise CADRepositoryError('已有图纸属于另一台设备，不能改作本设备的整机图纸')
+    limits = {'drawing_id':128, 'version_id':128, 'device_id':128, 'device_model':128, 'drawing_name':255, 'filename':255, 'version_label':64, 'source_kind':64}
+    if any(len(value[key]) > limit for key, limit in limits.items()) or not isinstance(record.get('current', True), bool):
+        raise CADRepositoryError('图纸登记字段长度或当前版本标记无效')
+    value['source_kind'] = value['source_kind'] or 'device_reference'
+    return value | {'current':record.get('current', True)}
 
 
 def _ci_fixture_enabled() -> bool:
@@ -150,6 +171,7 @@ class MySQLCADRepository:
     def _ensure_schema(self) -> None:
         """创建 CAD 自有的工程查询表，不依赖其他服务的迁移流程。"""
         statements = (
+            "CREATE TABLE IF NOT EXISTS cad_device_drawings (drawing_id VARCHAR(128) NOT NULL, version_id VARCHAR(128) NOT NULL DEFAULT '', device_id VARCHAR(128) NOT NULL, device_model VARCHAR(128) NOT NULL DEFAULT '', drawing_name VARCHAR(255) NOT NULL, filename VARCHAR(255) NOT NULL, version_label VARCHAR(64) NOT NULL DEFAULT '', is_current TINYINT(1) NOT NULL DEFAULT 1, source_kind VARCHAR(64) NOT NULL DEFAULT 'device_reference', PRIMARY KEY (drawing_id, version_id), KEY idx_device_drawing (device_id, is_current))",
             "CREATE TABLE IF NOT EXISTS cad_drawings (drawing_id VARCHAR(128) PRIMARY KEY, drawing_name VARCHAR(255) NOT NULL DEFAULT '', version_id VARCHAR(128) NOT NULL DEFAULT '', version_label VARCHAR(64) NOT NULL DEFAULT '', is_current TINYINT(1) NOT NULL DEFAULT 1, source_format VARCHAR(32) NOT NULL DEFAULT '', object_ref VARCHAR(512) NOT NULL DEFAULT '')",
             "CREATE TABLE IF NOT EXISTS cad_entities (entity_id VARCHAR(160) PRIMARY KEY, entity_type VARCHAR(64) NOT NULL DEFAULT '', layer_name VARCHAR(255) NOT NULL DEFAULT '', block_name VARCHAR(255) NOT NULL DEFAULT '', device_id VARCHAR(128) NOT NULL DEFAULT '', text_content TEXT, raw_json JSON NOT NULL, drawing_id VARCHAR(128) NOT NULL DEFAULT '')",
             "CREATE TABLE IF NOT EXISTS cad_entity_relations (source_entity_id VARCHAR(160) NOT NULL, target_entity_id VARCHAR(160) NOT NULL, relation_type VARCHAR(128) NOT NULL DEFAULT '', evidence_text TEXT, metadata_json JSON, KEY idx_cad_rel_source (source_entity_id), KEY idx_cad_rel_target (target_entity_id))",
@@ -205,6 +227,63 @@ class MySQLCADRepository:
                     ),
                 )
         self.connection.commit()
+        # 只登记已存在的整机文件，不生成部件/BOM，不覆盖工程人员已维护的元数据。
+        for reference in device_reference_drawings():
+            self.register_device_drawing({**reference, 'filename': reference['drawing_url'].removeprefix('/drawings/')}, bootstrap=True)
+
+    def register_device_drawing(self, record: Mapping[str, Any], *, bootstrap: bool = False) -> dict[str, Any]:
+        """新增整机图纸版本。写操作不自动重试，已有版本不被覆盖。"""
+        keys = ('drawing_id', 'version_id', 'device_id', 'device_model', 'drawing_name', 'filename', 'version_label', 'source_kind')
+        value = validate_device_drawing_registration(record)
+        params = tuple(value[key] for key in keys) + (int(value['current']),)
+        with self._connection_lock:
+            try:
+                with self.connection.cursor() as cursor:
+                    cursor.execute('INSERT IGNORE INTO cad_device_drawings (drawing_id, version_id, device_id, device_model, drawing_name, filename, version_label, source_kind, is_current) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)', params)
+            except Exception as error:
+                raise CADRepositoryError('图纸登记失败，写入状态需对账 (%s)' % type(error).__name__) from error
+            if not bootstrap:
+                rows = self._query('SELECT device_id, filename FROM cad_device_drawings WHERE drawing_id=%s AND version_id=%s', (value['drawing_id'], value['version_id']))
+                if not rows or rows[0]['device_id'] != value['device_id'] or rows[0]['filename'] != value['filename']:
+                    raise CADRepositoryError('图纸编号及版本已登记给其他设备或文件，未覆盖原记录')
+        return value
+
+    def search_device_drawings(self, *, device_id: str, device_model: str = '', drawing_id: str = '', version: str = '') -> list[dict[str, Any]]:
+        """以设备为必需条件检索整机目录，与故障部件查询完全独立。"""
+        filters = {'device_id':device_id, 'device_model':device_model, 'drawing_id':drawing_id, 'version':version}
+        if any(not isinstance(value, str) for value in filters.values()) or not device_id.strip():
+            return []
+        clauses, params = ['device_id=%s'], [device_id.strip()]
+        for key in ('device_model', 'drawing_id'):
+            if filters[key].strip():
+                clauses.append(key + '=%s')
+                params.append(filters[key].strip())
+        if version.strip():
+            clauses.append('(version_id=%s OR version_label=%s)')
+            params.extend([version.strip(), version.strip()])
+        else:
+            clauses.append('is_current=1')
+        rows = self._query('SELECT * FROM cad_device_drawings WHERE ' + ' AND '.join(clauses) + ' ORDER BY drawing_id, version_id LIMIT %s', tuple(params) + (100,))
+        result = []
+        for row in rows:
+            # 数据库排序规则可能不区分大小写；设备编号、机型、图号和版本仍须逐字一致。
+            if any(filters[key].strip() and row.get(key) != filters[key].strip()
+                   for key in ('device_id', 'device_model', 'drawing_id')):
+                continue
+            if version.strip() and version.strip() not in {row.get('version_id'), row.get('version_label')}:
+                continue
+            filename = row.get('filename', '')
+            known_device = known_drawing_device(filename)
+            if known_device and row.get('device_id') != known_device:
+                raise CADRepositoryError('图纸目录中的已知文件设备归属不一致，未展示错配图纸')
+            # 目录记录不能把失效文件、外链或目录外的符号链接伪装为可查看图纸。
+            if local_drawing_file(filename) is None:
+                continue
+            result.append({key: row.get(key, '') for key in ('drawing_id','version_id','version_label','device_id','device_model','drawing_name','source_kind')}
+                | {'current':bool(row['is_current']), 'drawing_url':'/drawings/' + filename,
+                   'model_url':'/drawings/' + filename, 'source_format':'html', 'drawing_type':'html',
+                   'evidence_scope':'device_reference', 'engineering_status':'reference_only', 'source':'mysql-device-drawings'})
+        return result
 
     def search(self, query: str = "", limit: int = 20, filters: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
         needle = str(query or "").strip()

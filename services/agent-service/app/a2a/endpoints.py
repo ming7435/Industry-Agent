@@ -198,7 +198,11 @@ class A2AEndpoints:
         )
 
     def _memory_endpoint(self, request: MemoryRequest) -> MemoryResponse:
-        result = self.harnesses["memory"].execute_agent(request.model_dump(mode="json"))
+        task = request.model_dump(mode='json')
+        if request.action in {'summarize', 'sync'} and request.workorder.get('event_id'):
+            task['runtime_context'] = {'run_type': 'fault', 'event_id': request.workorder.get('event_id'),
+                                       'device_id': request.workorder.get('device_id')}
+        result = self.harnesses["memory"].execute_agent(task)
         payload = _serialize_agent_result(result)
         return MemoryResponse(
             request_id=request.request_id,

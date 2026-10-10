@@ -30,6 +30,14 @@ export const freeCadWorkbenchExamples = {
 
 export const validFreeCadRun = (value) => typeof value === "string" && /^FC-[a-f0-9]{64}$/.test(value);
 
+export const validFreeCadPartNumber = (value) => typeof value === 'string' && value.length === 5 && /^[0-9]{5}$/.test(value);
+
+export function freeCadDisplayNumber(run) {
+  if (validFreeCadPartNumber(run?.part_number)) return run.part_number;
+  // 历史设计的五位短号仅用于显示，查询、版本和下载始终保留完整运行编号。
+  return validFreeCadRun(run?.run_id) ? String(parseInt(run.run_id.slice(-8), 16) % 100000).padStart(5, '0') : '';
+}
+
 export async function freeCadRunId(commandId) {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(commandId));
   return `FC-${Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
@@ -40,7 +48,11 @@ export function readFreeCadSession(storage) {
     const value = JSON.parse(storage?.getItem(sessionKey) || "null");
     if (!value || typeof value.prompt !== "string" || typeof value.command_id !== "string" || (value.run_id && !validFreeCadRun(value.run_id))) return null;
     return { prompt: value.prompt, command_id: value.command_id, run_id: value.run_id || "", draft_prompt: typeof value.draft_prompt === "string" ? value.draft_prompt : value.prompt,
-      draft_spec: typeof value.draft_spec === 'string' ? value.draft_spec : '' };
+      draft_spec: typeof value.draft_spec === 'string' ? value.draft_spec : '',
+      part_name: typeof value.part_name === 'string' ? value.part_name.slice(0, 120) : '',
+      part_number: typeof value.part_number === 'string' ? value.part_number.slice(0, 80) : '',
+      draft_part_name: typeof value.draft_part_name === 'string' ? value.draft_part_name.slice(0, 120) : typeof value.part_name === 'string' ? value.part_name.slice(0, 120) : '',
+      draft_part_number: typeof value.draft_part_number === 'string' ? value.draft_part_number.slice(0, 80) : typeof value.part_number === 'string' ? value.part_number.slice(0, 80) : '' };
   } catch { return null; }
 }
 

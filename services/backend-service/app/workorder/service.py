@@ -62,6 +62,12 @@ class BackendBusinessService:
         loader = getattr(self.repository, "list_records", None)
         return [dict(item) for item in (loader(record_type) if loader is not None else [])]
 
+    def get_run_lifecycle(self, event_ids: list[str]) -> dict[str, Any]:
+        if not isinstance(event_ids, list) or len(event_ids) > 200 or any(not isinstance(value, str) for value in event_ids):
+            raise ValueError('每次最多查询 200 个故障事件')
+        identities = list(dict.fromkeys(value.strip() for value in event_ids if value.strip()))
+        return {'success': True, **self.repository.list_run_facts(identities)}
+
     def _append_audit(self, record: dict[str, Any]) -> None:
         self._audit.append(record)
         self._save_record("audit", str(record.get("audit_id") or uuid4().hex), record)
@@ -776,12 +782,34 @@ class BackendBusinessService:
         deleted = bool(getattr(self.repository, "delete_record", lambda *_args: False)("report", report_id))
         return {"success": deleted, "deleted": deleted, "found": deleted, "report_id": report_id, "backend": "backend-service"}
 
+    @_quality_operation
     def save_experience(self, experience: Mapping[str, Any] | None = None, **values: Any) -> dict[str, Any]:
         item = dict(experience or values)
         source_workorder = str(item.get("source_workorder") or item.get("workorder_id") or "").strip()
         if not source_workorder:
             raise ValueError("经验记录必须关联 source_workorder")
         source_order = self.repository.get(source_workorder)
+        if item.get('learning_scope') == 'manual_case_summary':
+            from shared.repair_experience import build_manual_summary, manual_restart_cycle
+            from ..line_control.repository import LineControlRepository
+            if source_order is None:
+                raise ValueError('经验总结关联的工单不存在')
+            cycle = manual_restart_cycle(source_order, LineControlRepository(self.team.repository).status().get('completed_cycles') or [])
+            # Always compose from authoritative stored facts, never client claims.
+            item = build_manual_summary(source_order, cycle)
+            key = item['experience_id']
+            existing = self._get_record('experience', key)
+            if existing:
+                changed = existing.get('content') != item['content']
+                enriched = ({**existing, **item, 'created_at': existing.get('created_at') or item['created_at'],
+                             'updated_at': datetime.now(timezone.utc).isoformat()}
+                            if changed else {**item, **existing})
+                if enriched != existing:
+                    self._experiences[key] = self._save_record('experience', key, enriched)
+                existing = enriched
+                return {'success': True, 'experience': existing, 'experience_id': key, 'duplicate': True, 'backend': 'backend-service'}
+            self._experiences[key] = self._save_record('experience', key, item)
+            return {'success': True, 'experience': dict(item), 'experience_id': key, 'backend': 'backend-service'}
         if source_order is None or str(source_order.get("status") or "") != "closed":
             raise ValueError("经验记录只能来自已关闭工单")
         if not self._verification_is_valid(source_order.get("repair_verification"), source_order, enforce_freshness=False):
@@ -799,11 +827,59 @@ class BackendBusinessService:
         self._experiences[key] = self._save_record("experience", key, item)
         return {"success": True, "experience": dict(item), "experience_id": key, "backend": "backend-service"}
 
+    @_quality_operation
+    def record_experience_index(self, experience_id: str, result: Mapping[str, Any], **_: Any) -> dict[str, Any]:
+        """Persist an authenticated index receipt, preserving authoritative repair facts."""
+        item = self._get_record('experience', experience_id)
+        if not item:
+            raise ValueError('经验记录不存在，不能保存索引回执')
+        if item.get('content_revision') != result.get('document_revision'):
+            raise ValueError('经验内容已更新，旧索引回执不能标记新内容已同步')
+        previous = item.get('knowledge_sync') or {}
+        # A late failure cannot downgrade a fully indexed stable document.
+        if previous.get('pipeline_ready') is True:
+            return {'success': True, 'experience': item}
+        backends = result.get('backends') or {}
+        metadata = result.get('metadata_saved') is True
+        bm25 = metadata and backends.get('whoosh', {}).get('success') is True and not backends.get('whoosh', {}).get('skipped')
+        dense = metadata and backends.get('milvus', {}).get('success') is True and not backends.get('milvus', {}).get('skipped')
+        ready = bm25 and dense and result.get('pipeline_ready') is True
+        now = datetime.now(timezone.utc)
+        attempts = int(previous.get('attempts') or 0) + 1
+        from datetime import timedelta
+        item.update(rag_saved=ready, memory_saved=True, knowledge_sync={
+            'status': 'indexed' if ready else 'retry', 'pipeline_ready': ready,
+            'searchable': bool(bm25 or previous.get('searchable')), 'metadata_saved': metadata,
+            'bm25_indexed': bool(bm25), 'dense_indexed': bool(dense), 'attempts': attempts,
+            'last_attempt_at': now.isoformat(),
+            'indexed_at': now.isoformat() if ready else '',
+            'next_retry_at': '' if ready else (now + timedelta(seconds=min(300, 5 * 2 ** min(attempts - 1, 6)))).isoformat(),
+            'backends': deepcopy(backends),
+            'error': '' if ready else '检索索引尚未全部完成，后台自动重试',
+        }, updated_at=now.isoformat())
+        self._experiences[experience_id] = self._save_record('experience', experience_id, item)
+        return {'success': True, 'experience': deepcopy(item), 'backend': 'backend-service'}
+
     def search_experience(self, device_id: str = "", limit: int = 20, **filters: Any) -> dict[str, Any]:
-        values = list(self._experiences.values())
-        if device_id:
-            values = [item for item in values if str(item.get("device_id") or "") == device_id]
-        return {"success": True, "items": [dict(item) for item in values[-max(1, int(limit)):]], "backend": "backend-service"}
+        # Read persisted receipts, including those written by another worker/process.
+        values = self._list_records('experience')
+        criteria = {'device_id': device_id, **{k: filters.get(k) for k in
+            ('device_model', 'alarm_code', 'fault_type', 'component', 'part_no', 'source_workorder', 'experience_id')}}
+        values = [item for item in values if all(not expected or str(item.get(key) or '') == str(expected)
+                  for key, expected in criteria.items())]
+        if filters.get('sync_pending'):
+            now = datetime.now(timezone.utc).isoformat()
+            values = [item for item in values if item.get('rag_saved') is not True
+                and item.get('validation_status') in {'accepted', 'duplicate'}
+                and float(item.get('experience_quality_score') or 0) >= .8
+                and ((item.get('knowledge_sync') or {}).get('next_retry_at') or '') <= now]
+        query = str(filters.get('query') or '').strip().lower()
+        if query:
+            tokens = query.split()
+            values = [item for item in values if any(token in
+                (' '.join(str(item.get(k) or '') for k in ('title', 'content', 'treatment', 'fault'))).lower() for token in tokens)]
+        values.sort(key=lambda item: str(item.get('created_at') or ''), reverse=True)
+        return {"success": True, "items": [deepcopy(item) for item in values[:max(1, min(100, int(limit)))]], "backend": "backend-service"}
 
     @_quality_operation
     def create_quality_check(self, operator: str = "", **values: Any) -> dict[str, Any]:

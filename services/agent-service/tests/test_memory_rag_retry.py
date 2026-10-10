@@ -58,3 +58,21 @@ def test_rag_upsert_requires_unified_pipeline_when_reported():
 
     writer = ExperienceWriter(ShortMemoryStore(), LongMemoryStore(), _PartialRag())
     assert writer._upsert_rag({"experience_id": "EXP-PARTIAL"}) is False
+
+
+def test_sync_reuses_authoritative_saved_experience_and_rejects_unadmitted_input():
+    store = LongMemoryStore()
+    rag = _RetryRag()
+    agent = MemoryAgent(ExperienceLearningModule(ShortMemoryStore(), store, rag=rag))
+    rejected = agent.run({'action': 'sync', 'experience': {'experience_id': 'UNSAVED',
+        'validation_status': 'accepted', 'experience_quality_score': 1, 'content': '编造经验'}})
+    assert not rejected.success and rag.calls == 0
+    store.save({'experience_id': 'EXP-VERIFIED', 'validation_status': 'accepted', 'experience_quality_score': .95,
+                'source_workorder': 'WO-VERIFIED', 'device_id': 'M1', 'content': '真实维修记录'})
+    request = {'action': 'sync', 'experience': {'experience_id': 'EXP-VERIFIED', 'content': '伪造操作'}}
+    first = agent.run(request)
+    second = agent.run(request)
+    assert first.success and not first.experience['rag_saved']
+    assert second.success and second.experience['rag_saved']
+    assert second.experience['content'] == '真实维修记录' and len(store.search()) == 1
+    assert agent.run(request).experience['rag_saved'] and rag.calls == 2

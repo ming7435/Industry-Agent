@@ -66,7 +66,8 @@ def test_public_confirmation_starts_four_devices_and_survives_page_reload_withou
             assert order_id in report['workorder_ids']
             assert report['stop_reason'] == 'restart_confirmed'
             assert '人工确认' in report['summary'] and '核验通过' not in report['summary']
-            assert report['sections']['quality']['status'] == 'not_tested'
+            assert 'quality' not in report['sections']
+            assert not any('质检' in finding for finding in report['validation_findings'])
 
             factory.snapshot = snapshot
             controller.handle_fault('NEW-FAULT', 'M1', 'fault after manual restart')

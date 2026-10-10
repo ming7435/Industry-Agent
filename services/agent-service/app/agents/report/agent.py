@@ -159,12 +159,12 @@ class ReportAgent(BaseAgent):
             return requested
         if diagnosis and plan and order and (repair_feedback or repair_verification):
             return "full_case_report"
-        if quality:
-            return "quality_report"
         if plan or order:
             return "maintenance_report"
         if diagnosis:
             return "diagnosis_report"
+        if quality:
+            return "quality_report"
         return "incident_report"
 
     @staticmethod

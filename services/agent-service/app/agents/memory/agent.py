@@ -1,4 +1,4 @@
-"""Memory Agent：只管理已验证维修经验的检索与沉淀。"""
+"""Memory Agent：管理已验证经验与有明确人工确认依据的维修总结。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from .schemas import MemoryQuery, MemoryResult
 
 class MemoryAgent(BaseAgent):
     name = "memory"
-    capabilities = ("experience_learning", "experience_retrieval")
+    capabilities = ("experience_learning", "experience_retrieval", "repair_summary")
 
     def __init__(self, experience_module: ExperienceLearningModule | None = None, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()

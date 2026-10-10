@@ -99,10 +99,11 @@ def _event_id(record: Mapping[str, Any]) -> str:
 
 
 def _is_trigger(record: Mapping[str, Any]) -> bool:
+    """识别 Runtime 的 event 来源，同时兼容历史 trigger 轨迹。"""
     state_change = _as_dict(record.get("state_change"))
     return (
         str(record.get("event") or "").lower() == "goal_parsed"
-        and str(state_change.get("source") or "").lower() == "trigger"
+        and str(state_change.get("source") or "").strip().lower() in {"event", "trigger"}
     )
 
 
@@ -149,9 +150,7 @@ def _phase_for(record: Mapping[str, Any], quality: bool) -> str | None:
     text = _record_text(record)
     if quality:
         return "quality"
-    state_change = _as_dict(record.get("state_change"))
-    source = str(state_change.get("source") or "").lower()
-    if str(record.get("event") or "").lower() == "goal_parsed" and source == "trigger":
+    if _is_trigger(record):
         return "monitor"
     agent = str(record.get('agent') or (record.get('name') if record.get('type') == 'agent' else '') or '').lower()
     agent_phase = {'report':'report','memory':'experience','maintenance':'maintenance','workorder':'workorder',
@@ -164,7 +163,7 @@ def _phase_for(record: Mapping[str, Any], quality: bool) -> str | None:
         return "diagnosis"
     if any(token in text for token in ("maintenance", "repair_plan", "maintenance_plan", "plan_maintenance")):
         return "maintenance"
-    if any(token in text for token in ("workorder", "work_order", "dispatch", "assign_workorder")):
+    if any(token in text for token in ("workorder", "work_order")):
         return "workorder"
     if any(token in text for token in ("report", "generate_report")):
         return "report"
@@ -180,7 +179,7 @@ def _is_error(record: Mapping[str, Any]) -> bool:
 
 def _is_complete(record: Mapping[str, Any]) -> bool:
     event = str(record.get("event") or "").lower()
-    if event == "goal_parsed" and str(_as_dict(record.get("state_change")).get("source") or "").lower() == "trigger":
+    if _is_trigger(record):
         return True
     return event in {'agent_completed', 'node_completed', 'node_complete', 'node_end'}
 
@@ -416,6 +415,7 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
         last_at = max(timestamps) if timestamps else datetime.min.replace(tzinfo=timezone.utc)
         run_id = group["run_key"]
         terminal_status, stop_reason = _runtime_terminal(items)
+        terminal_records = [item for item in current_items if _is_runtime_boundary(item) and item.get('event') == 'loop_stop']
         result.append({
             "run_id": run_id,
             "run_type": group["run_type"],
@@ -432,6 +432,7 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
             "alarm_code": group["alarm_code"],
             "started_at": "" if first_at == datetime.min.replace(tzinfo=timezone.utc) else first_at.isoformat(),
             "ended_at": "" if last_at == datetime.min.replace(tzinfo=timezone.utc) else last_at.isoformat(),
+            'runtime_ended_at': str(terminal_records[-1].get('timestamp') or '') if terminal_records else '',
             "event_count": len(items),
             "tool_count": sum(1 for item in items if str(item.get("type") or "").lower() == "tool"),
             "error_count": sum(1 for item in items if _is_error(item)),

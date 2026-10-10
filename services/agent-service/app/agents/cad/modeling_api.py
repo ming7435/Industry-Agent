@@ -305,6 +305,15 @@ class FreeCADRunRequest(StrictRequest):
     prompt: str = Field(min_length=1, max_length=10000)
     command_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
     spec: dict | None = None
+    part_name: str = Field(default="", max_length=120)
+    part_number: str = Field(default="", max_length=80)
+
+    @field_validator("part_name", "part_number")
+    @classmethod
+    def single_line_part_identity(cls, value):
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("零件名称和编号不能包含换行或控制字符")
+        return value.strip()
 
     @field_validator("prompt")
     @classmethod
@@ -330,7 +339,7 @@ class FreeCADRunStore(BuildCADRunStore):
 
 def _freecad_public_record(record):
     keys = ("run_id", "prompt", "status", "answer", "calls", "artifacts", "validation", "spec",
-        "error", "error_code", "error_stage", "error_tool", "execution", "created_at", "updated_at")
+        "error", "error_code", "error_stage", "error_tool", "execution", "created_at", "updated_at", "part_name", "part_number")
     value = {key: record[key] for key in keys if key in record}
     if value.get("status") == "running" and time.time() - record.get("created_at", 0) > RUN_DEADLINE_SECONDS:
         value.update(status="outcome_unknown", error="此运行长时间未返回结果，请检查本地 FreeCAD；不会自动重新执行。")
@@ -408,7 +417,8 @@ def build_freecad_router(require_auth, trace=None):
             error = value.get("error")
             if isinstance(error, dict):
                 value = {**value, "error": error.get("message", "本地 FreeCAD 尚未连接。"), "error_code": error.get("code", "")}
-            return {**value, "connected": value.get("connected") is True, "tools": value.get("tools") or []}
+            return {**value, "connected": value.get("connected") is True, "tools": value.get("tools") or [],
+                "part_identity_supported": True}
         except FreeCADConnectionError as error:
             return {"connected": False, "tools": [], "error": str(error), "error_code": getattr(error, "code", "connection_failed")}
         except Exception:
@@ -420,7 +430,11 @@ def build_freecad_router(require_auth, trace=None):
     def create_run(body: FreeCADRunRequest, request: Request, background_tasks: BackgroundTasks):
         storage = store(request)
         run_id = "FC-" + sha256(body.command_id.encode()).hexdigest()
-        digest = sha256(json.dumps([body.prompt, body.spec], ensure_ascii=False, sort_keys=True,
+        # 未填写标识时保留历史命令摘要；标识变化也必须使用新命令，不能错误复用旧零件。
+        identity = [body.prompt, body.spec]
+        if body.part_name or body.part_number:
+            identity.extend([body.part_name, body.part_number])
+        digest = sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True,
             separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
         def existing(record):
@@ -440,6 +454,7 @@ def build_freecad_router(require_auth, trace=None):
         try:
             now = time.time()
             record = {"run_id": run_id, "input_digest": digest, "prompt": body.prompt, "spec": body.spec,
+                "part_name": body.part_name, "part_number": body.part_number,
                 "status": "running", "answer": "", "calls": [], "artifacts": [], "created_at": now, "updated_at": now}
             try:
                 created = storage.create(run_id, record)

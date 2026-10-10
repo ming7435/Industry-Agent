@@ -122,7 +122,10 @@ export function appendDesignVersion(history, run) {
   const safe = (Array.isArray(history) ? history : []).filter((entry) => validFreeCadRun(entry?.run_id) && entry.status === 'completed').slice(-19);
   if (!validFreeCadRun(run?.run_id) || run.status !== 'completed') return safe;
   const index = safe.findIndex((entry) => entry.run_id === run.run_id);
-  const entry = { run_id: run.run_id, prompt: String(run.prompt || '').slice(0,10000), status: 'completed', spec: run.spec ? clone(run.spec) : null, created_at: run.created_at || Date.now() / 1000 };
+  const previous = index >= 0 ? safe[index] : null;
+  const entry = { run_id: run.run_id, prompt: String(run.prompt || '').slice(0,10000), status: 'completed', spec: run.spec ? clone(run.spec) : null, created_at: run.created_at || previous?.created_at || Date.now() / 1000,
+    part_name: typeof run.part_name === 'string' ? run.part_name.slice(0, 120) : previous?.part_name || '',
+    part_number: typeof run.part_number === 'string' ? run.part_number.slice(0, 80) : previous?.part_number || '' };
   if (index >= 0) safe[index] = entry; else safe.push(entry);
   return safe;
 }

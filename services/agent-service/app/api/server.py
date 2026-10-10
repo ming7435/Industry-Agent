@@ -33,6 +33,7 @@ from app.api.schemas.rag import RAGIngestRequest
 from app.api.schemas.workorder import RepairFeedbackRequest, WorkOrderActionRequest, WorkOrderCreateRequest
 from app.graph import AgentOrchestrator, build_orchestrator
 from app.harness.runs import build_run_records
+from app.harness.run_business import reconcile_run_business_facts
 from app.runtime.event_store import EventResultConflict, EventResultStore, scoped_event_key
 from app.runtime.durable_store import PendingResultError
 from app.tools.report.generate_report_file import get_report_file_path
@@ -41,6 +42,7 @@ from app.clients.backend import BackendServiceError
 from app.clients.backend import BackendServiceClient
 from app.api.team_auth import team_actor, require_assignee, human_action
 from app.api.maintenance_plans import list_saved_maintenance_plans, deleted_maintenance_plan_ids
+from shared.local_drawings import is_local_drawing_url, known_drawing_device
 
 
 class MaintenancePlanDeleteRequest(BaseModel):
@@ -235,6 +237,11 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         workorder_dispatcher = SavedPlanDispatcher(event_results, BackendServiceClient(), runtime.container.registry)
         app.add_event_handler('startup', workorder_dispatcher.start)
         app.add_event_handler('shutdown', workorder_dispatcher.close)
+        from app.memory.sync import KnowledgeSyncWorker
+        knowledge_worker = KnowledgeSyncWorker(runtime.container.operations, BackendServiceClient())
+        app.state.knowledge_sync_worker = knowledge_worker
+        app.add_event_handler('startup', knowledge_worker.start)
+        app.add_event_handler('shutdown', knowledge_worker.close)
     app.add_event_handler("shutdown", event_results.close)
 
     def closure_call(callable_: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
@@ -380,7 +387,6 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
                 warning = '生产记录授权或保存事实暂不可核对'
         return [item for item in records if not is_production_record(item) or production_job_id(item) in facts], facts, warning
 
-
     @app.get("/api/runs", deprecated=True)
     @app.get("/api/v1/runs")
     def runs(request: Request, limit: int = 5000) -> Dict[str, Any]:
@@ -393,7 +399,22 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         items = build_run_records(records)
         from app.production_simulation.run_facts import reconcile_production_runs
         items = reconcile_production_runs(items, production_facts)
-        return {"runs": items, "count": len(items), 'storage_warning': '；'.join(filter(None, (getattr(recorder, 'storage_error', ''), production_warning)))}
+        warning = '；'.join(filter(None, (getattr(recorder, 'storage_error', ''), production_warning)))
+        registry = getattr(runtime.container, 'registry', None)
+        event_ids = list(dict.fromkeys(item['event_id'] for item in items if item['run_type'] == 'fault' and item.get('event_id')))
+        if event_ids and getattr(registry, 'backend_base_url', ''):
+            try:
+                facts = {'workorders': [], 'reports': [], 'experiences': []}
+                for offset in range(0, len(event_ids), 200):
+                    result = registry.mcp.call('mes', 'get_run_lifecycle', {'event_ids': event_ids[offset:offset + 200]})
+                    if result.get('success') is not True:
+                        raise ValueError('业务阶段状态读取未成功')
+                    for key in facts:
+                        facts[key].extend(result.get(key) or [])
+                items = reconcile_run_business_facts(items, facts)
+            except Exception:
+                warning = '；'.join(filter(None, (warning, '业务阶段状态暂未同步，请刷新重试')))
+        return {"runs": items, "count": len(items), 'storage_warning': warning}
 
     @app.get("/api/v1/runtime/approvals")
     def runtime_approvals(status: str = "") -> Dict[str, Any]:
@@ -622,6 +643,13 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail=result.get("error") or "PDF 生成失败")
         return {**result, "open_url": f"/api/reports/{report_id}/pdf", "download_url": f"/api/reports/{report_id}/pdf"}
 
+    @app.get('/api/reports/{report_id}/json')
+    def download_report_data(report_id: str):
+        """Download complete source facts, including all samples and tool receipts."""
+        _, report_value = _load_report(report_id)
+        safe_id = ''.join(char for char in report_id if char.isalnum() or char in '-_')
+        return JSONResponse(report_value, headers={'Content-Disposition': f'attachment; filename="report-{safe_id}.json"'})
+
     @app.get("/api/reports/{report_id}/pdf")
     def open_report_pdf(report_id: str, download: bool = False) -> FileResponse:
         """打开已生成的 PDF；传入 download=1 时强制浏览器下载。"""
@@ -636,6 +664,31 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             media_type="application/pdf",
             headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
         )
+
+    @app.get('/api/cad/drawings')
+    def device_drawings(device_id: str = '', device_model: str = '', version: str = '') -> Dict[str, Any]:
+        """工单整机图纸只读检索：不运行诊断、不派工、不把报警描述当部件编号。"""
+        identity = device_id.strip()
+        if not identity:
+            raise HTTPException(status_code=400, detail='必须指定工单设备编号')
+        try:
+            result = runtime.container.registry.execute('query_drawing', {
+                'device_id':identity, 'device_model':device_model.strip(), 'version':version.strip(), 'reference_only':True})
+        except Exception as error:
+            raise HTTPException(status_code=503, detail='整机图纸检索服务不可用，请稍后重新检索') from error
+        if not isinstance(result, Mapping) or result.get('synthetic') or result.get('degraded') or result.get('error') or not isinstance(result.get('drawings'), list):
+            raise HTTPException(status_code=503, detail='整机图纸目录未返回有效数据')
+        drawings = result['drawings']
+        for item in drawings:
+            if (not isinstance(item, Mapping) or item.get('device_id') != identity
+                or item.get('evidence_scope') != 'device_reference' or not is_local_drawing_url(item.get('drawing_url'))
+                or known_drawing_device(item['drawing_url'].removeprefix('/drawings/')) not in {'', identity}
+                or device_model.strip() and item.get('device_model') != device_model.strip()
+                or version.strip() and version.strip() not in {item.get('version_id'), item.get('version_label')}):
+                raise HTTPException(status_code=502, detail='图纸返回的设备、版本或文件地址不匹配，未展示该图纸')
+        return {'device_id':identity, 'drawings':drawings, 'status':'available' if drawings else 'not_found',
+                'source':result.get('catalog_backend') or result.get('source') or 'document-cad-service',
+                'evidence_scope':'device_reference'}
 
     @app.get("/api/cad/resolve")
     def resolve_cad(component: str = "", part_no: str = "", device_id: str = "") -> Dict[str, Any]:
@@ -771,6 +824,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     from app.api.production_simulation import build_virtual_production_router
     production = getattr(runtime.container, 'virtual_production', None)
     app.include_router(build_virtual_production_router(production, production.backend if production else None, require_write_auth))
+    from app.api.quality_simulation import build_simulation_router
+    app.include_router(build_simulation_router(require_write_auth))
     app.include_router(build_freecad_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
     return app
 

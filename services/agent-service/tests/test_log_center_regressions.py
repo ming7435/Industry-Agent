@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.api.server import create_app
 from app.harness.runs import build_run_records
+from app.harness.run_business import reconcile_run_business_facts
 from app.harness.trace import TraceRecorder
 from app.harness.trace_store import MySQLTraceStore
 import pytest
@@ -25,6 +26,106 @@ def test_tool_completion_does_not_complete_an_active_agent_phase():
     run = build_run_records([trigger(), event('agent_started', 'diagnosis', type='agent'),
                              event('tool_completed', 'diagnosis', type='tool', tool_name='get_alarm_definition')])[0]
     assert next(p for p in run['phases'] if p['id'] == 'diagnosis')['status'] == 'running'
+
+
+@pytest.mark.parametrize('name', ['action_selected', 'policy_decision'])
+def test_runtime_dispatcher_does_not_start_workorder_phase(name):
+    run = build_run_records([trigger(), event('agent_started', 'diagnosis'),
+        event(name, name='runtime_dispatcher', node='runtime', type='runtime')])[0]
+    assert next(p for p in run['phases'] if p['id'] == 'diagnosis')['status'] == 'running'
+    assert next(p for p in run['phases'] if p['id'] == 'workorder')['status'] == 'pending'
+
+
+@pytest.mark.parametrize('report_status,with_experience,expected', [
+    ('incomplete', False, 'blocked'), ('completed', True, 'completed'),
+])
+def test_runs_api_reconciles_saved_business_results(report_status, with_experience, expected):
+    trace = TraceRecorder()
+    for record in [trigger(), event('agent_completed', 'diagnosis'),
+                   event('agent_completed', 'maintenance'),
+                   event('loop_stop', state_change={'status': 'blocked', 'stop_reason': 'replan_limit_exceeded'})]:
+        trace.record(**record)
+    facts = {
+        'workorders': [{'workorder_id': 'WO-1', 'event_id': 'EV-1', 'device_id': 'D-1',
+                       'status': 'completed', 'assignee': 'U-1', 'updated_at': '2026-10-07T02:01:00+00:00'}],
+        'reports': [{'report_id': 'RPT-1', 'report_type': 'full_case_report', 'event_ids': ['EV-1'],
+                     'device_ids': ['D-1'], 'workorder_ids': ['WO-1'], 'status': report_status,
+                     'validation_findings': ['报告缺少有效维修依据'] if report_status == 'incomplete' else []}],
+        'experiences': [{'experience_id': 'EXP-1', 'source_workorder': 'WO-1',
+                         'validation_status': 'accepted', 'experience_quality_score': .9,
+                         'rag_saved': True}] if with_experience else [],
+    }
+    calls = []
+    def call(domain, tool, arguments):
+        calls.append((domain, tool, arguments))
+        return {'success': True, **facts}
+    registry = SimpleNamespace(backend_base_url='http://isolated-backend', mcp=SimpleNamespace(call=call))
+    client = TestClient(create_app(orchestrator=SimpleNamespace(container=SimpleNamespace(trace=trace, registry=registry))))
+
+    response = client.get('/api/v1/runs')
+    assert response.status_code == 200
+    run = response.json()['runs'][0]
+    phases = {p['id']: p['status'] for p in run['phases']}
+    assert phases['workorder'] == 'completed'
+    assert phases['report'] == ('completed' if report_status == 'completed' else 'blocked')
+    assert phases['experience'] == ('completed' if with_experience else 'pending')
+    assert run['status'] == expected
+    assert calls == [('mes', 'get_run_lifecycle', {'event_ids': ['EV-1']})]
+    if report_status == 'incomplete':
+        assert '报告缺少有效维修依据' in run['status_reason']
+
+
+@pytest.mark.parametrize('failure', ['exception', 'unsuccessful'])
+def test_runs_api_warns_when_business_state_cannot_be_read(failure):
+    trace = TraceRecorder()
+    trace.record(**trigger())
+    def call(*args):
+        if failure == 'unsuccessful':
+            return {'success': False, 'error': 'private-backend-detail'}
+        raise RuntimeError('private-backend-detail')
+    registry = SimpleNamespace(backend_base_url='http://isolated-backend', mcp=SimpleNamespace(call=call))
+    client = TestClient(create_app(orchestrator=SimpleNamespace(container=SimpleNamespace(trace=trace, registry=registry))))
+    response = client.get('/api/v1/runs')
+    assert response.status_code == 200
+    assert response.json()['storage_warning']
+    assert 'private-backend-detail' not in response.text
+
+
+def test_business_results_from_another_fault_or_device_do_not_complete_this_run():
+    run = build_run_records([trigger()])[0]
+    facts = {
+        'workorders': [{'workorder_id': 'WO-OTHER', 'event_id': 'EV-OTHER', 'device_id': 'D-1',
+                       'status': 'completed', 'assignee': 'U-1'},
+                      {'workorder_id': 'WO-WRONG-DEVICE', 'event_id': 'EV-1', 'device_id': 'D-2',
+                       'status': 'completed', 'assignee': 'U-1'}],
+        'reports': [{'report_id': 'RPT-OTHER', 'event_ids': ['EV-1'], 'device_ids': ['D-2'], 'status': 'completed'}],
+        'experiences': [{'experience_id': 'EXP-OTHER', 'source_workorder': 'WO-OTHER',
+                         'validation_status': 'accepted', 'experience_quality_score': .9}],
+    }
+    reconcile_run_business_facts([run], facts)
+    assert {p['id']: p['status'] for p in run['phases'] if p['id'] in {'workorder', 'report', 'experience'}} == {
+        'workorder': 'pending', 'report': 'pending', 'experience': 'pending'}
+
+
+@pytest.mark.parametrize('order_time', [None, '2026-10-07T02:00:00'])
+def test_legacy_business_timestamps_do_not_break_the_run_index(order_time):
+    run = build_run_records([trigger(), event('loop_stop', state_change={'status': 'blocked', 'stop_reason': 'root'})])[0]
+    reconcile_run_business_facts([run], {'workorders': [{'workorder_id': 'WO-1', 'event_id': 'EV-1',
+        'device_id': 'D-1', 'status': 'completed', 'assignee': 'U-1', 'updated_at': order_time}]})
+    assert next(p for p in run['phases'] if p['id'] == 'workorder')['status'] == 'completed'
+    assert run['status'] == 'blocked'
+    assert run['stop_reason'] == 'root'
+
+
+def test_later_saved_report_supersedes_the_runtime_stop_reason():
+    run = build_run_records([trigger(), event('loop_stop', state_change={'status': 'blocked', 'stop_reason': 'root'})])[0]
+    reconcile_run_business_facts([run], {'reports': [{'report_id': 'RPT-1', 'event_ids': ['EV-1'],
+        'device_ids': ['D-1'], 'status': 'incomplete', 'updated_at': '2026-10-07T02:01:00+00:00',
+        'validation_findings': ['未关联质检记录']}]})
+    assert run['status'] == 'blocked'
+    assert run['stop_reason'] == 'report_incomplete'
+    assert run['runtime_stop_reason'] == 'root'
+    assert run['status_reason'] == '未关联质检记录'
 
 
 @pytest.mark.parametrize('name', ['tool_called', 'tool_completed', 'step_completed'])

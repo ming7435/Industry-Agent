@@ -42,6 +42,26 @@ def _source_file(filename: str) -> Path | None:
     return None
 
 
+def local_drawing_file(filename: str) -> Path | None:
+    """仅允许图纸目录内的单个 HTML 文件，拒绝外链、路径穿越及空文件。"""
+    if not isinstance(filename, str) or not re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*\.html', filename):
+        return None
+    return _source_file(filename)
+
+
+def is_local_drawing_url(value: Any) -> bool:
+    """校验已登记的同源查看器地址；不允许查询参数、外链或子目录。"""
+    return isinstance(value, str) and re.fullmatch(r'/drawings/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.html', value) is not None
+
+
+def known_drawing_device(filename: str) -> str:
+    """已有三份资料的设备归属不能在登记时改成另一台机器。"""
+    if not isinstance(filename, str):
+        return ''
+    # Windows 文件名不区分大小写；变换文件名大小写不能改变设备归属。
+    return next((reference[0] for reference in _REFERENCES if reference[2].casefold() == filename.casefold()), '')
+
+
 def device_reference_drawings(device_id: str = '', device_model: str = '', **filters: Any) -> list[dict[str, Any]]:
     """Return known references; empty scope enumerates the catalog for health only.
 

@@ -1457,6 +1457,15 @@ h2 {
 .workspace-empty h2 { margin: 0; font-size: 21px; }
 .workspace-empty p { max-width: 440px; color: #62777e; font-size: 13px; line-height: 1.7; }
 .platform-shell:not(.big-screen) .report-panel { margin-top: 16px; }
+.report-display-sections { display: grid; gap: 24px; margin-top: 24px; }
+.report-byline { color: #70858b; font-size: 14px; margin: 16px 0 26px; }
+.report-article { max-width: 900px; color: #263e45; font-size: 17px; line-height: 1.95; }
+.report-article p { margin: 0 0 22px; text-indent: 2em; overflow-wrap: anywhere; }
+.report-article p:last-child { margin-bottom: 0; }
+.report-display-section { padding: 22px; border: 1px solid #d9e6e5; border-radius: 14px; background: #fff; }
+.report-display-section h3 { color: #087a70; margin: 0 0 18px; padding-bottom: 12px; border-bottom: 1px solid #e4eeed; }
+.report-display-section .report-record-heading { margin: 22px 0 12px; font-size: 16px; }
+.report-display-section p { margin: 8px 0; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
 .report-details { margin-top: 18px; padding-top: 14px; border-top: 1px solid #d9e4e5; }
 .report-details summary { width: fit-content; color: #087c70; cursor: pointer; font-size: 13px; font-weight: 700; }
 .long-evidence { max-width: 100%; }
@@ -2370,6 +2379,12 @@ h2 {
 
 .document-list.compact article { padding: 10px; }
 .document-list.compact p { -webkit-line-clamp: 3; }
+
+.logs-experience-summaries p {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
 
 .document-list span {
   margin-top: 8px;

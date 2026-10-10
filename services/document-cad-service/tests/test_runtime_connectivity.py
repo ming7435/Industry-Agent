@@ -108,6 +108,10 @@ class TemporaryMySQLAdapter:
                 "text_content TEXT, raw_json TEXT, drawing_id TEXT);"
                 "CREATE TABLE cad_entity_relations (source_entity_id TEXT, target_entity_id TEXT, "
                 "relation_type TEXT, evidence_text TEXT, metadata_json TEXT);"
+                "CREATE TABLE cad_device_drawings (drawing_id TEXT COLLATE NOCASE, version_id TEXT COLLATE NOCASE DEFAULT '', "
+                "device_id TEXT COLLATE NOCASE, device_model TEXT COLLATE NOCASE, drawing_name TEXT, filename TEXT, "
+                "version_label TEXT COLLATE NOCASE DEFAULT '', is_current INTEGER DEFAULT 1, source_kind TEXT, "
+                "PRIMARY KEY (drawing_id, version_id));"
             )
 
     def connect(self, **kwargs):

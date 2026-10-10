@@ -21,7 +21,7 @@ def initialize(state: MemoryGraphState) -> Dict[str, Any]:
 
 def load_skill(state: MemoryGraphState) -> Dict[str, Any]:
     skills = get_skill_registry().select("memory", state.get("request") or {})
-    route = "validate_admission" if state["action"] == "learn" else "validate_search" if state["action"] == "search" else "retrieve_memory"
+    route = "summarize_repair" if state["action"] in {"summarize", "sync"} else "validate_admission" if state["action"] == "learn" else "validate_search" if state["action"] == "search" else "retrieve_memory"
     return {"active_skill": "+".join(item.name for item in skills), "active_skills": [item.name for item in skills], "allowed_tools": get_skill_registry().merge_tools(skills), "route": route}
 
 
@@ -60,7 +60,7 @@ def rerank(state: MemoryGraphState) -> Dict[str, Any]:
 def validate(state: MemoryGraphState) -> Dict[str, Any]:
     findings = list(state.get("validation_findings") or [])
     if state["action"] == "search" and not state.get("ranked_items"):
-        findings.append("未检索到已验证维修经验")
+        findings.append("未检索到匹配的维修经验")
     return {"validation_findings": list(dict.fromkeys(findings)), "route": "final"}
 
 
@@ -121,10 +121,50 @@ def validate_experience(state: MemoryGraphState) -> Dict[str, Any]:
 
 
 def persist(state: MemoryGraphState) -> Dict[str, Any]:
+    if state['action'] == 'sync':
+        request = state['request']
+        proposed_id = (request.get('experience') or {}).get('experience_id')
+        existing = next((item for item in state['agent'].experience_module.long_memory.search(
+            experience_id=proposed_id, limit=100) if item.get('experience_id') == proposed_id), None)
+        if not existing or existing.get('validation_status') not in {'accepted', 'duplicate', 'manual_confirmed'}:
+            return {'validation_findings': ['仅同步数据库已保存且已确认的经验'], 'route': 'fallback'}
+        if existing.get('validation_status') != 'manual_confirmed' and float(existing.get('experience_quality_score') or 0) < .8:
+            return {'validation_findings': ['经验质量未达到知识沉淀条件'], 'route': 'fallback'}
+        experience = existing if existing.get('rag_saved') else state['agent'].experience_module.writer.sync(existing)
+        return {'experience': {**experience, 'memory_saved': True}, 'route': 'final'}
+    if state['action'] == 'summarize':
+        return summarize_repair(state)
     experience = state.get("experience") or {}
     saved, rag_saved, duplicate = state["agent"].experience_module.writer.write(experience)
     experience = {**experience, "memory_saved": saved, "rag_saved": rag_saved, "duplicate": duplicate}
     return {"experience": experience, "route": "final"}
+
+
+def summarize_repair(state: MemoryGraphState) -> Dict[str, Any]:
+    from shared.repair_experience import build_manual_summary
+    request = state['request']
+    try:
+        experience = build_manual_summary(request.get('workorder') or {}, request.get('report') or {})
+    except ValueError as error:
+        return {'validation_findings': [str(error)], 'route': 'fallback'}
+    store = state['agent'].experience_module.long_memory
+    existing = next((item for item in store.search(device_id=experience['device_id'], limit=100,
+                                                 source_workorder=experience['source_workorder'])
+                     if item.get('experience_id') == experience['experience_id']), None)
+    if existing:
+        # Rebuild missing metadata for older persisted summaries, retaining receipts.
+        store.save(experience)
+        existing = next((item for item in store.search(device_id=experience['device_id'], limit=100,
+                            source_workorder=experience['source_workorder'])
+                         if item.get('experience_id') == experience['experience_id']), experience)
+        experience = {**experience, **existing, 'memory_saved': True, 'duplicate': True}
+    else:
+        store.save(experience)
+    # Confirmation returns after the durable save. Remote indexing is performed
+    # by the background Memory Agent invocation and can safely resume on restart.
+    if (request.get('context') or {}).get('sync_knowledge') and not experience.get('rag_saved'):
+        experience = state['agent'].experience_module.writer.sync(experience)
+    return {'experience': experience, 'route': 'final'}
 
 
 def final(state: MemoryGraphState) -> Dict[str, Any]:
@@ -178,7 +218,7 @@ def build_memory_graph():
     workflow.add_node("persist", steps["persist"])
     workflow.add_node("finish", result_node(steps["final"], steps["fallback"]))
     workflow.add_edge(START, "prepare")
-    workflow.add_conditional_edges("prepare", _route, {"retrieve_memory": "retrieve_memory", "extract_experience": "extract", "fallback": "finish"})
+    workflow.add_conditional_edges("prepare", _route, {"retrieve_memory": "retrieve_memory", "extract_experience": "extract", "summarize_repair": "persist", "fallback": "finish"})
     workflow.add_edge("retrieve_memory", "rank_results")
     workflow.add_edge("rank_results", "finish")
     workflow.add_conditional_edges("extract", _route, {"validate_experience": "validate_experience", "final": "finish"})

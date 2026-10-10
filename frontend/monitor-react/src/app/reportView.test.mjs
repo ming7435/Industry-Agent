@@ -2,6 +2,41 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as reportView from './reportView.mjs';
 
+test('文章报告保留自然段，使用保存的正文且不混入原始字段', () => {
+  assert.equal(typeof reportView.buildReportArticle, 'function');
+  const article = '设备因送料机报警停机，诊断后给出检查方案。\n\n维修人员记录“完成”，人工确认后整线复机。\n\n经验已保存供后续检索。';
+  assert.equal(reportView.buildReportArticle({article_text: article, sections: {diagnosis: {model: 'UNUSED'}}}), article);
+  const fullArticle = '完整诊断证据与维修方案应在正常文章中保留。'.repeat(60);
+  assert.equal(reportView.buildReportArticle({article_text: fullArticle}), fullArticle);
+  const fallback = reportView.buildReportArticle({sections: {diagnosis: {records: [{summary: '液压压力不足', model: 'UNUSED'}]}}});
+  assert.match(fallback, /液压压力不足/);
+  assert.doesNotMatch(fallback, /UNUSED|负责人：|实际处理：/);
+  assert.ok([...fallback].length <= 500);
+  const longLegacy = reportView.buildReportArticle({sections: {
+    lifecycle: {restart_method: 'manual_confirmation', restarted_at: '2026-10-09T13:40:56Z'},
+    diagnosis: {records: [{device_id: '长设备' .repeat(100), summary: '长诊断'.repeat(100)}]},
+    maintenance_plan: {records: [{repair_steps: ['检查部件'.repeat(100)]}]},
+    workorder: {records: [{assignee_name: '长姓名'.repeat(100), repair_feedback: {feedback: '处理完成'.repeat(100)}}]},
+    experience: {records: [{experience_id: 'EXP-1'}]},
+  }});
+  assert.ok([...longLegacy].length <= 500);
+});
+
+test('报告页面仅显示500字内正文，旧报告也不展开模型和采样参数', () => {
+  assert.equal(typeof reportView.buildConciseReportSections, 'function');
+  const report = {concise_sections: [{title: '智能诊断', body: '刀塔旋转超时'},
+    {title: '工单执行与检查', body: '完成，人工确认后复机'}],
+    sections: {diagnosis: {records: [{model: 'UNUSED-MODEL', summary: 'UNUSED-RAW'}]}}};
+  assert.deepEqual(reportView.buildConciseReportSections(report), report.concise_sections);
+  const legacy = reportView.buildConciseReportSections({sections: {lifecycle: {},
+    diagnosis: {records: [{summary: '液压压力不足', model: 'UNUSED-MODEL', raw: {unused: 'UNUSED-RAW'}}]},
+    workorder: {records: [{repair_feedback: {feedback: '处理完成'}}]}}});
+  const text = legacy.map(item => item.title + item.body).join('');
+  assert.match(text, /液压压力不足.*处理完成/s);
+  assert.doesNotMatch(text, /UNUSED/);
+  assert.ok([...text].length <= 500);
+});
+
 function section(sections, title) {
   const result = sections.find(item => item.title === title);
   assert.ok(result, `报告必须显示${title}`);
@@ -26,7 +61,7 @@ test('人工确认启动记录不会展示为自动核验通过', () => {
   assert.doesNotMatch(section(lifecycle, '停机到复机').body, /复机核验通过/);
 });
 
-test('统一报告展示停机复机时间和所有设备的四个业务章节', () => {
+test('故障报告展示停机复机和维修记录，历史质检章节不会混入', () => {
   const shown = reportView.buildReportDisplaySections({
     lifecycle: {started_at: '2026-10-08T01:00:00Z', stopped_at: '2026-10-08T01:00:02Z',
       restarted_at: '2026-10-08T01:05:00Z', duration_seconds: 300, device_ids: ['M1', 'M2'], event_ids: ['E1', 'E2']},
@@ -41,8 +76,17 @@ test('统一报告展示停机复机时间和所有设备的四个业务章节',
   assert.match(section(shown, '智能诊断').body, /液压异常[\s\S]*振动异常/);
   assert.match(section(shown, '维修方案').body, /检查压力[\s\S]*检查轴承/);
   assert.match(section(shown, '工单执行与检查').body, /WO1[\s\S]*检查完成[\s\S]*检查通过/);
-  assert.match(section(shown, '质检结果').body, /未关联质检/);
+  assert.equal(shown.some(item => /质检|质量/.test(item.title)), false);
   assert.equal(reportView.reportQualityLabel({status: 'not_tested', records: []}), '未关联质检');
+});
+
+test('维修报告不展示产品质检，独立质检报告保留实际检测结果', () => {
+  const source = {diagnosis: {fault: '液压异常'}, quality: {passed: false, findings: ['尺寸超差']}};
+  const repair = reportView.buildReportDisplaySections(source, 'maintenance_report');
+  assert.equal(repair.some(item => item.title === '质量结果'), false);
+  const quality = reportView.buildReportDisplaySections(source, 'quality_report');
+  assert.match(section(quality, '质量结果').body, /未通过.*尺寸超差/);
+  assert.equal(quality.some(item => item.title === '诊断结论'), false);
 });
 
 test('报告中的诊断原文时间根据已保存的事件时间显示为北京时间', () => {
@@ -173,4 +217,20 @@ test('生成失败、处理中和未知状态保留真实状态而非标记内�
   const unfamiliar = completeness({status: 'custom_state'});
   assert.match(unfamiliar.label, /custom_state/);
   assert.notEqual(unfamiliar.label, '内容完整');
+});
+
+
+test('完整周期报告保留证据、全部工单、人工确认和知识沉淀回执', () => {
+  const shown = reportView.buildReportDisplaySections({
+    lifecycle: {restart_method: 'manual_confirmation', restarted_at: '2026-10-09T07:33:12Z'},
+    diagnosis: {records: [{summary: '压力异常', evidence: [{evidence_id: 'EV-37', content: '历史曲线原文'}]}]},
+    maintenance_plan: {records: [{plan_id: 'P1', required_tools: ['压力表'], post_checks: ['复测循环']}]},
+    workorder: {records: Array.from({length: 30}, (_,i) => ({workorder_id: `WO-${i}`, status: 'completed',
+      repair_feedback: {feedback: `真实处理${i}`}, repair_verification: {phase: 'manual_confirmation', automatic_verification: false}}))},
+    experience: {records: [{experience_id: 'EXP-1', content: '实际经验总结', knowledge_sync: {status: 'retry', searchable: true, dense_indexed: false}}]},
+    references: {records: [{workorder_id: 'WO-29', trace_id: 'T-SOURCE'}]},
+  }, 'full_case_report');
+  const text = shown.map(section => section.body).join('\n');
+  for (const token of ['EV-37','历史曲线原文','压力表','复测循环','WO-29','真实处理29','人工确认','EXP-1','实际经验总结','自动重试','T-SOURCE']) assert.ok(text.includes(token), token);
+  assert.ok(!text.includes('复机核验通过'));
 });

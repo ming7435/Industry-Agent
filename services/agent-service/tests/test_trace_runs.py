@@ -1,10 +1,13 @@
-from app.harness.runs import build_run_records
+import pytest
+
+from app.harness.runs import build_run_records, run_index_record
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from app.api.server import create_app
 from app.harness.trace import TraceRecorder
+from app.runtime.coordinator import RuntimeInputParser
 
 
 def _event(event, *, trace="TRACE-FAULT", task="TASK-FAULT", agent="", node="", **extra):
@@ -50,6 +53,44 @@ def test_fault_lifecycle_is_one_record_with_ordered_real_phases():
     ]
     assert all(phase["status"] == "completed" for phase in run["phases"])
     assert run["status"] == "completed"
+
+
+@pytest.mark.parametrize("indexed", [False, True])
+@pytest.mark.parametrize("event_id", ["EVT-MONITOR", ""])
+def test_real_monitor_event_completes_monitor_phase(indexed, event_id):
+    payload = {"device_id": "D-MONITOR", "abnormal_metrics": {"temperature": 90}}
+    if event_id:
+        payload["event_id"] = event_id
+    parsed = RuntimeInputParser().parse(payload)
+    records = [
+        _event("goal_parsed", state_change=parsed.as_dict()),
+        _event("agent_completed", agent="diagnosis", node="diagnosis"),
+    ]
+    if indexed:
+        records = [run_index_record(record) for record in records]
+
+    runs = build_run_records(records)
+
+    assert len(runs) == 1
+    assert runs[0]["run_type"] == "fault"
+    assert runs[0]["device_id"] == "D-MONITOR"
+    assert runs[0]["phases"][0]["status"] == "completed"
+    assert runs[0]["phases"][1]["status"] == "completed"
+    assert runs[0]["phases"][2]["status"] == "pending"
+
+
+def test_user_request_linked_to_fault_does_not_complete_monitor_phase():
+    records = [
+        _event("goal_parsed", state_change={
+            "source": "user", "raw": {"event_id": "EVT-MANUAL", "device_id": "D-MANUAL"},
+        }),
+        _event("agent_completed", agent="diagnosis", node="diagnosis"),
+    ]
+
+    run = build_run_records(records)[0]
+
+    assert run["phases"][0]["status"] == "pending"
+    assert run["phases"][1]["status"] == "completed"
 
 
 def test_quality_is_not_merged_into_fault_record():

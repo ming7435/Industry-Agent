@@ -1,9 +1,9 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { freeCadArtifacts, freeCadRequest, freeCadRunId, freeCadStatus, freeCadWorkbenchExamples, readFreeCadSession, saveFreeCadSession, validFreeCadRun } from "./freecad.mjs";
+import { freeCadArtifacts, freeCadDisplayNumber, freeCadRequest, freeCadRunId, freeCadStatus, freeCadWorkbenchExamples, readFreeCadSession, saveFreeCadSession, validFreeCadPartNumber, validFreeCadRun } from "./freecad.mjs";
 import DesignParameterEditor from './DesignParameterEditor.jsx';
 import { appendDesignVersion, designParameterGroups, designTemplates } from './designEditor.mjs';
 import InlineDimensionEditor from './InlineDimensionEditor.jsx';
-import SimulatedProductionPanel from "./SimulatedProductionPanel.jsx";
+import SimulatedProductionPanel from './SimulatedProductionPanel.jsx';
 import "./productionCad.css";
 
 const FreeCadModelViewer = lazy(() => import("./FreeCadModelViewer.jsx"));
@@ -51,12 +51,22 @@ function readVersions() {
   catch { return []; }
 }
 
+function withPartIdentity(record, previous) {
+  // 旧服务响应可能没有标识；只保留同一设计版本的标识，绝不使用未提交草稿。
+  const same = previous?.run_id === record.run_id;
+  return { ...record, part_name: record.part_name ?? (same ? previous.part_name : '') ?? '',
+    part_number: record.part_number ?? (same ? previous.part_number : '') ?? '' };
+}
+
 export default function ProductionCadWorkspace() {
   const [saved] = useState(() => readFreeCadSession(storage()));
   const [prompt, setPrompt] = useState(saved?.draft_prompt || "");
+  const [partName, setPartName] = useState(saved?.draft_part_name || ''), [partNumber, setPartNumber] = useState(validFreeCadPartNumber(saved?.draft_part_number) ? saved.draft_part_number : '');
+  const partNumberValid = !partNumber || validFreeCadPartNumber(partNumber);
+  const [inputOpen, setInputOpen] = useState(true);
   const [specText, setSpecText] = useState(saved?.draft_spec || ''), [confirmed, setConfirmed] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [run, setRun] = useState(saved?.run_id ? { run_id: saved.run_id, prompt: saved.prompt, status: "restoring", calls: [] } : null);
+  const [run, setRun] = useState(saved?.run_id ? { run_id: saved.run_id, prompt: saved.prompt, part_name: saved.part_name, part_number: saved.part_number, status: "restoring", calls: [] } : null);
   const [health, setHealth] = useState(null), [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [pollEpoch, setPollEpoch] = useState(0);
@@ -82,6 +92,8 @@ export default function ProductionCadWorkspace() {
   const dimensions = designParameterGroups(run?.spec).filter((group) => group.operation || group.id === 'sheet_metal').slice(0, 1)
     .flatMap((group) => group.fields.filter((field) => !field.options && !field.id.includes('.position.') && !field.id.includes('.sections.'))).slice(0, 4);
 
+  useEffect(() => { if (stl) setInputOpen(false); }, [stl?.url]);
+
   useEffect(() => {
     if (run?.status !== 'completed' || !freeCadArtifacts(run).some((item) => item.format === 'stl')) return;
     setVersions((current) => {
@@ -106,7 +118,7 @@ export default function ProductionCadWorkspace() {
         const record = await freeCadRequest(`/runs/${run.run_id}`, { signal: abort.signal });
         if (abort.signal.aborted || version !== readVersion.current) return;
         if (record.run_id !== run.run_id || (!terminal.has(record.status) && record.status !== "running")) throw new Error("运行记录格式不完整，请刷新状态重查。");
-        setRun(record); setError("");
+        setRun((current) => withPartIdentity(record, current)); setError("");
         if (record.status === "running") timer = window.setTimeout(poll, 1500);
       } catch (failure) {
         if (abort.signal.aborted || version !== readVersion.current) return;
@@ -131,10 +143,18 @@ export default function ProductionCadWorkspace() {
     saveFreeCadSession(storage(), session.current);
   }
 
-  function chooseExample(value, spec = '') {
+  function editIdentity(name, number) {
+    setPartName(name); setPartNumber(number);
+    session.current = { prompt: '', command_id: '', ...session.current,
+      draft_part_name: name, draft_part_number: number };
+    saveFreeCadSession(storage(), session.current);
+  }
+
+  function chooseExample(value, spec = '', name = '') {
     setPrompt(value); setSpecText(spec); setConfirmed(false);
+    setPartName(name); setPartNumber('');
     setDraftValid(true);
-    session.current = { prompt: '', command_id: '', ...session.current, draft_prompt: value, draft_spec: spec };
+    session.current = { prompt: '', command_id: '', ...session.current, draft_prompt: value, draft_spec: spec, draft_part_name: name, draft_part_number: '' };
     saveFreeCadSession(storage(), session.current);
   }
 
@@ -145,7 +165,7 @@ export default function ProductionCadWorkspace() {
       if (validFreeCadRun(run?.run_id)) {
         const record = await freeCadRequest(`/runs/${run.run_id}`);
         if (record.run_id !== run.run_id || (!terminal.has(record.status) && record.status !== "running")) throw new Error("运行记录格式不完整，请稍后刷新。");
-        setRun(record);
+        setRun((current) => withPartIdentity(record, current));
       }
     } catch (failure) { setError(failure.status === 404 ? "本次运行记录暂未找到。刷新仅查询已有记录；如已确认未生成，可开始新需求。" : failure.message); }
     finally { setBusy(""); setPollEpoch((value) => value + 1); }
@@ -154,7 +174,7 @@ export default function ProductionCadWorkspace() {
   async function submit(event, changedSpec = null) {
     event.preventDefault();
     if (submitting.current || busy || pending || unknown || !connected || !supported ||
-        (changedSpec ? !validRevision || !revisionConfirmed : !prompt.trim() || !draftValid || (specText.trim() && !confirmed))) return;
+        (changedSpec ? !validRevision || !revisionConfirmed : !partNumberValid || !prompt.trim() || !draftValid || (specText.trim() && !confirmed))) return;
     submitting.current = true; setBusy("submit"); setError(""); ++readVersion.current;
     let nextSession;
     try {
@@ -165,24 +185,29 @@ export default function ProductionCadWorkspace() {
       }
       const submittedPrompt = changedSpec ? `修改现有设计：${String(run.prompt || '零件设计').slice(0, 9500)}。以本次确认的参数为准，重新生成模型和图纸。` : prompt;
       const command_id = crypto.randomUUID(), run_id = await freeCadRunId(command_id);
+      const identity = { part_name: String(changedSpec ? run.part_name || '' : partName).trim(),
+        part_number: String(changedSpec ? run.part_number || '' : partNumber).trim() };
       // 请求发出前保存确定性编号；丢失响应后只回查，不自动重放建模。
-      nextSession = { command_id, run_id, prompt: submittedPrompt, draft_prompt: prompt, draft_spec: specText };
+      nextSession = { command_id, run_id, prompt: submittedPrompt, draft_prompt: prompt, draft_spec: specText,
+        ...identity, draft_part_name: partName, draft_part_number: partNumber };
       session.current = nextSession; saveFreeCadSession(storage(), nextSession);
       setRevision(null); setRevisionConfirmed(false);
-      setRun({ run_id, prompt: submittedPrompt, status: "submitting", calls: [] });
-      const record = await freeCadRequest("/runs", { method: "POST", body: { prompt: submittedPrompt, command_id, ...(spec ? { spec } : {}) } });
+      setRun({ run_id, prompt: submittedPrompt, ...identity, status: "submitting", calls: [] });
+      const record = await freeCadRequest("/runs", { method: "POST", body: { prompt: submittedPrompt, command_id,
+        ...(health?.part_identity_supported === true ? identity : {}), ...(spec ? { spec } : {}) } });
       if (!validFreeCadRun(record?.run_id) || (!terminal.has(record.status) && record.status !== "running")) throw Object.assign(new Error("未收到有效运行记录，请刷新状态核对。"), { outcomeUnknown: true });
       session.current = { ...nextSession, run_id: record.run_id }; saveFreeCadSession(storage(), session.current);
-      setRun({ ...record, prompt: record.prompt ?? submittedPrompt });
+      setRun(withPartIdentity({ ...record, prompt: record.prompt ?? submittedPrompt }, { run_id: record.run_id, ...identity }));
     } catch (failure) {
       setError(failure.message);
-      if (nextSession) setRun({ run_id: nextSession.run_id, prompt: nextSession.prompt, status: failure.outcomeUnknown ? "outcome_unknown" : "failed", error: failure.message, calls: [] });
+      if (nextSession) setRun({ run_id: nextSession.run_id, prompt: nextSession.prompt, part_name: nextSession.part_name, part_number: nextSession.part_number, status: failure.outcomeUnknown ? "outcome_unknown" : "failed", error: failure.message, calls: [] });
     } finally { submitting.current = false; setBusy(""); }
   }
 
   function startNew() {
     ++readVersion.current; setRun(null); setError(""); setRevision(null);
-    session.current = { prompt: "", command_id: "", draft_prompt: prompt, draft_spec: specText };
+    setPartName(''); setPartNumber(''); setInputOpen(true);
+    session.current = { prompt: "", command_id: "", draft_prompt: prompt, draft_spec: specText, draft_part_name: '', draft_part_number: '' };
     saveFreeCadSession(storage(), session.current);
   }
 
@@ -200,9 +225,9 @@ export default function ProductionCadWorkspace() {
     if (locked || !validFreeCadRun(id) || id === run?.run_id) return;
     const version = versions.find((item) => item.run_id === id);
     setRevision(null); setRevisionConfirmed(false);
-    session.current = { ...session.current, run_id: id, prompt: version?.prompt || '' };
+    session.current = { ...session.current, run_id: id, prompt: version?.prompt || '', part_name: version?.part_name || '', part_number: version?.part_number || '' };
     saveFreeCadSession(storage(), session.current);
-    setRun({ run_id: id, prompt: version?.prompt || '', status: 'restoring', calls: [] });
+    setRun({ run_id: id, prompt: version?.prompt || '', part_name: version?.part_name || '', part_number: version?.part_number || '', status: 'restoring', calls: [] });
   }
 
   function changeOnDrawing(spec) {
@@ -227,13 +252,23 @@ export default function ProductionCadWorkspace() {
       <div className="cad-card-heading"><div><span className="cad-section-number">01 / 设计输入</span><h2>创建你的设计</h2></div><button type="button" disabled={locked} onClick={startNew}>新建设计</button></div>
       {health === null && <p className="cad-read-notice" role="status">正在检查建模服务，确认连接后可以生成或应用修改。</p>}
       {health !== null && (!connected || !supported) && <div className="cad-alert" role="alert"><p>建模服务暂不可用，请稍后重试。</p><button type="button" disabled={Boolean(busy)} onClick={refresh}>{busy === "refresh" ? "正在重试…" : "重试"}</button></div>}
+      <details className="cad-input-details" open={inputOpen} onToggle={(event) => setInputOpen(event.currentTarget.open)}>
+        <summary>零件信息与建模需求</summary>
       <form onSubmit={submit}>
+        <div className="cad-part-fields">
+          <label htmlFor="freecad-part-name">零件名称<input id="freecad-part-name" type="text" maxLength={120} value={partName} disabled={locked} onChange={(event) => editIdentity(event.target.value, partNumber)} placeholder="例如：带通孔销轴" /></label>
+          <label htmlFor="freecad-part-number">零件编号（选填）<input id="freecad-part-number" type="text" inputMode="numeric" pattern="[0-9]{5}" maxLength={5} value={partNumber} disabled={locked} aria-invalid={!partNumberValid} aria-describedby={!partNumberValid ? 'freecad-part-number-error' : undefined} onChange={(event) => editIdentity(partName, event.target.value)} placeholder="5 位数字，例如：00123" /></label>
+          {!partNumberValid && <p id="freecad-part-number-error" className="cad-run-error" role="alert">请输入 5 位数字，例如 00123。</p>}
+        </div>
         <label htmlFor="freecad-prompt">描述零件、尺寸和设计要求</label>
         <textarea id="freecad-prompt" rows={3} maxLength={10000} value={prompt} onChange={(event) => editPrompt(event.target.value)} disabled={locked} placeholder="说明用途、形状和尺寸。例如：法兰直径70mm、厚12mm，中心通孔16mm，四个安装孔。" />
+        <details className="cad-expert-options cad-template-options"><summary>模板与示例</summary>
         <label htmlFor="advanced-example">选择设计模板</label>
-        <select id="advanced-example" defaultValue="" disabled={locked} onChange={(event) => { const sample = advancedExamples[event.target.value]; if (sample) chooseExample(sample.prompt, sample.spec ? JSON.stringify(sample.spec, null, 2) : ''); }}>
+        <select id="advanced-example" defaultValue="" disabled={locked} onChange={(event) => { const sample = advancedExamples[event.target.value]; if (sample) chooseExample(sample.prompt, sample.spec ? JSON.stringify(sample.spec, null, 2) : '', sample.label.split(' · ')[0]); }}>
           <option value="">从模板开始，尺寸与特征都可以修改</option>{Object.entries(advancedExamples).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}
         </select>
+        <div className="cad-actions"><button type="button" disabled={locked} onClick={() => chooseExample("外径30mm、长50mm的销轴，带同轴通孔直径10mm", '', '带通孔销轴')}>填入带通孔销轴示例</button><button type="button" disabled={locked} onClick={() => chooseExample("正四面体（立体三角形、四面相同、边长100mm）", '', '正四面体')}>填入正四面体示例</button></div>
+        </details>
         {specText.trim() && <div className="cad-template-notice"><p>使用下方参数生成，文字描述用于说明用途。</p><button type="button" disabled={locked} onClick={() => { editSpec(''); setDraftValid(true); setAdvancedOpen(false); }}>仅按文字建模</button></div>}
         {draftSpec?.units === 'mm' && <DesignParameterEditor key={prompt} spec={draftSpec} disabled={locked} onChange={(value) => editSpec(JSON.stringify(value, null, 2))} onValidityChange={setDraftValid} />}
         {specText.trim() && <label className="cad-confirm"><input type="checkbox" checked={confirmed} disabled={locked} onChange={(event) => setConfirmed(event.target.checked)} />我已核对设计尺寸与参数</label>}
@@ -244,26 +279,27 @@ export default function ProductionCadWorkspace() {
           <label htmlFor="freecad-spec">结构化参数（JSON，优先于文字描述）</label>
           <textarea id="freecad-spec" rows={12} maxLength={30000} value={specText} disabled={locked} onChange={(event) => editSpec(event.target.value)} placeholder='{"units":"mm","operations":[...]}' />
         </details>
-        <div className="cad-actions"><button type="submit" className="cad-primary" disabled={!connected || !supported || locked || !draftValid || !prompt.trim() || Boolean(specText.trim() && !confirmed)}>{busy === "submit" ? "正在提交…" : pending ? "正在生成模型…" : "生成 3D 模型"}</button><button type="button" disabled={locked} onClick={() => chooseExample("外径30mm、长50mm的销轴，带同轴通孔直径10mm")}>填入带通孔销轴示例</button><button type="button" disabled={locked} onClick={() => chooseExample("正四面体（立体三角形、四面相同、边长100mm）")}>填入正四面体示例</button></div>
-        <p className="cad-storage-note">生成后点击图上的“图上编辑”，直接改尺寸或拖动端点；核对后应用修改。设计文件不代表生产放行，不会启动机器。</p>
+        <div className="cad-actions"><button type="submit" className="cad-primary" disabled={!connected || !supported || locked || !partNumberValid || !draftValid || !prompt.trim() || Boolean(specText.trim() && !confirmed)}>{busy === "submit" ? "正在提交…" : pending ? "正在生成模型…" : "生成 3D 模型"}</button></div>
+        {!stl && <p className="cad-storage-note">生成后点击图上的“图上编辑”，直接改尺寸或拖动端点；核对后应用修改。设计文件不代表生产放行，不会启动机器。</p>}
         <details className="cad-expert-options"><summary>设计范围与使用说明</summary><p className="cad-review-note">支持基础实体、齿轮、圆角、倒角、放样、工程图、关节装配、单折弯钣金和基础建筑。外螺纹为实验功能；装配未进行运动碰撞和强度验收，建筑未进行结构安全验收。下载 FCStd 可在 FreeCAD 继续编辑；设计生成不会启动机器。修改版本记录保存在当前浏览器会话，运行记录过期后仍可保留已下载的文件。</p></details>
       </form>
+      </details>
     </section>
     {!run && <section className="cad-card cad-preview-empty"><div className="cad-empty-icon" aria-hidden="true">◇</div><h2>你的设计将显示在这里</h2><p>描述需求或选择模板，生成后可查看三维模型、修改尺寸并导出图纸。</p></section>}
     {run && <section className="cad-card" aria-labelledby="freecad-result-title">
       <div className="cad-card-heading"><div><span className="cad-section-number">02 / 设计成果</span><h2 id="freecad-result-title">模型与图纸</h2></div><span className={`cad-badge ${run.status}`} role="status">{freeCadStatus(run.status)}</span></div>
+      <section className="cad-part-identity" aria-label="当前零件标识"><h3>{run.part_name || '未命名零件'}</h3><p><span>{validFreeCadPartNumber(run.part_number) ? '零件编号' : '设计短号'}</span><strong>{freeCadDisplayNumber(run)}</strong></p></section>
       <div className="cad-actions"><button type="button" disabled={Boolean(busy)} onClick={refresh}>{busy === "refresh" ? "正在刷新…" : "刷新结果"}</button>{stl && run.spec?.units === 'mm' && <button type="button" className="cad-primary" disabled={locked} onClick={() => editCurrent()}>修改设计</button>}
-        {versions.length > 0 && <label className="cad-version-label">设计版本<select aria-label="设计版本" value={versions.some((item) => item.run_id === run.run_id) ? run.run_id : ''} disabled={locked} onChange={(event) => selectVersion(event.target.value)}><option value="" disabled>正在生成新版本</option>{versions.map((item, index) => <option key={item.run_id} value={item.run_id}>版本 {index + 1} · {new Date(item.created_at * 1000).toLocaleTimeString('zh-CN')}</option>)}</select></label>}</div>
+        {versions.length > 0 && <label className="cad-version-label">设计版本<select aria-label="设计版本" value={versions.some((item) => item.run_id === run.run_id) ? run.run_id : ''} disabled={locked} onChange={(event) => selectVersion(event.target.value)}><option value="" disabled>正在生成新版本</option>{versions.map((item, index) => <option key={item.run_id} value={item.run_id}>{item.part_name || `${validFreeCadPartNumber(item.part_number) ? '零件' : '设计短号'} ${freeCadDisplayNumber(item)}`} · 版本 {index + 1} · {new Date(item.created_at * 1000).toLocaleTimeString('zh-CN')}</option>)}</select></label>}</div>
       <details className="cad-design-brief"><summary>查看设计要求</summary><p className="cad-submitted-prompt">{run.prompt}</p></details>
       {pending && <p role="status">正在等待 FreeCAD 实际执行结果。可以稍后回到此页继续查询。</p>}
       {unknown && <div className="cad-alert"><p>尚未确认本次执行结果。请先刷新查询；如已在本地 FreeCAD 核对，可开始新需求。</p><button type="button" disabled={Boolean(busy)} onClick={startNew}>已核对，开始新需求</button></div>}
       {run.error && <p className="cad-run-error" role="alert">{String(run.error)}</p>}
       {run.answer && !stl && <p className="cad-result-text">{run.answer}</p>}
       {stl ? <>
-        <div className="cad-validation"><span>模型检查通过</span>{Array.isArray(run.validation.bounds_mm) && <span>外形尺寸 {run.validation.bounds_mm.map((value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })).join(" × ")} mm</span>}{Number.isFinite(run.validation.volume_mm3) && <span>体积 {run.validation.volume_mm3.toLocaleString(undefined, { maximumFractionDigits: 3 })} mm³</span>}</div>
-        {run.validation.model_kind === 'assembly' && <p>{motion ? '真实关节运动' : run.validation.assembly?.verified ? '原生装配' : '静态装配'} · {run.validation.component_count} 个零件 · 首帧干涉检查通过：{run.validation.components.map((p) => p.name).join('、')}</p>}
-        {run.validation.model_kind === 'bim' && <p>BIM 建筑 · {run.validation.bim.walls} 面墙 · {run.validation.bim.slabs} 块楼板 · {run.validation.bim.openings} 个开口</p>}
+        <div className="cad-validation"><span>模型检查通过</span>{Array.isArray(run.validation.bounds_mm) && <span>外形尺寸 {run.validation.bounds_mm.map((value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })).join(" × ")} mm</span>}</div>
         {motion && <p className="cad-read-notice">播放的是 FreeCAD 关节求解生成的运动帧；尚未进行运动全过程的碰撞或强度验收。</p>}
+        <p className="cad-storage-note">生成后点击图上的“图上编辑”，直接改尺寸或拖动端点；核对后应用修改。设计文件不代表生产放行，不会启动机器。</p>
         <Suspense fallback={<p role="status">正在加载三维查看器…</p>}><FreeCadModelViewer key={stl.url} url={stl.url} motionUrl={motion?.url} editProps={directProps && { ...directProps, onValidityChange: modelValidity }} dimensionControls={!locked && <DimensionButtons dimensions={dimensions} onEdit={editCurrent} />} /></Suspense>
         {revision?.run_id === run.run_id && <section id="cad-design-edit" className="cad-edit-design" aria-label="修改当前设计">
           <div className="cad-card-heading"><div><span className="cad-section-number">03 / 设计修改</span><h3>修改当前设计</h3></div><button type="button" disabled={locked} onClick={discardOnDrawing}>取消修改</button></div>
@@ -285,8 +321,13 @@ export default function ProductionCadWorkspace() {
       </> : terminal.has(run.status) && <p className="cad-no-model" role={run.status === 'completed' ? 'alert' : undefined}>本轮没有可展示的 STL 模型。{run.status === "needs_input" ? "请补充上方所需参数后再次生成。" : run.status === 'completed' ? "实体证据或模型产物不完整，不能将二维图纸作为建模成功结果。" : "请查看执行结果和实际工具调用。"}</p>}
       <SimulatedProductionPanel run={run} draftPending={Boolean(revision) || locked || Boolean(run.prompt && prompt.trim() !== run.prompt.trim()) || Boolean(specText.trim() && JSON.stringify(draftSpec) !== JSON.stringify(run.spec))} />
       <details className="cad-call-details"><summary>技术记录</summary><p className="cad-identifier">运行编号：{run.run_id}</p>
+        {run.part_number && !validFreeCadPartNumber(run.part_number) && <p>原始零件编号：{run.part_number}</p>}
+        {!validFreeCadPartNumber(run.part_number) && <p>五位设计短号仅便于展示，不作为唯一查询编号；版本和下载按完整运行编号关联。</p>}
+        <p>名称、编号和未提交需求在当前浏览器会话保留；建模服务支持时，名称和编号也写入本次设计记录。服务运行记录有保存期限，请下载并保存需要长期保留的图纸。</p>
         {run.spec && <details><summary>建模参数</summary><pre>{JSON.stringify(run.spec, null, 2)}</pre></details>}
         {run.validation && <details><summary>几何检查详情</summary><pre>{JSON.stringify(run.validation, null, 2)}</pre></details>}
+        {stl && run.validation.model_kind === 'assembly' && <p>{motion ? '真实关节运动' : run.validation.assembly?.verified ? '原生装配' : '静态装配'} · {run.validation.component_count} 个零件 · 首帧干涉检查通过：{run.validation.components.map((p) => p.name).join('、')}</p>}
+        {stl && run.validation.model_kind === 'bim' && <p>BIM 建筑 · {run.validation.bim.walls} 面墙 · {run.validation.bim.slabs} 块楼板 · {run.validation.bim.openings} 个开口</p>}
         {run.execution && <details className="cad-execution-details"><summary>执行路径</summary><p>{run.execution.agent} → {run.execution.node} → {run.execution.skill} → {run.execution.tool}</p></details>}
         {!!run.calls?.length && <details><summary>实际工具调用 · {run.calls.length} 次</summary><ol>{run.calls.map((call, index) => <li key={index}><details><summary>{index + 1}. {call.tool}{call.error || call.result?.isError ? " · 失败" : ""}</summary><h3>参数</h3><pre>{JSON.stringify(call.arguments, null, 2)}</pre><h3>{call.error ? "调用错误" : "工具返回"}</h3><pre>{JSON.stringify(call.error ? { error: call.error, result: call.result } : call.result, null, 2)}</pre></details></li>)}</ol></details>}
       </details>
