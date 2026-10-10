@@ -25,15 +25,14 @@ try {
     await page.goto(`http://127.0.0.1:8001/?view=${view}`, { waitUntil: 'domcontentloaded' });
     if (view === 'quality') {
       const workspace = page.getByRole('region', { name: '质检系统', exact: true });
-      await workspace.waitFor({ state: 'attached' });
       await page.getByRole('heading', { name: '质量检测', exact: true }).waitFor();
       await page.getByRole('heading', { name: '检测零件', exact: true }).waitFor();
-      assert.equal(await workspace.getByRole('region', { name: '检测零件', exact: true }).locator('dt').count(), 2);
       assert.equal(await workspace.locator('input, form, table').count(), 0);
-      assert.equal(await workspace.getByRole('button', { name: '开始检测', exact: true }).count(), 1);
-      const result = workspace.getByRole('region', { name: '检测结果', exact: true });
-      assert.equal(await result.getByText('待检测', { exact: true }).count(), 1);
-      assert.deepEqual(await result.locator('.quality-rate-fields dd').allTextContents(), ['—', '—', '—']);
+      assert.equal(await page.getByRole('navigation', { name: '质检来源', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: '比对仪数值演示', exact: true }).count(), 0);
+      assert.equal(await workspace.getByRole('combobox', { name: '零件名称', exact: true }).count(), 1);
+      assert.equal(await page.getByRole('heading', { name: '工厂产出检测', exact: true }).count(), 0);
+      assert.equal(await workspace.getByRole('button', { name: '开始检测', exact: true }).isDisabled(), true);
       await page.getByRole('button', { name: '质检系统', exact: true }).waitFor();
     } else {
       await page.getByRole('heading', { name: heading, exact: true }).waitFor();

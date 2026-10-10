@@ -50,6 +50,8 @@ class SiliconFlowVisionConfig:
             raise ValueError("SiliconFlow vision api_key must not be empty.")
         if not self.model.strip():
             raise ValueError("SiliconFlow vision model must not be empty.")
+        if "deepseek" in self.model.casefold():
+            raise ValueError("DeepSeek requests through SiliconFlow are disabled")
         if not self.endpoint.strip():
             raise ValueError("SiliconFlow vision endpoint must not be empty.")
         if self.timeout_seconds <= 0:

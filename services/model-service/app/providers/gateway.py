@@ -93,6 +93,8 @@ class _OpenAICompatibleProvider:
         self.reranker_model = reranker_model
 
     def _post(self, path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        if self.name == "siliconflow" and "deepseek" in str(payload.get("model") or "").casefold():
+            raise ProviderError("DeepSeek requests through SiliconFlow are disabled")
         if not self.api_key:
             raise ProviderError("%s API key is not configured" % self.name)
         request = Request(
@@ -126,15 +128,10 @@ class _OpenAICompatibleProvider:
 
     def resolved_model(self, payload: Mapping[str, Any], capability: str) -> str:
         requested_model = str(payload.get("model") or "").strip()
-        # Agent/RAG 客户端使用 ``deepseek-chat`` 作为通用契约默认值。
-        # 当对话提供方是 SiliconFlow 时，该名称可能不是有效的模型名，
-        # 因此改写为提供方配置的模型，不把其他提供方的名称直接转发。
         defaults = {"embedding": self.embedding_model, "rerank": self.reranker_model}
         if capability in defaults:
             return requested_model or defaults[capability]
-        if not requested_model or (self.name == "siliconflow" and requested_model == "deepseek-chat"):
-            return self.model
-        return requested_model
+        return requested_model or self.model
 
     def chat(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return self._post("/chat/completions", {**dict(payload), "model": self.resolved_model(payload, "chat")})
@@ -157,14 +154,15 @@ class ModelGateway:
                 raise ProviderError("fake model provider is forbidden in production")
             self.chat_provider: Any = _FakeProvider()
             self.aux_provider: Any = self.chat_provider
-        elif mode in {"remote", "deepseek", "siliconflow"}:
+        elif mode in {"remote", "deepseek"}:
+            chat_provider = os.getenv("MODEL_CHAT_PROVIDER", "deepseek").strip().lower()
+            if chat_provider != "deepseek":
+                raise ProviderError("unsupported MODEL_CHAT_PROVIDER; only deepseek is supported")
             siliconflow = _OpenAICompatibleProvider(
                 "siliconflow",
                 os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"),
                 os.getenv("SILICONFLOW_API_KEY", ""),
-                os.getenv("SILICONFLOW_CHAT_MODEL")
-                or os.getenv("SILICONFLOW_VISION_MODEL")
-                or "deepseek-ai/DeepSeek-V4-Flash",
+                os.getenv("SILICONFLOW_VISION_MODEL", "").strip() or "Qwen/Qwen2.5-VL-72B-Instruct",
                 os.getenv("SILICONFLOW_EMBEDDING_MODEL", "BAAI/bge-m3"),
                 os.getenv("SILICONFLOW_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"),
             )
@@ -176,14 +174,11 @@ class ModelGateway:
                 "",
                 "",
             )
-            chat_provider = os.getenv("MODEL_CHAT_PROVIDER", "deepseek").strip().lower()
-            if chat_provider not in {"deepseek", "siliconflow", "sf"}:
-                raise ProviderError("unsupported MODEL_CHAT_PROVIDER")
-            self.chat_provider = siliconflow if chat_provider in {"siliconflow", "sf"} else deepseek
+            self.chat_provider = deepseek
             self.aux_provider = siliconflow
         else:
             raise ProviderError("unsupported MODEL_PROVIDER: %s" % mode)
-        self.vision_model = "fake-chat" if self.aux_provider.name == "fake" else (os.getenv("SILICONFLOW_VISION_MODEL", "").strip() or "Qwen/Qwen2.5-VL-72B-Instruct")
+        self.vision_model = "fake-chat" if self.aux_provider.name == "fake" else self.aux_provider.model
         self._observation_lock = Lock()
         self._observations: dict[tuple[str, str, str], dict[str, Any]] = {}
 

@@ -225,6 +225,10 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     runtime = orchestrator or build_orchestrator()
+    from app.api.expert import build_expert_router
+    expert_router, expert_manager = build_expert_router(runtime, require_write_auth)
+    app.state.expert_skills = expert_manager
+    app.include_router(expert_router)
     event_results = EventResultStore()
     runtime.container.event_results = event_results
     production_worker = getattr(runtime.container, 'virtual_production_reconciler', None)

@@ -31,7 +31,7 @@ test('真实诊断页面保留92%已返回诊断，后续重试耗尽不误标�
   const body = await page.locator('body').innerText();
   assert.match(body, /诊断已返回/);
   assert.match(body, /92%/);
-  assert.match(body, /后续流程重试达到上限/);
+  assert.doesNotMatch(body, /重试达到上限|replan_limit_exceeded/);
   assert.match(body, /未完成自动派工/);
   assert.doesNotMatch(body, /证据不足/);
   assert.deepEqual(writes, []);

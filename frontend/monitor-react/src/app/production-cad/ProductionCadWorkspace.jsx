@@ -2,6 +2,7 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import { freeCadArtifacts, freeCadDisplayNumber, freeCadRequest, freeCadRunId, freeCadStatus, freeCadWorkbenchExamples, readFreeCadSession, saveFreeCadSession, validFreeCadPartNumber, validFreeCadRun } from "./freecad.mjs";
 import DesignParameterEditor from './DesignParameterEditor.jsx';
 import { appendDesignVersion, designParameterGroups, designTemplates } from './designEditor.mjs';
+import { publishCompletedDesign } from './completedDesigns.mjs';
 import InlineDimensionEditor from './InlineDimensionEditor.jsx';
 import SimulatedProductionPanel from './SimulatedProductionPanel.jsx';
 import "./productionCad.css";
@@ -96,11 +97,10 @@ export default function ProductionCadWorkspace() {
 
   useEffect(() => {
     if (run?.status !== 'completed' || !freeCadArtifacts(run).some((item) => item.format === 'stl')) return;
-    setVersions((current) => {
-      const next = appendDesignVersion(current, run);
-      try { storage()?.setItem('freecad.design-versions', JSON.stringify(next)); } catch { /* 会话存储不可用不影响当前设计。 */ }
-      return JSON.stringify(current) === JSON.stringify(next) ? current : next;
-    });
+    const next = appendDesignVersion(readVersions(), run);
+    try { storage()?.setItem('freecad.design-versions', JSON.stringify(next)); } catch { /* 会话存储不可用不影响当前设计。 */ }
+    setVersions(current=>JSON.stringify(current)===JSON.stringify(next)?current:next);
+    publishCompletedDesign(run,next,{automatic:run.run_id!==saved?.run_id});
   }, [run]);
 
   useEffect(() => {

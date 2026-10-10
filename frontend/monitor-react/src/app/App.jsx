@@ -7,7 +7,7 @@ import machineImage from "../assets/trak-tc820-machine-transparent.png";
 import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getDeviceDisplayName, getWorkorderAlarmCode, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
 import { buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLatestPipeline } from "./diagnosisView.mjs";
 import { currentIncident, incidentIdentity, matchesIncident, linkedPlanOrder, recordTimes, formatRecordTime } from './incidentIdentity.mjs';
-import { buildReportArticle, buildReportDisplaySections, reportCompleteness, reportQualityLabel } from "./reportView.mjs";
+import { buildReportArticleChapters, buildReportDisplaySections, reportCompleteness, reportQualityLabel } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
@@ -19,10 +19,10 @@ import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMark
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { createMotionClock, getMachineMotionState, getWorkshopMotionState } from "./workshopMotion.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
+import ExpertWorkspace from './ExpertWorkspace.jsx';
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
 import { freeCadRequest } from "./production-cad/freecad.mjs";
-import DemoQualityWorkspace from "./QualityWorkspace.jsx";
-import QualitySourceWorkspace from "./QualitySourceWorkspace.jsx";
+import PartQualityWorkspace from "./QualityWorkspace.jsx";
 import RepairCadPanel from './WorkorderDrawingPanel.jsx';
 import "../workbench.css";
 import TeamAccess from '../TeamAccess.jsx';
@@ -678,17 +678,19 @@ function App() {
   const [activeView, setActiveView] = useState(() => {
     if (typeof window === "undefined") return "monitor";
     const requested = new URLSearchParams(window.location.search).get("view");
-    return ["cad", "monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested) ? requested : "monitor";
+    return ["cad", "monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "expert", "logs", "report"].includes(requested) ? requested : "monitor";
   });
   const [maintenanceVisited, setMaintenanceVisited] = useState(activeView === "maintenance");
   const [logsVisited, setLogsVisited] = useState(activeView === "logs");
   const [workorderVisited, setWorkorderVisited] = useState(activeView === "workorder");
   const [reportVisited, setReportVisited] = useState(activeView === "report");
+  const [expertVisited, setExpertVisited] = useState(activeView === "expert");
   useEffect(() => {
     if (activeView === "maintenance") setMaintenanceVisited(true);
     if (activeView === "logs") setLogsVisited(true);
     if (activeView === "workorder") setWorkorderVisited(true);
     if (activeView === "report") setReportVisited(true);
+    if (activeView === "expert") setExpertVisited(true);
   }, [activeView]);
   const [ragMessages, setRagMessages] = useState(() => {
     if (typeof window === "undefined") return [];
@@ -718,7 +720,7 @@ function App() {
     if (typeof window === "undefined") return undefined;
     const handleHistoryNavigation = () => {
       const requested = new URLSearchParams(window.location.search).get("view");
-      if (["cad", "monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "logs", "report"].includes(requested || "")) {
+      if (["cad", "monitor", "diagnosis", "maintenance", "workorder", "quality", "rag", "expert", "logs", "report"].includes(requested || "")) {
         setActiveView(requested);
       } else if (!requested) {
         setActiveView("monitor");
@@ -784,6 +786,7 @@ function App() {
         {!bigScreen && activeView === "workorder" && (teamActor ? <SupervisorQueue actor={teamActor} /> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单。</p></section>)}
         {teamActor && (workorderVisited || activeView === "workorder") && <WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} active={!bigScreen && activeView === "workorder"} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
+        {(expertVisited || activeView === "expert") && <div hidden={bigScreen || activeView !== "expert"}><ExpertWorkspace key={`${teamActor?.user_id || 'guest'}:${teamActor?.role || ''}`} actor={teamActor} /></div>}
         {(logsVisited || activeView === "logs") && <LogsWorkspace active={!bigScreen && activeView === "logs"} snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace />}
         {(reportVisited || activeView === "report") && <ReportWorkspace active={!bigScreen && activeView === "report"} snapshot={snapshot} />}
@@ -2446,10 +2449,10 @@ function DiagnosisWorkspace({ snapshot, sample }) {
   const alarm = sample?.alarm_label || sample?.alarm_code || "当前无活动报警";
   return (
     <section className="workspace-view active module-board diagnosis-workspace" aria-label="智能诊断">
-      <ModuleHero eyebrow="Runtime Diagnosis" title="智能诊断" text="基于实时事件、知识证据和工程数据生成可追溯的诊断结论。" />
+      <ModuleHero eyebrow="故障分析" title="智能诊断" text="查看设备故障判断、原因分析和处理建议。" />
       <div className="module-grid">
         <ModuleStat label="诊断状态" value={view.statusLabel} text={view.deviceId || "等待设备"} />
-        <ModuleStat label="置信度" value={confidence} text="Evaluator 评估结果" />
+        <ModuleStat label="置信度" value={confidence} text="诊断结果参考" />
         <ModuleStat label="当前报警" value={alarm} text={view.workflowReason || "持续监测中"} />
       </div>
       <div className="answer-grid diagnosis-content-grid">
@@ -2457,14 +2460,10 @@ function DiagnosisWorkspace({ snapshot, sample }) {
           <div className="panel-heading"><div><span className="eyebrow">诊断结论</span><h2>当前判断</h2></div></div>
           <FormattedText value={view.summary} className="diagnosis-summary" />
           {view.statusHint && <div className="notice-banner" role="status">{view.statusHint}</div>}
-          {view.error && <div className="inline-error" role="alert">{view.error}</div>}
+          {view.error && <div className="inline-error" role="alert">诊断暂未完成，请稍后重试或联系维修人员。</div>}
           {view.cause && <div className="diagnosis-recommendation"><span className="section-kicker">根因判断</span><FormattedText value={view.cause} /></div>}
           {view.recommendation && <div className="diagnosis-recommendation"><span className="section-kicker">处置建议</span><FormattedText value={view.recommendation} /></div>}
           {view.nextAction && <div className="diagnosis-recommendation"><span className="section-kicker">下一步</span><FormattedText value={view.nextAction} /></div>}
-        </section>
-        <section className="panel module-panel">
-          <div className="panel-heading"><div><span className="eyebrow">Evidence</span><h2>诊断依据</h2></div><span className="step-count">{view.evidence.length} 条</span></div>
-          {view.evidence.length ? <StepList steps={view.evidence} /> : <div className="empty-state">等待 Runtime 收集证据</div>}
         </section>
       </div>
     </section>
@@ -2794,7 +2793,7 @@ function ReportWorkspace({ snapshot, active = true }) {
   const sections = report.sections || {};
   const qualityReport = report.report_type === 'quality_report';
   const displaySections = qualityReport ? buildReportDisplaySections(sections, report.report_type) : [];
-  const article = qualityReport ? '' : buildReportArticle(report);
+  const articleChapters = qualityReport ? [] : buildReportArticleChapters(report);
   const workorderCount = new Set([...(report.workorder_ids || []), ...(sections.workorder?.records || []).map(order => order.workorder_id),
     sections.workorder?.workorder_id].filter(Boolean)).size;
   const hasReport = Boolean(report.report_id || report.title || report.summary || Object.keys(sections).length);
@@ -2841,7 +2840,7 @@ function ReportWorkspace({ snapshot, active = true }) {
       {hasReport ? (
         <>
           {qualityReport && <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text="产品质检报告" /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质检结果" value={reportQualityLabel(sections.quality)} text="产品的实际检测结果" /></div>}
-          <section className="panel module-panel report-panel"><div className="panel-heading"><div><h2>{report.title || "运维报告"}</h2><span className={`severity-pill ${completeness.tone}`}>{completeness.label}</span></div><div className="report-file-actions"><button className="button" type="button" onClick={generatePdf} disabled={!report.report_id || Boolean(generatingPdf)}>{generatingPdf === report.report_id ? "生成中…" : "生成 PDF"}</button>{pdfReady && <><a className="button" href={pdfUrl} target="_blank" rel="noreferrer">打开 PDF</a><a className="button" href={`${pdfUrl}?download=1`} download={`report-${report.report_id}.pdf`}>下载 PDF</a></>}</div></div>{completeness.findings.length > 0 && <div className="workspace-notice" role="status"><ul>{completeness.findings.map((finding, index) => <li key={`${index}-${finding}`}>{finding}</li>)}</ul></div>}{qualityReport ? <><FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</> : <><p className="report-byline">{formatTime(report.created_at || report.updated_at)} · {report.report_id} · {workorderCount} 张工单</p><article className="report-article" aria-label="故障处理报告正文">{article.split(/\n\s*\n/).filter(Boolean).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</article></>}</section>
+          <section className="panel module-panel report-panel"><div className="panel-heading"><div><h2>{(!qualityReport && report.article_title) || report.title || "运维报告"}</h2><span className={`severity-pill ${completeness.tone}`}>{completeness.label}</span></div><div className="report-file-actions"><button className="button" type="button" onClick={generatePdf} disabled={!report.report_id || Boolean(generatingPdf)}>{generatingPdf === report.report_id ? "生成中…" : "生成 PDF"}</button>{pdfReady && <><a className="button" href={pdfUrl} target="_blank" rel="noreferrer">打开 PDF</a><a className="button" href={`${pdfUrl}?download=1`} download={`report-${report.report_id}.pdf`}>下载 PDF</a></>}</div></div>{completeness.findings.length > 0 && <div className="workspace-notice" role="status">报告资料尚不完整，请补充相关处理记录。</div>}{qualityReport ? <><FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</> : <>{report.article_subtitle && <p className="report-subtitle">{report.article_subtitle}</p>}<p className="report-byline">{formatTime(report.created_at || report.updated_at)} · {report.report_id} · {workorderCount} 张工单</p><article className="report-article" aria-label="故障处理报告正文">{articleChapters.map((chapter, index) => <section className="report-chapter" key={index}>{chapter.title && <h3>{chapter.title}</h3>}{chapter.paragraphs.map((paragraph, paragraphIndex) => <p key={paragraphIndex}>{paragraph}</p>)}</section>)}</article></>}</section>
         </>
       ) : <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="工单检查通过并确认整线恢复运行后，报告会自动显示，无需选择来源或手动生成。" />}
     </section>
@@ -2985,15 +2984,15 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
     try {
       const result = await retryMaintenancePlan(request,planId,retryCommands.current[planId]);
       const orderId = result.workorder?.workorder_id || '';
-      setRetryMessage(orderId ? `系统已处理派工，工单：${orderId}；具体状态以工单和日志为准。` : `校验已返回：${result.status || '待核对'}；${(result.maintenance_plan?.validation_findings || []).join('；') || result.stop_reason || '请在日志中查看执行结果'}`);
+      setRetryMessage(orderId ? `系统已处理派工，工单：${orderId}；具体状态以工单列表为准。` : '本次尚未派发工单，请联系维修人员确认方案和设备负责人。');
       delete retryCommands.current[planId];
       await refreshRef.current?.();
     } catch (err) {
       if (err.detail?.execution_started === false) {
         delete retryCommands.current[planId];
-        setRetryMessage(`未启动重新派工：${err.message}。补齐数据后可以重新校验。`);
+        setRetryMessage('本次派工尚未开始，请确认方案与设备负责人后重试。');
       } else {
-        setRetryMessage(`重新校验未确认成功：${err.message}。请先核对日志和工单；本页保留原命令编号，避免重复派工。`);
+        setRetryMessage('派工结果尚未确认，请稍后核对工单状态再重试。');
       }
     } finally {
       setRetrying(false);
@@ -3057,7 +3056,6 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
             <button type="button" className="workorder-queue-item" onClick={() => setSelectedId(record.recordId)}><span>
               <strong>{getDeviceDisplayName(record.device_id, { snapshot, device_name:record.device_name })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong>
               <small>{maintenanceWorkType(record).label} · {record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · 方案生成 ${formatRecordTime(record.created_at)}` : record.diagnosis_created_at ? ` · 诊断完成 ${formatRecordTime(record.diagnosis_created_at)}` : ""}</small>
-              {dispatch.reason && <small style={{ whiteSpace: "normal" }} title={dispatch.reason}>派发与执行校验：{dispatch.reason}</small>}
             </span><em>{dispatch.label}</em></button>
             <button className="button danger" type="button" disabled={!actor?.user_id || deleting || !record.plan_id} onClick={() => removePlans([record.plan_id])}>删除此方案</button>
           </div>;
@@ -3214,14 +3212,14 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
           message: '新方案已更新至原工单，负责人保持不变。仍需实际执行并复测；此次校验不代表完成维修或复机。' });
       } else {
         publish({ requestId: null, pending: false, phase: 'blocked', revision, findings,
-          message: `${typeof result.message === 'string' ? result.message : '候选方案未通过校验'}。原工单与原方案保留；完成实际维修后可填写处理说明并申请设备恢复核验。` });
+          message: '方案暂未更新，原工单与原方案保留。请联系维修人员确认；完成实际维修后可填写处理说明并申请复机。' });
       }
     } catch (err) {
       const notStarted = err.detail?.execution_started === false;
       publish({ requestId: notStarted ? null : requestId, pending: false,
         phase: notStarted ? 'not_started' : 'unknown', revision, findings: [],
-        message: notStarted ? `未启动方案重新校验：${err.message}。补齐依据后可再次生成。`
-          : `方案更新结果尚未确认：${err.message}。保留原请求编号；请显式核对同一请求结果，勿重复生成。` });
+        message: notStarted ? '方案更新尚未开始，请确认现场情况后重试。'
+          : '方案更新结果尚未确认，请稍后核对结果。' });
     } finally {
       if (mountedRef.current) setBusy(false);
     }
@@ -3383,15 +3381,13 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
       {sheet.dispatchMode === 'fault_followup' && <section className="maintenance-plan-panel" aria-label="工单任务范围">
         <h2>故障处理任务</h2><p>关联维修方案：{order.plan_id}。原方案已保留；先完成现场核查，涉及拆修或换件前需补齐相应工程与备件依据。</p>
         <PlanList title="本工单处理步骤" items={sheet.taskSteps} ordered />
-        <PlanList title="工程资料与备件待核实项" items={sheet.dispatchFindings} />
       </section>}
 
       {(review.required || revalidation?.message) && <section className="maintenance-plan-panel" aria-label="方案执行复核">
         <h2>{review.required ? review.label : '方案校验结果'}</h2>
-        {review.required && <><PlanList title="原方案校验记录" items={review.findings} /><p>原方案的问题保留记录。完成实际维修后，在处理说明中填写结果并确认，系统将自动核验设备状态并申请复机。</p></>}
+        {review.required && <p>请维修人员确认方案与现场情况。完成实际维修后，在处理说明中填写结果并申请复机。</p>}
         {!readOnly && canRevalidate && (review.required || revalidation?.requestId) && <><p>基于原工单的故障依据重新生成并校验方案；保留原工单和负责人，不重新派单，不控制设备。</p><button className="button" type="button" disabled={busy || revalidation?.pending} onClick={onRevalidate}>{revalidation?.phase === 'unknown' ? '核对方案更新结果' : '重新生成并校验方案'}</button></>}
         {revalidation?.message && <p role="status">{revalidation.message}</p>}
-        {revalidation?.findings?.length > 0 && <PlanList title="新方案未满足的条件" items={revalidation.findings} />}
       </section>}
 
       <div className="workorder-bigscreen-grid cad-only">
@@ -3404,17 +3400,18 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
 
 function MaintenanceDispatchStatus({ record, hasOrder = false }) {
   const status = maintenanceDispatchView(record, { hasOrder });
-  return <section className="maintenance-plan-panel" aria-label="自动派发条件"><div className="maintenance-plan-heading"><h2>{status.label}</h2><span>工单就绪：{status.ready}</span></div>{status.reviewRequired && <div role="status"><strong>{status.reviewLabel}</strong><PlanList title="需重新校验的原因" items={status.reviewFindings} /><p>派发记录和原方案问题保留；已派发工单可由维修人员填写实际处理结果，申请设备恢复核验与复机。</p></div>}{status.reason && <p>{status.reason}</p>}{status.assigneeName && <p>维修负责人：{status.assigneeName} · 对应设备：{status.assignmentDeviceId || "未提供"}</p>}{status.findings.length > 0 && <PlanList title="未满足的条件" items={status.findings} />}{status.stopReason && <p>流程停止原因：{status.stopReason}</p>}<p>系统按证据校验、明确审批要求及登录人员负责设备匹配后派发；方案存在不代表已创建工单。</p></section>;
+  return <section className="maintenance-plan-panel" aria-label="自动派发条件">
+    <div className="maintenance-plan-heading"><h2>{status.label}</h2><span>工单就绪：{status.ready}</span></div>
+    {status.reviewRequired && <div role="status"><strong>{status.reviewLabel}</strong><p>请维修人员确认方案与现场情况，实际处理结果在关联工单中提交。</p></div>}
+    {status.assigneeName && <p>维修负责人：{status.assigneeName} · 对应设备：{status.assignmentDeviceId || "未提供"}</p>}
+    {!hasOrder && !status.assigneeName && <p>工单派发后会自动显示在工单系统；尚未派发时，请确认设备已有负责的维修人员并已登录。</p>}
+  </section>;
 }
 
 function MaintenancePlanPanel({ plan, record, hasCurrentDiagnosis }) {
   const diagnosis = plan.diagnosis || {};
   const drawings = maintenanceReferenceDrawings(record);
   const workType = maintenanceWorkType(record);
-  const evidence = (plan.evidence || []).map((item) => {
-    if (typeof item === "string") return item;
-    return item.title || item.content || item.evidence_text || item.source || item.document_id || item.component_id || "维修证据";
-  }).filter(Boolean);
   const sourceLabel = plan.source === "maintenance-plan"
     ? "独立维修方案"
     : plan.source === "legacy-workorder-snapshot"
@@ -3423,7 +3420,7 @@ function MaintenancePlanPanel({ plan, record, hasCurrentDiagnosis }) {
   return (
     <section className="maintenance-plan-panel" aria-label="维修方案">
       <div className="maintenance-plan-heading">
-        <div><span className="eyebrow">Maintenance Plan · {workType.label}</span><h2>{workType.inspection ? "检查方案" : "维修方案"}</h2><p>由 Diagnosis Agent → Maintenance Agent 生成，工单仅引用并负责执行。</p>{workType.inspection && <p>{workType.description}{workType.reason && ` ${workType.reason}`}</p>}</div>
+        <div><span className="eyebrow">{workType.label}</span><h2>{workType.inspection ? "检查方案" : "维修方案"}</h2><p>根据设备故障生成处理方案，实际处理结果在工单中提交。</p>{workType.inspection && <p>{workType.description}{workType.reason && ` ${workType.reason}`}</p>}</div>
         <div className="maintenance-plan-meta"><span>{sourceLabel}</span>{plan.planId && <strong>{plan.planId}</strong>}</div>
       </div>
       {plan.source === "unavailable" ? (
@@ -3443,7 +3440,6 @@ function MaintenancePlanPanel({ plan, record, hasCurrentDiagnosis }) {
             <PlanList title={workType.inspection ? "检查步骤" : "维修步骤"} items={plan.steps} ordered />
             <PlanList title="工具与备件" items={[...plan.tools.map((item) => `工具：${item}`), ...plan.parts.map((item) => `备件：${item}`)]} />
             <PlanList title="安全与检查" items={[...plan.safety, ...plan.preChecks, ...plan.postChecks]} />
-            <PlanList title={workType.inspection ? "Evidence 检查依据" : "Evidence 维修证据"} items={evidence} />
           </div>
         </>
       )}
@@ -3684,7 +3680,7 @@ function RagWorkspace({ snapshot, sample, messages, setMessages }) {
 }
 
 function QualityWorkspace(props) {
-  return <QualitySourceWorkspace {...props} Demo={DemoQualityWorkspace} />;
+  return <PartQualityWorkspace {...props} />;
 }
 
 function ModuleHero({ eyebrow, title, text, action = null }) {

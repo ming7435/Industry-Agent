@@ -69,7 +69,9 @@ def test_completed_cycle_unifies_fault_records_without_requiring_product_quality
     assert set(report['sections']) >= {'diagnosis', 'maintenance_plan', 'workorder', 'lifecycle'}
     assert 'quality' not in report['sections']
     assert report['status'] == 'completed'
-    assert report['composition_version'] == 7
+    assert report['composition_version'] == 8
+    assert report['article_title'] == '设备故障诊断与维修处理报告'
+    assert len(report['article_outline']) == 4
     assert len(report['article_text'].split('\n\n')) == 6
     assert all(identity in report['article_text'] for identity in ('WO-1', 'WO-2'))
     assert report['concise_sections']

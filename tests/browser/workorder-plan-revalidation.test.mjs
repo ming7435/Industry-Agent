@@ -99,7 +99,7 @@ test('同一已派单应用新方案，保留负责人和未提交记录并允�
   } finally { await context.close(); }
 });
 
-test('候选方案被阻止时原工单与复核审计保留，挂起请求不可重复点击', async () => {
+test('候选方案被阻止时保留原工单及处理状态，隐藏校验明细，挂起请求不可重复点击', async () => {
   let pendingRoute, pendingBody;
   const { context, page, posts, unexpectedWrites, errors } = await pageFor({ revalidateHandler: (route, body) => { pendingRoute = route; pendingBody = body; return new Promise(() => {}); } });
   try {
@@ -108,14 +108,15 @@ test('候选方案被阻止时原工单与复核审计保留，挂起请求不�
     assert.equal(await initialButton(page).isDisabled(), true); assert.equal(posts.length, 1);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), true);
     await respond(pendingRoute, blocked(pendingBody));
-    await reviewPanel(page).getByText('缺少刀塔部件工程依据', { exact: true }).waitFor();
-    assert.ok((await reviewPanel(page).innerText()).includes(review.findings[0]));
+    await reviewPanel(page).getByText(/方案暂未更新，原工单与原方案保留/).waitFor();
+    assert.ok(!(await reviewPanel(page).innerText()).includes(review.findings[0]));
+    assert.ok(!(await reviewPanel(page).innerText()).includes('缺少刀塔部件工程依据'));
     assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal(await page.getByLabel('处理说明', { exact: true }).inputValue(), '保留原始现场证据');
     assert.equal(await page.locator('.workorder-queue-item').count(), 1);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), false);
     assertOnlyScopedPosts(posts, unexpectedWrites, errors);
-    observations.push({ case: 'blocked_retains_old_order', posts, findings_visible: true, old_review_retained: true, unexpectedWrites, errors });
+    observations.push({ case: 'blocked_retains_old_order', posts, findings_visible: false, old_review_status_retained: true, unexpectedWrites, errors });
   } finally { await context.close(); }
 });
 
@@ -131,7 +132,7 @@ test('503未知结果和在途409仅以原请求编号显式核对，不盲目�
     await verify.waitFor(); assert.equal(await initialButton(page).count(), 0);
     await page.clock.runFor(10000); assert.equal(posts.length, 1);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), true);
-    await verify.click(); await page.getByText(/相同请求仍在执行/).first().waitFor();
+    await verify.click(); await page.getByText('方案更新结果尚未确认，请稍后核对结果。', { exact: true }).waitFor();
     await verify.click(); await page.getByRole('status').filter({ hasText: '仍需实际执行' }).waitFor();
     assert.equal(posts.length, 3); assert.ok(posts.every(post => post.body.request_id === posts[0].body.request_id));
     assertOnlyScopedPosts(posts, unexpectedWrites, errors);
@@ -143,8 +144,8 @@ test('确定未启动的预检查拒绝允许下一次使用新请求编号，bl
   const { context, page, posts, unexpectedWrites, errors } = await pageFor({ revalidateHandler: (route, body, count) =>
     count === 1 ? respond(route, { detail: { message: '当前现场数据尚未就绪', execution_started: false } }, 409) : respond(route, blocked(body)) });
   try {
-    await initialButton(page).click(); await page.getByText(/当前现场数据尚未就绪/).first().waitFor();
-    await initialButton(page).click(); await reviewPanel(page).getByText('缺少刀塔部件工程依据', { exact: true }).waitFor();
+    await initialButton(page).click(); await page.getByText('方案更新尚未开始，请确认现场情况后重试。', { exact: true }).waitFor();
+    await initialButton(page).click(); await reviewPanel(page).getByText(/方案暂未更新，原工单与原方案保留/).waitFor();
     await initialButton(page).click(); await frame(page);
     assert.equal(posts.length, 3);
     assert.equal(new Set(posts.map(post => post.body.request_id)).size, 3);

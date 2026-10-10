@@ -15,7 +15,7 @@ from app.providers.base import ProviderError
 
 
 @contextmanager
-def provider_api(monkeypatch, *, chat_provider="deepseek"):
+def provider_api(monkeypatch):
     import app.main as main
 
     replies = {"/chat/completions": (200, {"model": "isolated-chat", "choices": [{"message": {"role": "assistant", "content": "实际测试回答"}}]})}
@@ -41,7 +41,7 @@ def provider_api(monkeypatch, *, chat_provider="deepseek"):
     thread.start()
     address = f"http://127.0.0.1:{server.server_port}"
     monkeypatch.setenv("MODEL_PROVIDER", "remote")
-    monkeypatch.setenv("MODEL_CHAT_PROVIDER", chat_provider)
+    monkeypatch.setenv("MODEL_CHAT_PROVIDER", "deepseek")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", address)
     monkeypatch.setenv("SILICONFLOW_BASE_URL", address)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "isolated-provider-secret")
@@ -118,8 +118,8 @@ def test_null_content_with_valid_tool_call_remains_supported(monkeypatch):
         assert response.json()["choices"][0]["message"]["tool_calls"][0]["id"] == "call-1"
 
 
-def test_vision_uses_dedicated_model_when_chat_and_aux_share_provider(monkeypatch):
-    with provider_api(monkeypatch, chat_provider="siliconflow") as (client, _, requests):
+def test_vision_uses_siliconflow_model_separately_from_official_chat(monkeypatch):
+    with provider_api(monkeypatch) as (client, _, requests):
         response = client.post("/v1/vision", json={"messages": [{"role": "user", "content": [{"type": "text", "text": "查看图纸"}]}]})
         assert response.status_code == 200
         assert requests[-1][1]["model"] == "Qwen/Qwen2.5-VL-72B-Instruct"
@@ -129,10 +129,42 @@ def test_vision_uses_dedicated_model_when_chat_and_aux_share_provider(monkeypatc
         assert client.get("/health").json()["capabilities"]["chat"]["reachable"] == "not_probed"
 
 
-def test_invalid_provider_selection_is_rejected_not_silently_deepseek(monkeypatch):
+@pytest.mark.parametrize("model", ["deepseek-ai/DeepSeek-V4-Flash", "Pro/deepseek-ai/DeepSeek-V4-Flash-0731", "deepseek-chat"])
+def test_vision_rejects_deepseek_before_contacting_siliconflow(monkeypatch, model):
+    with provider_api(monkeypatch) as (client, _, requests):
+        monkeypatch.setenv("SILICONFLOW_VISION_MODEL", model)
+        import app.main as main
+        monkeypatch.setattr(main, "gateway", ModelGateway())
+        response = client.post("/v1/vision", json={"messages": [{"role": "user", "content": "测试"}]})
+        assert response.status_code == 503
+        assert "DeepSeek" in response.json()["detail"]
+        assert requests == []
+
+
+@pytest.mark.parametrize("path,payload", [
+    ("embeddings", {"input": ["测试"]}),
+    ("rerank", {"query": "查询", "documents": ["文档"]}),
+])
+def test_aux_requests_reject_deepseek_before_contacting_siliconflow(monkeypatch, path, payload):
+    with provider_api(monkeypatch) as (client, _, requests):
+        response = client.post("/v1/" + path, json={"model": "deepseek-ai/DeepSeek-V4-Flash", **payload})
+        assert response.status_code == 503
+        assert "DeepSeek" in response.json()["detail"]
+        assert requests == []
+
+
+@pytest.mark.parametrize("chat_provider", ["siliconflow", "sf", "misspelled-provider"])
+def test_unsupported_chat_provider_is_rejected(monkeypatch, chat_provider):
     monkeypatch.setenv("MODEL_PROVIDER", "remote")
-    monkeypatch.setenv("MODEL_CHAT_PROVIDER", "misspelled-provider")
+    monkeypatch.setenv("MODEL_CHAT_PROVIDER", chat_provider)
     with pytest.raises(ProviderError, match="MODEL_CHAT_PROVIDER"):
+        ModelGateway()
+
+
+def test_siliconflow_is_not_a_model_provider_mode(monkeypatch):
+    monkeypatch.setenv("MODEL_PROVIDER", "siliconflow")
+    monkeypatch.setenv("MODEL_CHAT_PROVIDER", "deepseek")
+    with pytest.raises(ProviderError, match="MODEL_PROVIDER"):
         ModelGateway()
 
 

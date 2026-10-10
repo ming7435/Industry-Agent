@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as reportView from './reportView.mjs';
 
+test('报告章节标题清晰，所有自然段保持原文顺序', () => {
+  assert.equal(typeof reportView.buildReportArticleChapters, 'function');
+  const report = {article_text: ['概况', '诊断', '方案', '工单', '复机', '经验'].join('\n\n'),
+    article_outline: [{title: '一、故障概况与诊断分析', paragraph_indexes: [0, 1]},
+      {title: '二、维修方案与工单处理', paragraph_indexes: [2, 3]},
+      {title: '三、复机结果', paragraph_indexes: [4]}, {title: '四、经验总结', paragraph_indexes: [5]}]};
+  const chapters = reportView.buildReportArticleChapters(report);
+  assert.equal(chapters.length, 4);
+  assert.equal(chapters.flatMap(c => c.paragraphs).join('\n\n'), report.article_text);
+  report.article_outline[1].paragraph_indexes = [4, 5];
+  assert.equal(reportView.buildReportArticleChapters(report).flatMap(c => c.paragraphs).join('\n\n'), report.article_text);
+});
+
 test('文章报告保留自然段，使用保存的正文且不混入原始字段', () => {
   assert.equal(typeof reportView.buildReportArticle, 'function');
   const article = '设备因送料机报警停机，诊断后给出检查方案。\n\n维修人员记录“完成”，人工确认后整线复机。\n\n经验已保存供后续检索。';

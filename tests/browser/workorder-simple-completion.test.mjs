@@ -98,12 +98,12 @@ test('空白不能提交，填写后清空或改为纯空白均恢复不可提�
   } finally { await result.context.close(); }
 });
 
-test('旧模板要求复核仍展示审计，但本人可直接提交实际维修说明申请现场核验', async () => {
+test('旧模板要求复核只显示业务提示，本人仍可提交实际维修说明申请现场核验', async () => {
   const currentOrder = { ...order, execution_review: { required: true, findings: ['刀塔故障错误引用安全门模板'] } };
   const result = await pageFor({ currentOrder });
   try {
     const panel = result.page.getByRole('region', { name: '方案执行复核', exact: true });
-    await panel.waitFor(); assert.ok((await panel.innerText()).includes(currentOrder.execution_review.findings[0]));
+    await panel.waitFor(); assert.ok(!(await panel.innerText()).includes(currentOrder.execution_review.findings[0]));
     assert.equal(await result.page.getByRole('button', { name: '重新生成并校验方案', exact: true }).count(), 1);
     await result.page.getByLabel('处理说明', { exact: true }).fill(feedback);
     assert.equal(await completeButton(result.page).isDisabled(), false, '旧方案审计不能阻止本人提交真实结果；实际复机仍由服务端核验');
@@ -111,8 +111,8 @@ test('旧模板要求复核仍展示审计，但本人可直接提交实际维�
     await completeButton(result.page).click();
     await result.page.getByRole('button', { name: '再次确认并申请复机', exact: true }).waitFor();
     assertActualFeedbackOnly(result.posts); assertClean(result);
-    assert.ok((await panel.innerText()).includes(currentOrder.execution_review.findings[0]));
-    observations.push({ case: 'review_audit_manual_completion', posts: result.posts, old_findings_retained: true, errors: result.errors });
+    assert.ok(!(await panel.innerText()).includes(currentOrder.execution_review.findings[0]));
+    observations.push({ case: 'review_audit_manual_completion', posts: result.posts, old_findings_hidden: true, errors: result.errors });
   } finally { await result.context.close(); }
 });
 

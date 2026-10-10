@@ -819,6 +819,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         return path.startswith((
             "/api/agent/",
             "/api/rag/",
+            "/api/expert/",
             "/api/trace",
             "/api/runs",
             "/api/v1/runs",
@@ -847,7 +848,12 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             and len(path_parts) > 2 and path_parts[2] in {"buildcad", "freecad"}
         )
         production_write = method != 'GET' and path_parts[:3] == ['api', 'production', 'virtual']
-        if cad_write or production_write:
+        expert_write = method != 'GET' and path_parts[:2] == ['api', 'expert']
+        if expert_write:
+            body = self._read_local_body(label='专家中心', max_bytes=128 * 1024)
+            if body is None:
+                return
+        elif cad_write or production_write:
             body = self._read_local_cad_body()
             if body is None:
                 return
@@ -862,6 +868,8 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         headers = agent_request_headers(self.headers.get("Content-Type", "application/json"))
         if self.headers.get('Cookie'):
             headers['Cookie'] = self.headers['Cookie']
+        if expert_write:
+            headers['Origin'] = self.headers['Origin']
         request = Request(
             AGENT_SERVICE_BASE_URL.rstrip("/") + self.path,
             data=body,
@@ -897,6 +905,10 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
 
     def _read_local_cad_body(self) -> bytes | None:
         """在附加服务凭据前验证本机 CAD 请求的来源和正文边界。"""
+        return self._read_local_body()
+
+    def _read_local_body(self, label: str = 'CAD', max_bytes: int = 1024 * 1024) -> bytes | None:
+        """受控本机写入口共享来源与有界正文校验。"""
         def reject(status: HTTPStatus, message: str) -> None:
             self.close_connection = True
             self._error(status, message)
@@ -912,10 +924,10 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         hosts = self.headers.get_all("Host", [])
         origins = self.headers.get_all("Origin", [])
         if not local_peer or len(hosts) != 1 or hosts[0].lower() not in authorities:
-            reject(HTTPStatus.FORBIDDEN, "CAD 接口仅允许本机地址和当前服务端口")
+            reject(HTTPStatus.FORBIDDEN, f"{label} 接口仅允许本机地址和当前服务端口")
             return None
         if len(origins) != 1 or origins[0].lower() != "http://" + hosts[0].lower():
-            reject(HTTPStatus.FORBIDDEN, "CAD 接口需要完整的 HTTP 同源 Origin")
+            reject(HTTPStatus.FORBIDDEN, f"{label} 接口需要完整的 HTTP 同源 Origin")
             return None
         lengths = self.headers.get_all("Content-Length", [])
         if (
@@ -924,11 +936,11 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             or not lengths[0].isascii()
             or not lengths[0].isdigit()
         ):
-            reject(HTTPStatus.BAD_REQUEST, "CAD 请求的 Content-Length 无效")
+            reject(HTTPStatus.BAD_REQUEST, f"{label} 请求的 Content-Length 无效")
             return None
         # 新入口仅接收 JSON 需求，不再接收原本地模型文件上传。
-        if len(lengths[0]) > 10 or int(lengths[0]) > 1024 * 1024:
-            reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "CAD 请求体过大")
+        if len(lengths[0]) > 10 or int(lengths[0]) > max_bytes:
+            reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"{label} 请求体过大")
             return None
         length = int(lengths[0])
         original_timeout = self.connection.gettimeout()
@@ -936,12 +948,12 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             self.connection.settimeout(CAD_BODY_TIMEOUT_SECONDS)
             body = self.rfile.read(length)
         except (OSError, TimeoutError):
-            reject(HTTPStatus.BAD_REQUEST, "CAD 请求体读取失败")
+            reject(HTTPStatus.BAD_REQUEST, f"{label} 请求体读取失败")
             return None
         finally:
             self.connection.settimeout(original_timeout)
         if len(body) != length:
-            reject(HTTPStatus.BAD_REQUEST, "CAD 请求体长度与 Content-Length 不一致")
+            reject(HTTPStatus.BAD_REQUEST, f"{label} 请求体长度与 Content-Length 不一致")
             return None
         return body
 

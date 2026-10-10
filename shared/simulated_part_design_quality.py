@@ -287,6 +287,22 @@ def summarize(basis, samples):
             'status': 'review' if counts['review'] else 'partial' if counts['pending'] else 'unqualified' if counts['unqualified'] else 'qualified'}
 
 
+def summarize_items(basis, samples):
+    """Read-only item statistics; these never change the whole-piece verdict."""
+    identifiers = [sample['part_id'] for sample in samples]
+    if len(set(identifiers)) != len(identifiers): raise ValueError('同一批次不能重复统计样本')
+    counts = dict(total=len(samples) * len(basis['parameters']), qualified=0, unqualified=0,
+                  pending=0, review=0, determinate=0)
+    for sample in samples:
+        for row in compare_sample(basis, sample['observations'])['items']:
+            counts[row['status']] += 1
+    counts['determinate'] = counts['qualified'] + counts['unqualified']
+    def rate(n, d): return float((Decimal(n)*100/Decimal(d)).quantize(Decimal('.01'), rounding=ROUND_HALF_UP)) if d else None
+    return {'counts': counts, 'rates': {'qualified': rate(counts['qualified'], counts['determinate']),
+                                      'defect': rate(counts['unqualified'], counts['determinate']),
+                                      'coverage': rate(counts['determinate'], counts['total'])}}
+
+
 def generate_samples(basis, seed, measured_at):
     samples = []
     parameters = [p for p in basis['parameters'] if p.get('comparable') is not False]

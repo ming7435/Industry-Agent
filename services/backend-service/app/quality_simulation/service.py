@@ -30,7 +30,8 @@ class SimulatedQualityService:
             if any(stored.get(k) != v for k, v in {'simulation': True, 'synthetic': True, 'source': sim.SOURCE}.items()):
                 raise ValueError('模拟来源标记损坏')
             if stored.get('integrity') != sim.digest({k: v for k, v in stored.items() if k != 'integrity'}): raise ValueError('批次数据损坏')
-            return deepcopy(stored)
+            # Derived read view only: keep historical bytes, integrity and whole-piece rates unchanged.
+            return {**deepcopy(stored), 'item_summary': sim.summarize_items(basis, stored['samples'])}
         except (ValueError, KeyError, TypeError):
             return {'batch_id': pointer['batch_id'], 'design_run_id': stored.get('design_run_id'),
                     'request_id': stored.get('request_id'), 'status': 'review', 'simulation': True, 'synthetic': True,
@@ -88,4 +89,4 @@ class SimulatedQualityService:
             self.repository.save_record('simulated_quality_batch', result['batch_id'], result)
             self.repository.save_record('simulated_quality_request', request_key,
                                         {'actor_id': actor, 'design_run_id': run_id, 'request_id': request_id, 'batch_id': result['batch_id']})
-            return result
+            return {**result, 'item_summary': sim.summarize_items(basis, samples)}

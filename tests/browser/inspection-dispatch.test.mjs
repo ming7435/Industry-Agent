@@ -44,7 +44,7 @@ test('检查方案列表与详情明确现场检查范围，人员等待不误�
     assert.equal(await panel.getByRole('heading', { name: '检查步骤', exact: true }).count(), 1);
     const status = await page.locator('[aria-label="自动派发条件"]').innerText();
     assert.ok(status.includes('等待负责人员登录'));
-    assert.ok(status.includes(inspection.dispatch.reason));
+    assert.ok(!status.includes(inspection.dispatch.reason));
     assert.ok(!text.includes('无需维修'));
     assert.equal(await page.getByText('已自动派单', { exact: true }).count(), 0);
     assert.deepEqual(mutations, []);
@@ -52,7 +52,7 @@ test('检查方案列表与详情明确现场检查范围，人员等待不误�
   } finally { await context.close(); }
 });
 
-test('未就绪旧方案保留原资料失败，只有重新校验入口可请求派工', async () => {
+test('未就绪旧方案保留未派发状态并隐藏校验记录，只有重新校验入口可请求派工', async () => {
   const old = { ...inspection, workorder_ready: false, validation_findings: ['旧方案缺少目标部件工程资料'],
     dispatch: { allowed: false, reason: '旧方案须重新校验后生成检查方案' }, stop_reason: 'validation_failed' };
   const { context, page, mutations, errors } = await pageFor([old]);
@@ -62,9 +62,9 @@ test('未就绪旧方案保留原资料失败，只有重新校验入口可请�
     const status = await page.locator('[aria-label="自动派发条件"]').innerText();
     assert.ok(status.includes('暂不能自动派发'));
     assert.ok(status.includes('工单就绪：否'));
-    assert.ok(status.includes(old.dispatch.reason));
-    assert.ok(status.includes(old.validation_findings[0]));
-    assert.ok(status.includes(old.stop_reason));
+    assert.ok(!status.includes(old.dispatch.reason));
+    assert.ok(!status.includes(old.validation_findings[0]));
+    assert.ok(!status.includes(old.stop_reason));
     assert.equal(await page.getByRole('button', { name: '重新校验并自动派工', exact: true }).count(), 1);
     assert.equal(await page.getByText('已自动派单', { exact: true }).count(), 0);
     assert.deepEqual(mutations, []);
@@ -224,7 +224,9 @@ test('没有明确检查类型的旧维修记录仍显示设备维修与原就�
     assert.ok((await page.locator('.maintenance-plan-queue').innerText()).includes('设备维修'));
     assert.equal(await page.getByRole('heading', { name: '检查方案', exact: true }).count(), 0);
     assert.equal(await page.getByRole('heading', { name: '维修步骤', exact: true }).count(), 1);
-    assert.ok((await page.locator('[aria-label="自动派发条件"]').innerText()).includes('缺少维修 BOM'));
+    const status = await page.locator('[aria-label="自动派发条件"]').innerText();
+    assert.ok(status.includes('暂不能自动派发'));
+    assert.ok(!status.includes('缺少维修 BOM'));
     assert.deepEqual(mutations, []);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }

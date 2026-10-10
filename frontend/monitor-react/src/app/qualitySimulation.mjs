@@ -3,6 +3,20 @@ const prefix = '/api/quality/simulation';
 export const pendingSimulationKey = (actor, runId) => `quality.simulation.pending:${actor}:${runId}`;
 export const formatSimulationRate = value => typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)}%` : '—';
 
+export function simulationItemSummary(result) {
+  const summary=result?.item_summary, counts=summary?.counts, rates=summary?.rates;
+  if(result?.simulation!==true || result.synthetic!==true || result.status==='review' || result.basis?.run_id!==result.design_run_id
+    || !Array.isArray(result.basis?.parameters) || !Array.isArray(result.samples) || !counts || !rates) return null;
+  if(['total','qualified','unqualified','pending','review','determinate'].some(key=>!Number.isSafeInteger(counts[key])||counts[key]<0)
+    || counts.total!==result.basis.parameters.length*result.samples.length
+    || counts.total!==counts.qualified+counts.unqualified+counts.pending+counts.review
+    || counts.determinate!==counts.qualified+counts.unqualified) return null;
+  for(const [key,n,d] of [['qualified',counts.qualified,counts.determinate],['defect',counts.unqualified,counts.determinate],['coverage',counts.determinate,counts.total]]) {
+    if(!d ? rates[key]!==null : typeof rates[key]!=='number'||!Number.isFinite(rates[key])||Math.abs(rates[key]-100*n/d)>.00501) return null;
+  }
+  return summary;
+}
+
 const locationRules = {
   size: {
     location: '刀具／刀补／加工程序尺寸',

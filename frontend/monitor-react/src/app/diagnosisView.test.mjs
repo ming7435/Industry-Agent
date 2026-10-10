@@ -102,7 +102,8 @@ test("后续重试达到上限不能把已完成诊断改成证据不足", () =>
   assert.equal(view.confidence, 0.916);
   assert.equal(view.workflowStatus, "blocked");
   assert.equal(view.stopReason, "replan_limit_exceeded");
-  assert.match(view.workflowReason, /后续流程重试达到上限/);
+  assert.match(view.workflowReason, /未完成自动派工/);
+  assert.doesNotMatch(view.workflowReason, /重试|门禁|校验/);
   assert.match(view.statusHint, /未完成自动派工/);
   assert.doesNotMatch(view.statusHint, /证据不足|补充报警定义/);
 });
@@ -111,20 +112,20 @@ test("维修方案门禁与知识检索门禁属于后续流程，不否定诊�
   const plan = completedDiagnosis({ status: "blocked", stop_reason: "maintenance_plan_invalid" });
   assert.equal(plan.status, "completed");
   assert.equal(plan.statusLabel, "诊断已返回");
-  assert.match(plan.workflowReason, /后续流程被门禁拦截/);
+  assert.match(plan.workflowReason, /未完成自动派工/);
   assert.doesNotMatch(plan.statusHint, /诊断证据不足/);
   const knowledge = completedDiagnosis({ runtime_result: { status: "blocked", stop_reason: "knowledge_evidence_gate" } });
   assert.equal(knowledge.status, "completed");
   assert.equal(knowledge.workflowStatus, "blocked");
-  assert.match(knowledge.workflowReason, /维修依据检索未通过/);
+  assert.match(knowledge.workflowReason, /未完成自动派工/);
   assert.doesNotMatch(knowledge.statusHint, /诊断证据不足|补充报警定义/);
 });
 
 test("真实诊断证据不足即使高置信度也必须待核实", () => {
   const view = completedDiagnosis({ status: "completed" }, { evidence_status: "insufficient" });
   assert.equal(view.status, "completed");
-  assert.equal(view.statusLabel, "诊断证据不足，待核实");
-  assert.match(view.statusHint, /诊断证据不足/);
+  assert.equal(view.statusLabel, "诊断待核实");
+  assert.match(view.statusHint, /故障信息尚不完整/);
   assert.doesNotMatch(view.statusHint, /诊断已返回/);
 });
 

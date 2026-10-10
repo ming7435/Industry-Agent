@@ -32,7 +32,7 @@ async function pageFor(currentOrder = order, includeOrder = true) {
   return { context, page, writes, errors };
 }
 
-test('已派单事实与方案需重新校验同时显示，关联工单不隐藏原因', async () => {
+test('已派单事实与方案待确认状态同时显示，校验明细不进入业务页面', async () => {
   for (const hasOrder of [false, true]) {
     const { context, page, writes, errors } = await pageFor(order, hasOrder);
     try {
@@ -42,10 +42,10 @@ test('已派单事实与方案需重新校验同时显示，关联工单不隐�
       assert.ok(status.includes(hasOrder ? '已关联工单' : '已自动派单'));
       assert.ok(status.includes('方案需重新校验'));
       assert.ok(status.includes('lmy'));
-      assert.ok(status.includes(plan.dispatch.reason));
+      assert.ok(!status.includes(plan.dispatch.reason));
       for (const finding of review.findings) {
-        assert.ok(status.includes(finding));
-        assert.ok((await page.locator('.maintenance-plan-queue').innerText()).includes(finding));
+        assert.ok(!status.includes(finding));
+        assert.ok(!(await page.locator('.maintenance-plan-queue').innerText()).includes(finding));
       }
       assert.deepEqual(writes, []);
       assert.deepEqual(errors, []);
@@ -53,7 +53,7 @@ test('已派单事实与方案需重新校验同时显示，关联工单不隐�
   }
 });
 
-test('需复核维修单保留审计与记录入口，填写实际结果后可申请服务端核验', async () => {
+test('需复核维修单保留处理入口，隐藏校验记录，填写实际结果后可申请复机', async () => {
   const { context, page, writes, errors } = await pageFor();
   const submitted = [];
   try {
@@ -65,7 +65,7 @@ test('需复核维修单保留审计与记录入口，填写实际结果后可�
     await page.locator('.workorder-titlebar').waitFor();
     const detail = await page.locator('.workorder-detail-page').innerText();
     assert.ok(detail.includes('方案需重新校验'));
-    for (const finding of review.findings) assert.ok(detail.includes(finding));
+    for (const finding of review.findings) assert.ok(!detail.includes(finding));
     assert.equal(await page.locator('.maintenance-sheet').getByRole('checkbox').count(), 0);
     assert.equal(await page.getByRole('button', { name: '确认维修完成并申请复机', exact: true }).isDisabled(), true);
     await page.getByLabel('处理说明', { exact: true }).fill('已记录现场刀塔报警；等待重新校验方案。');
@@ -97,7 +97,7 @@ test('旧完成记录无可信维修确认时不能直接关闭，但可提交�
   } finally { await context.close(); }
 });
 
-test('服务端可信维修确认与运行复核通过后可关闭，原方案问题仍保留为审计', async () => {
+test('服务端可信维修确认与运行复核通过后可关闭，前端不展示原方案校验记录', async () => {
   const { context, page, writes, errors } = await pageFor({ ...order, status: 'completed',
     maintenance_confirmed_by: actor.user_id, execution_review: { ...review, human_confirmed: true },
     repair_verification: { phase: 'poststart', passed: true } });
@@ -105,7 +105,7 @@ test('服务端可信维修确认与运行复核通过后可关闭，原方案�
     await page.goto(`${fixture.base}/?view=workorder`);
     await page.locator('.workorder-titlebar').waitFor();
     const panel = page.getByRole('region', { name: '方案执行复核', exact: true });
-    assert.ok((await panel.innerText()).includes(review.findings[0]));
+    assert.ok(!(await panel.innerText()).includes(review.findings[0]));
     assert.equal(await page.getByRole('button', { name: '关闭工单', exact: true }).isDisabled(), false);
     await page.getByLabel('处理说明', { exact: true }).fill('已有真实确认和运行复核，不再重复申请。');
     assert.equal(await page.getByRole('button', { name: '再次确认并申请复机', exact: true }).isDisabled(), true);

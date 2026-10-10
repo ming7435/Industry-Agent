@@ -94,7 +94,7 @@ test('工程资料待核实的故障任务自动出现并显示原方案引用�
     await task.waitFor();
     assert.match(await task.innerText(),/P-ORIGINAL/);
     assert.match(await task.innerText(),/安全停机后记录送料状态/);
-    assert.match(await task.innerText(),/CAD\/BOM/);
+    assert.doesNotMatch(await task.innerText(),/CAD\/BOM/);
     assert.equal(await page.getByText('系统自动派发',{exact:true}).count(),1);
     assert.deepEqual(writes,[]); assert.deepEqual(errors,[]);
   } finally {await context.close();}

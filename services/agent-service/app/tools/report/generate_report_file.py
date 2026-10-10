@@ -436,7 +436,7 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
         if font_path:
             page.insert_font(fontname=font_name, fontfile=font_path)
 
-    def add_text(text: str, size: float = 10.5, color: tuple[float, float, float] = (0.12, 0.2, 0.23), bold: bool = False, leading: float = 1.55, first_indent: bool = False) -> None:
+    def add_text(text: str, size: float = 10.5, color: tuple[float, float, float] = (0.12, 0.2, 0.23), bold: bool = False, leading: float = 1.55, first_indent: bool = False, centered: bool = False) -> None:
         nonlocal y
         line_height = size * leading
         text = str(text or "").strip()
@@ -447,10 +447,13 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
                 return font.text_length(value, fontsize=size)
             return sum((latin_font.text_length(char, fontsize=size) if char.isascii() else font.text_length(char, fontsize=size)) for char in value)
 
-        # 按字体测量逐行换行，避免中文内容越过页面边界。
+        # Keep numbers, timestamps and Latin identifiers together when wrapping.
         words: list[str] = []
         current = ""
-        for char in text:
+        token_pattern = r'[A-Za-z0-9][A-Za-z0-9._:/%+\-]*|[^A-Za-z0-9]'
+        tokens = re.findall(token_pattern, text)
+        tokens = [part for token in tokens for part in (list(token) if measure(token) > 511 else [token])]
+        for char in tokens:
             if char == '\n':
                 if current:
                     words.append(current)
@@ -460,16 +463,33 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
             width = measure(candidate)
             available_width = 511 - (size * 2 if first_indent and not words else 0)
             if current and width > available_width:
-                words.append(current)
-                current = char
+                if char in '。，；：！？、）】》”’' and len(re.findall(token_pattern, current)) > 1:
+                    last = re.findall(token_pattern, current)[-1]
+                    words.append(current[:-len(last)])
+                    current = last + char
+                else:
+                    words.append(current)
+                    current = char
             else:
                 current = candidate
         if current:
             words.append(current)
+        # Balance a short paragraph tail so a full stop does not occupy its own line.
+        if len(words) > 1:
+            previous = re.findall(token_pattern, words[-2])
+            tail = words[-1]
+            while len(previous) > 8 and measure(tail) < size * 8:
+                candidate = previous[-1] + tail
+                if measure(candidate) > 511:
+                    break
+                tail = previous.pop() + tail
+            words[-2], words[-1] = ''.join(previous), tail
         for line_index, line in enumerate(words):
             if y + line_height > 790:
                 add_page()
             x = float(margin) + (size * 2 if first_indent and line_index == 0 else 0)
+            if centered:
+                x = margin + (511 - measure(line)) / 2
             if font_path:
                 page.insert_text((x, y), line, fontsize=size, fontname=font_name, color=color)
             else:
@@ -488,20 +508,36 @@ def _write_pdf(report: Mapping[str, Any], target: Path) -> None:
             y += line_height
 
     report_id = str(report.get("report_id") or "未编号")
-    title = str(report.get("title") or "运维报告")
-    add_text(title, size=20, color=(0.02, 0.32, 0.38), bold=True)
-    add_text(f"报告编号：{report_id}", size=10, color=(0.35, 0.43, 0.46))
+    title = str(report.get('article_title') or report.get("title") or "运维报告")
+    article = str(report.get('article_text') or '').strip()
+    outlined = bool(article and report.get('article_outline'))
+    add_text(title, size=21 if outlined else 20, leading=1.35 if outlined else 1.55,
+             color=(0.02, 0.32, 0.38), bold=True, centered=outlined)
     report_type = _VALUE_LABELS.get(str(report.get("report_type") or ""), _SECTION_LABELS.get(str(report.get("report_type") or ""), "运维报告"))
     report_status = _VALUE_LABELS.get(str(report.get("status") or ""), str(report.get("status") or "待确认"))
-    add_text(f"停机处理汇总    报告状态：{report_status}" if (report.get('sections') or {}).get('lifecycle') else f"报告类型：{report_type}    报告状态：{report_status}", size=10, color=(0.35, 0.43, 0.46))
-    add_text(f"生成时间：{_display_value(report.get('created_at') or report.get('updated_at') or '未记录', 'created_at')}", size=10, color=(0.35, 0.43, 0.46))
-    article = str(report.get('article_text') or '').strip()
+    generated = _display_value(report.get('created_at') or report.get('updated_at') or '未记录', 'created_at')
+    if outlined:
+        add_text(str(report.get('article_subtitle') or ''), size=10.5, leading=1.35, centered=True, color=(0.35, 0.43, 0.46))
+        add_text(f"报告编号：{report_id}    生成时间：{generated}    状态：{report_status}", size=8.6, leading=1.35, centered=True, color=(0.35, 0.43, 0.46))
+    else:
+        add_text(f"报告编号：{report_id}", size=10, color=(0.35, 0.43, 0.46))
+        add_text(f"停机处理汇总    报告状态：{report_status}" if (report.get('sections') or {}).get('lifecycle') else f"报告类型：{report_type}    报告状态：{report_status}", size=10, color=(0.35, 0.43, 0.46))
+        add_text(f"生成时间：{generated}", size=10, color=(0.35, 0.43, 0.46))
     concise = report.get('concise_sections') or []
     if article:
-        y += 18
-        for paragraph in article.split('\n\n'):
-            add_text(paragraph, size=11.5, leading=1.55, first_indent=True)
-            y += 8
+        from shared.report_presentation import report_article_chapters
+        y += 14 if outlined else 18
+        for index, chapter in enumerate(report_article_chapters(report)):
+            if chapter['title']:
+                if y + 55 > 790:
+                    add_page()
+                elif index:
+                    y += 7
+                add_text(chapter['title'], size=12, leading=1.35, color=(0.02, 0.32, 0.38), bold=True)
+                y += 4
+            for paragraph in chapter['paragraphs']:
+                add_text(paragraph, size=11 if outlined else 11.5, leading=1.5 if outlined else 1.55, first_indent=True)
+                y += 5 if outlined else 8
     elif not concise:
         y += 8
         add_text("报告摘要", size=13, color=(0.02, 0.32, 0.38), bold=True)

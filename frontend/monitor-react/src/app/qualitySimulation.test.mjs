@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { detectSimulation, formatSimulationRate, pendingSimulationKey } from './qualitySimulation.mjs';
+import * as simulation from './qualitySimulation.mjs';
 import { request } from './apiRequest.mjs';
 import { getTeamSession, setTeamSessionActor } from '../teamSession.mjs';
 
@@ -48,6 +49,19 @@ test('rates preserve zero and missing and pending keys isolate users and full ve
   assert.equal(formatSimulationRate(77.78), '77.78%');
   assert.notEqual(pendingSimulationKey('U1', id), pendingSimulationKey('U2', id));
   assert.notEqual(pendingSimulationKey('U1', id), pendingSimulationKey('U1', 'FC-'+'b'.repeat(64)));
+});
+
+test('partial item statistics cannot be presented as whole-part qualification or trusted after review',()=>{
+  const simulationItemSummary=value=>simulation.simulationItemSummary(value);
+  const summary={counts:{total:20,qualified:7,unqualified:2,pending:11,review:0,determinate:9},
+    rates:{qualified:77.78,defect:22.22,coverage:45}};
+  const partial={...result,status:'partial',item_summary:summary,
+    basis:{run_id:id,parameters:[{comparable:true},{comparable:false}]},samples:Array(10).fill({})};
+  assert.equal(simulationItemSummary(partial),summary);
+  assert.equal(simulationItemSummary({...partial,status:'review'}),null);
+  assert.equal(simulationItemSummary({...partial,item_summary:{...summary,counts:{...summary.counts,total:0}}}),null);
+  assert.equal(simulationItemSummary({...partial,item_summary:{...summary,rates:{...summary.rates,qualified:100}}}),null);
+  assert.equal(simulationItemSummary({...partial,basis:{...partial.basis,run_id:'FC-'+'b'.repeat(64)}}),null);
 });
 
 test('delayed simulation results from the previous login cannot reach the current actor', async () => {

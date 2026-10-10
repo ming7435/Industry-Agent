@@ -112,6 +112,41 @@ def test_statistics_count_pieces_not_parameters_and_zero_denominator_is_unknown(
     with pytest.raises(ValueError): sim.summarize(basis, samples + [samples[0]])
 
 
+def test_item_rates_show_partial_measurements_without_qualifying_uncovered_parts():
+    basis = {'parameters': [
+        {'key': 'size', 'name': '外形尺寸', 'expected': '10', 'unit': 'mm', 'kind': 'number', 'comparable': True},
+        {'key': 'radius', 'name': '圆角', 'expected': '1', 'unit': 'mm', 'kind': 'number', 'comparable': False},
+    ]}
+    samples = [{'part_id': str(i), 'observations': values} for i, values in enumerate([
+        {'size': {'value': '10.000', 'unit': 'mm'}},
+        {'size': {'value': '10.1', 'unit': 'mm'}},
+        {},
+        {'size': {'value': '10', 'unit': 'cm'}},
+    ])]
+    summary = sim.summarize_items(basis, samples)
+    assert summary['counts'] == {'total': 8, 'qualified': 1, 'unqualified': 1, 'pending': 5, 'review': 1, 'determinate': 2}
+    assert summary['rates'] == {'qualified': 50.0, 'defect': 50.0, 'coverage': 25.0}
+    assert sim.summarize(basis, samples[:3])['rates']['qualified'] is None
+    assert sim.summarize_items(basis, [])['rates'] == {'qualified': None, 'defect': None, 'coverage': None}
+    with pytest.raises(ValueError): sim.summarize_items(basis, samples + [samples[0]])
+
+
+def test_item_summary_is_a_verified_read_view_and_does_not_rewrite_historical_batches(service):
+    result = service.detect('U-1', 'partial-items', flange(), station())
+    stored = service.repository.get_record('simulated_quality_batch', result['batch_id'])
+    assert 'item_summary' not in stored
+    assert result['item_summary']['counts']['determinate'] > 0
+    assert result['item_summary']['rates']['qualified'] is not None
+    assert result['rates']['qualified'] is None
+    assert service.request('U-1', 'partial-items') == result
+    assert service.repository.get_record('simulated_quality_batch', result['batch_id']) == stored
+    stored['samples'][0]['observations']['model.bounds_mm.0']['value'] = '999'
+    service.repository.save_record('simulated_quality_batch', result['batch_id'], stored)
+    corrupted = service.request('U-1', 'partial-items')
+    assert corrupted['status'] == 'review'
+    assert 'item_summary' not in corrupted
+
+
 @pytest.mark.parametrize('change', ['wrong_device', 'stale', 'future', 'stop', 'fault', 'missing', 'bool', 'calibration', 'contradictory_monitor', 'contradictory_detail'])
 def test_station_failure_does_not_generate_quality_results(change):
     now = time.time(); data = station(now)

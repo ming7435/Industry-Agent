@@ -1459,7 +1459,11 @@ h2 {
 .platform-shell:not(.big-screen) .report-panel { margin-top: 16px; }
 .report-display-sections { display: grid; gap: 24px; margin-top: 24px; }
 .report-byline { color: #70858b; font-size: 14px; margin: 16px 0 26px; }
+.report-subtitle { color: #526c75; font-size: 16px; margin: 20px 0 0; }
 .report-article { max-width: 900px; color: #263e45; font-size: 17px; line-height: 1.95; }
+.report-chapter { margin: 0 0 28px; }
+.report-chapter:last-child { margin-bottom: 0; }
+.report-chapter h3 { color: #087a70; font-size: 19px; line-height: 1.5; margin: 0 0 14px; }
 .report-article p { margin: 0 0 22px; text-indent: 2em; overflow-wrap: anywhere; }
 .report-article p:last-child { margin-bottom: 0; }
 .report-display-section { padding: 22px; border: 1px solid #d9e6e5; border-radius: 14px; background: #fff; }

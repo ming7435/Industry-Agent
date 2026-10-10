@@ -3,6 +3,25 @@ from copy import deepcopy
 from shared.report_presentation import report_presentation
 
 
+def test_article_layout_has_a_clear_title_and_four_chapters_without_losing_text():
+    from shared import report_presentation as module
+    layout = getattr(module, 'report_article_layout', None)
+    chapters = getattr(module, 'report_article_chapters', None)
+    assert callable(layout) and callable(chapters)
+    report = {'article_text': '\n\n'.join('完整报告正文' + str(i) for i in range(6)),
+        'sections': {'diagnosis': {'records': [{'device_id': 'M1', 'alarm_code': '700015',
+            'alarm_definition': {'name': '送料机报警'}}]}}}
+    report.update(layout(report))
+    assert report['article_title'] == '设备故障诊断与维修处理报告'
+    assert all(value in report['article_subtitle'] for value in ('M1', '700015', '送料机报警'))
+    shown = chapters(report)
+    assert len(shown) == 4
+    assert shown[0]['title'] == '一、故障概况与诊断分析'
+    assert '\n\n'.join(p for chapter in shown for p in chapter['paragraphs']) == report['article_text']
+    report['article_outline'][0]['paragraph_indexes'] = [0]
+    assert '\n\n'.join(p for chapter in chapters(report) for p in chapter['paragraphs']) == report['article_text']
+
+
 def test_article_connects_saved_facts_without_field_labels_or_500_character_cutoff():
     from shared import report_presentation as module
     builder = getattr(module, 'report_article', None)

@@ -29,7 +29,7 @@ async function pageFor(items) {
   return { context, page, mutations, errors };
 }
 
-test('未就绪且没有工单的方案能打开设备图纸，保留真实资料缺项与派发阻塞', async () => {
+test('未就绪且没有工单的方案能打开设备图纸，保留派发状态并隐藏校验明细', async () => {
   const deviceId = 'TRAK-TC820LTYSI-001';
   const drawing = reference(deviceId, 'TC820si 设备图纸', '/drawings/TC820si.html', 'original_edrawings');
   const { context, page, mutations, errors } = await pageFor([plan(deviceId, { available_drawings: [drawing] })]);
@@ -41,7 +41,7 @@ test('未就绪且没有工单的方案能打开设备图纸，保留真实资�
     assert.ok((await page.locator('[aria-label="设备图纸参考"]').innerText()).includes('设备图纸'));
     const status = await page.locator('[aria-label="自动派发条件"]').innerText();
     assert.ok(status.includes('暂不能自动派发') && status.includes('工单就绪：否'));
-    assert.ok(status.includes('BOM、尺寸和材料'));
+    assert.ok(!status.includes('BOM、尺寸和材料'));
     assert.equal(await page.getByText('已自动派单', { exact: true }).count(), 0);
     const popupPromise = page.waitForEvent('popup');
     await link.click();

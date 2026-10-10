@@ -8,6 +8,21 @@ from tempfile import TemporaryDirectory
 from app.tools.report.generate_report_file import generate_report_file
 
 
+def test_article_pdf_does_not_leave_closing_punctuation_on_a_separate_line(tmp_path, monkeypatch):
+    import importlib
+    import pymupdf
+    module = importlib.import_module('app.tools.report.generate_report_file')
+    monkeypatch.setattr(module, '_find_font', lambda: None)
+    article = '测试' * 21 + '。'
+    path = tmp_path / 'punctuation.pdf'
+    generate_report_file({'report_id': 'RPT-PUNCTUATION', 'title': '格式检查报告', 'article_text': article},
+                         path=str(path), format='pdf')
+    with pymupdf.open(path) as document:
+        text = document[0].get_text()
+        assert article in ''.join(text.split())
+        assert all(not line.strip().startswith(('。', '，', '；', '）', '”')) for line in text.splitlines())
+
+
 def test_article_pdf_uses_paragraphs_without_numbered_sections(tmp_path):
     import pymupdf
     article = '设备因送料机报警停机。智能诊断确认报警类型，维修方案建议检查送料机。\n\n维修人员记录“完成”，人工确认后整线复机，未进行自动恢复核验。\n\n具体操作未记录，经验已保存供后续检索。'
@@ -21,6 +36,38 @@ def test_article_pdf_uses_paragraphs_without_numbered_sections(tmp_path):
         text = ''.join(doc[0].get_text().split())
         assert ''.join(article.split()) in text
         assert 'UNUSED' not in text and '01停机到复机' not in text
+
+
+def test_full_article_pdf_fills_a_page_without_splitting_numbers(tmp_path):
+    import pymupdf
+    paragraphs = [('本次报告依据停机事件及工单记录汇总处理过程。' * 8),
+        ('智能诊断记录显示液压总压力为698 psi，卡盘压力为282 psi，需结合现场数据核查。' * 7),
+        ('维修方案建议检查相关部件并记录复测指标，实际操作以工单反馈为依据。' * 8),
+        ('维修人员在工单中填写处理说明，人工确认后提交复机申请。' * 6),
+        ('整线启动回执已记录，未进行自动恢复核验，后续应关注同类报警是否再次出现。' * 5),
+        ('处理经验已保存，可供后续检索参考，具体操作和检测数据应继续补充。' * 5)]
+    article = '\n\n'.join(paragraphs)
+    assert len(article) > 1000
+    path = tmp_path / 'full-article.pdf'
+    from shared.report_presentation import report_article_layout
+    report = {'report_id': 'RPT-FULL-ARTICLE', 'title': '故障处理汇总报告', 'article_text': article,
+        'sections': {'diagnosis': {'records': [{'device_id': 'M1', 'alarm_code': '700010',
+            'alarm_definition': {'name': '液压压力不足'}}]}}}
+    report.update(report_article_layout(report))
+    generate_report_file(report, path=str(path), format='pdf')
+    with pymupdf.open(path) as doc:
+        assert len(doc) == 1
+        text = ''.join(doc[0].get_text().split())
+        for paragraph in paragraphs:
+            assert ''.join(paragraph.split()) in text
+        assert doc.metadata['title'] == '设备故障诊断与维修处理报告'
+        for chapter in report['article_outline']:
+            assert chapter['title'] in text
+        assert max(block[3] for block in doc[0].get_text('blocks') if 170 < block[1] < 790) > 690
+        spans = [span['text'] for block in doc[0].get_text('dict')['blocks'] if 'lines' in block
+                 for line in block['lines'] for span in line['spans']]
+        for value in ('698', '282'):
+            assert sum(value in span for span in spans) == 7
 
 
 def test_saved_concise_report_pdf_has_one_page_and_no_raw_parameter_dump(tmp_path):

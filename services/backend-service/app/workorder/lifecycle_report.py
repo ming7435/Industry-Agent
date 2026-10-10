@@ -7,7 +7,7 @@ import logging
 from ..line_control.repository import LineControlRepository
 
 log = logging.getLogger(__name__)
-COMPOSITION_VERSION = 7
+COMPOSITION_VERSION = 8
 
 
 def iso(timestamp):
@@ -138,8 +138,9 @@ class LifecycleReports:
                       status='incomplete' if findings else 'completed', validation_findings=findings,
                       stop_reason='restart_confirmed' if manual else 'restart_verified',
                       summary=('本次停机处理已完成，维修人员人工确认后整线启动指令已执行。' if manual else '本次停机处理已完成，整线复机核验通过。') + '已汇总 %s 张工单的智能诊断、维修方案及处理检查记录。' % len(orders))
-        from shared.report_presentation import concise_report_sections, report_article, report_presentation
+        from shared.report_presentation import concise_report_sections, report_article, report_article_layout, report_presentation
         report['presentation_sections'] = report_presentation(report['sections'])
         report['concise_sections'] = concise_report_sections(report)
         report['article_text'] = report_article(report)
+        report.update(report_article_layout(report))
         return report

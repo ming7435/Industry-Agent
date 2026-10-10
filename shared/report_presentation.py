@@ -5,6 +5,53 @@ import json
 import re
 
 
+def report_article_layout(report):
+    """A document title and four chapters over the unchanged six narrative paragraphs."""
+    source = report.get('sections') or {}
+    records = [item for name in ('workorder', 'diagnosis')
+               for item in (source.get(name) or {}).get('records', []) if isinstance(item, dict)]
+    devices = list(dict.fromkeys(str(r['device_id']) for r in records if r.get('device_id')))
+    alarms = []
+    for record in records:
+        code = str(record.get('alarm_code') or '')
+        definition = record.get('alarm_definition') or {}
+        name = definition.get('name') if isinstance(definition, dict) else ''
+        if code and not any(item[0] == code for item in alarms):
+            alarms.append((code, str(name or '')))
+        elif code and name:
+            alarms = [(c, str(name) if c == code else n) for c, n in alarms]
+    subtitle = '设备：' + '、'.join(devices) if devices else ''
+    if alarms:
+        subtitle += ('   ' if subtitle else '') + '报警：' + '、'.join(c + ('（' + n + '）' if n else '') for c, n in alarms)
+    return {'article_title': '设备故障诊断与维修处理报告', 'article_subtitle': subtitle,
+        'article_outline': [
+            {'title': '一、故障概况与诊断分析', 'paragraph_indexes': [0, 1]},
+            {'title': '二、维修方案与工单处理', 'paragraph_indexes': [2, 3]},
+            {'title': '三、复机结果', 'paragraph_indexes': [4]},
+            {'title': '四、经验总结', 'paragraph_indexes': [5]}]}
+
+
+def report_article_chapters(report):
+    """Apply the stored outline only when it covers every paragraph in original order."""
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', report.get('article_text') or '') if p.strip()]
+    outline = report.get('article_outline')
+    fallback = [{'title': '', 'paragraphs': paragraphs}] if paragraphs else []
+    if not isinstance(outline, list) or not outline:
+        return fallback
+    indexes = []
+    for chapter in outline:
+        if not isinstance(chapter, dict) or not isinstance(chapter.get('title'), str) or not chapter['title'].strip():
+            return fallback
+        values = chapter.get('paragraph_indexes')
+        if not isinstance(values, list) or not values or any(type(i) is not int for i in values):
+            return fallback
+        indexes.extend(values)
+    if indexes != list(range(len(paragraphs))):
+        return fallback
+    return [{'title': chapter['title'].strip(), 'paragraphs': [paragraphs[i] for i in chapter['paragraph_indexes']]}
+            for chapter in outline]
+
+
 def report_article(report):
     """Write a full article from saved evidence, recommendations and actual receipts."""
     source = report.get('sections') or {}

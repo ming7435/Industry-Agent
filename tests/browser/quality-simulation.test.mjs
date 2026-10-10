@@ -240,3 +240,28 @@ test('read-only production parameters remain visible for complex shapes before l
     assert.deepEqual(posts,[]);
   } finally {await fixture.close();}
 });
+
+test('partially covered designs display item rates while keeping whole parts pending',async()=>{
+  const parameters=[
+    {key:'model.bounds_mm.2',name:'成品外形 · Z尺寸',expected:'42',unit:'mm',kind:'number',comparable:true},
+    {key:'operations.3.radius',name:'圆角／半径',expected:'1',unit:'mm',kind:'number',comparable:false},
+  ];
+  const {fixture,page}=await setup({basisOverrides:{parameters},resultOverrides:{
+    basis:{...basis,parameters},counts:{total:3,determinate:0,qualified:0,unqualified:0,pending:3,review:0},
+    rates:{qualified:null,defect:null,coverage:0},
+    samples:[{part_id:'1',simulation:true,synthetic:true,observations:{'model.bounds_mm.2':{value:'42',unit:'mm'}}},
+      {part_id:'2',simulation:true,synthetic:true,observations:{'model.bounds_mm.2':{value:'42.1',unit:'mm'}}},
+      {part_id:'3',simulation:true,synthetic:true,observations:{}}],
+    item_summary:{counts:{total:6,qualified:1,unqualified:1,pending:4,review:0,determinate:2},rates:{qualified:50,defect:50,coverage:33.33}},
+    issues:[{part_id:'2',key:'model.bounds_mm.2',name:'成品外形 · Z尺寸',expected:'42',actual:'42.1',difference:'.1',unit:'mm',kind:'number',status:'unqualified'}],
+  }});
+  try{
+    await page.goto(fixture.base+'/?view=quality');await page.getByRole('button',{name:'开始检测',exact:true}).click();
+    const results=page.getByRole('region',{name:'检测结果',exact:true});await results.getByText('33.33%',{exact:true}).waitFor();
+    assert.deepEqual(await results.locator('.quality-rate-fields dd').allTextContents(),['50.00%','50.00%','33.33%']);
+    assert.deepEqual(await results.locator('.quality-rate-fields dt').allTextContents(),['已检测项通过率','已检测项不通过率','参数检测覆盖率']);
+    assert.match(await results.textContent(),/0 件可判定，3 件待判定/);
+    assert.match(await results.textContent(),/不是整件合格率/);
+    assert.match(await results.getByRole('region',{name:'待判定项目'}).textContent(),/圆角／半径/);
+  }finally{await fixture.close();}
+});

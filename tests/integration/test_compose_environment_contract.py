@@ -58,6 +58,8 @@ def test_production_persists_rag_and_protects_gateway():
     services = production["services"]
     assert "rag-data:/data/rag" in services["rag-service"]["volumes"]
     assert services["model-service"]["environment"]["MODEL_PROVIDER"] == "remote"
+    assert services["model-service"]["environment"]["MODEL_CHAT_PROVIDER"] == "deepseek"
+    assert services["model-service"]["environment"]["DEEPSEEK_API_KEY"] == "${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}"
     assert "FACTORY_API_BASE_URL" in services["monitor-web"]["environment"]
     nginx = (ROOT / "infra/nginx/nginx.production.conf").read_text(encoding="utf-8")
     assert "auth_basic_user_file" in nginx

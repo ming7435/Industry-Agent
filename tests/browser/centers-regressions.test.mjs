@@ -81,7 +81,7 @@ test('慢日志轮询只保留一个在途索引请求且不读取全库正文�
 });
 
 
-test('报告显示完整性和所有校验缺失原因', async () => {
+test('报告显示资料完整性和补充提示，不展示内部校验明细', async () => {
   const context = await fixture.browser.newContext();
   const page = await context.newPage();
   try {
@@ -89,7 +89,8 @@ test('报告显示完整性和所有校验缺失原因', async () => {
     await page.goto(`${fixture.base}/?view=report`);
     await page.locator('.report-list-select').waitFor();
     assert.ok((await page.locator('.report-panel').innerText()).includes('资料不完整'));
-    for (const finding of ['缺少诊断事实', '缺少维修步骤', '缺少质检证据']) assert.equal(await page.getByText(finding, { exact: true }).count(), 1);
+    assert.equal(await page.getByText('报告资料尚不完整，请补充相关处理记录。', { exact: true }).count(), 1);
+    for (const finding of ['缺少诊断事实', '缺少维修步骤', '缺少质检证据']) assert.equal(await page.getByText(finding, { exact: true }).count(), 0);
   } finally { await context.close(); }
 });
 

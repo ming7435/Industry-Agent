@@ -2,14 +2,23 @@ import React, { useEffect, useRef, useState } from 'react';
 import { request } from './apiRequest.mjs';
 import { freeCadRequest } from './production-cad/freecad.mjs';
 import { readQualityCandidates, verifiedQualityPart } from './qualityParts.mjs';
+import { publishCompletedDesign, subscribeCompletedDesigns } from './production-cad/completedDesigns.mjs';
 import { getTeamSession, setTeamSessionActor, subscribeTeamSession } from '../teamSession.mjs';
 import { teamRequest } from '../teamApi.mjs';
-import { detectSimulation, formatSimulationRate, pendingSimulationKey, simulationResult, possibleProblemLocations } from './qualitySimulation.mjs';
+import { detectSimulation, formatSimulationRate, pendingSimulationKey, simulationResult, simulationItemSummary, possibleProblemLocations } from './qualitySimulation.mjs';
 import './qualityPart.css';
 
 const prefix = '/api/quality/simulation';
 const statusLabel = { qualified: '模拟一致性合格', unqualified: '模拟一致性不合格', partial: '存在不一致／待判定样本', review: '待复核' };
 const displayLineName = name => name === '模拟 A 线' ? 'A 线' : name || '未知产线';
+
+function qualitySource() {
+  let storage,shared;
+  try { storage=window.sessionStorage; } catch { /* No local candidate index. */ }
+  try { shared=window.localStorage; } catch { /* Other tabs may not be available. */ }
+  return readQualityCandidates(storage,shared);
+}
+const sourceKey = source => JSON.stringify([source.currentRunId,source.submittedRunId,source.automaticRunId,source.candidates.map(item=>[item.run_id,item.version])]);
 
 function ProblemLocations({ result }) {
   const locations = possibleProblemLocations(result);
@@ -45,7 +54,10 @@ export default function QualityWorkspace() {
   const [loading, setLoading] = useState(true), [reading, setReading] = useState(false);
   const [capability, setCapability] = useState(null), [basis, setBasis] = useState(null), [result, setResult] = useState(null);
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
+  const [catalogEpoch,setCatalogEpoch] = useState(0), [automaticRunId,setAutomaticRunId] = useState('');
+  const [waitingRunIds,setWaitingRunIds] = useState([]);
   const revision = useRef(0), posting = useRef(false);
+  const sourceFingerprint = useRef(''), automaticAttempts = useRef(new Set()), catalogAbort=useRef(null);
   const userId = auth.actor?.user_id;
 
   useEffect(() => {
@@ -57,16 +69,46 @@ export default function QualityWorkspace() {
   }, []);
 
   useEffect(() => {
+    if(!checked) return;
+    const refresh = () => {
+      const fingerprint=sourceKey(qualitySource());
+      if(!sourceFingerprint.current) { sourceFingerprint.current=fingerprint; return; }
+      if(fingerprint===sourceFingerprint.current) return;
+      sourceFingerprint.current=fingerprint;
+      catalogAbort.current?.abort();
+      // Invalidate late results immediately, before the new model/basis GETs complete.
+      revision.current++; posting.current=false;
+      setLoading(true); setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');
+      setCatalogEpoch(value=>value+1);
+    };
+    const unsubscribe=subscribeCompletedDesigns(refresh);
+    refresh();
+    return unsubscribe;
+  }, [checked,auth.version]);
+
+  useEffect(() => {
     if (!checked) return;
     const abort = new AbortController();
+    catalogAbort.current=abort;
     revision.current++; posting.current = false;
     setLoading(true); setCapability(null); setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');
-    let source;
-    try { source = readQualityCandidates(window.sessionStorage); }
-    catch { source = { currentRunId: '', candidates: [] }; }
+    const source=qualitySource();
+    sourceFingerprint.current=sourceKey(source);
+    setAutomaticRunId(source.automaticRunId);
     let readFailure = '';
+    const waiting=[];
     const cad = Promise.all(source.candidates.map(candidate => freeCadRequest(`/runs/${candidate.run_id}`, { signal: abort.signal })
-      .then(record => verifiedQualityPart(record, candidate)).catch(error => { if (error.status >= 500) readFailure = error.message; return null; })));
+      .then(record => {
+        if(abort.signal.aborted || record.run_id!==candidate.run_id) return null;
+        if(record.run_id===candidate.run_id && record.status==='running') waiting.push(record.run_id);
+        if(record.status==='completed' && record.run_id===source.submittedRunId) publishCompletedDesign(record);
+        return verifiedQualityPart(record, candidate);
+      }).catch(error => {
+        if(abort.signal.aborted) return null;
+        if(userId && candidate.run_id===source.submittedRunId && (!error.status || error.status===404 || error.status>=500)) waiting.push(candidate.run_id);
+        if (error.status >= 500) readFailure = error.message;
+        return null;
+      })));
     const catalog = userId ? request(prefix + '/designs', { signal: abort.signal }).then(value => value.items || []).catch(error => { readFailure = error.message; return []; }) : Promise.resolve([]);
     if (userId) request(prefix + '/capabilities', { signal: abort.signal }).then(value => {
       if (!abort.signal.aborted) { setCapability(value); if (!value.enabled) setMessage(value.reason || '模拟检测未启用'); }
@@ -79,18 +121,42 @@ export default function QualityWorkspace() {
         if (part) { available.push(part); ids.add(item.run_id); }
       }
       setParts(available);
+      setWaitingRunIds(waiting);
       setSelected(available.some(p => p.run_id === source.currentRunId) ? source.currentRunId : available[0]?.run_id || '');
       setLoading(false);
       if (readFailure) setMessage(readFailure);
     });
     return () => { abort.abort(); revision.current++; };
-  }, [checked, auth.version]);
+  }, [checked, auth.version, catalogEpoch]);
+
+  useEffect(() => {
+    if(!userId || !waitingRunIds.length) return;
+    const abort=new AbortController();
+    let timer, remaining=waitingRunIds;
+    const poll=async()=>{
+      const running=[];
+      await Promise.all(remaining.map(async runId=>{
+        try {
+          const record=await freeCadRequest(`/runs/${runId}`,{signal:abort.signal});
+          if(abort.signal.aborted || record.run_id!==runId) return;
+          if(record.status==='running') running.push(runId);
+          else if(record.status==='completed') publishCompletedDesign(record);
+        } catch(error) { if(!abort.signal.aborted && (!error.status || error.status===404 || error.status>=500)) running.push(runId); }
+      }));
+      if(abort.signal.aborted) return;
+      remaining=running;
+      if(remaining.length) timer=window.setTimeout(poll,1500);
+      else setWaitingRunIds([]);
+    };
+    timer=window.setTimeout(poll,1500);
+    return()=>{abort.abort();window.clearTimeout(timer);};
+  }, [waitingRunIds,auth.version]);
 
   useEffect(() => {
     const generation = ++revision.current, abort = new AbortController();
-    setBasis(null); setResult(null); setPending(null); setMessage('');
+    setBasis(null); setResult(null); setPending(null);
     if (loading || !selected || !userId) { setReading(false); return () => abort.abort(); }
-    setReading(true);
+    setMessage(''); setReading(true);
     let savedRequest;
     try { savedRequest = JSON.parse(sessionStorage.getItem(pendingSimulationKey(userId, selected)) || 'null'); } catch { /* unavailable storage */ }
     if (savedRequest?.design_run_id !== selected || !/^[A-Za-z0-9_-]{1,128}$/.test(savedRequest?.request_id || '')) savedRequest = null;
@@ -117,9 +183,9 @@ export default function QualityWorkspace() {
     return () => { abort.abort(); revision.current++; };
   }, [selected, loading, auth.version]);
 
-  async function detect() {
+  async function detect(automaticBody) {
     if (posting.current || !basis || !userId || capability?.enabled !== true) return;
-    const generation = revision.current, retrying = !!pending, body = pending || { design_run_id: selected, request_id: crypto.randomUUID() };
+    const generation = revision.current, retrying = !!pending, body = pending || automaticBody || { design_run_id: selected, request_id: crypto.randomUUID() };
     const storageKey = pendingSimulationKey(userId, selected);
     posting.current = true; setBusy(true); setMessage(''); setResult(null); setPending(body);
     try { sessionStorage.setItem(storageKey, JSON.stringify(body)); } catch { /* current-page reconciliation remains available */ }
@@ -137,6 +203,16 @@ export default function QualityWorkspace() {
     } finally { if (generation === revision.current) { posting.current = false; setBusy(false); } }
   }
 
+  useEffect(() => {
+    if(loading || reading || busy || pending || result || !basis || !userId || capability?.enabled!==true || selected!==automaticRunId) return;
+    const key=pendingSimulationKey(userId,selected);
+    if(automaticAttempts.current.has(key)) return;
+    automaticAttempts.current.add(key);
+    // Stable per actor + full revision (backend scopes request IDs by actor): multiple tabs
+    // and duplicate completion events converge on one saved batch, never a blind new retry.
+    void detect({design_run_id:selected,request_id:`auto-model-${selected.slice(3)}`});
+  }, [loading,reading,busy,pending,result,basis,userId,capability,selected,automaticRunId]);
+
   async function reconcile() {
     if (!pending || posting.current) return;
     const generation = revision.current;
@@ -152,6 +228,8 @@ export default function QualityWorkspace() {
 
   const part = parts.find(p => p.run_id === selected), counts = result?.counts || {}, trace = result?.traceability || {};
   const pendingParameters = (result?.basis?.parameters || []).filter(p => p.comparable === false);
+  const itemSummary=pendingParameters.length ? simulationItemSummary(result) : null;
+  const displayedCounts=itemSummary?.counts || counts, displayedRates=itemSummary?.rates || result?.rates;
   return <section className="workspace-view active quality-workspace" aria-label="质检系统">
     <header className="module-hero quality-heading"><h1>质量检测</h1></header>
     <section className="quality-part-panel" aria-labelledby="quality-part-heading">
@@ -159,7 +237,7 @@ export default function QualityWorkspace() {
       <dl className="quality-part-fields">
         <div><dt><label htmlFor="quality-part-name">零件名称</label></dt><dd><select id="quality-part-name" value={selected}
           disabled={loading || busy || !!pending || !parts.length} onChange={e => {
-            revision.current++; setBasis(null); setResult(null); setMessage(''); setSelected(e.target.value);
+            revision.current++; setBasis(null); setResult(null); setMessage(''); setAutomaticRunId(''); setSelected(e.target.value);
           }}>
           {!parts.length && <option value="">{loading ? '正在读取零件…' : '暂无已完成零件'}</option>}
           {parts.map(item => <option key={item.run_id} value={item.run_id}>{parts.filter(other => other.name === item.name).length > 1
@@ -167,6 +245,7 @@ export default function QualityWorkspace() {
         </select></dd></div><div><dt>零件编号</dt><dd>{part?.number || '—'}</dd></div>
       </dl>
       <p className="quality-standard-note">模拟比对仪：RENISHAW-EQUATOR300-001 · 标准来自生产建模已保存版本</p>
+      {waitingRunIds.length>0 && <p className="quality-standard-note" role="status">新模型正在生成，完成后自动更新标准并重新检测。</p>}
       {basis && <details className="quality-standard-summary"><summary>建模标准参数（{basis.parameters.length} 项，只读）</summary>
         <ul>{basis.parameters.map(p => <li key={p.key}>{p.name}：{p.expected} {p.unit}
           {p.comparable === false ? ' · 待判定' : p.comparable === true ? ' · 可比对' : ''}</li>)}</ul></details>}
@@ -176,7 +255,7 @@ export default function QualityWorkspace() {
       <div className="quality-detection-actions">
         {pending && !busy && <button className="button" type="button" onClick={reconcile}>核对结果</button>}
         <button className="button primary" type="button" disabled={loading || reading || !basis || !userId || capability?.enabled !== true || busy}
-          onClick={detect}>{busy ? '正在模拟检测…' : pending ? '按原请求重试' : '开始检测'}</button>
+          onClick={()=>detect()}>{busy ? '正在模拟检测…' : pending ? '按原请求重试' : '开始检测'}</button>
       </div>
     </section>
     <section className="quality-result-panel" aria-labelledby="quality-result-heading">
@@ -187,10 +266,11 @@ export default function QualityWorkspace() {
             : '点击开始检测，自动生成并比对 10 件模拟测量样本。')}</p>
       {capability && !capability.enabled && <p className="quality-standard-note">{capability.reason || '模拟检测未启用'}</p>}
       <dl className="quality-rate-fields">
-        <div><dt>模拟合格率（良品率／优良率）</dt><dd>{formatSimulationRate(result?.rates?.qualified)}</dd>{result && <small>{counts.qualified ?? '—'} / {counts.determinate ?? '—'} 件</small>}</div>
-        <div><dt>模拟不良率</dt><dd>{formatSimulationRate(result?.rates?.defect)}</dd>{result && <small>{counts.unqualified ?? '—'} / {counts.determinate ?? '—'} 件</small>}</div>
-        <div><dt>模拟检测覆盖率</dt><dd>{formatSimulationRate(result?.rates?.coverage)}</dd>{result && <small>{counts.determinate ?? '—'} / {counts.total ?? '—'} 件</small>}</div>
+        <div><dt>{itemSummary?'已检测项通过率':'模拟合格率（良品率／优良率）'}</dt><dd>{formatSimulationRate(displayedRates?.qualified)}</dd>{result && <small>{displayedCounts.qualified ?? '—'} / {displayedCounts.determinate ?? '—'} {itemSummary?'项':'件'}</small>}</div>
+        <div><dt>{itemSummary?'已检测项不通过率':'模拟不良率'}</dt><dd>{formatSimulationRate(displayedRates?.defect)}</dd>{result && <small>{displayedCounts.unqualified ?? '—'} / {displayedCounts.determinate ?? '—'} {itemSummary?'项':'件'}</small>}</div>
+        <div><dt>{itemSummary?'参数检测覆盖率':'模拟检测覆盖率'}</dt><dd>{formatSimulationRate(displayedRates?.coverage)}</dd>{result && <small>{displayedCounts.determinate ?? '—'} / {displayedCounts.total ?? '—'} {itemSummary?'项':'件'}</small>}</div>
       </dl>
+      {itemSummary && <p className="quality-standard-note">上述比例按检测项统计，不是整件合格率。已判定 {displayedCounts.determinate} 项，待判定 {displayedCounts.pending} 项。</p>}
       {result?.batch_id && <p className="quality-batch-id">本次批次：{result.batch_id}</p>}
       {pendingParameters.length > 0 && <section aria-labelledby="quality-pending-heading">
         <h3 id="quality-pending-heading">待判定项目</h3>

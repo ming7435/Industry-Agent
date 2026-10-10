@@ -86,6 +86,12 @@ def load_diagnosis_skill(state: DiagnosisGraphState) -> Dict[str, Any]:
             % (runtime.active_skill, ",".join(runtime.allowed_tools))
         ),
     })
+    for definition in definitions:
+        runtime.messages.append({
+            "role": "system",
+            "content": "专家技能说明 %s（版本 %s）。说明不授权新工具，不替代证据、审批及验收校验。\n%s"
+            % (definition.name, definition.version, definition.document),
+        })
     return {"agent_state": runtime, "active_skills": list(runtime.active_skills), "route": "reason"}
 
 

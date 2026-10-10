@@ -118,7 +118,7 @@ app = FastAPI(
     title="Industrial Maintenance RAG Service",
     description=(
         "在线检索 + 生成服务：BM25 与 dense 双路检索 → RRF 融合 → bge-reranker-v2-m3 "
-        "重排 → 证据组织与引用 → DeepSeek-v4-Flash 生成诊断建议。"
+        "重排 → 证据组织与引用 → DeepSeek 生成诊断建议。"
     ),
     version="0.1.0",
     lifespan=lifespan,

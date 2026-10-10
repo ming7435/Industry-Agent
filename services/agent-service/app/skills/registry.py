@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import RLock
 from typing import Any, Iterable, List, Mapping, TYPE_CHECKING
 
 import yaml
@@ -151,17 +152,34 @@ class SkillRegistry:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or SKILLS_ROOT
         self._cache: dict[str, tuple[SkillDefinition, ...]] = {}
+        self._signatures: dict[str, tuple[Any, ...]] = {}
+        self._lock = RLock()
 
     def list(self, agent: str) -> list[SkillDefinition]:
         agent = str(agent).strip().lower()
-        if agent not in self._cache:
+        if not agent or agent.startswith('.') or any(char in agent for char in '/\\'):
+            raise ValueError("无效的 Agent 技能目录")
+        with self._lock:
             directory = self.root / agent
+            paths = sorted(directory.glob("*.md")) if directory.is_dir() else []
+            signature = tuple((str(path), path.stat().st_mtime_ns, path.stat().st_size) for path in paths)
+            if self._signatures.get(agent) == signature:
+                return list(self._cache[agent])
             definitions: List[SkillDefinition] = []
-            for path in sorted(directory.glob("*.md")) if directory.is_dir() else []:
+            for path in paths:
+                if not path.resolve().is_relative_to(self.root.resolve()):
+                    raise ValueError("技能文档不能位于注册目录外")
                 payload, document = _load_markdown_skill(path)
                 definitions.append(SkillDefinition.from_payload(agent, payload, path, document))
+            # 完整加载后才交换缓存，损坏的文件不能发布为部分成功目录。
             self._cache[agent] = tuple(definitions)
-        return list(self._cache[agent])
+            self._signatures[agent] = signature
+            return list(self._cache[agent])
+
+    def invalidate(self, agent: str) -> None:
+        """更新完成后使本进程在下次读取时重新加载。"""
+        with self._lock:
+            self._signatures.pop(agent, None)
 
     def get(self, agent: str, name: str) -> SkillDefinition | None:
         return next((item for item in self.list(agent) if name == item.name or name in item.aliases), None)
@@ -275,7 +293,12 @@ def _as_strings(value: Any) -> tuple[str, ...]:
 def _load_markdown_skill(path: Path) -> tuple[Mapping[str, Any], str]:
     """读取 Skill Markdown，并分离 YAML Front Matter 与说明正文。"""
 
-    text = path.read_text(encoding="utf-8").lstrip("\ufeff")
+    return _parse_markdown_skill(path.read_bytes().decode("utf-8"), path)
+
+
+def _parse_markdown_skill(text: str, path: Path) -> tuple[Mapping[str, Any], str]:
+    """解析同一文件快照，避免修订编号与正文来自不同的读取。"""
+    text = text.lstrip("\ufeff")
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         raise ValueError(f"Skill Markdown 缺少 YAML Front Matter: {path}")
@@ -287,7 +310,10 @@ def _load_markdown_skill(path: Path) -> tuple[Mapping[str, Any], str]:
     if closing_index is None:
         raise ValueError(f"Skill Markdown 的 YAML Front Matter 未闭合: {path}")
 
-    payload = yaml.safe_load("\n".join(lines[1:closing_index])) or {}
+    try:
+        payload = yaml.safe_load("\n".join(lines[1:closing_index])) or {}
+    except yaml.YAMLError as error:
+        raise ValueError("Skill Markdown 的结构化说明无法解析") from error
     if not isinstance(payload, Mapping):
         raise ValueError(f"Skill Markdown Front Matter 必须是映射: {path}")
 

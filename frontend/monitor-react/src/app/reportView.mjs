@@ -23,6 +23,18 @@ function mapping(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
+export function buildReportArticleChapters(report = {}) {
+  const paragraphs = buildReportArticle(report).split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+  const fallback = paragraphs.length ? [{title: '', paragraphs}] : [];
+  const outline = report.article_outline;
+  if (!Array.isArray(outline) || !outline.length || outline.some(chapter =>
+    typeof chapter?.title !== 'string' || !chapter.title.trim() || !Array.isArray(chapter.paragraph_indexes) ||
+    !chapter.paragraph_indexes.length || chapter.paragraph_indexes.some(index => !Number.isInteger(index)))) return fallback;
+  const indexes = outline.flatMap(chapter => chapter.paragraph_indexes);
+  if (indexes.length !== paragraphs.length || indexes.some((index, position) => index !== position)) return fallback;
+  return outline.map(chapter => ({title: chapter.title.trim(), paragraphs: chapter.paragraph_indexes.map(index => paragraphs[index])}));
+}
+
 export function buildReportArticle(report = {}) {
   if (typeof report.article_text === 'string' && report.article_text.trim()) return report.article_text.trim();
   const source = mapping(report.sections);
