@@ -72,4 +72,10 @@ try{
   await logs.screenshot({path:resolve(output,'production-logs.png')});assert.deepEqual(errors,[]);
   await writeFile(resolve(output,'live-summary.json'),JSON.stringify({verified_at:new Date().toISOString(),actor_id:actor.user_id,source:'factory-simulation',simulation_only:true,jobs:saved,browser_errors:errors},null,2));
   console.log(JSON.stringify({jobs:saved.length,inspections:saved.length,closed_page_background_completion:true,refresh_restored:true,production_logs_completed:true,browser_errors:errors.length}));
-}finally{await context.close();await browser.close();}
+}finally{
+  try{
+    const logout=await context.request.post(base+'/api/team/logout',{headers:{Origin:base},data:{}});
+    assert.equal(logout.status(),200,'verification session cleanup failed');
+  }catch(failure){process.exitCode=1;console.error('verification session cleanup failed: '+failure.message);}
+  finally{await context.close();await browser.close();}
+}

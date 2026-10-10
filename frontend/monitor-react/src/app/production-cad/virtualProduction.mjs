@@ -4,6 +4,30 @@ export const productionPendingKey=(actorId,runId)=>`production.virtual.pending:$
 export const productionRequest=(path,options={})=>request('/api/production/virtual'+path,{credentials:'same-origin',...options});
 const hex=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 
+export function mergeProductionJob(current,incoming){
+  if(current?.job_id!==incoming.job_id)return incoming;
+  if(incoming.revision<current.revision)return current;
+  // Inspections are independently saved without incrementing the job revision.
+  if(incoming.revision===current.revision&&current.inspection&&!incoming.inspection
+    &&current.output?.output_digest===incoming.output?.output_digest)return {...incoming,inspection:current.inspection};
+  return incoming;
+}
+export function upsertProductionJob(values,incoming){
+  const previous=values.find(item=>item.job_id===incoming.job_id),saved=mergeProductionJob(previous,incoming);
+  return previous?values.map(item=>item.job_id===saved.job_id?saved:item):[saved,...values];
+}
+export async function readProductionJobs(options={},filters={}){
+  const values=[],seen=new Set();let cursor='';
+  for(let page=0;page<100;page++){
+    const result=await productionRequest('/jobs?'+new URLSearchParams({limit:'50',...filters,...(cursor?{cursor}:{})}),options);
+    if(!Array.isArray(result.items))throw new Error('生产任务目录格式不完整。');
+    values.push(...result.items.map(value=>validateProductionJob(value)));
+    if(!result.next_cursor)return values;
+    if(seen.has(result.next_cursor))throw new Error('生产任务目录游标重复。');seen.add(result.next_cursor);cursor=result.next_cursor;
+  }
+  throw new Error('生产任务目录过大，请按版本查询。');
+}
+
 export function validateProductionJob(value,expected={}){
   const invalid=()=>{throw new Error('生产任务身份或事实不完整，请核对原指令。');};
   if(!value||!/^SIM-JOB-[a-f0-9]{64}$/.test(value.job_id||'')||value.part_id!=='SIM-PART-'+value.job_id.slice(8)

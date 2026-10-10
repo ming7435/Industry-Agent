@@ -6,6 +6,7 @@ import sys
 import time
 import json
 from types import SimpleNamespace
+from threading import Event, get_ident
 
 import pytest
 
@@ -67,6 +68,38 @@ def test_idempotent_plan_and_completed_output(service, factory):
     assert len(service.repository.list_records('sim_produced_part')) == 1
     for record in ['production_part', 'quality', 'simulated_quality_batch']:
         assert service.repository.list_records(record) == []
+
+
+@pytest.mark.parametrize('view', ['detail', 'directory'])
+def test_completion_between_job_and_output_reads_never_creates_false_review(service, factory, monkeypatch, view):
+    job = prepare(service)
+    received = factory.submit(job['factory_command_id'], job['program'])
+    saved = service.record_receipt(OWNER, job['job_id'], job['revision'], received)
+    factory.start(received['job_id'], received['program_digest'], '测试'); factory.tick(1)
+    running = service.record_receipt(OWNER, job['job_id'], saved['revision'], factory.get(received['job_id']))
+    factory.tick(20); final_receipt = factory.get(received['job_id'])
+    entered, committed = Event(), Event()
+    reader_thread, original_read = get_ident(), service._read
+    paused = False
+    def paused_read(identity):
+        nonlocal paused
+        value = original_read(identity)
+        if get_ident() == reader_thread and not paused:
+            paused = True; entered.set(); committed.wait(timeout=1)
+        return value
+    monkeypatch.setattr(service, '_read', paused_read)
+    def writer():
+        assert entered.wait(timeout=3)
+        value = service.record_receipt(OWNER, job['job_id'], running['revision'], final_receipt)
+        committed.set()
+        return value
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(writer)
+        value = service.get(OWNER, job['job_id']) if view == 'detail' else service.list_jobs(OWNER)['items'][0]
+        assert value['sync_status'] == 'confirmed', value.get('error_code')
+        assert bool(value['output']) == (value['status'] == 'completed')
+        assert pending.result(timeout=3)['status'] == 'completed'
+    assert service.get(OWNER, job['job_id'])['output'] is not None
 
 
 def test_immutable_factory_bytes_survive_numeric_json_database_reformatting(service, factory, monkeypatch):

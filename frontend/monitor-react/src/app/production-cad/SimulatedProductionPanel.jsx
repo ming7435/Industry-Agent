@@ -1,7 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {getTeamSession,setTeamSessionActor,subscribeTeamSession} from '../../teamSession.mjs';
 import {teamRequest} from '../../teamApi.mjs';
-import {productionRequest,validateProductionJob,formatProductionStatus,productionPendingKey,virtualDesignSupport} from './virtualProduction.mjs';
+import {productionRequest,validateProductionJob,formatProductionStatus,productionPendingKey,virtualDesignSupport,readProductionJobs,mergeProductionJob,upsertProductionJob} from './virtualProduction.mjs';
 import './virtualProduction.css';
 
 const fields=[['stock_diameter_mm','毛坯直径（mm）'],['stock_length_mm','毛坯长度（mm）'],['grip_length_mm','夹持长度（mm）'],
@@ -35,10 +35,10 @@ export default function SimulatedProductionPanel({run,draftPending=false}){
     if(!checked||!userId||!runId){setLoading(false);return()=>abort.abort();}
     let old;try{old=JSON.parse(sessionStorage.getItem(key)||'null');}catch{}
     if(old?.design_run_id===runId)setPending(old);
-    Promise.all([productionRequest('/capabilities',{signal:abort.signal}),productionRequest('/jobs?'+new URLSearchParams({design_run_id:runId}),{signal:abort.signal})])
+    Promise.all([productionRequest('/capabilities',{signal:abort.signal}),readProductionJobs({signal:abort.signal},{design_run_id:runId})])
       .then(([capability,list])=>{
         if(abort.signal.aborted||epoch.current!==version)return;
-        const values=(list.items||[]).map(value=>validateProductionJob(value,expected));
+        const values=list.map(value=>validateProductionJob(value,expected));
         const selected=values.sort((a,b)=>b.created_at-a.created_at)[0]||null;
         setCap(capability);setJobs(values);setJob(selected);
         if(selected){setSetup(selected.setup);setMaterial(selected.material);setBatch(selected.batch_id);}
@@ -53,7 +53,11 @@ export default function SimulatedProductionPanel({run,draftPending=false}){
     if(!job||!userId||job.status==='completed'||job.sync_status==='review')return;
     const version=epoch.current,abort=new AbortController();
     const timer=setInterval(()=>productionRequest('/jobs/'+job.job_id,{signal:abort.signal}).then(value=>{
-      if(!abort.signal.aborted&&epoch.current===version)setJob(validateProductionJob(value,{...expected,job_id:job.job_id}));
+      if(!abort.signal.aborted&&epoch.current===version){
+        const saved=validateProductionJob(value,{...expected,job_id:job.job_id});
+        setJob(current=>current?.job_id===saved.job_id?mergeProductionJob(current,saved):current);
+        setJobs(values=>upsertProductionJob(values,saved));
+      }
     }).catch(failure=>{if(!abort.signal.aborted&&epoch.current===version)setError(failure.message);}),2000);
     return()=>{clearInterval(timer);abort.abort();};
   },[job?.job_id,job?.status,job?.sync_status,auth.version,runId]);
@@ -69,14 +73,18 @@ export default function SimulatedProductionPanel({run,draftPending=false}){
       }else if(action==='reconcile'&&pending){value=await productionRequest('/jobs/by-command/'+encodeURIComponent(pending.command_id));}
       else value=await productionRequest(`/jobs/${job.job_id}/${action}`,{method:'POST',body:JSON.stringify(action==='sync'?{}:{digest:job.program_digest})});
       if(epoch.current!==version)return;
-      value=validateProductionJob(value,identity);setJob(value);setJobs(values=>[value,...values.filter(item=>item.job_id!==value.job_id)]);
+      value=validateProductionJob(value,identity);setJob(current=>mergeProductionJob(current,value));setJobs(values=>upsertProductionJob(values,value));
       setPending(null);pendingStorage(key,null);
     }catch(failure){
       if(epoch.current!==version||failure.name==='AbortError')return;
       setError(failure.message);
       if(action==='prepare'&&command){
         try{const saved=validateProductionJob(await productionRequest('/jobs/by-command/'+encodeURIComponent(command)),identity);
-          if(epoch.current===version){setJob(saved);setPending(null);pendingStorage(key,null);}}catch{}
+          if(epoch.current===version){setJob(current=>mergeProductionJob(current,saved));setJobs(values=>upsertProductionJob(values,saved));setPending(null);pendingStorage(key,null);}}
+        catch(lookupFailure){
+          if(epoch.current===version&&lookupFailure.status===404&&[400,403,404,409,413,422].includes(failure.status)
+            &&failure.detail?.outcome_unknown!==true){setPending(null);pendingStorage(key,null);}
+        }
       }
     }finally{if(epoch.current===version){posting.current=false;setBusy('');}}
   }
@@ -102,7 +110,7 @@ export default function SimulatedProductionPanel({run,draftPending=false}){
         <button disabled={Boolean(busy)} onClick={()=>act('sync')}>核对工厂状态</button></>}
     </div>
     {changed&&<p className="vp-note">工艺已修改，请保存新方案后下发。</p>}
-    {jobs.length>1&&<label>生产任务<select aria-label="生产任务" value={job?.job_id||''} disabled={Boolean(busy)} onChange={e=>{const selected=jobs.find(item=>item.job_id===e.target.value);setJob(selected);setSetup(selected.setup);setMaterial(selected.material);}}>{jobs.map(item=><option key={item.job_id} value={item.job_id}>{item.batch_id} · {formatProductionStatus(item)}</option>)}</select></label>}
+    {jobs.length>1&&<label>生产任务<select aria-label="生产任务" value={job?.job_id||''} disabled={Boolean(busy)} onChange={e=>{const selected=jobs.find(item=>item.job_id===e.target.value);setJob(selected);setSetup(selected.setup);setMaterial(selected.material);setBatch(selected.batch_id);}}>{jobs.map(item=><option key={item.job_id} value={item.job_id}>{item.batch_id} · {formatProductionStatus(item)}</option>)}</select></label>}
     {job&&<div className="vp-result"><strong>{formatProductionStatus(job)}</strong><p>批次 {job.batch_id} · 零件 {job.part_name||run.part_name||'未命名'} · {job.part_number||run.part_number}</p>
       <progress aria-label="模拟加工进度" max="1" value={job.progress}/><span>{Math.round(job.progress*100)}%</span>
       {job.error_code&&<p className="vp-error">{job.error_message||`任务需核对：${job.error_code}`}</p>}

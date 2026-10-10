@@ -52,3 +52,27 @@ test('anonymous production quality does not read another person output',async()=
     assert.equal(reads.some(x=>x.includes('/production/')),false);assert.equal(posts.length,0);
   }finally{await fixture.close();}
 });
+
+test('switching outputs restores the inspection just saved in this session',async()=>{
+  const {fixture,page,posts}=await setup();const suffix='8'.repeat(64),other={...job,job_id:'SIM-JOB-'+suffix,part_id:'SIM-PART-'+suffix,
+    output:{...output,job_id:'SIM-JOB-'+suffix,part_id:'SIM-PART-'+suffix,output_digest:'9'.repeat(64)},inspection:null};
+  try{
+    await page.route('**/api/production/virtual/jobs?*',route=>respond(route,{items:[job,other],next_cursor:null}));
+    await page.route('**/api/production/virtual/jobs/'+other.job_id,route=>respond(route,other));
+    await page.reload();await page.getByRole('button',{name:'开始检测',exact:true}).click();
+    await page.getByRole('heading',{name:'参数不一致',exact:true}).waitFor();await page.waitForFunction(()=>document.querySelector('.pq-actions button').textContent==='开始检测');
+    await page.getByRole('combobox',{name:'加工产出',exact:true}).selectOption(other.job_id);await page.getByRole('heading',{name:'待检测',exact:true}).waitFor();
+    await page.getByRole('combobox',{name:'加工产出',exact:true}).selectOption(jobId);await page.getByRole('heading',{name:'参数不一致',exact:true}).waitFor();
+    assert.equal(await page.locator('.pq-comparison article').count(),1);assert.equal(posts.length,1);
+  }finally{await fixture.close();}
+});
+
+test('quality opened during processing follows saved completion and enables inspection',async()=>{
+  const {fixture,page,posts}=await setup({running:true});
+  try{
+    await page.getByText('加工中',{exact:true}).waitFor();
+    await page.route('**/api/production/virtual/jobs/'+jobId,route=>respond(route,{...job,revision:3,inspection:null}));
+    await page.waitForFunction(()=>!document.querySelector('.pq-actions button').disabled,{},{timeout:7000});
+    await page.getByText('模拟加工完成',{exact:true}).waitFor();assert.equal(posts.length,0);
+  }finally{await fixture.close();}
+});

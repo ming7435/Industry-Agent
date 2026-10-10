@@ -4,6 +4,7 @@ import math
 import pytest
 from shared.virtual_turning import VirtualProductionError, digest
 from test_virtual_production_store import service, factory, prepare, complete, OWNER, OTHER, SUPERVISOR
+from test_virtual_turning import run, setup
 
 
 def test_incomplete_production_cannot_be_inspected(service):
@@ -74,3 +75,21 @@ def test_supervisor_same_batch_name_requires_owner_selection(service, factory):
     scoped = service.quality(SUPERVISOR, job['design_run_id'], job['batch_id'], owner_job_id=job['job_id'])
     assert scoped['counts']['total'] == 1
     assert scoped['actor_id'] == OWNER['user_id']
+
+
+@pytest.mark.parametrize('hole,actual', [(True, 0), (False, 6)])
+def test_saved_hole_defects_count_as_inconsistent_and_covered(service, factory, hole, actual):
+    job = service.prepare(OWNER, 'hole-defect', run(hole=hole), setup(hole=hole), '模拟钢材', 'hole-batch')
+    received = factory.submit(job['factory_command_id'], job['program'])
+    saved = service.record_receipt(OWNER, job['job_id'], job['revision'], received)
+    factory.start(received['job_id'], received['program_digest'], '测试'); factory.tick(20)
+    receipt = factory.get(received['job_id'])
+    receipt['result_profile']['inner_diameter_mm'] = actual
+    receipt['simulated_volume_mm3'] = math.pi * (20 ** 2 - actual ** 2) / 4 * 10
+    completed = service.record_receipt(OWNER, job['job_id'], saved['revision'], receipt)
+    check = service.inspect(OWNER, job['part_id'], completed['output']['output_digest'])
+    assert check['status'] == 'fail'
+    assert service.get(OWNER, job['job_id'])['inspection']['check_id'] == check['check_id']
+    summary = service.quality(OWNER, job['design_run_id'], job['batch_id'])
+    assert summary['counts']['fail'] == 1 and summary['counts']['insufficient_data'] == 0
+    assert summary['rates'] == {'consistent': 0.0, 'inconsistent': 100.0, 'coverage': 100.0}

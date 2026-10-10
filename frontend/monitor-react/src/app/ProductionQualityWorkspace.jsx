@@ -1,7 +1,7 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {getTeamSession,setTeamSessionActor,subscribeTeamSession} from '../teamSession.mjs';
 import {teamRequest} from '../teamApi.mjs';
-import {productionRequest,validateProductionJob,formatProductionStatus} from './production-cad/virtualProduction.mjs';
+import {productionRequest,validateProductionJob,formatProductionStatus,upsertProductionJob} from './production-cad/virtualProduction.mjs';
 import {readProductionJobs,validateProductionInspection,formatProductionRate,inspectionStatus,qualitySelectionIdentity} from './productionQuality.mjs';
 import './productionQuality.css';
 
@@ -28,9 +28,24 @@ export default function ProductionQualityWorkspace(){
     const version=++epoch.current,abort=new AbortController();setResult(null);setSummary(null);setRateError('');setUnknown(false);
     if(!job)return()=>abort.abort();
     if(job.inspection&&job.output){try{setResult(validateProductionInspection(job.inspection,expected));}catch(failure){setError(failure.message);}}
+    let refreshing=false;
+    async function refresh(){
+      if(refreshing||posting.current)return;refreshing=true;
+      try{
+        const saved=validateProductionJob(await productionRequest('/jobs/'+job.job_id,{signal:abort.signal}),
+          {job_id:job.job_id,actor_id:job.actor_id,design_run_id:job.design_run_id});
+        if(abort.signal.aborted||epoch.current!==version)return;
+        setJobs(values=>upsertProductionJob(values,saved));
+        if(saved.inspection&&saved.output){setResult(validateProductionInspection(saved.inspection,{...expected,output_digest:saved.output.output_digest}));setUnknown(false);}
+        const stats=await loadSummary(saved,{signal:abort.signal});
+        if(!abort.signal.aborted&&epoch.current===version){setSummary(stats);setRateError('');}
+      }catch(failure){if(!abort.signal.aborted&&epoch.current===version)setError(failure.message);}
+      finally{refreshing=false;}
+    }
+    refresh();const timer=setInterval(refresh,2000);
     loadSummary(job,{signal:abort.signal}).then(value=>{if(!abort.signal.aborted&&epoch.current===version)setSummary(value);})
       .catch(failure=>{if(!abort.signal.aborted&&epoch.current===version)setRateError(failure.message);});
-    return()=>abort.abort();
+    return()=>{clearInterval(timer);abort.abort();};
   },[identity]);
   async function loadSummary(target,options={}){
     const value=await productionRequest('/quality?'+new URLSearchParams({design_run_id:target.design_run_id,batch_id:target.batch_id,owner_job_id:target.job_id}),options);
@@ -52,7 +67,8 @@ export default function ProductionQualityWorkspace(){
           if(!saved.inspection)throw failure;value=saved.inspection;}
       }
       if(epoch.current!==version)return;
-      setResult(validateProductionInspection(value,fixed));setUnknown(false);
+      value=validateProductionInspection(value,fixed);setResult(value);setUnknown(false);
+      setJobs(values=>values.map(item=>item.job_id===target.job_id?{...item,inspection:value}:item));
       try{const stats=await loadSummary(target);if(epoch.current===version){setSummary(stats);setRateError('');}}
       catch(failure){if(epoch.current===version){setSummary(null);setRateError(failure.message);}}
     }catch(failure){if(epoch.current===version&&failure.name!=='AbortError')setError(failure.message);}

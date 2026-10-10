@@ -23,3 +23,13 @@ test('completed job requires matching factory output and preserves unknown state
   assert.match(formatProductionStatus({...fixture(),status:'paused'}),/暂停/);
   assert.notEqual(productionPendingKey('U1',id),productionPendingKey('U2',id));
 });
+
+test('new saved facts reject old revisions and retain an already saved inspection',async()=>{
+  const {mergeProductionJob}=await import('./virtualProduction.mjs');
+  const old={...fixture(),revision:2,status:'running',progress:.2},current={...old,revision:3,progress:.8};
+  assert.equal(mergeProductionJob(current,old),current);
+  assert.equal(mergeProductionJob(old,current),current);
+  const checked={...current,output:{output_digest:'f'.repeat(64)},inspection:{check_id:'saved-check'}};
+  const delayed={...checked,inspection:null};
+  assert.equal(mergeProductionJob(checked,delayed).inspection.check_id,'saved-check');
+});

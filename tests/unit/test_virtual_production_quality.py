@@ -22,6 +22,19 @@ def test_output_difference_is_not_release_evidence():
     assert result.get('qualified') is not True
 
 
+@pytest.mark.parametrize('hole,actual,expected,difference', [(True, 0, '6', '-6'), (False, 6, '0', '6')])
+def test_missing_or_unexpected_hole_is_a_measured_defect(hole, actual, expected, difference):
+    from shared.virtual_turning import build_virtual_design
+    from shared.virtual_production_quality import compare_virtual_output
+    design = build_virtual_design(run(hole=hole))
+    value = output(design)
+    value['profile'].update(outer_diameter_mm=20, inner_diameter_mm=actual)
+    result = compare_virtual_output(design, value)
+    assert result['status'] == 'fail'
+    item = next(row for row in result['items'] if row['key'] == 'inner_diameter_mm')
+    assert item['expected'] == expected and item['actual'] == str(actual) and item['difference'] == difference
+
+
 @pytest.mark.parametrize('kind', ['missing', 'nonfinite', 'bool', 'mismatch', 'source', 'units', 'exact'])
 def test_comparison_keeps_unknown_values_and_identity_conflicts(kind):
     from shared.virtual_turning import build_virtual_design

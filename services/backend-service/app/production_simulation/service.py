@@ -96,8 +96,12 @@ class VirtualProductionService:
             return self._present(value)
 
     def get(self, actor, job_id):
-        job = self._read(job_id); self._owner(actor, job)
-        return self._present(job)
+        # Read the job, output and check under the same short-lived job guard.
+        # Otherwise a concurrent completion can pair an old running receipt
+        # with a newly committed output and falsely mark it for review.
+        with self.repository.simulation_transaction(job_id):
+            job = self._read(job_id); self._owner(actor, job)
+            return self._present(job)
 
     def by_command(self, actor, command_id):
         owner = self._actor(actor); self._command(command_id)
@@ -118,7 +122,7 @@ class VirtualProductionService:
                     if (job['actor_id'] == owner or actor['role'] == 'supervisor')
                     and (not design_run_id or job['design_run_id'] == design_run_id) and (not batch_id or job['batch_id'] == batch_id)]
         page = self._page(selected, cursor, limit)
-        page['items'] = [self._present(self._read(job['job_id'])) for job in page['items']]
+        page['items'] = [self.get(actor, job['job_id']) for job in page['items']]
         return page
 
     @staticmethod
