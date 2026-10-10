@@ -7,8 +7,8 @@ import pytest
 from app.harness.trace import TraceRecorder
 
 
-COUNTS = {"router": 3, "diagnosis": 7, "knowledge": 6, "cad": 6, "maintenance": 6,
-          "workorder": 7, "quality": 5, "report": 5, "memory": 7}
+COUNTS = {"router": 3, "diagnosis": 7, "knowledge": 6, "cad": 7, "maintenance": 6,
+          "workorder": 7, "quality": 6, "report": 5, "memory": 7}
 
 
 @pytest.mark.parametrize("name,expected", COUNTS.items())
@@ -19,7 +19,7 @@ def test_compiled_stage_node_count(name, expected):
     assert len(actual) == expected, (name, actual)
 
 
-def test_all_nine_graphs_total_52_and_only_original_loop_domains_have_cycles():
+def test_all_nine_graphs_include_two_trusted_simulation_branches_and_keep_original_cycles():
     counts, loops = {}, set()
     for name in COUNTS:
         module = import_module(f"app.agents.{name}.graph")
@@ -39,7 +39,7 @@ def test_all_nine_graphs_total_52_and_only_original_loop_domains_have_cycles():
 
         if any(reaches_self(node, node, {node}) for node in graph.nodes):
             loops.add(name)
-    assert counts == COUNTS and sum(counts.values()) == 52
+    assert counts == COUNTS and sum(counts.values()) == 54
     assert loops == {"diagnosis", "knowledge", "cad"}
 
 

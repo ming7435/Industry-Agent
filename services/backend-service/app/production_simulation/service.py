@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from shared.virtual_turning import (build_virtual_design, build_virtual_program, build_virtual_output,
     validate_factory_receipt, digest, require, SOURCE, VirtualProductionError)
 from shared.virtual_production_quality import compare_virtual_output, RULE
+from .records import ExactVirtualRecords
 
 JOB = 'sim_production_job'
 OUTPUT = 'sim_produced_part'
@@ -16,7 +17,7 @@ CHECK = 'sim_quality_check'
 
 class VirtualProductionService:
     def __init__(self, repository):
-        self.repository = repository
+        self.repository = repository if isinstance(repository, ExactVirtualRecords) else ExactVirtualRecords(repository)
 
     @staticmethod
     def _actor(actor):

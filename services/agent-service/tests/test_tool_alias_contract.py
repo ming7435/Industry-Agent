@@ -91,7 +91,11 @@ def test_registry_definitions_drive_handlers_and_schemas(monkeypatch):
     definitions = getattr(tools, "definitions", None)
     assert definitions is not None, "缺少单一工具定义"
     schemas = {item["function"]["name"]: item["function"] for item in tools.tool_schemas()}
-    assert len(definitions) == 78 and len(schemas) == 58
+    assert len(definitions) == 83 and len(schemas) == 58
+    virtual_tools = {'prepare_virtual_production', 'submit_virtual_production', 'start_virtual_production', 'sync_virtual_production', 'inspect_virtual_output'}
+    assert virtual_tools <= set(definitions)
+    assert not virtual_tools & set(schemas)
+    assert all(definitions[name].local_only for name in virtual_tools)
     assert definitions['freecad_mcp'].local_only is True
     assert 'freecad_mcp' not in schemas
     # 录入和闭环工具只由服务器业务入口授权，不增加模型写入权限。

@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 import sys
 import time
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -66,6 +67,24 @@ def test_idempotent_plan_and_completed_output(service, factory):
     assert len(service.repository.list_records('sim_produced_part')) == 1
     for record in ['production_part', 'quality', 'simulated_quality_batch']:
         assert service.repository.list_records(record) == []
+
+
+def test_immutable_factory_bytes_survive_numeric_json_database_reformatting(service, factory, monkeypatch):
+    # Binary JSON stores can reformat DOUBLE values on extraction. Reproduce
+    # the verified MySQL boundary without weakening any digest verification.
+    target = getattr(service.repository, 'raw', service.repository)
+    original = target.save_record
+    def reformatted(kind, identity, value):
+        stored = json.loads(json.dumps(value), parse_float=lambda text: float(format(float(text), '.15g')))
+        return original(kind, identity, stored)
+    monkeypatch.setattr(target, 'save_record', reformatted)
+    job = prepare(service, 'database-byte-roundtrip')
+    assert service.get(OWNER, job['job_id'])['program'] == job['program']
+    completed, receipt = complete(service, factory, job)
+    assert service.get(OWNER, job['job_id'])['receipt'] == receipt
+    check = service.inspect(OWNER, job['part_id'], completed['output']['output_digest'])
+    assert check['status'] == 'pass'
+    assert service.get(OWNER, job['job_id'])['inspection']['check_id'] == check['check_id']
 
 
 def test_same_command_with_other_design_or_setup_is_conflict(service):

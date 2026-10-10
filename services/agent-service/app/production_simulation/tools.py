@@ -1,5 +1,5 @@
 """Skill tools bound to an authorized action, target and immutable saved program."""
-from shared.virtual_turning import require
+from shared.virtual_turning import require, VirtualProductionError
 from .context import current_virtual_context
 from .factory import VirtualFactoryError
 
@@ -12,8 +12,16 @@ def _save_receipt(context, job, receipt):
     return context.backend.record_receipt(context.actor, job['job_id'], job['revision'], receipt)
 
 
-def _failed(context, job, error):
+def _failed(context, job, error, explicit_write=False):
     saved = context.backend.record_sync_error(context.actor, job['job_id'], job['revision'], error.code, error.outcome_unknown)
+    if explicit_write and not error.outcome_unknown and error.status < 500:
+        # A known rejection is still read back: some executors persist a pause
+        # before returning 409. Only a validated receipt can clear the pending flag.
+        try: saved = _save_receipt(context, saved, _read_factory(context, saved))
+        except VirtualFactoryError: pass
+        failure = VirtualProductionError(error.code, str(error), error.status)
+        failure.outcome_unknown = saved['sync_status'] == 'outcome_unknown'
+        raise failure from None
     return {**saved, 'error_message': str(error)}
 
 
@@ -44,7 +52,7 @@ def submit_virtual_production(**arguments):
         if error.outcome_unknown:
             try: return _save_receipt(context, job, context.factory.by_command(job['factory_command_id']))
             except VirtualFactoryError: pass
-        return _failed(context, job, error)
+        return _failed(context, job, error, explicit_write=True)
 
 
 def start_virtual_production(**arguments):
@@ -64,7 +72,7 @@ def start_virtual_production(**arguments):
         if error.outcome_unknown:
             try: return _save_receipt(context, job, _read_factory(context, job))
             except VirtualFactoryError: pass
-        return _failed(context, job, error)
+        return _failed(context, job, error, explicit_write=True)
 
 
 def sync_saved_job(context, job):
