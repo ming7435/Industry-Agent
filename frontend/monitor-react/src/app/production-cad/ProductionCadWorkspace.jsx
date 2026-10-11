@@ -61,9 +61,10 @@ function withPartIdentity(record, previous) {
 }
 
 export default function ProductionCadWorkspace() {
-  const [enabled,setEnabled]=useState(false),[mode,setMode]=useState('legacy');
-  useEffect(()=>{const abort=new AbortController();freeCadRequest('/capabilities',{signal:abort.signal}).then(result=>{if(!abort.signal.aborted&&result.enabled===true){setEnabled(true);setMode('document');}}).catch(()=>{});return()=>abort.abort();},[]);
-  return <><nav className="cad-actions" aria-label="建模方式">{enabled&&<><button aria-pressed={mode==='document'} onClick={()=>setMode('document')}>原生文档编辑</button><button aria-pressed={mode==='legacy'} onClick={()=>setMode('legacy')}>中文与规格生成</button></>}</nav>{mode==='document'?<Suspense fallback={<p>正在加载文档工作区…</p>}><DocumentWorkspace/></Suspense>:<LegacyProductionCadWorkspace/>}</>;
+  const [enabled,setEnabled]=useState(false),[mode,setMode]=useState('legacy'),[capabilities,setCapabilities]=useState(null);
+  useEffect(()=>{const abort=new AbortController();freeCadRequest('/capabilities',{signal:abort.signal}).then(result=>{if(!abort.signal.aborted){setCapabilities(result);if(result.enabled===true){setEnabled(true);setMode('document');}}}).catch(()=>{});return()=>abort.abort();},[]);
+  const names={create_primitive:'基础形体',set_primitive_dimensions:'尺寸修改',set_placement:'位置与旋转',set_label:'对象标签',set_visibility:'显示与隐藏',replace_from_spec:'按完整规格重建',publish:'保存发布'};
+  return <>{capabilities?.items?.length>0&&<details className="cad-card"><summary>FreeCAD 功能与接入状态</summary><section aria-label="FreeCAD 能力目录"><p>安装工作台不等于已接入网页。当前内核：{capabilities.version_fingerprint?.slice(0,12)||'未确认'}；AI 验证状态单独显示。</p>{capabilities.items.map(item=><div key={item.capability_id}><strong>{names[item.capability_id]||item.module}</strong> · {item.manual_verified?'已验证可用':!item.installed?'缺少依赖':item.web_adapter?'已接入待验证':'待接入'} · AI {item.ai_verified?'已验证':'未验证'}{item.disabled_reason&&<p>{item.disabled_reason}</p>}</div>)}</section></details>}<nav className="cad-actions" aria-label="建模方式">{enabled&&<><button aria-pressed={mode==='document'} onClick={()=>setMode('document')}>原生文档编辑</button><button aria-pressed={mode==='legacy'} onClick={()=>setMode('legacy')}>中文与规格生成</button></>}</nav>{mode==='document'?<Suspense fallback={<p>正在加载文档工作区…</p>}><DocumentWorkspace/></Suspense>:<LegacyProductionCadWorkspace/>}</>;
 }
 
 function LegacyProductionCadWorkspace() {

@@ -415,59 +415,70 @@ def freecad_mcp(spec):
             error.calls = [{'tool': 'execute_code', 'arguments': arguments, 'result': result}]
             raise error
         try:
-            evidence = json.loads(manifest.read_text(encoding='utf-8'))
-
-            def positive_number(value):
-                return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
-
-            # 业务校验不能依赖 assert，Python 优化模式下也必须执行。
-            if evidence['run_id'] != run_id or evidence['spec'] != normalized or evidence['units'] != 'mm':
-                raise ValueError('实体证据归属或单位不匹配')
-            expected_solids = len(normalized['parts']) if 'parts' in normalized else len(normalized['bim']['walls']) + len(normalized['bim']['slabs']) if 'bim' in normalized else 1
-            if evidence['valid'] is not True or evidence['step_roundtrip'] is not True or type(evidence['solid_count']) is not int or evidence['solid_count'] != expected_solids:
-                raise ValueError('实体或 STEP 验证未通过')
-            if 'parts' in normalized:
-                components = evidence.get('components')
-                if evidence.get('model_kind') != 'assembly' or evidence.get('component_count') != expected_solids or evidence.get('interference_checked') is not True or not isinstance(components, list) or len(components) != expected_solids:
-                    raise ValueError('装配校验未通过')
-                if [p.get('name') for p in components] != [p['name'] for p in normalized['parts']] or any(p.get('solid_count') != 1 or not positive_number(p.get('volume_mm3')) for p in components):
-                    raise ValueError('装配零件证据归属不匹配')
-            if not positive_number(evidence['volume_mm3']):
-                raise ValueError('实体体积无效')
-            if not isinstance(evidence['bounds_mm'], list) or len(evidence['bounds_mm']) != 3 or not all(positive_number(v) for v in evidence['bounds_mm']):
-                raise ValueError('实体包围尺寸无效')
-            operations = normalized.get('operations', [])
-            if len(operations) == 1 and operations[0]['type'] == 'thread':
-                thread = operations[0]
-                expected = [thread['major_diameter']] * 3
-                expected['xyz'.index(thread['axis'])] = thread['length']
-                if any(abs(a-b) > max(1e-6, b*1e-6) for a,b in zip(evidence['bounds_mm'], expected)):
-                    raise ValueError('外螺纹实体尺寸不符合指定大径与长度')
-            files = _requested_files(normalized)
-            _validate_workbench_evidence(normalized, evidence)
-            for name in files:
-                path = artifact_path(run_id, name)
-                if not path.is_file() or not 0 < path.stat().st_size <= 100 * 1024 * 1024:
-                    raise ValueError('导出文件无效')
-                _validate_extra_file(path)
-            if normalized.get('assembly', {}).get('motion'):
-                motion = json.loads(artifact_path(run_id, 'motion.json').read_text(encoding='utf-8'))
-                wanted = normalized['assembly']['motion']
-                if [p['name'] for p in motion['components']] != [p['name'] for p in normalized['parts']] or len(motion['frames']) != wanted['frames']:
-                    raise ValueError('运动数据的零件或帧数不符合请求')
-                if not math.isclose(motion['frames'][-1]['time'], wanted['duration'], abs_tol=1e-8):
-                    raise ValueError('运动时长不符合请求')
-        except (ValueError, KeyError, TypeError, OSError):
-            error = FreeCADModelError('FreeCAD 未生成完整、有效且属于本任务的实体文件。')
+            value = read_validated_result(normalized, run_id)
+        except FreeCADModelError as error:
             error.calls = [{'tool': 'execute_code', 'arguments': arguments, 'result': result}]
-            raise error from None
-        return {'status': 'completed', 'answer': 'FreeCAD 实体及 STEP 回读校验通过，可旋转预览并下载设计文件。',
-            'validation': {k: v for k, v in evidence.items() if k not in {'spec', 'run_id'}},
-            'artifacts': [{'name': name, 'format': name.rsplit('.', 1)[1].lower(), 'url': f'/api/cad/freecad/runs/{run_id}/artifacts/{name}'} for name in files],
-            'calls': [{'tool': 'execute_code', 'arguments': arguments, 'result': result}]}
+            raise
+        return {**value, 'calls': [{'tool': 'execute_code', 'arguments': arguments, 'result': result}]}
     finally:
         _execution_lock.release()
 
+
+
+
+def read_validated_result(normalized, run_id):
+    """Read original terminal evidence only; shared by normal replies and durable recovery."""
+    normalized = validate_spec(normalized)
+    manifest = artifact_path(run_id, 'manifest.json')
+    try:
+        evidence = json.loads(manifest.read_text(encoding='utf-8'))
+
+        def positive_number(value):
+            return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+
+        # 业务校验不能依赖 assert，Python 优化模式下也必须执行。
+        if evidence['run_id'] != run_id or evidence['spec'] != normalized or evidence['units'] != 'mm':
+            raise ValueError('实体证据归属或单位不匹配')
+        expected_solids = len(normalized['parts']) if 'parts' in normalized else len(normalized['bim']['walls']) + len(normalized['bim']['slabs']) if 'bim' in normalized else 1
+        if evidence['valid'] is not True or evidence['step_roundtrip'] is not True or type(evidence['solid_count']) is not int or evidence['solid_count'] != expected_solids:
+            raise ValueError('实体或 STEP 验证未通过')
+        if 'parts' in normalized:
+            components = evidence.get('components')
+            if evidence.get('model_kind') != 'assembly' or evidence.get('component_count') != expected_solids or evidence.get('interference_checked') is not True or not isinstance(components, list) or len(components) != expected_solids:
+                raise ValueError('装配校验未通过')
+            if [p.get('name') for p in components] != [p['name'] for p in normalized['parts']] or any(p.get('solid_count') != 1 or not positive_number(p.get('volume_mm3')) for p in components):
+                raise ValueError('装配零件证据归属不匹配')
+        if not positive_number(evidence['volume_mm3']):
+            raise ValueError('实体体积无效')
+        if not isinstance(evidence['bounds_mm'], list) or len(evidence['bounds_mm']) != 3 or not all(positive_number(v) for v in evidence['bounds_mm']):
+            raise ValueError('实体包围尺寸无效')
+        operations = normalized.get('operations', [])
+        if len(operations) == 1 and operations[0]['type'] == 'thread':
+            thread = operations[0]
+            expected = [thread['major_diameter']] * 3
+            expected['xyz'.index(thread['axis'])] = thread['length']
+            if any(abs(a-b) > max(1e-6, b*1e-6) for a,b in zip(evidence['bounds_mm'], expected)):
+                raise ValueError('外螺纹实体尺寸不符合指定大径与长度')
+        files = _requested_files(normalized)
+        _validate_workbench_evidence(normalized, evidence)
+        for name in files:
+            path = artifact_path(run_id, name)
+            if not path.is_file() or not 0 < path.stat().st_size <= 100 * 1024 * 1024:
+                raise ValueError('导出文件无效')
+            _validate_extra_file(path)
+        if normalized.get('assembly', {}).get('motion'):
+            motion = json.loads(artifact_path(run_id, 'motion.json').read_text(encoding='utf-8'))
+            wanted = normalized['assembly']['motion']
+            if [p['name'] for p in motion['components']] != [p['name'] for p in normalized['parts']] or len(motion['frames']) != wanted['frames']:
+                raise ValueError('运动数据的零件或帧数不符合请求')
+            if not math.isclose(motion['frames'][-1]['time'], wanted['duration'], abs_tol=1e-8):
+                raise ValueError('运动时长不符合请求')
+    except (ValueError, KeyError, TypeError, OSError):
+        error = FreeCADModelError('FreeCAD 未生成完整、有效且属于本任务的实体文件。')
+        raise error from None
+    return {'status': 'completed', 'answer': 'FreeCAD 实体及 STEP 回读校验通过，可旋转预览并下载设计文件。',
+        'validation': {k: v for k, v in evidence.items() if k not in {'spec', 'run_id'}},
+        'artifacts': [{'name': name, 'format': name.rsplit('.', 1)[1].lower(), 'url': f'/api/cad/freecad/runs/{run_id}/artifacts/{name}'} for name in files]}
 
 def _requested_files(spec):
     files = list(_FILES)

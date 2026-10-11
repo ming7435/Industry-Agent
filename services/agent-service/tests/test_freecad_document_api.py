@@ -61,7 +61,8 @@ def test_copy_does_not_claim_legacy_owner(tmp_path,monkeypatch):
     calls=[]
     head=DocumentHead(document_id='DOC-copy',owner_user_id='USER-a',part_name='底板',part_number='00123',revision=0,created_at=0,updated_at=0)
     native=tmp_path/'source.FCStd';native.write_bytes(b'trusted-source-document')
-    monkeypatch.setattr(freecad_mcp,'artifact_path',lambda *_:native)
+    auxiliary=tmp_path/'unfold.svg';auxiliary.write_text('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L10 10"/></svg>',encoding='utf-8')
+    monkeypatch.setattr(freecad_mcp,'artifact_path',lambda _,name:auxiliary if name=='unfold.svg' else native)
     class Gateway:
         backend=None
         def call(self,operation,**body):
@@ -69,15 +70,19 @@ def test_copy_does_not_claim_legacy_owner(tmp_path,monkeypatch):
             if operation in {'create_document','get_document'}: return head.model_dump(mode='json')
             if operation=='claim_import': return {}
             raise AssertionError(operation)
-    source=dict(run_id='FC-'+'a'*64,status='completed',spec={'units':'mm','operations':[{'type':'box','mode':'add','length':40,'width':20,'height':10,'position':[0,0,0]}]},
+    source=dict(run_id='FC-'+'a'*64,status='completed',artifacts=[{'name':'unfold.svg'}],spec={'units':'mm','operations':[{'type':'box','mode':'add','length':40,'width':20,'height':10,'position':[0,0,0]}]},
                 validation={'valid':True,'step_roundtrip':True,'solid_count':1,'product_names':['Model']})
     app=CadDocumentApplication(Gateway,ArtifactStore(tmp_path/'managed'),lambda _:source)
-    app.create('USER-a',dict(request_id='r',part_name='底板',part_number='00123',source_run_id=source['run_id']))
+    source['part_number']='00456'
+    app.create('USER-a',dict(request_id='r',part_name='底板',part_number='',source_run_id=source['run_id']))
     assert native.read_bytes()==b'trusted-source-document'
     assert not any('owner' in op for op,_ in calls)
+    assert next(body for op,body in calls if op=='create_document')['part_number']=='00456'
     imported=next(body for op,body in calls if op=='claim_import')
     assert imported['document_id']=='DOC-copy' and imported['actor_id']=='USER-a'
     assert imported['source']['native_artifact']['name']=='model.FCStd'
+    assert imported['source']['source_artifacts'][0]['name']=='unfold.svg'
+    assert app.artifacts.entry_path(imported['source']['source_artifacts'][0]).read_bytes()==auxiliary.read_bytes()
 
 
 def test_command_polling_has_explicit_identity_even_without_envelope(monkeypatch):

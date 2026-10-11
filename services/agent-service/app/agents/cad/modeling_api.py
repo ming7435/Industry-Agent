@@ -34,7 +34,8 @@ def get_freecad_run_record(request: Request, run_id: str):
     if not re.fullmatch(r'FC-[a-f0-9]{64}', run_id):
         raise HTTPException(404, '建模版本不存在或已过期')
     from app.cad_documents import documents_enabled
-    if documents_enabled():
+    # Disabling editing never disables durable reads. Backend-less legacy/offline mode has no document store.
+    if documents_enabled() or os.getenv('BACKEND_SERVICE_BASE_URL','').strip():
         from app.cad_documents.publishing import read_published_run
         published = read_published_run(request, run_id)
         if published is not None:

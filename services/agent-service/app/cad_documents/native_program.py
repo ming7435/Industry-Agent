@@ -1,5 +1,6 @@
 """Only server-owned templates run in the GUI thread; JSON supplies typed data."""
 import json
+from hashlib import sha256
 from pathlib import Path
 from shared.freecad_documents import NativeJob, PRIMITIVE_TYPES, DIMENSIONS, parse_command
 
@@ -28,6 +29,13 @@ def validate_object_command(command, snapshot):
 
 
 def render_document_program(job: NativeJob, directory: Path, source_path: Path | None):
+    if source_path is not None:
+        # FreeCAD reuses already-open filenames. Always edit a fresh private file, never the saved revision.
+        content=source_path.read_bytes();candidate=directory/'.source.FCStd'
+        if candidate.is_symlink():raise ValueError('候选原生文件不能为链接')
+        if not candidate.exists():candidate.write_bytes(content)
+        if sha256(candidate.read_bytes()).digest()!=sha256(content).digest():raise ValueError('候选来源摘要不一致')
+        source_path=candidate
     if job.envelope is not None:
         job=job.model_copy(update={'envelope':parse_command(job.envelope.model_dump(mode='json'))})
     spec=(job.envelope.parameters.spec if job.envelope and job.envelope.command_type=='replace_from_spec'
@@ -38,6 +46,16 @@ def render_document_program(job: NativeJob, directory: Path, source_path: Path |
         from app.tools.cad.freecad_spec_kernel import kernel_source
         spec=validate_spec(spec)
         kernel=kernel_source(spec)
+    if spec and (job.job_kind in {'import','publish'} or job.envelope and job.envelope.command_type in {'set_label','set_visibility'}):
+        from .artifacts import ArtifactStore
+        store=ArtifactStore(directory.parent)
+        sources=(job.source.get('snapshot') or {}).get('artifacts',[])+job.source.get('source_artifacts',[])
+        for entry in sources:
+            if entry['name'] not in {'drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'}:continue
+            content=store.entry_path(entry).read_bytes();target=directory/entry['name']
+            if target.is_symlink():raise ValueError('附属文件不能为链接')
+            if not target.exists():target.write_bytes(content)
+            if sha256(target.read_bytes()).digest()!=sha256(content).digest():raise ValueError('附属文件摘要不一致')
     data=job.model_dump(mode='json')
     if spec is not None and job.envelope and job.envelope.command_type=='replace_from_spec': data['envelope']['parameters']['spec']=spec
     return 'import FreeCAD as App\nimport Part, Mesh, json, math, os, hashlib, uuid\nfrom pathlib import Path\n'+kernel+'\n'+(
@@ -119,11 +137,14 @@ receipt={'job_id':job['job_id'],'input_digest':job['input_digest'],'state':'fail
          'artifacts':[],'validation':{},'result':{},'error_code':None}
 try:
     previous=job.get('source',{}).get('snapshot') or {}
+    if source_path and any(getattr(o,'FileName','')==source_path for o in getattr(App,'listDocuments',lambda:{})().values()):
+        raise ValueError('candidate already open')
     doc=App.openDocument(source_path) if source_path else App.newDocument('Industry_'+job['job_id'][4:20].replace('-',''))
     old_ids=[object_uuid(o) for o in doc.Objects]
     roots=list(previous.get('product_root_ids',[]))
     spec=previous.get('source_spec')
-    extra={}
+    source_validation=job.get('source',{}).get('source_validation') or {}
+    extra=dict(source_validation if job['job_kind']=='import' else previous.get('validation') or source_validation)
     envelope=job.get('envelope')
     if job['job_kind']=='import':
         for obj in doc.Objects: object_uuid(obj,True)
@@ -159,6 +180,13 @@ try:
                 obj.Placement=App.Placement(App.Vector(*params['position']),App.Rotation(doc_axis,angle)); spec=None
             else: raise ValueError('unsupported document command')
     doc.recompute()
+    # Generate requested native workbench objects before taking the complete tree snapshot.
+    if spec and 'drawing' in spec and not ((out/'drawing.svg').is_file() and (out/'drawing.pdf').is_file()):
+        from_objects=[o for o in doc.Objects if object_uuid(o) in roots]
+        extra.update(make_drawing(doc,from_objects,spec['drawing'],out))
+    if spec and 'assembly' in spec and envelope and envelope['command_type']=='replace_from_spec':
+        finalize_workbenches(doc,[o for o in doc.Objects if object_uuid(o) in roots],spec)
+    doc.recompute()
     if len(doc.Objects)>500: raise ValueError('object resource limit')
     entries=[]; snapshots=[]
     for obj in doc.Objects:
@@ -171,6 +199,20 @@ try:
             props.extend([{'name':'position','type':'vector','value':[position.x,position.y,position.z],'unit':'mm','editable':bool(fields)},
                           {'name':'rotation','type':'rotation','value':{'axis':[rot.Axis.x,rot.Axis.y,rot.Axis.z],'angle':math.degrees(rot.Angle)},'unit':'deg','editable':bool(fields)}])
         props.append({'name':'label','type':'string','value':obj.Label,'unit':'','editable':True})
+        for name in sorted(obj.PropertiesList):
+            if name in {'Label','Placement','IndustryObjectId','Shape'}:continue
+            try:
+                value=getattr(obj,name);unit=''
+                if hasattr(value,'Value') and hasattr(value,'Unit'):value,unit=float(value.Value),str(value.Unit)
+                elif hasattr(value,'Name') and hasattr(value,'Document'):value=object_uuid(value)
+                elif hasattr(value,'x') and hasattr(value,'y') and hasattr(value,'z'):value=[value.x,value.y,value.z]
+                elif isinstance(value,(tuple,list)):
+                    if len(value)>100:continue
+                    value=[object_uuid(v) if hasattr(v,'Name') and hasattr(v,'Document') else v for v in value]
+                elif not isinstance(value,(str,int,float,bool)):continue
+                json.dumps(value,allow_nan=False)
+                props.append({'name':'native.'+name,'type':getattr(obj,'getTypeIdOfProperty',lambda _:'native')(name),'value':value,'unit':unit,'editable':False})
+            except (ValueError,TypeError,AttributeError):continue
         geometry={}
         shape=getattr(obj,'Shape',None)
         if shape is not None and not shape.isNull():
@@ -187,18 +229,19 @@ try:
                 entries.append(digest_file(curve)); geometry={'curves':curve.name}
         edits=['set_label','set_visibility']+(['set_primitive_dimensions','set_placement'] if fields else [])
         snapshots.append({'object_id':oid,'name':obj.Name,'label':obj.Label,'type_id':obj.TypeId,
-                          'parent_ids':[object_uuid(o) for o in obj.InList], 'dependency_ids':[object_uuid(o) for o in obj.OutList],
+                          'parent_ids':[object_uuid(o) for o in obj.InList if obj in getattr(o,'Group',[])], 'dependency_ids':[object_uuid(o) for o in obj.OutList],
                           'visible':bool(obj.ViewObject.Visibility),'properties':props,'geometry':geometry,
                           'editable_commands':edits,'read_only_reason':'' if fields else '该对象由规格或工作台约束生成，尺寸需修改规格重新生成'})
     validation=export_products(doc,roots,spec)
     if job['job_kind']=='publish' and validation['solid_count']==0: raise ValueError('empty document cannot publish')
-    if spec and 'drawing' in spec:
-        from_objects=[o for o in doc.Objects if object_uuid(o) in roots]
-        extra.update(make_drawing(doc,from_objects,spec['drawing'],out))
+    if spec and any((out/name).exists() for name in ('drawing.svg','unfold.svg','motion.json')) and job['job_kind']!='edit':
+        # Revision zero is the empty destination, not the imported source geometry.
+        original=source_validation if job['job_kind']=='import' else previous.get('validation') or source_validation
+        if original and (original.get('solid_count')!=validation['solid_count'] or abs(original.get('volume_mm3',0)-validation['volume_mm3'])>max(1e-6,validation['volume_mm3']*1e-7)):
+            raise ValueError('copied workbench geometry changed: '+str((original.get('solid_count'),original.get('volume_mm3'),validation['solid_count'],validation['volume_mm3'])))
     for key in ('drawing','assembly','bim','sheet_metal'):
         if key in extra: validation[key]=extra[key]
         elif key in (previous.get('validation') or {}): validation[key]=previous['validation'][key]
-    if spec and 'assembly' in spec: finalize_workbenches(doc,[o for o in doc.Objects if object_uuid(o) in roots],spec)
     doc.saveAs(str(out/'model.FCStd'))
     for name in ('model.FCStd','model.step','model.stl','drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'):
         path=out/name
@@ -208,7 +251,7 @@ try:
               'objects':snapshots,'product_root_ids':roots,'source_spec':spec,'validation':validation,'artifacts':entries}
     receipt.update(state='completed',snapshot=snapshot,artifacts=entries,validation=validation)
 except Exception as error:
-    receipt.update(error_code='native_validation_failed',result={'message':'原生建模或导出验证失败；最后有效修订未改变','error_type':type(error).__name__})
+    receipt.update(error_code='native_validation_failed',result={'message':'原生建模或导出验证失败；最后有效修订未改变','error_type':type(error).__name__,'error_detail':str(error)[:300]})
 finally:
     if doc is not None: App.closeDocument(doc.Name)
 temporary=out/'receipt.tmp'

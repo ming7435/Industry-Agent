@@ -230,6 +230,13 @@ def cad_document_worker_service(env):
     return ('cad-document-worker',[sys.executable,str(PROJECT_ROOT/'scripts/freecad_document_worker.py')],PROJECT_ROOT,PROJECT_ROOT)
 
 
+def unexpected_service_exit(processes):
+    for name,process in processes:
+        code=process.poll()
+        if code is not None and not (name=='cad-document-worker' and code==0):return name,code
+    return None
+
+
 def main() -> int:
     python = sys.executable
     services = [
@@ -337,12 +344,12 @@ def main() -> int:
                 print(f"{name} 健康接口已可用。")
 
         while True:
-            for name, process in processes:
-                return_code = process.poll()
-                if return_code is not None:
-                    print(f"{name} 已退出，退出码：{return_code}")
-                    _terminate(processes)
-                    return return_code
+            exited=unexpected_service_exit(processes)
+            if exited:
+                name,return_code=exited
+                print(f"{name} 已退出，退出码：{return_code}")
+                _terminate(processes)
+                return return_code
             time.sleep(1)
     except KeyboardInterrupt:
         _terminate(processes)

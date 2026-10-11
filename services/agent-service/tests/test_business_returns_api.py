@@ -27,11 +27,15 @@ def business_runtime(tmp_path, monkeypatch):
     backend_type = importlib.import_module(name + '.workorder.service').BackendBusinessService
     repository = importlib.import_module(name + '.workorder.repository').SQLiteRepository(str(tmp_path / 'backend.db'))
     backend = backend_type(repository=repository, team_service=SimpleNamespace())
+    cad_repository = importlib.import_module(name + '.cad_documents.repository').CadDocumentRepository(sqlite_path=tmp_path / 'cad.db')
+    cad_service = importlib.import_module(name + '.cad_documents.service').CadDocumentService(cad_repository)
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             try:
-                if self.path.endswith('/session/resolve'):
+                if self.path.startswith('/internal/cad/documents/'):
+                    result = cad_service.call(self.path.rsplit('/', 1)[-1], body)
+                elif self.path.endswith('/session/resolve'):
                     result = {'user': {'user_id':'U-1','role':'technician'}}
                 elif hasattr(backend, body['tool']):
                     result = getattr(backend, body['tool'])(**body['arguments'])

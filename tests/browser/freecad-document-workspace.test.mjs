@@ -15,7 +15,7 @@ before(async()=>{
 });
 after(async()=>{await browser?.close();if(server) await new Promise(r=>server.close(r));});
 const object=(id,label,type='Part::Box')=>({object_id:id,name:id,label,type_id:type,visible:true,parent_ids:[],dependency_ids:[],geometry:{},read_only_reason:type==='Part::Box'?'':'受规格约束，尺寸只读',editable_commands:type==='Part::Box'?['set_label','set_visibility','set_primitive_dimensions','set_placement']:['set_label','set_visibility'],properties:[{name:'length',value:40,unit:'mm',editable:type==='Part::Box'},{name:'width',value:20,unit:'mm',editable:type==='Part::Box'},{name:'height',value:10,unit:'mm',editable:type==='Part::Box'}]});
-async function setup({unknown=false}={}) {
+async function setup({unknown=false,delayedRefresh=false}={}) {
   const context=await browser.newContext({viewport:{width:1000,height:1000}}),page=await context.newPage();page.setDefaultTimeout(7000);
   let head={document_id:'DOC-a',owner_user_id:'USER-a',part_name:'安装底板',part_number:'00123',revision:1,published_version:null,published_revision:null};
   let snapshot={document_id:'DOC-a',revision:1,objects:[object('OBJ-a','孔'),object('OBJ-b','孔'),object('OBJ-read','齿轮','PartDesign::Feature')],product_root_ids:['OBJ-a','OBJ-b','OBJ-read'],artifacts:[]};
@@ -31,7 +31,13 @@ async function setup({unknown=false}={}) {
       } else if(path.endsWith('/documents')) {head={...head,document_id:'DOC-new',part_name:body.part_name,revision:0};snapshot={...snapshot,document_id:'DOC-new',revision:0,objects:[],product_root_ids:[]};value=head;}
     } else if(path.endsWith('/documents')) value={items:[head],next_cursor:''};
     else if(path.includes('/commands/')) value=commands.get(path.split('/').at(-1))||{command_id:path.split('/').at(-1),state:'outcome_unknown'};
-    else if(path.includes('/snapshots/')) value=snapshot;
+    else if(path.includes('/snapshots/')) {
+      value=snapshot;
+      if(delayedRefresh&&posts.some(p=>p.path.endsWith('/commands'))) {
+        setTimeout(()=>page.evaluate(()=>window.dispatchEvent(new Event('focus'))).catch(()=>{}),10);
+        return new Promise(resolve=>setTimeout(()=>resolve(route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)})),60));
+      }
+    }
     else if(path.endsWith('/designs')) value={items:[],next_cursor:''};
     else value=head;
     return route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)});
@@ -62,5 +68,15 @@ test('creating an owned document preserves leading-zero number and does not gene
     await page.getByText('新建文档 / 复制历史设计',{exact:true}).click();
     await page.getByLabel('新文档零件名称').fill('新零件');await page.getByLabel('新文档零件编号').fill('00456');await page.getByRole('button',{name:'创建个人文档',exact:true}).click();
     await page.getByText('空文档，请添加形体或确认中文建模提案',{exact:false}).waitFor();assert.equal(posts.at(-1).part_number,'00456');assert.equal(posts.length,1);
+  } finally {await context.close();}
+});
+test('focus refresh cannot repeatedly abort an in-flight native snapshot or leave completed edits busy',async()=>{
+  const {context,page}=await setup({delayedRefresh:true});try {
+    await page.getByRole('treeitem',{name:/孔.*OBJ-b/}).click();
+    await page.getByLabel('长度（mm）',{exact:true}).fill('62');
+    await page.getByRole('button',{name:'应用尺寸',exact:true}).click();
+    await page.getByText('工作修订 2',{exact:false}).waitFor();
+    assert.equal(await page.getByLabel('长度（mm）',{exact:true}).inputValue(),'62');
+    assert.equal(await page.getByRole('button',{name:'保存发布版本',exact:true}).isDisabled(),false);
   } finally {await context.close();}
 });

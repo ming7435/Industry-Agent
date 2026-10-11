@@ -1,4 +1,5 @@
 import importlib
+import pytest
 from shared.freecad_documents import DocumentHead,DocumentSnapshot
 
 
@@ -23,3 +24,12 @@ def test_proposal_does_not_mutate():
     assert result['command']['command_type']=='create_primitive'
     assert result['command']['parameters']==dict(primitive_type='box',length=40,width=20,height=10)
     assert snapshot.objects==[] and head.revision==0
+@pytest.mark.parametrize('questions',['请补充尺寸',123,{},[''],[123]])
+def test_malformed_model_questions_do_not_crash_browser(questions):
+    import json
+    from app.cad_documents.proposal import resolve_freecad_spec
+    class Model:
+        available=True;timeout=30
+        def chat(self,*_):return {'choices':[{'message':{'content':json.dumps({'status':'needs_input','questions':questions})}}]}
+    value=resolve_freecad_spec('帮我设计一个零件',Model())
+    assert isinstance(value['questions'],list) and value['questions'] and all(isinstance(q,str) and q for q in value['questions'])

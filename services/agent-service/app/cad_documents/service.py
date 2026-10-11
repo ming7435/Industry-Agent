@@ -25,6 +25,8 @@ class CadDocumentApplication:
             source=self.source_reader(source_id)
             if source.get('status')!='completed' or (source.get('validation') or {}).get('valid') is not True:
                 raise CadDocumentError('source_invalid','来源版本没有通过实体校验',422)
+            inherited=source.get('part_number','')
+            body['part_number']=inherited if re.fullmatch(r'[0-9]{5}',inherited or '') else str(int(source_id[-8:],16)%100000).zfill(5)
         head=DocumentHead.model_validate(self.gateway.call('create_document',actor_id=actor_id,**body))
         if source and head.revision==0:
             self._import_source(actor_id,head,body['request_id'],source)
@@ -53,7 +55,20 @@ class CadDocumentApplication:
         if sha256(target.read_bytes()).hexdigest()!=sha256(content).hexdigest():
             raise CadDocumentError('source_conflict','已存在的副本来源不一致')
         entry={'job_id':source_job,'name':'model.FCStd','size':len(content),'sha256':sha256(content).hexdigest()}
-        payload={'native_artifact':entry,'spec':spec,'product_names':names,'source_validation':source['validation']}
+        auxiliary=[]
+        from app.tools.cad.freecad_mcp import _validate_extra_file
+        for original in source.get('artifacts',[]):
+            filename=original['name']
+            if filename not in {'drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'}:continue
+            auxiliary_path=self.artifacts.entry_path(original) if source.get('document_id') else artifact_path(source['run_id'],filename)
+            if auxiliary_path.is_symlink() or not 0<auxiliary_path.stat().st_size<=100*1024*1024:
+                raise CadDocumentError('source_invalid','来源附属文件缺失或过期',422)
+            _validate_extra_file(auxiliary_path)
+            content=auxiliary_path.read_bytes();target=self.artifacts.job_directory(source_job)/filename
+            if not target.exists():target.write_bytes(content)
+            if sha256(target.read_bytes()).digest()!=sha256(content).digest():raise CadDocumentError('source_conflict','附属文件来源不一致')
+            auxiliary.append(dict(job_id=source_job,name=filename,size=len(content),sha256=sha256(content).hexdigest()))
+        payload={'native_artifact':entry,'spec':spec,'product_names':names,'source_validation':source['validation'],'source_artifacts':auxiliary}
         self.gateway.call('claim_import',actor_id=actor,document_id=head.document_id,
                           command_id='CMD-import-'+canonical_digest(request_id)[:32],source=payload)
 

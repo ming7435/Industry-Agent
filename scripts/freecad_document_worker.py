@@ -13,6 +13,7 @@ sys.path.insert(0,str(ROOT/'services/agent-service'))
 def main():
     from app.cad_documents import documents_enabled
     if not documents_enabled(): return 0
+    os.environ.setdefault('FREECAD_REQUIRE_MANAGED_RUNTIME','true')
     from app.cad_documents.gateway import Gateway
     from app.cad_documents.coordinator import CadDocumentWorker
     from app.cad_documents.artifacts import ArtifactStore

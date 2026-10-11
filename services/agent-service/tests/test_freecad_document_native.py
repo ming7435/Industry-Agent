@@ -59,3 +59,33 @@ def test_hidden_and_construction_objects_are_distinct(tmp_path):
     assert b.snapshot.objects[0].visible is False
     assert b.snapshot.product_root_ids==a.snapshot.product_root_ids
     assert b.validation['volume_mm3']==8000
+def test_candidate_never_opens_the_prior_published_path(tmp_path):
+    from shared.freecad_documents import NativeJob
+    from app.cad_documents.native_program import render_document_program
+    source=tmp_path/'previous.FCStd';source.write_bytes(b'original-native-bytes')
+    candidate=tmp_path/'candidate';candidate.mkdir()
+    job=NativeJob(job_id='JOB-copy',input_digest='a'*64,job_kind='publish',owner_user_id='USER-a',document_id='DOC-a',expected_revision=1,envelope=None)
+    code=render_document_program(job,candidate,source)
+    assert str(source) not in code
+    assert (candidate/'.source.FCStd').read_bytes()==source.read_bytes()
+
+
+def test_import_uses_source_proof_not_empty_destination_revision(tmp_path):
+    from app.cad_documents.artifacts import ArtifactStore
+    from app.cad_documents.native_program import render_document_program
+    from hashlib import sha256
+    source=run(tmp_path,'create_primitive',dict(primitive_type='box',length=40,width=20,height=10))
+    store=ArtifactStore(tmp_path);source_entry=next(a for a in source.artifacts if a['name']=='model.FCStd')
+    auxiliary=[]
+    for name,content in [('drawing.svg',b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M 0 0 L 10 10"/></svg>'),('drawing.pdf',b'%PDF-1.4\n%%EOF')]:
+        (store.job_directory(source_entry['job_id'])/name).write_bytes(content)
+        auxiliary.append(dict(job_id=source_entry['job_id'],name=name,size=len(content),sha256=sha256(content).hexdigest()))
+    job=NativeJob(job_id='JOB-'+uuid4().hex,input_digest='a'*64,job_kind='import',owner_user_id='USER-a',document_id=DOC,expected_revision=0,envelope=None,
+        source=dict(snapshot={'validation':{'valid':True,'solid_count':0}},native_artifact=source_entry,
+                    product_names=[source.snapshot.objects[0].name],source_validation={**source.validation,'drawing':{'verified':True}},source_artifacts=auxiliary,
+                    spec={'units':'mm','operations':[{'type':'box','mode':'add','length':40,'width':20,'height':10,'position':[0,0,0]}],'drawing':{'projection':'third_angle','scale':1,'section':None}}))
+    FakeKernel().call_tool('execute_code',{'code':render_document_program(job,store.job_directory(job.job_id),store.entry_path(source_entry))})
+    receipt=store.read_receipt(job.job_id)
+    assert receipt.state=='completed',receipt.result
+    assert receipt.validation['volume_mm3']==8000
+    assert receipt.validation['drawing']['verified'] is True

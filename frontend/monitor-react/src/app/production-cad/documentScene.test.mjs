@@ -21,3 +21,11 @@ test('mismatched artifact/object identity and non-finite geometry are rejected',
   await assert.rejects(buildDocumentScene({...snapshot,objects:[{...obj('OBJ-a'),geometry:{mesh:'OBJ-b.stl'}}]},async()=>new THREE.BoxGeometry()),/身份/);
   await assert.rejects(buildDocumentScene(snapshot,async()=>{const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute([NaN,0,0],3));return g;}),/网格/);
 });
+
+test('hidden containment groups hide descendants without hiding dependency consumers',async()=>{
+  const objects=[{...obj('OBJ-group',false),visible:false}, {...obj('OBJ-a'),parent_ids:['OBJ-group']}, {...obj('OBJ-b'),dependency_ids:['OBJ-group']}];
+  const scene=await buildDocumentScene({...snapshot,objects},async()=>new THREE.BoxGeometry());
+  assert.equal(scene.objectMap.get('OBJ-a').visible,false);
+  assert.equal(objectIdFromIntersection({object:scene.objectMap.get('OBJ-a')}),null);
+  assert.equal(scene.objectMap.get('OBJ-b').visible,true);scene.dispose();
+});

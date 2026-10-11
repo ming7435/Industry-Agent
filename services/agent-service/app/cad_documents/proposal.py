@@ -23,7 +23,11 @@ def resolve_freecad_spec(prompt,model,explicit_spec=None):
         if not isinstance(value,dict) or set(value)-{'status','spec','questions'}:
             from app.tools.cad.freecad_mcp import FreeCADModelError
             raise FreeCADModelError('模型只允许返回严格规格或补充问题，不接受代码或额外字段')
-        if value.get('status')=='needs_input': return {'status':'needs_input','questions':value.get('questions') or ['请提供明确的形状、单位和全部尺寸']}
+        if value.get('status')=='needs_input':
+            questions=value.get('questions')
+            if not isinstance(questions,list) or not 1<=len(questions)<=10 or any(not isinstance(q,str) or not q.strip() or len(q)>500 for q in questions):
+                questions=['请提供明确的形状、单位和全部尺寸']
+            return {'status':'needs_input','questions':questions}
         spec=validate_spec(value.get('spec'))
         if _dimensions_are_explicit(spec,prompt): return {'status':'ready','spec':spec}
     return {'status':'needs_input','questions':['请提供明确的形状、毫米单位、完整尺寸和特征位置；不会用示例尺寸补齐。']}

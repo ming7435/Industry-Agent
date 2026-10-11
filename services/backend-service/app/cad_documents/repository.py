@@ -292,7 +292,7 @@ class CadDocumentRepository:
             if record.input_digest!=receipt.input_digest or value['kind']!='publish': raise CadDocumentError('receipt_identity','发布收据身份无效')
             if record.state=='completed': return record.model_dump(mode='json')
             engine=db.execute('SELECT * FROM cad_executor_state WHERE singleton=1').one()
-            if engine['job_id']!=receipt.job_id: raise CadDocumentError('executor_conflict','发布不属于活动任务')
+            if engine['job_id']!=receipt.job_id or engine['worker_id']!=worker_id: raise CadDocumentError('executor_conflict','发布不属于活动任务')
             head=self._head(db,record.owner_user_id,row['document_id'])
             snapshot=receipt.snapshot
             expected_id='FC-'+canonical_digest([record.owner_user_id,head.document_id,head.revision])
@@ -341,6 +341,17 @@ class CadDocumentRepository:
             if not row: raise CadDocumentError('job_not_found','CAD作业不存在',404)
             return CommandRecord.model_validate(json.loads(row['payload'])['record'])
 
+    def native_job(self,job_id):
+        with self.transaction() as db:
+            row=db.execute('SELECT * FROM cad_commands WHERE job_id=?',[job_id]).one()
+            if not row:raise CadDocumentError('job_not_found','CAD作业不存在',404)
+            value=json.loads(row['payload'])
+            if value.get('native_job'):return NativeJob.model_validate(value['native_job'])
+            record=CommandRecord.model_validate(value['record'])
+            expected=record.envelope.expected_revision if record.envelope else None
+            return NativeJob(job_id=job_id,input_digest=record.input_digest,job_kind=value['kind'],owner_user_id=record.owner_user_id,
+                             document_id=row['document_id'],expected_revision=expected,envelope=record.envelope,source=value.get('source') or {})
+
     def engine_state(self):
         with self.transaction() as db:
             return db.execute('SELECT * FROM cad_executor_state WHERE singleton=1').one()
@@ -365,12 +376,14 @@ class CadDocumentRepository:
                 source['snapshot']=json.loads(saved['payload'])
             record.state='running'
             value['record']=record.model_dump(mode='json')
+            job=NativeJob(job_id=record.job_id,input_digest=record.input_digest,job_kind=value['kind'],
+                          owner_user_id=record.owner_user_id,document_id=row['document_id'],
+                          expected_revision=expected,envelope=record.envelope,source=source)
+            value['native_job']=job.model_dump(mode='json')
             db.execute('UPDATE cad_commands SET state=?,payload=? WHERE job_id=?',['running',encoded(value),record.job_id])
             db.execute('UPDATE cad_executor_state SET job_id=?,worker_id=?,state=?,heartbeat=? WHERE singleton=1',
                        [record.job_id,worker_id,'running',time.time()])
-            return NativeJob(job_id=record.job_id,input_digest=record.input_digest,job_kind=value['kind'],
-                             owner_user_id=record.owner_user_id,document_id=row['document_id'],
-                             expected_revision=expected,envelope=record.envelope,source=source)
+            return job
 
     def _finish(self, db, row, value, record, unknown=False):
         value['record']=record.model_dump(mode='json')
@@ -396,7 +409,7 @@ class CadDocumentRepository:
                 raise CadDocumentError('receipt_identity','收据不属于原始命令')
             if record.state in {'completed','failed'}: return record
             engine=db.execute('SELECT * FROM cad_executor_state WHERE singleton=1').one()
-            if engine['job_id']!=receipt.job_id:
+            if engine['job_id']!=receipt.job_id or engine['worker_id']!=worker_id:
                 raise CadDocumentError('executor_conflict','收据与活动执行不一致')
             if receipt.state=='failed':
                 record.state,record.error_code,record.result='failed',receipt.error_code,receipt.result

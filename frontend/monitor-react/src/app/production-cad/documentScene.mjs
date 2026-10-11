@@ -10,6 +10,12 @@ export async function buildDocumentScene(snapshot,loadGeometry,signal) {
   const dispose=()=>{for(const resource of resources)resource.dispose?.();resources.clear();root.clear();objectMap.clear();};
   try {
     if(!/^DOC-[\w-]+$/.test(snapshot.document_id)||!Number.isInteger(snapshot.revision))throw new Error('快照身份无效');
+    const objects=new Map(snapshot.objects.map(o=>[o.object_id,o]));
+    const visible=(object,seen=new Set())=>{
+      if(object.visible===false||seen.has(object.object_id))return false;
+      const path=new Set(seen);path.add(object.object_id);
+      return (object.parent_ids||[]).every(id=>!objects.has(id)||visible(objects.get(id),path));
+    };
     for(const object of snapshot.objects) {
       signal?.throwIfAborted();
       const name=object.geometry?.mesh||object.geometry?.curves;if(!name)continue;
@@ -30,7 +36,7 @@ export async function buildDocumentScene(snapshot,loadGeometry,signal) {
         material=new THREE.MeshStandardMaterial({color:0xb3b8b8,metalness:.35,roughness:.45,side:THREE.DoubleSide});resources.add(material);mesh=new THREE.Mesh(geometry,material);
       }
       geometry.computeBoundingBox();if(!geometry.boundingBox||geometry.boundingBox.isEmpty())throw new Error('几何范围无效');
-      mesh.visible=object.visible;mesh.userData.objectId=object.object_id;root.add(mesh);objectMap.set(object.object_id,mesh);
+      mesh.visible=visible(object);mesh.userData.objectId=object.object_id;root.add(mesh);objectMap.set(object.object_id,mesh);
     }
     const bounds=new THREE.Box3();for(const mesh of objectMap.values())if(mesh.visible)bounds.union(mesh.geometry.boundingBox);
     // Only the complete document is centered. Native component positions remain unchanged.

@@ -53,3 +53,13 @@ def test_private_run_never_falls_back_to_redis(monkeypatch):
     request=Request({'type':'http','app':app,'headers':[]})
     with pytest.raises(HTTPException) as error: api.get_freecad_run_record(request,'FC-'+'a'*64)
     assert error.value.status_code==403 and reads==[]
+def test_disabled_writes_still_read_durable_publication(monkeypatch):
+    from types import SimpleNamespace
+    from app.cad_documents import publishing
+    from app.agents.cad.modeling_api import get_freecad_run_record
+    monkeypatch.setenv('FREECAD_DOCUMENTS_ENABLED','false')
+    monkeypatch.setenv('BACKEND_SERVICE_BASE_URL','http://isolated-backend.invalid')
+    record={'run_id':'FC-'+'e'*64,'document_id':'DOC-a','status':'completed'}
+    monkeypatch.setattr(publishing,'read_published_run',lambda *_:record)
+    request=SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    assert get_freecad_run_record(request,record['run_id'])==record

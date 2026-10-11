@@ -72,14 +72,14 @@ export default function QualityWorkspace() {
   useEffect(() => {
     if(!checked) return;
     const refresh = () => {
-      const fingerprint=sourceKey(qualitySource());
+      const source=qualitySource(),fingerprint=sourceKey(source);
       if(!sourceFingerprint.current) { sourceFingerprint.current=fingerprint; return; }
       if(fingerprint===sourceFingerprint.current) return;
       sourceFingerprint.current=fingerprint;
       catalogAbort.current?.abort();
       // Invalidate late results immediately, before the new model/basis GETs complete.
-      if(followRef.current){revision.current++; posting.current=false;setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');}
-      else setNewVersionNotice(true);
+      if(followRef.current&&!publishedCatalog.current.length&&source.currentRunId!==selectedRef.current){revision.current++; posting.current=false;setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');}
+      else if(!followRef.current)setNewVersionNotice(true);
       setCatalogEpoch(value=>value+1);
     };
     const unsubscribe=subscribeCompletedDesigns(refresh);
@@ -119,13 +119,14 @@ export default function QualityWorkspace() {
         const part = verifiedQualityPart({ ...item, status: 'completed', validation: { valid: true, solid_count: 1 } }, item);
         if (part) { available.push(part); ids.add(item.run_id); }
       }
-      setParts(mergePublishedParts(available,publishedCatalog.current));
+      const merged=mergePublishedParts(available,publishedCatalog.current);
+      setParts(merged);
       setWaitingRunIds(waiting);
-      setSelected(previous=>!followRef.current&&available.some(p=>p.run_id===previous)?previous:publishedCatalog.current.at(-1)?.run_id||(available.some(p => p.run_id === source.currentRunId) ? source.currentRunId : available[0]?.run_id || ''));
+      setSelected(previous=>!followRef.current&&merged.some(p=>p.run_id===previous)?previous:mergePublishedParts([],publishedCatalog.current)[0]?.run_id||(available.some(p => p.run_id === source.currentRunId) ? source.currentRunId : available[0]?.run_id || ''));
       setLoading(false);
       if (readFailure) setMessage(readFailure);
     });
-    return () => { abort.abort(); revision.current++; };
+    return () => { abort.abort(); };
   }, [checked, auth.version, catalogEpoch]);
 
   useEffect(()=>{
@@ -178,6 +179,7 @@ export default function QualityWorkspace() {
 
   useEffect(() => {
     const generation = ++revision.current, abort = new AbortController();
+    posting.current=false;setBusy(false);
     setBasis(null); setResult(null); setPending(null);
     if (loading || !selected || !userId) { setReading(false); return () => abort.abort(); }
     setMessage(''); setReading(true);

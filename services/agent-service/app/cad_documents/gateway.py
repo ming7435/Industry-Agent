@@ -11,7 +11,7 @@ worker_execution = ContextVar('cad_document_worker_execution',default=False)
 class Gateway:
     OPERATIONS={'create_document','get_document','read_snapshot','claim_command','get_command','list_documents',
                 'list_designs','find_published','enqueue_system_job','job','engine_state','take_job','complete_job','fail_job',
-                'claim_import','claim_publication','commit_publication','published_exists'}
+                'claim_import','claim_publication','commit_publication','published_exists','native_job'}
 
     def __init__(self, backend=None): self.backend=backend or BackendServiceClient()
 
@@ -29,6 +29,7 @@ class Gateway:
         return NativeJob.model_validate(self.call('enqueue_system_job',kind='legacy_generate',request_key=run_id,payload={'run_id':run_id,'spec':spec}))
 
     def job(self, job_id): return CommandRecord.model_validate(self.call('job',job_id=job_id))
+    def native_job(self,job_id):return NativeJob.model_validate(self.call('native_job',job_id=job_id))
     def take_job(self, worker_id):
         value=self.call('take_job',worker_id=worker_id)
         return NativeJob.model_validate(value) if value else None

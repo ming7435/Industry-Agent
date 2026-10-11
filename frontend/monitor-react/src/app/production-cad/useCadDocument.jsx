@@ -11,10 +11,10 @@ export default function useCadDocument({actorId,documentId,api}) {
   if(identity.current!==key) {identity.current=key;state.current=selectDocument({...createDocumentState(actorId),generation:state.current.generation},documentId);}
   const update=next=>{state.current=typeof next==='function'?next(state.current):next;setValue(state.current);};
   useEffect(()=>{
-    const token=documentToken(state.current), storage=sessionStorage(); let disposed=false,timer,abort;
+    const token=documentToken(state.current), storage=sessionStorage(); let disposed=false,timer,abort,inFlight=false,refreshQueued=false;
     update({...state.current,pending:readPendingCommand(storage,actorId,documentId)});
     const valid=()=>!disposed&&identity.current===key&&currentDocumentToken(state.current,token);
-    const refresh=async()=>{
+    const read=async()=>{
       clearTimeout(timer);abort?.abort();
       if(!actorId||!documentId||document.visibilityState==='hidden') return;
       const controller=new AbortController();abort=controller;
@@ -22,6 +22,7 @@ export default function useCadDocument({actorId,documentId,api}) {
         const head=await api.head(documentId,{signal:controller.signal});
         const snapshot=await api.snapshot(documentId,head.revision,{signal:controller.signal});
         if(!valid()||controller.signal.aborted) return;
+        if(head.revision<(state.current.snapshot?.revision??-1)) {timer=setTimeout(refresh,2000);return;}
         update({...applyDocumentSnapshot(state.current,snapshot,token),head,error:''});
         const pending=state.current.pending||(head.active_command_id?{command_id:head.active_command_id,document_id:documentId,actorId,kind:'edit'}:null);
         if(pending) {
@@ -39,8 +40,20 @@ export default function useCadDocument({actorId,documentId,api}) {
       } catch(error) {if(valid()&&!controller.signal.aborted&&error.name!=='AbortError') update({...state.current,error:error.message,...(error.status===401?{head:null,snapshot:null}:{})});}
       if(valid()) {const delay=documentPollDelay(document.visibilityState!=='hidden');if(delay!==null) timer=setTimeout(refresh,delay);}
     };
+    async function refresh() {
+      if(disposed)return;
+      if(inFlight){refreshQueued=true;return;}
+      inFlight=true;
+      try {await read();}
+      finally {
+        inFlight=false;
+        if(refreshQueued&&!disposed&&document.visibilityState!=='hidden') {
+          refreshQueued=false;clearTimeout(timer);timer=setTimeout(refresh,0);
+        }
+      }
+    }
     refreshRef.current=refresh;
-    const visible=()=>{clearTimeout(timer);abort?.abort();if(document.visibilityState!=='hidden') refresh();};
+    const visible=()=>{clearTimeout(timer);if(document.visibilityState!=='hidden') refresh();else abort?.abort();};
     window.addEventListener('focus',visible);document.addEventListener('visibilitychange',visible);refresh();
     return()=>{disposed=true;clearTimeout(timer);abort?.abort();window.removeEventListener('focus',visible);document.removeEventListener('visibilitychange',visible);};
   },[actorId,documentId,api,key]);
