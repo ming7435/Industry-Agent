@@ -38,8 +38,19 @@ export function verifiedQualityPart(record, candidate) {
     || (record.spec?.parts && (!Array.isArray(record.spec.parts) || !record.spec.parts.length))) return null;
   // 旧接口只继承该版本已保存的标识，未提交草稿不参与名称或编号。
   const name = record.part_name ?? candidate.part_name;
-  return { run_id: record.run_id, version: candidate.version,
+  return { run_id: record.run_id, version: record.version??candidate.version,
+    document_id:record.document_id,revision:record.revision,published_at:record.published_at,
     spec: record.spec,
     name: typeof name === 'string' && name.trim() ? name.trim() : '未命名零件',
     number: freeCadDisplayNumber({ run_id: record.run_id, part_number: record.part_number ?? candidate.part_number }) };
+}
+
+export function mergePublishedParts(legacy,published) {
+  const parts=new Map(legacy.filter(p=>validFreeCadRun(p?.run_id)).map(p=>[p.run_id,p]));
+  for(const record of published) {
+    const standard=record?.standard_parameters;
+    if(!standard||standard.run_id!==record.run_id||standard.document_id!==record.document_id||standard.revision!==record.revision)continue;
+    const part=verifiedQualityPart(record,record);if(part)parts.set(part.run_id,part);
+  }
+  return [...parts.values()].sort((a,b)=>(b.published_at||0)-(a.published_at||0));
 }

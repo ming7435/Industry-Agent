@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readQualityCandidates} from './qualityParts.mjs';
+import {readQualityCandidates,mergePublishedParts} from './qualityParts.mjs';
 
 const oldId='FC-'+'a'.repeat(64),newId='FC-'+'b'.repeat(64);
 const storage=values=>({getItem:key=>values[key]||null});
@@ -27,4 +27,10 @@ test('a new cross-tab version never inherits the previous version identity as a 
   const source=readQualityCandidates(local,shared);
   assert.equal(source.candidates[0].part_name,'');
   assert.equal(source.candidates[0].part_number,'');
+});
+
+test('native published versions with no legacy spec merge by full identity, never by short number',()=>{
+  const record=(run_id,revision)=>({run_id,document_id:'DOC-a',revision,version:revision,status:'completed',part_name:'球体',part_number:'00123',spec:null,published_at:revision,validation:{valid:true,solid_count:1,step_roundtrip:true},standard_parameters:{run_id,document_id:'DOC-a',revision,parameters:[]}});
+  const parts=mergePublishedParts([{run_id:oldId,name:'旧名称',number:'00123'}],[record(oldId,1),record(newId,2)]);
+  assert.equal(parts.length,2);assert.equal(parts[0].run_id,newId);assert.equal(parts[0].name,'球体');assert.equal(parts[0].number,'00123');assert.equal(parts[0].version,2);
 });

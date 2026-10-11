@@ -12,6 +12,7 @@ RULE = 'nominal_exact_demo_v1'
 GENERATOR = 'equator_numeric_v1'
 EXTRACTOR = 'simulation_parameters_v1'
 DISPLAY_EXTRACTOR = 'simulation_parameters_v2'
+DOCUMENT_EXTRACTOR = 'freecad_document_parameters_v1'
 SOURCE = 'local-simulated-equator-adapter'
 SAMPLE_COUNT = 10
 
@@ -208,6 +209,21 @@ def build_basis(run):
             or proof['solid_count'] < 1 or _untrusted(run)):
         raise ValueError('模型需要完成实体和 STEP 校验，且不能是降级或模拟建模')
     extractor = run.get('extractor')
+    if 'standard_parameters' in run or run.get('document_id') or extractor == DOCUMENT_EXTRACTOR:
+        from shared.freecad_documents import verify_document_standard
+        standard=verify_document_standard(run.get('standard_parameters'))
+        if (standard.run_id!=run['run_id'] or standard.document_id!=run.get('document_id')
+                or standard.revision!=run.get('revision') or extractor not in {None,DOCUMENT_EXTRACTOR}):
+            raise ValueError('原生文档标准与发布版本身份不一致')
+        number=str(run.get('part_number') or '')
+        if not re.fullmatch(r'\d{5}',number):number=str(int(run['run_id'][-8:],16)%100000).zfill(5)
+        result=dict(run_id=run['run_id'],status='completed',validation=deepcopy(proof),spec=deepcopy(run.get('spec')),
+                    part_name=str(run.get('part_name') or '未命名零件')[:120],part_number=number,
+                    document_id=standard.document_id,revision=standard.revision,
+                    standard_parameters=standard.model_dump(mode='json'),
+                    parameters=deepcopy(standard.parameters+standard.uncovered),extractor=DOCUMENT_EXTRACTOR,source='production-modeling')
+        result['digest']=digest([DOCUMENT_EXTRACTOR,standard.run_id,standard.digest])
+        return result
     if extractor not in {None, EXTRACTOR, DISPLAY_EXTRACTOR}: raise ValueError('建模标准提取版本无效')
     if extractor != DISPLAY_EXTRACTOR and proof['solid_count'] == 1:
         try:
@@ -261,7 +277,9 @@ def compare_sample(basis, observations):
                     actual = number_text(value)
                     if p['kind'] == 'count' and (decimal(value) < 0 or decimal(value) != decimal(value).to_integral()): raise ValueError('数量无效')
                     row['difference'] = number_text(decimal(actual) - decimal(p['expected']))
-                row.update(actual=actual, status='qualified' if actual == p['expected'] else 'unqualified')
+                matches=actual==p['expected']
+                if basis.get('extractor')==DOCUMENT_EXTRACTOR and p['kind']!='choice':matches=decimal(actual)==decimal(p['expected'])
+                row.update(actual=actual, status='qualified' if matches else 'unqualified')
                 if row['status'] == 'unqualified': issues.append(row)
             except (ValueError, TypeError):
                 row['status'], review = 'review', True
@@ -306,6 +324,7 @@ def summarize_items(basis, samples):
 def generate_samples(basis, seed, measured_at):
     samples = []
     parameters = [p for p in basis['parameters'] if p.get('comparable') is not False]
+    if not parameters:raise ValueError('当前文档尚无可比对的原生参数，不能生成检测样本')
     for i in range(SAMPLE_COUNT):
         code = int(digest([GENERATOR, seed, i]), 16)
         # Ensure this numerical demo exercises all three states; rates are calculated from rows.

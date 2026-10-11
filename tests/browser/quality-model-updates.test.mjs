@@ -77,11 +77,14 @@ async function generate(page) {
   await page.getByRole('region',{name:'当前零件标识',exact:true}).waitFor();
 }
 
-test('a completed model in another tab refreshes standards and starts a separate new-version batch',async()=>{
+test('a completed model in another tab refreshes standards; only an explicit click starts a new-version batch',async()=>{
   const {fixture,context,page,posts,errors}=await setup();
   try{
     await page.getByRole('button',{name:'开始检测',exact:true}).click();await page.getByText('77.78%',{exact:true}).waitFor();
     const cad=await context.newPage();await cad.goto(fixture.base+'/?view=cad');await generate(cad);
+    await page.waitForFunction(id=>document.querySelector('#quality-part-name')?.value!==id,oldId);
+    assert.equal(posts.length,1);
+    await page.getByRole('button',{name:'开始检测',exact:true}).click();
     await page.getByText('100.00%',{exact:true}).waitFor();
     const selected=await page.getByRole('combobox',{name:'零件名称',exact:true}).inputValue();
     assert.notEqual(selected,oldId);assert.equal(posts.at(-1).design_run_id,selected);
@@ -94,11 +97,11 @@ test('a completed model in another tab refreshes standards and starts a separate
   }finally{await fixture.close();}
 });
 
-test('a newly generated model is detected when returning from modeling in the same page',async()=>{
+test('a newly generated model is available for an explicit detection when returning in the same page',async()=>{
   const {fixture,page,posts}=await setup();
   try{
     await page.getByRole('button',{name:'打开建模',exact:true}).click();await generate(page);
-    await page.getByRole('button',{name:'打开质检',exact:true}).click();await page.getByText('100.00%',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'打开质检',exact:true}).click();assert.equal(posts.length,0);await page.getByRole('button',{name:'开始检测',exact:true}).click();await page.getByText('100.00%',{exact:true}).waitFor();
     assert.equal(posts.length,1);assert.notEqual(posts[0].design_run_id,oldId);
   }finally{await fixture.close();}
 });
@@ -108,6 +111,7 @@ test('new-version results cannot be overwritten by an older detection response a
   try{
     await page.getByRole('button',{name:'开始检测',exact:true}).click();
     const cad=await context.newPage();await cad.goto(fixture.base+'/?view=cad');await generate(cad);
+    await page.waitForFunction(id=>document.querySelector('#quality-part-name')?.value!==id,oldId);await page.getByRole('button',{name:'开始检测',exact:true}).click();
     await page.getByText('100.00%',{exact:true}).waitFor();gate.resolve();
     await page.waitForFunction(()=>!document.querySelector('.quality-detection-actions .primary').disabled);
     assert.equal(await page.getByText('77.78%',{exact:true}).count(),0);
@@ -138,6 +142,7 @@ test('quality opened before modeling finishes follows its completion even after 
     await page.getByRole('button',{name:'打开质检',exact:true}).click();await read;
     assert.equal(posts.length,0);
     records.set(newId,model(newId,80,2));
+    await page.waitForFunction(id=>document.querySelector('#quality-part-name')?.value===id,newId);await page.getByRole('button',{name:'开始检测',exact:true}).click();
     await page.getByText('100.00%',{exact:true}).waitFor();
     assert.equal(posts.length,1);assert.equal(posts[0].design_run_id,newId);
   }finally{await fixture.close();}
@@ -151,6 +156,7 @@ test('a model finishing between leaving CAD and the first quality read still rep
     const newId=[...records.keys()].find(id=>id!==oldId);
     records.set(newId,model(newId,80,2));
     await page.getByRole('button',{name:'打开质检',exact:true}).click();
+    await page.waitForFunction(id=>document.querySelector('#quality-part-name')?.value===id,newId);assert.equal(posts.length,0);await page.getByRole('button',{name:'开始检测',exact:true}).click();
     await page.getByText('100.00%',{exact:true}).waitFor();
     assert.equal(posts.length,1);assert.equal(posts[0].design_run_id,newId);
     assert.equal(await page.getByRole('combobox',{name:'零件名称',exact:true}).inputValue(),newId);
@@ -168,19 +174,22 @@ test('a temporarily unavailable new run is followed until its saved model become
     await page.getByRole('button',{name:'打开质检',exact:true}).click();await read;
     assert.equal(posts.length,0);
     records.set(newId,model(newId,80,2));
+    await page.waitForFunction(id=>document.querySelector('#quality-part-name')?.value===id,newId);assert.equal(posts.length,0);await page.getByRole('button',{name:'开始检测',exact:true}).click();
     await page.getByText('100.00%',{exact:true}).waitFor();
     assert.equal(posts.length,1);assert.equal(posts[0].design_run_id,newId);
   }finally{await fixture.close();}
 });
 
-test('two quality tabs use the same automatic request for one completed revision',async()=>{
+test('two quality tabs read a completed revision without automatic writes; explicit requests remain independent',async()=>{
   const gate=deferred(),{fixture,context,page,posts}=await setup({newDetectionGate:gate});
   try{
     const cad=await context.newPage();await cad.goto(fixture.base+'/?view=cad');await generate(cad);
-    await page.getByRole('button',{name:'正在模拟检测…',exact:true}).waitFor();
+    await page.waitForFunction(id=>document.querySelector('#quality-part-name')?.value!==id,oldId);
     const other=await context.newPage();await other.goto(fixture.base+'/?view=quality');
+    await other.getByRole('button',{name:'开始检测',exact:true}).waitFor();assert.equal(posts.length,0);
+    await page.getByRole('button',{name:'开始检测',exact:true}).click();await other.getByRole('button',{name:'开始检测',exact:true}).click();
     await other.getByRole('button',{name:'正在模拟检测…',exact:true}).waitFor();
-    assert.equal(posts.length,2);assert.equal(new Set(posts.map(row=>row.request_id)).size,1);
+    assert.equal(posts.length,2);assert.equal(new Set(posts.map(row=>row.request_id)).size,2);
     assert.equal(new Set(posts.map(row=>row.design_run_id)).size,1);
     gate.resolve();await page.getByText('100.00%',{exact:true}).waitFor();await other.getByText('100.00%',{exact:true}).waitFor();
   }finally{gate.resolve();await fixture.close();}

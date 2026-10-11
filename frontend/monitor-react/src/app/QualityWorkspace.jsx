@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { request } from './apiRequest.mjs';
 import { freeCadRequest } from './production-cad/freecad.mjs';
-import { readQualityCandidates, verifiedQualityPart } from './qualityParts.mjs';
+import { readQualityCandidates, verifiedQualityPart,mergePublishedParts } from './qualityParts.mjs';
 import { publishCompletedDesign, subscribeCompletedDesigns } from './production-cad/completedDesigns.mjs';
 import { getTeamSession, setTeamSessionActor, subscribeTeamSession } from '../teamSession.mjs';
 import { teamRequest } from '../teamApi.mjs';
@@ -54,10 +54,11 @@ export default function QualityWorkspace() {
   const [loading, setLoading] = useState(true), [reading, setReading] = useState(false);
   const [capability, setCapability] = useState(null), [basis, setBasis] = useState(null), [result, setResult] = useState(null);
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
-  const [catalogEpoch,setCatalogEpoch] = useState(0), [automaticRunId,setAutomaticRunId] = useState('');
+  const [catalogEpoch,setCatalogEpoch] = useState(0),[followCurrent,setFollowCurrent]=useState(true),[newVersionNotice,setNewVersionNotice]=useState(false);
   const [waitingRunIds,setWaitingRunIds] = useState([]);
   const revision = useRef(0), posting = useRef(false);
-  const sourceFingerprint = useRef(''), automaticAttempts = useRef(new Set()), catalogAbort=useRef(null);
+  const sourceFingerprint = useRef(''),catalogAbort=useRef(null),catalogSession=useRef(-1),publishedCatalog=useRef([]),selectedRef=useRef(''),followRef=useRef(true),publishedFingerprint=useRef('');
+  selectedRef.current=selected;followRef.current=followCurrent;
   const userId = auth.actor?.user_id;
 
   useEffect(() => {
@@ -77,8 +78,8 @@ export default function QualityWorkspace() {
       sourceFingerprint.current=fingerprint;
       catalogAbort.current?.abort();
       // Invalidate late results immediately, before the new model/basis GETs complete.
-      revision.current++; posting.current=false;
-      setLoading(true); setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');
+      if(followRef.current){revision.current++; posting.current=false;setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');}
+      else setNewVersionNotice(true);
       setCatalogEpoch(value=>value+1);
     };
     const unsubscribe=subscribeCompletedDesigns(refresh);
@@ -90,11 +91,9 @@ export default function QualityWorkspace() {
     if (!checked) return;
     const abort = new AbortController();
     catalogAbort.current=abort;
-    revision.current++; posting.current = false;
-    setLoading(true); setCapability(null); setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');
+    if(catalogSession.current!==auth.version){catalogSession.current=auth.version;publishedCatalog.current=[];publishedFingerprint.current='';revision.current++; posting.current = false;setParts([]);setSelected('');setFollowCurrent(true);setLoading(true); setCapability(null); setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');}
     const source=qualitySource();
     sourceFingerprint.current=sourceKey(source);
-    setAutomaticRunId(source.automaticRunId);
     let readFailure = '';
     const waiting=[];
     const cad = Promise.all(source.candidates.map(candidate => freeCadRequest(`/runs/${candidate.run_id}`, { signal: abort.signal })
@@ -120,14 +119,39 @@ export default function QualityWorkspace() {
         const part = verifiedQualityPart({ ...item, status: 'completed', validation: { valid: true, solid_count: 1 } }, item);
         if (part) { available.push(part); ids.add(item.run_id); }
       }
-      setParts(available);
+      setParts(mergePublishedParts(available,publishedCatalog.current));
       setWaitingRunIds(waiting);
-      setSelected(available.some(p => p.run_id === source.currentRunId) ? source.currentRunId : available[0]?.run_id || '');
+      setSelected(previous=>!followRef.current&&available.some(p=>p.run_id===previous)?previous:publishedCatalog.current.at(-1)?.run_id||(available.some(p => p.run_id === source.currentRunId) ? source.currentRunId : available[0]?.run_id || ''));
       setLoading(false);
       if (readFailure) setMessage(readFailure);
     });
     return () => { abort.abort(); revision.current++; };
   }, [checked, auth.version, catalogEpoch]);
+
+  useEffect(()=>{
+    if(!checked||!userId)return;const abort=new AbortController();let timer,readingDirectory=false;
+    const refresh=async()=>{
+      clearTimeout(timer);if(document.visibilityState==='hidden'||readingDirectory)return;readingDirectory=true;
+      try {
+        const items=[];let cursor='';do{const page=await request('/api/cad/freecad/designs?limit=100&cursor='+encodeURIComponent(cursor),{signal:abort.signal});if(!Array.isArray(page.items))throw new Error('发布目录返回无效');items.push(...page.items);cursor=page.next_cursor||'';}while(cursor&&!abort.signal.aborted);
+        if(abort.signal.aborted)return;
+        const fingerprint=JSON.stringify(items.map(p=>[p.run_id,p.revision,p.standard_parameters?.digest]));
+        if(fingerprint!==publishedFingerprint.current) {
+          publishedFingerprint.current=fingerprint;publishedCatalog.current=items;
+          setParts(current=>mergePublishedParts(current,items));
+          const latest=mergePublishedParts([],items)[0];
+          if(latest&&latest.run_id!==selectedRef.current) {
+            if(followRef.current){revision.current++;posting.current=false;setBasis(null);setResult(null);setPending(null);setBusy(false);setMessage('');setSelected(latest.run_id);setNewVersionNotice(false);}
+            else setNewVersionNotice(true);
+          }
+        }
+      }catch(error){if(!abort.signal.aborted&&error.name!=='AbortError'&&error.status!==404)setMessage(error.message);}
+      finally{readingDirectory=false;if(!abort.signal.aborted&&document.visibilityState!=='hidden')timer=window.setTimeout(refresh,2000);}
+    };
+    const visible=()=>{clearTimeout(timer);if(document.visibilityState!=='hidden')refresh();};
+    const unsubscribe=subscribeCompletedDesigns(refresh);refresh();document.addEventListener('visibilitychange',visible);
+    return()=>{abort.abort();clearTimeout(timer);unsubscribe();document.removeEventListener('visibilitychange',visible);};
+  },[checked,userId,auth.version]);
 
   useEffect(() => {
     if(!userId || !waitingRunIds.length) return;
@@ -183,9 +207,9 @@ export default function QualityWorkspace() {
     return () => { abort.abort(); revision.current++; };
   }, [selected, loading, auth.version]);
 
-  async function detect(automaticBody) {
+  async function detect() {
     if (posting.current || !basis || !userId || capability?.enabled !== true) return;
-    const generation = revision.current, retrying = !!pending, body = pending || automaticBody || { design_run_id: selected, request_id: crypto.randomUUID() };
+    const generation = revision.current, retrying = !!pending, body = pending || { design_run_id: selected, request_id: crypto.randomUUID() };
     const storageKey = pendingSimulationKey(userId, selected);
     posting.current = true; setBusy(true); setMessage(''); setResult(null); setPending(body);
     try { sessionStorage.setItem(storageKey, JSON.stringify(body)); } catch { /* current-page reconciliation remains available */ }
@@ -202,16 +226,6 @@ export default function QualityWorkspace() {
       }
     } finally { if (generation === revision.current) { posting.current = false; setBusy(false); } }
   }
-
-  useEffect(() => {
-    if(loading || reading || busy || pending || result || !basis || !userId || capability?.enabled!==true || selected!==automaticRunId) return;
-    const key=pendingSimulationKey(userId,selected);
-    if(automaticAttempts.current.has(key)) return;
-    automaticAttempts.current.add(key);
-    // Stable per actor + full revision (backend scopes request IDs by actor): multiple tabs
-    // and duplicate completion events converge on one saved batch, never a blind new retry.
-    void detect({design_run_id:selected,request_id:`auto-model-${selected.slice(3)}`});
-  }, [loading,reading,busy,pending,result,basis,userId,capability,selected,automaticRunId]);
 
   async function reconcile() {
     if (!pending || posting.current) return;
@@ -237,15 +251,17 @@ export default function QualityWorkspace() {
       <dl className="quality-part-fields">
         <div><dt><label htmlFor="quality-part-name">零件名称</label></dt><dd><select id="quality-part-name" value={selected}
           disabled={loading || busy || !!pending || !parts.length} onChange={e => {
-            revision.current++; setBasis(null); setResult(null); setMessage(''); setAutomaticRunId(''); setSelected(e.target.value);
+            revision.current++; setBasis(null); setResult(null); setMessage(''); setFollowCurrent(false);setNewVersionNotice(false);setSelected(e.target.value);
           }}>
           {!parts.length && <option value="">{loading ? '正在读取零件…' : '暂无已完成零件'}</option>}
           {parts.map(item => <option key={item.run_id} value={item.run_id}>{parts.filter(other => other.name === item.name).length > 1
             ? `${item.name}（${item.number} · ${item.version ? `版本 ${item.version}` : item.run_id.slice(3, 11)}）` : item.name}</option>)}
         </select></dd></div><div><dt>零件编号</dt><dd>{part?.number || '—'}</dd></div>
       </dl>
+      <label className="quality-standard-note"><input type="checkbox" checked={followCurrent} disabled={busy||!!pending} onChange={e=>{setFollowCurrent(e.target.checked);if(e.target.checked){const latest=mergePublishedParts([],publishedCatalog.current)[0]?.run_id||qualitySource().currentRunId;if(latest&&latest!==selected){revision.current++;setBasis(null);setResult(null);setPending(null);setMessage('');setSelected(latest);}setNewVersionNotice(false);}}}/>跟随最新发布版本</label>
+      {newVersionNotice&&<p role="status">发现新发布版本；当前保留你选择的历史版本。</p>}
       <p className="quality-standard-note">模拟比对仪：RENISHAW-EQUATOR300-001 · 标准来自生产建模已保存版本</p>
-      {waitingRunIds.length>0 && <p className="quality-standard-note" role="status">新模型正在生成，完成后自动更新标准并重新检测。</p>}
+      {waitingRunIds.length>0 && <p className="quality-standard-note" role="status">新模型正在生成，完成后更新标准；点击开始检测创建新批次。</p>}
       {basis && <details className="quality-standard-summary"><summary>建模标准参数（{basis.parameters.length} 项，只读）</summary>
         <ul>{basis.parameters.map(p => <li key={p.key}>{p.name}：{p.expected} {p.unit}
           {p.comparable === false ? ' · 待判定' : p.comparable === true ? ' · 可比对' : ''}</li>)}</ul></details>}
