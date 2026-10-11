@@ -78,3 +78,12 @@ def test_copy_does_not_claim_legacy_owner(tmp_path,monkeypatch):
     imported=next(body for op,body in calls if op=='claim_import')
     assert imported['document_id']=='DOC-copy' and imported['actor_id']=='USER-a'
     assert imported['source']['native_artifact']['name']=='model.FCStd'
+
+
+def test_command_polling_has_explicit_identity_even_without_envelope(monkeypatch):
+    from shared.freecad_documents import CommandRecord
+    http,app=client(monkeypatch);http.cookies.set('maintenance_session','valid')
+    app.command=lambda *_:CommandRecord(envelope=None,input_digest='a'*64,owner_user_id='USER-a',state='completed',job_id='JOB-a')
+    response=http.get('/api/cad/freecad/documents/DOC-one/commands/CMD-publish')
+    assert response.status_code==200
+    assert response.json()['command_id']=='CMD-publish'

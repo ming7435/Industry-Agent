@@ -1,4 +1,17 @@
 .production-cad { max-width: 1120px; margin: 0 auto; color: #19343d; }
+.cad-document-layout { display: grid; grid-template-columns: minmax(170px,1fr) minmax(250px,2fr) minmax(220px,1fr); gap: 12px; margin: 20px 0; align-items: start; }
+.cad-document-layout > * { min-width: 0; border: 1px solid #d9e6e8; border-radius: 10px; padding: 12px; background: white; }
+.cad-document-tree ul { list-style: none; padding: 0; margin: 0; }
+.cad-document-tree [role=treeitem] { width: 100%; text-align: left; padding: 10px; margin: 3px 0; overflow-wrap: anywhere; }
+.cad-document-tree [aria-selected=true] { background: #e2f5ed; border-color: #087f73; }
+.cad-document-tree small { display: block; font-size: 10px; color: #5c727c; }
+.cad-document-workspace input:not([type=checkbox]) { display: block; box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #cadcde; border-radius: 7px; font: inherit; }
+.cad-document-workspace pre { overflow: auto; max-height: 280px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cad-document-properties label { margin: 12px 0; }
+.cad-document-properties dd { margin: 4px 0 12px; overflow-wrap: anywhere; }
+.cad-primitive-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.cad-primitive-form label { flex: 1 1 130px; }
+@media (max-width: 850px) { .cad-document-layout { grid-template-columns: minmax(0,1fr); } .cad-document-stage { order: -1; } }
 .production-cad h1 { font-size: 30px; margin: 10px 0; }
 .production-cad h2 { font-size: 21px; margin: 0; }
 .production-cad h3 { font-size: 16px; margin: 22px 0 10px; }

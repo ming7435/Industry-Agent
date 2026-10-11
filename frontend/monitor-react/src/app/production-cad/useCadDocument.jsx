@@ -23,8 +23,9 @@ export default function useCadDocument({actorId,documentId,api}) {
         const snapshot=await api.snapshot(documentId,head.revision,{signal:controller.signal});
         if(!valid()||controller.signal.aborted) return;
         update({...applyDocumentSnapshot(state.current,snapshot,token),head,error:''});
-        const pending=state.current.pending;
+        const pending=state.current.pending||(head.active_command_id?{command_id:head.active_command_id,document_id:documentId,actorId,kind:'edit'}:null);
         if(pending) {
+          if(!state.current.pending) update({...state.current,pending});
           try {
             const record=await api.command(documentId,pending.command_id,{signal:controller.signal});
             if(!valid()||controller.signal.aborted) return;

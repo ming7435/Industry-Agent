@@ -68,6 +68,10 @@ def build_document_router(require_write_auth,application_factory=application_for
         same_origin(request)
         if not documents_enabled(): raise HTTPException(503,'原生文档编辑尚未启用')
 
+    def command_response(record,command_id):
+        value=record.model_dump(mode='json') if hasattr(record,'model_dump') else dict(record)
+        return {**value,'command_id':command_id}
+
     @router.get('/documents')
     def documents(request:Request,cursor:str='',limit:int=50):
         application,actor=app_actor(request)
@@ -103,7 +107,7 @@ def build_document_router(require_write_auth,application_factory=application_for
     def submit(document_id:str,body:CommandEnvelope,request:Request):
         application,actor=app_actor(request)
         if body.document_id!=document_id: raise HTTPException(422,'命令文档身份不一致')
-        return call(application.submit,actor,body)
+        return command_response(call(application.submit,actor,body),body.command_id)
 
     @router.post('/documents/{document_id}/proposals',dependencies=[Depends(writing)])
     def propose(document_id:str,body:ProposeDocument,request:Request):
@@ -118,13 +122,13 @@ def build_document_router(require_write_auth,application_factory=application_for
     @router.get('/documents/{document_id}/commands/{command_id}')
     def command(document_id:str,command_id:str,request:Request):
         application,actor=app_actor(request)
-        return call(application.command,actor,document_id,command_id)
+        return command_response(call(application.command,actor,document_id,command_id),command_id)
 
     @router.post('/documents/{document_id}/publish',status_code=202,dependencies=[Depends(writing)])
     def publish(document_id:str,body:PublishDocument,request:Request):
         from app.cad_documents.publishing import CadDocumentPublisher
         application,actor=app_actor(request)
-        return call(CadDocumentPublisher(application).publish,actor,document_id,body.command_id,body.expected_revision)
+        return command_response(call(CadDocumentPublisher(application).publish,actor,document_id,body.command_id,body.expected_revision),body.command_id)
 
     @router.get('/documents/{document_id}/snapshots/{revision}/artifacts/{name}')
     def artifact(document_id:str,revision:int,name:str,request:Request):

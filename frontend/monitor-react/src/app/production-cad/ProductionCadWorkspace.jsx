@@ -8,6 +8,7 @@ import SimulatedProductionPanel from './SimulatedProductionPanel.jsx';
 import "./productionCad.css";
 
 const FreeCadModelViewer = lazy(() => import("./FreeCadModelViewer.jsx"));
+const DocumentWorkspace = lazy(() => import('./DocumentWorkspace.jsx'));
 const terminal = new Set(["completed", "needs_input", "failed", "outcome_unknown"]);
 function storage() { try { return window.sessionStorage; } catch { return null; } }
 const advancedExamples = {
@@ -60,6 +61,12 @@ function withPartIdentity(record, previous) {
 }
 
 export default function ProductionCadWorkspace() {
+  const [enabled,setEnabled]=useState(false),[mode,setMode]=useState('legacy');
+  useEffect(()=>{const abort=new AbortController();freeCadRequest('/capabilities',{signal:abort.signal}).then(result=>{if(!abort.signal.aborted&&result.enabled===true){setEnabled(true);setMode('document');}}).catch(()=>{});return()=>abort.abort();},[]);
+  return <><nav className="cad-actions" aria-label="建模方式">{enabled&&<><button aria-pressed={mode==='document'} onClick={()=>setMode('document')}>原生文档编辑</button><button aria-pressed={mode==='legacy'} onClick={()=>setMode('legacy')}>中文与规格生成</button></>}</nav>{mode==='document'?<Suspense fallback={<p>正在加载文档工作区…</p>}><DocumentWorkspace/></Suspense>:<LegacyProductionCadWorkspace/>}</>;
+}
+
+function LegacyProductionCadWorkspace() {
   const [saved] = useState(() => readFreeCadSession(storage()));
   const [prompt, setPrompt] = useState(saved?.draft_prompt || "");
   const [partName, setPartName] = useState(saved?.draft_part_name || ''), [partNumber, setPartNumber] = useState(validFreeCadPartNumber(saved?.draft_part_number) ? saved.draft_part_number : '');
