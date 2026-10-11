@@ -14,6 +14,7 @@ from .team.routes import create_router, internal_auth
 from .line_control.routes import create_router as create_line_router
 from .quality_simulation.routes import create_router as create_simulation_router
 from .production_simulation.routes import create_router as create_production_simulation_router
+from .cad_documents.routes import create_router as create_cad_document_router
 
 
 class ToolCall(BaseModel):
@@ -60,6 +61,20 @@ app.include_router(create_router(get_service))
 app.include_router(create_line_router(get_service))
 app.include_router(create_simulation_router(get_service))
 app.include_router(create_production_simulation_router(get_service))
+
+_cad_document_service = None
+
+
+def get_cad_document_service():
+    global _cad_document_service
+    if _cad_document_service is None:
+        from .cad_documents.repository import CadDocumentRepository
+        from .cad_documents.service import CadDocumentService
+        _cad_document_service = CadDocumentService(CadDocumentRepository())
+    return _cad_document_service
+
+
+app.include_router(create_cad_document_router(get_cad_document_service))
 
 
 @app.get("/health")
