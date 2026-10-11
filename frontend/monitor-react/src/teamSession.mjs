@@ -41,6 +41,7 @@ export function isTeamSessionPath(path) {
   if (/^\/api\/workorders(?:\/|$)/.test(pathname)) return true;
   if (pathname.startsWith('/api/expert/')) return true;
   if (/^\/api\/quality\/simulation(?:\/|$)/.test(pathname)) return true;
+  if (/^\/api\/cad\/freecad\/(?:documents|designs)(?:\/|$)/.test(pathname)) return true;
   if (/^\/api\/production\/virtual(?:\/|$)/.test(pathname)) return true;
   if (/^\/api\/maintenance\/plans\/(?:delete(?:\/|$)|[^/]+\/retry(?:\/|$))/.test(pathname)) return true;
   if (pathname.startsWith('/api/team/')) return !['devices', 'line', 'register', 'login'].includes(pathname.slice('/api/team/'.length));

@@ -3,6 +3,12 @@ import {freeCadArtifacts, validFreeCadRun} from './freecad.mjs';
 export const completedDesignKey = 'freecad.completed-designs.v1';
 const eventName = 'freecad:completed-design';
 
+// A notification is not a standard or a request to start inspection. Read the owned server directory.
+export function notifyPublishedDocument(detail,target=globalThis.window) {
+  target?.dispatchEvent(new CustomEvent(eventName,{detail:{...detail,published:true}}));
+  try {target?.localStorage?.setItem('freecad.published-notification',JSON.stringify({...detail,at:Date.now(),nonce:Math.random()}));} catch { /* Same-page events still work. */ }
+}
+
 export function readCompletedDesigns(storage) {
   try {
     const entries = JSON.parse(storage?.getItem(completedDesignKey) || '[]');
@@ -37,7 +43,7 @@ export function publishCompletedDesign(run, history = [], {target=globalThis.win
 }
 
 export function subscribeCompletedDesigns(listener, target = globalThis.window) {
-  const storageChanged = event => { if (event.key === completedDesignKey || event.key === null) listener(); };
+  const storageChanged = event => { if (event.key === completedDesignKey || event.key === 'freecad.published-notification' || event.key === null) listener(); };
   const visible = () => { if (target?.document?.visibilityState==='visible') listener(); };
   target?.addEventListener(eventName,listener);
   target?.addEventListener('storage',storageChanged);
