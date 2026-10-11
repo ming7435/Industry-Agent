@@ -30,7 +30,8 @@ def validate_object_command(command, snapshot):
 def render_document_program(job: NativeJob, directory: Path, source_path: Path | None):
     if job.envelope is not None:
         job=job.model_copy(update={'envelope':parse_command(job.envelope.model_dump(mode='json'))})
-    spec=job.envelope.parameters.spec if job.envelope and job.envelope.command_type=='replace_from_spec' else None
+    spec=(job.envelope.parameters.spec if job.envelope and job.envelope.command_type=='replace_from_spec'
+          else (job.source.get('snapshot') or {}).get('source_spec') or job.source.get('spec'))
     kernel=''
     if spec is not None:
         from app.tools.cad.freecad_mcp import validate_spec
@@ -38,7 +39,7 @@ def render_document_program(job: NativeJob, directory: Path, source_path: Path |
         spec=validate_spec(spec)
         kernel=kernel_source(spec)
     data=job.model_dump(mode='json')
-    if spec is not None: data['envelope']['parameters']['spec']=spec
+    if spec is not None and job.envelope and job.envelope.command_type=='replace_from_spec': data['envelope']['parameters']['spec']=spec
     return 'import FreeCAD as App\nimport Part, Mesh, json, math, os, hashlib, uuid\nfrom pathlib import Path\n'+kernel+'\n'+(
         'job=json.loads('+repr(json.dumps(data,ensure_ascii=False,allow_nan=False))+')\n'
         'out=Path('+repr(str(directory))+')\n'

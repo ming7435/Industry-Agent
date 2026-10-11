@@ -294,6 +294,12 @@ def verify_document_standard(payload: dict) -> StandardParameters:
         if set(p) != required or p['key'] in keys or p['comparable'] is not True:
             raise ValueError('建模标准参数结构不完整')
         keys.add(p['key'])
-        if isinstance(p['expected'], bool) or not isinstance(p['expected'], (float,int)) or not math.isfinite(p['expected']):
+        if p['kind']=='choice':
+            if p['expected'] not in {'x','y','z'}: raise ValueError('不支持的标准方向')
+        elif isinstance(p['expected'], bool) or not isinstance(p['expected'], (float,int)) or not math.isfinite(p['expected']):
             raise ValueError('建模标准值必须为有限数值')
+    for p in standard.uncovered:
+        if p.get('comparable') is not False or not isinstance(p.get('key'),str) or p['key'] in keys:
+            raise ValueError('未覆盖标准项无效或重复')
+        keys.add(p['key'])
     return standard

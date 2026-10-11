@@ -11,7 +11,7 @@ worker_execution = ContextVar('cad_document_worker_execution',default=False)
 class Gateway:
     OPERATIONS={'create_document','get_document','read_snapshot','claim_command','get_command','list_documents',
                 'list_designs','find_published','enqueue_system_job','job','engine_state','take_job','complete_job','fail_job',
-                'claim_import','claim_publication','commit_publication'}
+                'claim_import','claim_publication','commit_publication','published_exists'}
 
     def __init__(self, backend=None): self.backend=backend or BackendServiceClient()
 

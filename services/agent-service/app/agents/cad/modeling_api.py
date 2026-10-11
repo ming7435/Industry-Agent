@@ -33,6 +33,12 @@ def get_freecad_run_record(request: Request, run_id: str):
     """只读服务端建模版本，供质检绑定；不触发模型或 CAD 工具调用。"""
     if not re.fullmatch(r'FC-[a-f0-9]{64}', run_id):
         raise HTTPException(404, '建模版本不存在或已过期')
+    from app.cad_documents import documents_enabled
+    if documents_enabled():
+        from app.cad_documents.publishing import read_published_run
+        published = read_published_run(request, run_id)
+        if published is not None:
+            return published
     try:
         with _FREECAD_STORE_LOCK:
             if getattr(request.app.state, 'freecad_run_store', None) is None:
@@ -339,7 +345,8 @@ class FreeCADRunStore(BuildCADRunStore):
 
 def _freecad_public_record(record):
     keys = ("run_id", "prompt", "status", "answer", "calls", "artifacts", "validation", "spec",
-        "error", "error_code", "error_stage", "error_tool", "execution", "created_at", "updated_at", "part_name", "part_number")
+        "error", "error_code", "error_stage", "error_tool", "execution", "created_at", "updated_at", "part_name", "part_number",
+        "document_id", "revision", "version", "standard_parameters", "published_at")
     value = {key: record[key] for key in keys if key in record}
     if value.get("status") == "running" and time.time() - record.get("created_at", 0) > RUN_DEADLINE_SECONDS:
         value.update(status="outcome_unknown", error="此运行长时间未返回结果，请检查本地 FreeCAD；不会自动重新执行。")
@@ -488,7 +495,12 @@ def build_freecad_router(require_auth, trace=None):
         ):
             raise HTTPException(404, detail="此运行没有可下载的模型文件。")
         try:
-            path = artifact_path(run_id, name)
+            if record.get('document_id'):
+                from app.api.freecad_documents import application_for_request
+                entry = next(a for a in record['artifacts'] if a['name'] == name)
+                path = application_for_request(request).artifacts.entry_path(entry)
+            else:
+                path = artifact_path(run_id, name)
             if not path.is_file():
                 raise ValueError("模型文件不存在")
         except (ValueError, OSError):

@@ -105,14 +105,14 @@ class CadDocumentRepository:
     def _write_head(db, head):
         db.execute('UPDATE cad_documents SET payload=? WHERE document_id=?', [encoded(head), head.document_id])
 
-    def create_document(self, actor_id, request_id, part_name, part_number):
+    def create_document(self, actor_id, request_id, part_name, part_number, source_run_id=None):
         self.actor(actor_id)
         part_name = single_line(part_name)
         if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', request_id):
             raise CadDocumentError('request_invalid', '创建请求身份无效', 422)
         if not isinstance(part_number, str) or (part_number and not re.fullmatch(r'[0-9]{5}', part_number)):
             raise CadDocumentError('number_invalid', '零件编号必须为五位数字或留空', 422)
-        key, digest = canonical_digest([actor_id, request_id]), canonical_digest([part_name, part_number])
+        key, digest = canonical_digest([actor_id, request_id]), canonical_digest([part_name, part_number, source_run_id])
         with self.transaction() as db:
             row = db.execute('SELECT * FROM cad_documents WHERE request_key=?', [key]).one()
             if row:
@@ -177,12 +177,28 @@ class CadDocumentRepository:
         self.actor(actor_id)
         with self.transaction() as db:
             self._head(db, actor_id, document_id)
-            row = db.execute('SELECT payload FROM cad_commands WHERE command_key=?', [canonical_digest([actor_id,command_id])]).one()
+            row = db.execute('SELECT payload,document_id FROM cad_commands WHERE command_key=?', [canonical_digest([actor_id,command_id])]).one()
             if not row:
                 raise CadDocumentError('command_not_found', 'CAD命令不存在', 404)
             record = CommandRecord.model_validate(json.loads(row['payload'])['record'])
-            if record.envelope is not None and record.envelope.document_id != document_id:
+            if row['document_id'] != document_id:
                 raise CadDocumentError('forbidden', '命令不属于此文档', 403)
+            return record
+
+    def claim_import(self, actor_id, document_id, command_id, source):
+        self.actor(actor_id)
+        key=canonical_digest([actor_id,command_id]); digest=canonical_digest([document_id,source])
+        with self.transaction() as db:
+            head=self._head(db,actor_id,document_id)
+            old=db.execute('SELECT payload,input_digest FROM cad_commands WHERE command_key=?',[key]).one()
+            if old:
+                if old['input_digest']!=digest: raise CadDocumentError('idempotency_conflict','副本请求内容不一致')
+                return CommandRecord.model_validate(json.loads(old['payload'])['record'])
+            if head.revision!=0 or head.active_command_id: raise CadDocumentError('import_conflict','只能向空文档创建可信副本')
+            record=CommandRecord(envelope=None,input_digest=digest,owner_user_id=actor_id,state='accepted',job_id='JOB-'+str(uuid4()))
+            value={'record':record.model_dump(mode='json'),'kind':'import','source':source}
+            db.execute('INSERT INTO cad_commands VALUES (?,?,?,?,?,?,?,?,?)',[key,record.job_id,actor_id,command_id,document_id,'accepted',digest,encoded(value),time.time()])
+            head.active_command_id=command_id; self._write_head(db,head)
             return record
 
     @staticmethod
@@ -235,6 +251,68 @@ class CadDocumentRepository:
             if row['owner_id'] != actor_id:
                 raise CadDocumentError('forbidden', '无权访问此已发布模型', 403)
             return json.loads(row['payload'])
+
+    def published_exists(self,run_id):
+        with self.transaction() as db:
+            return db.execute('SELECT run_id FROM cad_published_versions WHERE run_id=?',[run_id]).one() is not None
+
+    def claim_publication(self,actor_id,document_id,command_id,expected_revision):
+        self.actor(actor_id)
+        if not re.fullmatch(r'CMD-[A-Za-z0-9_-]{1,128}',command_id): raise CadDocumentError('command_invalid','发布请求身份无效',422)
+        digest=canonical_digest([actor_id,document_id,expected_revision,'publish'])
+        key=canonical_digest([actor_id,command_id])
+        with self.transaction() as db:
+            head=self._head(db,actor_id,document_id)
+            existing=db.execute('SELECT * FROM cad_commands WHERE command_key=?',[key]).one()
+            if existing:
+                if existing['input_digest']!=digest: raise CadDocumentError('idempotency_conflict','发布请求不能更换版本')
+                return CommandRecord.model_validate(json.loads(existing['payload'])['record'])
+            published=db.execute('SELECT payload FROM cad_published_versions WHERE document_id=? AND revision=?',[document_id,expected_revision]).one()
+            record=CommandRecord(envelope=None,input_digest=digest,owner_user_id=actor_id,state='accepted',job_id='JOB-'+str(uuid4()))
+            if published:
+                value=json.loads(published['payload']);record.state='completed';record.result={k:value[k] for k in ('run_id','version','revision','document_id')}
+            else:
+                if type(expected_revision) is not int or head.revision!=expected_revision: raise CadDocumentError('revision_conflict','发布修订已经改变')
+                if head.active_command_id: raise CadDocumentError('document_busy','文档存在未终结命令')
+                snapshot=json.loads(db.execute('SELECT payload FROM cad_revisions WHERE document_id=? AND revision=?',[document_id,expected_revision]).one()['payload'])
+                if not snapshot['product_root_ids']: raise CadDocumentError('empty_document','没有有效产品，不能发布',422)
+                head.active_command_id=command_id; self._write_head(db,head)
+            payload={'record':record.model_dump(mode='json'),'kind':'publish','source':{}}
+            db.execute('INSERT INTO cad_commands VALUES (?,?,?,?,?,?,?,?,?)',[key,record.job_id,actor_id,command_id,document_id,record.state,digest,encoded(payload),time.time()])
+            return record
+
+    def commit_publication(self,worker_id,receipt,standard):
+        from shared.freecad_documents import verify_document_standard
+        receipt=NativeReceipt.model_validate(receipt) if isinstance(receipt,dict) else receipt
+        standard=verify_document_standard(standard.model_dump(mode='json') if hasattr(standard,'model_dump') else standard)
+        with self.transaction() as db:
+            row=db.execute('SELECT * FROM cad_commands WHERE job_id=?',[receipt.job_id]).one()
+            if not row: raise CadDocumentError('job_not_found','发布命令不存在',404)
+            value=json.loads(row['payload']);record=CommandRecord.model_validate(value['record'])
+            if record.input_digest!=receipt.input_digest or value['kind']!='publish': raise CadDocumentError('receipt_identity','发布收据身份无效')
+            if record.state=='completed': return record.model_dump(mode='json')
+            engine=db.execute('SELECT * FROM cad_executor_state WHERE singleton=1').one()
+            if engine['job_id']!=receipt.job_id: raise CadDocumentError('executor_conflict','发布不属于活动任务')
+            head=self._head(db,record.owner_user_id,row['document_id'])
+            snapshot=receipt.snapshot
+            expected_id='FC-'+canonical_digest([record.owner_user_id,head.document_id,head.revision])
+            if (receipt.state!='completed' or receipt.validation.get('valid') is not True or receipt.validation.get('step_roundtrip') is not True
+                or snapshot is None or snapshot.document_id!=head.document_id or snapshot.revision!=head.revision
+                or standard.document_id!=head.document_id or standard.revision!=head.revision or standard.run_id!=expected_id):
+                raise CadDocumentError('publication_invalid','发布几何、标准或修订不一致')
+            version=(head.published_version or 0)+1
+            artifacts=[{**a,'format':a['name'].rsplit('.',1)[-1].lower(),
+                        'url':f'/api/cad/freecad/runs/{expected_id}/artifacts/{a["name"]}'} for a in receipt.artifacts
+                       if a['name'] in {'model.FCStd','model.step','model.stl','drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'}]
+            publication=dict(run_id=expected_id,status='completed',document_id=head.document_id,revision=head.revision,version=version,
+                             part_name=head.part_name,part_number=head.part_number,spec=snapshot.source_spec,validation=receipt.validation,
+                             standard_parameters=standard.model_dump(mode='json'),artifacts=artifacts,published_at=time.time())
+            db.execute('INSERT INTO cad_published_versions(run_id,document_id,revision,owner_id,payload) VALUES (?,?,?,?,?)',
+                       [expected_id,head.document_id,head.revision,record.owner_user_id,encoded(publication)])
+            head.published_version,head.published_revision=version,head.revision
+            self._write_head(db,head)
+            record.state='completed';record.result={k:publication[k] for k in ('run_id','version','revision','document_id')}
+            return self._finish(db,row,value,record).model_dump(mode='json')
 
     def enqueue_system_job(self, kind, request_key, payload):
         if kind not in {'legacy_generate','discover'}:

@@ -868,7 +868,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         headers = agent_request_headers(self.headers.get("Content-Type", "application/json"))
         if self.headers.get('Cookie'):
             headers['Cookie'] = self.headers['Cookie']
-        if expert_write:
+        if expert_write or cad_write:
             headers['Origin'] = self.headers['Origin']
         request = Request(
             AGENT_SERVICE_BASE_URL.rstrip("/") + self.path,
@@ -884,6 +884,9 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "no-store")
                 if response.headers.get("Content-Disposition"):
                     self.send_header("Content-Disposition", response.headers["Content-Disposition"])
+                for header in ('X-Content-Type-Options','Content-Security-Policy'):
+                    if response.headers.get(header):
+                        self.send_header(header,response.headers[header])
                 if path_parts[:4] == ["api", "cad", "buildcad", "auth"]:
                     for cookie in response.headers.get_all("Set-Cookie", []):
                         self.send_header("Set-Cookie", cookie)

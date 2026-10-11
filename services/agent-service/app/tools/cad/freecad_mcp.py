@@ -350,7 +350,8 @@ try:
         finalize_workbenches(doc, objects, spec)
     doc.saveAs(str(out / "model.FCStd"))
     evidence = {{"run_id": {run_id!r}, "valid": True, "solid_count": expected_solids, "volume_mm3": shape.Volume,
-        "bounds_mm": bounds, "step_roundtrip": True, "units": "mm", "spec": spec}}
+        "bounds_mm": bounds, "step_roundtrip": True, "units": "mm", "spec": spec,
+        "product_names": [getattr(obj, "Name", "Model" if len(objects)==1 else "Component%d" % (i+1)) for i,obj in enumerate(objects)]}}
     for key in ("drawing", "assembly", "bim", "sheet_metal"):
         if key in extra:
             evidence[key] = extra[key]

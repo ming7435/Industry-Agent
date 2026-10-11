@@ -15,6 +15,17 @@ class CadDocumentWorker:
         if receipt is None: return {'state':'blocked','job_id':job_id,'reason':'等待原生终结收据；不重放'}
         # Artifact validation is needed even after process restart, before registering a receipt.
         for entry in receipt.artifacts: self.artifacts.entry_path(entry)
+        if receipt.state=='completed' and receipt.snapshot is not None and self.backend.engine_state().get('job_id')==job_id:
+            # A publish keeps revision unchanged; the backend validates its command kind and standard.
+            try:
+                from shared.freecad_documents import canonical_digest
+                from shared.freecad_document_standards import build_document_standard
+                record=self.backend.job(job_id) if hasattr(self.backend,'job') else None
+                if record and record.envelope is None:
+                    return self.backend.call('commit_publication',worker_id=self.worker_id,receipt=receipt.model_dump(mode='json'),
+                                             standard=build_document_standard(receipt.snapshot,'FC-'+canonical_digest([record.owner_user_id,receipt.snapshot.document_id,receipt.snapshot.revision])).model_dump(mode='json'))
+            except Exception:
+                return {'state':'blocked','job_id':job_id,'reason':'发布收据待核验'}
         return self.backend.complete_job(self.worker_id,receipt)
 
     def tick(self):
@@ -47,7 +58,14 @@ class CadDocumentWorker:
             receipt=self.artifacts.read_receipt(job.job_id)
             if receipt is None:
                 return self.backend.fail_job(self.worker_id,job.job_id,'receipt_pending',outcome_unknown=True)
-            return self.backend.complete_job(self.worker_id,self.artifacts.validate_candidate(job,receipt))
+            receipt=self.artifacts.validate_candidate(job,receipt)
+            if job.job_kind=='publish' and receipt.state=='completed':
+                from shared.freecad_document_standards import build_document_standard
+                from shared.freecad_documents import canonical_digest
+                run_id='FC-'+canonical_digest([job.owner_user_id,job.document_id,job.expected_revision])
+                standard=build_document_standard(receipt.snapshot,run_id)
+                return self.backend.call('commit_publication',worker_id=self.worker_id,receipt=receipt.model_dump(mode='json'),standard=standard.model_dump(mode='json'))
+            return self.backend.complete_job(self.worker_id,receipt)
         except Exception:
             # CAD may have finished while the HTTP/DB result was lost. Only the original receipt resolves it.
             receipt=self.artifacts.read_receipt(job.job_id)

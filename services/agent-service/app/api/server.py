@@ -831,6 +831,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     from app.api.quality_simulation import build_simulation_router
     app.include_router(build_simulation_router(require_write_auth))
     app.include_router(build_freecad_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
+    from app.api.freecad_documents import build_document_router
+    app.include_router(build_document_router(require_write_auth))
     return app
 
 
