@@ -4,7 +4,8 @@ from shared.freecad_documents import CadDocumentError
 
 class CadDocumentService:
     OPERATIONS = {'create_document','get_document','read_snapshot','claim_command','get_command',
-                  'list_documents','list_designs','find_published'}
+                  'list_documents','list_designs','find_published','enqueue_system_job','job','engine_state',
+                  'take_job','complete_job','fail_job'}
 
     def __init__(self, repository):
         self.repository = repository

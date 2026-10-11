@@ -374,6 +374,14 @@ def freecad_mcp(spec):
     context = _scope.get()
     if context is None:
         raise FreeCADModelError('FreeCAD 工具缺少服务端任务上下文。')
+    from app.cad_documents import documents_enabled
+    from app.cad_documents.gateway import Gateway, worker_execution
+    if documents_enabled() and not worker_execution.get():
+        if context['executed']:
+            raise FreeCADModelError('同一建模命令不能重复执行。')
+        context['executed'] = True
+        gateway = Gateway()
+        return gateway.wait_legacy(gateway.enqueue_legacy(context['run_id'], normalized))
     if context['executed']:
         raise FreeCADModelError('同一建模命令不能重复执行。')
     if not _execution_lock.acquire(blocking=False):

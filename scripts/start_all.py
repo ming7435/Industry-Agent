@@ -224,6 +224,12 @@ def _start_optional_freecad(env: dict[str, str]) -> dict[str, object]:
     return {'ready': False, 'reason': 'start_failed'}
 
 
+def cad_document_worker_service(env):
+    if env.get('FREECAD_DOCUMENTS_ENABLED','').lower() != 'true':
+        return None
+    return ('cad-document-worker',[sys.executable,str(PROJECT_ROOT/'scripts/freecad_document_worker.py')],PROJECT_ROOT,PROJECT_ROOT)
+
+
 def main() -> int:
     python = sys.executable
     services = [
@@ -279,6 +285,9 @@ def main() -> int:
     ]
 
     launch_env = _default_env()
+    worker_service = cad_document_worker_service(launch_env)
+    if worker_service:
+        services.insert(2, worker_service)
     monitor_port = int(launch_env["MONITOR_WEB_PORT"])
     if not launch_env.get("BACKEND_INTERNAL_TOKEN", "").strip() and launch_env["APP_ENV"].lower() == "development":
         # 一次性身份无法证明旧服务的身份一致，必须在启动任何子进程前拒绝混用。
