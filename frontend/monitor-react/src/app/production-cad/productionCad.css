@@ -1,5 +1,9 @@
 .production-cad { max-width: 1120px; margin: 0 auto; color: #19343d; }
 .cad-document-layout { display: grid; grid-template-columns: minmax(170px,1fr) minmax(250px,2fr) minmax(220px,1fr); gap: 12px; margin: 20px 0; align-items: start; }
+.cad-document-viewport { width: 100%; min-height: 340px; height: 420px; }
+.cad-document-viewport canvas { display: block; max-width: 100%; }
+.cad-document-viewer .cad-actions { gap: 6px; margin: 0 0 12px; }
+.cad-document-viewer .cad-actions button { padding: 6px 9px; font-size: 12px; }
 .cad-document-layout > * { min-width: 0; border: 1px solid #d9e6e8; border-radius: 10px; padding: 12px; background: white; }
 .cad-document-tree ul { list-style: none; padding: 0; margin: 0; }
 .cad-document-tree [role=treeitem] { width: 100%; text-align: left; padding: 10px; margin: 3px 0; overflow-wrap: anywhere; }

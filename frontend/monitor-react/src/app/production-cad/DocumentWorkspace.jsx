@@ -3,6 +3,7 @@ import {createDocumentApi} from './documentApi.mjs';
 import useCadDocument from './useCadDocument.jsx';
 import DocumentTree from './DocumentTree.jsx';
 import DocumentProperties,{dimensionLabels} from './DocumentProperties.jsx';
+import DocumentViewer from './DocumentViewer.jsx';
 import {getTeamSession,setTeamSessionActor,subscribeTeamSession} from '../../teamSession.mjs';
 import {teamRequest} from '../../teamApi.mjs';
 
@@ -23,7 +24,7 @@ export default function DocumentWorkspace({api=defaultApi,actorId:providedActor,
   const generation=useRef(0),createRequest=useRef(null);
   const cad=useCadDocument({actorId,documentId,api}),blocked=busy||!!cad.pending||!!cad.head?.active_command_id;
   const selected=cad.snapshot?.objects.find(o=>o.object_id===cad.selectedObjectId);
-  useEffect(()=>{if(providedActor!==undefined)return;const unsub=subscribeTeamSession(setSession),abort=new AbortController();teamRequest('me',{signal:abort.signal}).then(value=>{if(!abort.signal.aborted)setTeamSessionActor(value);}).catch(()=>{});return()=>{abort.abort();unsub();};},[providedActor]);
+  useEffect(()=>{if(providedActor!==undefined)return;const unsub=subscribeTeamSession(setSession),abort=new AbortController();teamRequest('me',{signal:abort.signal}).then(value=>{if(!abort.signal.aborted)setTeamSessionActor(value.user);}).catch(()=>{});return()=>{abort.abort();unsub();};},[providedActor]);
   useEffect(()=>{generation.current++;setDocuments([]);setProposal(null);setError('');setBusy(false);createRequest.current=null;setDocumentId(initialDocumentId||storage()?.getItem(activeKey(actorId))||'');},[actorId,initialDocumentId]);
   useEffect(()=>{
     if(!actorId)return;const current=++generation.current,abort=new AbortController();let timer;
@@ -50,7 +51,7 @@ export default function DocumentWorkspace({api=defaultApi,actorId:providedActor,
     <label>个人文档<select value={documentId} onChange={e=>setDocumentId(e.target.value)} disabled={busy}><option value="">选择文档</option>{documents.map(d=><option key={d.document_id} value={d.document_id}>{d.part_name}（{d.part_number}）</option>)}{documentId&&!documents.some(d=>d.document_id===documentId)&&<option value={documentId}>{documentId}</option>}</select></label>
     {cad.head&&<><section className="cad-card-heading"><h3>{cad.head.part_name} · {cad.head.part_number}</h3><p>工作修订 {cad.head.revision} · 已发布版本 {cad.head.published_version??'无'}{cad.head.published_revision!==cad.head.revision?' · 存在未发布修改':''}</p></section>
     {(cad.pending||cad.head.active_command_id)&&<p role="status">{cad.pending?.state==='outcome_unknown'?'结果待核对，不会自动重执行':'原生任务执行中，请稍候'} <button onClick={cad.refresh}>查回状态</button></p>}
-    <div className="cad-document-layout"><DocumentTree snapshot={cad.snapshot} selectedObjectId={cad.selectedObjectId} onSelect={cad.selectObject}/><div className="cad-document-stage"><p>当前修订 {cad.snapshot?.revision} · {cad.snapshot?.objects.length||0} 个对象</p></div><DocumentProperties key={`${documentId}:${selected?.object_id}:${cad.snapshot?.revision}`} object={selected} pending={blocked} onSubmit={cad.submit}/></div>
+    <div className="cad-document-layout"><DocumentTree snapshot={cad.snapshot} selectedObjectId={cad.selectedObjectId} onSelect={cad.selectObject}/><div className="cad-document-stage"><DocumentViewer key={actorId+documentId} snapshot={cad.snapshot} selectedObjectId={cad.selectedObjectId} onSelect={cad.selectObject}/></div><DocumentProperties key={`${documentId}:${selected?.object_id}:${cad.snapshot?.revision}`} object={selected} pending={blocked} onSubmit={cad.submit}/></div>
     <details className="cad-card" open={!cad.snapshot?.objects.length}><summary>添加基础形体</summary><PrimitiveForm disabled={blocked} onSubmit={cad.submit}/></details>
     <section className="cad-card"><form onSubmit={propose}><label>中文建模或修改需求<textarea rows={3} maxLength={4000} value={prompt} disabled={blocked} onChange={e=>{setPrompt(e.target.value);setProposal(null);}} placeholder="例如：创建直径20mm的球体；将底板的长度改为65mm"/></label><button disabled={blocked||!prompt.trim()}>生成修改提案</button></form>
       {proposal?.status==='needs_input'&&<p>{proposal.questions?.join('；')||'请补充完整尺寸'}</p>}
