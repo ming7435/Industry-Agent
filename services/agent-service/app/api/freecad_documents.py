@@ -22,6 +22,11 @@ class PublishDocument(Contract):
     expected_revision: Revision
 
 
+class ProposeDocument(Contract):
+    prompt: StrictStr=Field(min_length=1,max_length=4000)
+    expected_revision: Revision
+
+
 def same_origin(request):
     origin=request.headers.get('origin')
     if not origin: return  # Non-browser authenticated clients have no Origin.
@@ -68,6 +73,11 @@ def build_document_router(require_write_auth,application_factory=application_for
         application,actor=app_actor(request)
         return call(application.documents,actor,cursor,limit)
 
+    @router.get('/capabilities')
+    def capabilities():
+        from app.cad_documents.capabilities import current_capabilities
+        return current_capabilities()
+
     @router.get('/designs')
     def designs(request:Request,cursor:str='',limit:int=50):
         from app.cad_documents.publishing import CadDocumentPublisher
@@ -94,6 +104,16 @@ def build_document_router(require_write_auth,application_factory=application_for
         application,actor=app_actor(request)
         if body.document_id!=document_id: raise HTTPException(422,'命令文档身份不一致')
         return call(application.submit,actor,body)
+
+    @router.post('/documents/{document_id}/proposals',dependencies=[Depends(writing)])
+    def propose(document_id:str,body:ProposeDocument,request:Request):
+        from app.cad_documents.proposal import propose_document_command
+        from app.clients.model import ModelServiceClient
+        application,actor=app_actor(request)
+        head=call(application.head,actor,document_id)
+        if head.revision!=body.expected_revision: raise HTTPException(409,'文档已更新，请重新读取修订')
+        snapshot=call(application.snapshot,actor,document_id,head.revision)
+        return call(propose_document_command,head,snapshot,body.prompt,ModelServiceClient())
 
     @router.get('/documents/{document_id}/commands/{command_id}')
     def command(document_id:str,command_id:str,request:Request):

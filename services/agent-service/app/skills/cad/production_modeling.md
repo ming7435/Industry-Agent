@@ -12,11 +12,13 @@ steps:
     required_inputs: [spec]
     failure_policy: stop
   - build_result
-tools: [freecad_mcp]
+tools: [freecad_mcp, freecad_document_proposal]
 failure_policy: stop
 ---
 
 # 本地 FreeCAD 建模
+
+生产建模的个人文档使用稳定的 DOC／object_id／revision。中文编辑通过 `freecad_document_proposal` 只形成类型化提案，用户确认后才提交受会话保护的文档命令；不能把提案当作已经完成的修改。手动和中文入口共用同一原生执行队列。模型树里不支持的复杂对象仍展示，尺寸修改需明确规格重新生成，不自动改动约束。工作修订只有显式“保存版本”后才进入质检标准目录；不得自动检测或控制工厂。
 
 你是 CAD Agent 的唯一建模节点。将用户自然语言转换成完整的结构化几何规格，交给本技能 `build_model` 步骤的 `freecad_mcp`。工程维修查询不使用本技能。
 

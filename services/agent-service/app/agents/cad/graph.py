@@ -91,29 +91,11 @@ def model_3d(state: CADGraphState) -> Dict[str, Any]:
     try:
         if request.get("provider") != "freecad":
             raise FreeCADModelError("BuildCAD 建模已停用，请通过本地 FreeCAD 接口提交需求。")
-        spec = request.get("spec")
-        if spec is None:
-            spec = _explicit_advanced_spec(request["prompt"]) or _explicit_tetrahedron_spec(request["prompt"]) or _explicit_cylinder_spec(request["prompt"])
-        if spec is None and model is not None and model.available:
-            model.timeout = min(model.timeout, 60)
-            response = model.chat([
-                {"role": "system", "content": skill.document},
-                {"role": "user", "content": json.dumps({"prompt": request["prompt"]}, ensure_ascii=False)},
-            ])
-            content = response["choices"][0]["message"].get("content")
-            if not isinstance(content, str):
-                raise FreeCADModelError("模型未返回结构化尺寸，请补充明确的尺寸需求。")
-            value = json.loads(content)
-            if not isinstance(value, dict):
-                raise FreeCADModelError("模型未返回结构化尺寸，请补充明确的尺寸需求。")
-            if value.get("status") == "needs_input":
-                questions = value.get("questions")
-                if isinstance(questions, list) and questions and all(isinstance(item, str) for item in questions):
-                    result["answer"] = "请补充建模尺寸：\n" + "\n".join(questions)[:2000]
-            else:
-                spec = validate_spec(value.get("spec"))
-                if not _dimensions_are_explicit(spec, request["prompt"]):
-                    raise FreeCADModelError("无法完整核对需求中的尺寸、孔数、孔位或额外特征，请补充明确规格；不会忽略特征或借用其他尺寸建模。")
+        from app.cad_documents.proposal import resolve_freecad_spec
+        resolved = resolve_freecad_spec(request["prompt"], model, request.get("spec"))
+        spec = resolved.get("spec")
+        if resolved.get("status") == "needs_input":
+            result["answer"] = "请补充建模尺寸：\n" + "\n".join(resolved.get("questions") or [])[:2000]
         if spec is not None:
             spec = validate_spec(spec)
             result["spec"] = spec
