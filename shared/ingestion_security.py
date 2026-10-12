@@ -43,6 +43,8 @@ def read_image_payload(path: Path) -> tuple[bytes, str]:
             if not media_type or not media_type.startswith('image/'):
                 raise ValueError('Unsupported image format')
             image.verify()
+        with Image.open(io.BytesIO(data)) as decoded:
+            decoded.load()
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
         raise ValueError('File is not a valid supported image') from error
     return data, media_type
