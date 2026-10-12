@@ -32,3 +32,21 @@ def test_rag_service_env_precedence_is_root_then_service(tmp_path):
     settings = Settings(_env_file=(str(root), str(service)), _env_file_encoding="utf-8")
     assert settings.service_port == 8020
     assert settings.milvus_database == "service_db"
+
+
+def test_disabled_dotenv_never_reads_a_project_env_file(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    source = Path(__file__).resolve().parents[1] / 'config' / 'settings.py'
+    service = tmp_path / 'services' / 'rag-service'
+    (service / 'config').mkdir(parents=True)
+    (service / 'config' / 'settings.py').write_text(source.read_text(encoding='utf-8'), encoding='utf-8')
+    (tmp_path / '.env').write_text('RAG_INTERNAL_TOKEN=isolated-file-that-must-not-load\n', encoding='utf-8')
+    env = {**os.environ, 'PYTHON_DOTENV_DISABLED': '1', 'PYTHONPATH': str(service)}
+    env.pop('RAG_INTERNAL_TOKEN', None)
+    result = subprocess.run([sys.executable, '-c',
+        "from config.settings import settings; assert settings.rag_internal_token == '', 'dotenv disabled but project configuration was loaded'"],
+        cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

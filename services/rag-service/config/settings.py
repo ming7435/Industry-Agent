@@ -87,7 +87,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         # 所有服务只读取仓库根目录的共享配置；实际进程环境变量优先级最高。
-        env_file=str(ENV_FILE),
+        env_file=None if os.getenv('PYTHON_DOTENV_DISABLED') == '1' else str(ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
