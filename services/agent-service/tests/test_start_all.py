@@ -1,4 +1,6 @@
 import json
+import io
+import os
 import subprocess
 import sys
 import threading
@@ -75,3 +77,57 @@ def test_startup_does_not_wait_for_exited_child():
     process.wait(timeout=5)
     with pytest.raises(RuntimeError, match="agent-service"):
         startup_waiter()("agent-service", process, 9, timeout_seconds=3, poll_seconds=0.01)
+
+
+def test_utf8_service_logs_keep_draining_on_a_gbk_windows_locale(monkeypatch, tmp_path):
+    """中文及非文本日志不能杀死读取线程，使真实子进程堵在输出管道。"""
+    real_popen, real_thread = subprocess.Popen, threading.Thread
+    processes, readers = [], []
+    sink = io.BytesIO()
+    gbk_output = io.TextIOWrapper(sink, encoding='gbk')
+    child = (
+        "import sys; "
+        "sys.stdout.buffer.write(b'\\xff\\xfe\\n'); sys.stdout.buffer.flush(); "
+        "sys.stdout.buffer.write(('诊断复核已完成：' + 'x' * 131072 + '\\n').encode('utf-8')); "
+        "sys.stdout.buffer.write(b'OUTPUT-DRAINED\\n'); sys.stdout.buffer.flush()"
+    )
+
+    def spawn(_command, **kwargs):
+        process = real_popen([sys.executable, '-c', child], **{**kwargs, 'cwd': tmp_path})
+        processes.append(process)
+        return process
+
+    def reader(*args, **kwargs):
+        thread = real_thread(*args, **kwargs)
+        readers.append(thread)
+        return thread
+
+    deadline = time.monotonic() + 5
+    def exited(children):
+        code = children[0][1].poll()
+        return (children[0][0], code) if code is not None else ('blocked-log-output', 98) if time.monotonic() > deadline else None
+
+    monkeypatch.setattr(subprocess, '_text_encoding', lambda: 'gbk')
+    monkeypatch.setattr(start_all.sys, 'stdout', gbk_output)
+    monkeypatch.setattr(subprocess, 'Popen', spawn)
+    monkeypatch.setattr(threading, 'Thread', reader)
+    monkeypatch.setattr(start_all, '_default_env', lambda: {'APP_ENV': 'development', 'MONITOR_WEB_PORT': '8001',
+                                                          'BACKEND_INTERNAL_TOKEN': 'isolated-test'})
+    monkeypatch.setattr(start_all, '_env_for_service', lambda _: {**os.environ, 'PYTHONIOENCODING': 'utf-8'})
+    monkeypatch.setattr(start_all, '_start_optional_freecad', lambda _: {'ready': False, 'reason': 'isolated-test'})
+    monkeypatch.setattr(start_all, '_port_in_use', lambda *_: False)
+    monkeypatch.setattr(start_all, '_wait_for_service_startup', lambda *_: None)
+    monkeypatch.setattr(start_all, 'unexpected_service_exit', exited)
+    try:
+        assert start_all.main() == 0
+        for thread in readers:
+            thread.join(timeout=2)
+        gbk_output.flush()
+        output = sink.getvalue().decode('gbk')
+        assert '诊断复核已完成：' in output
+        assert 'OUTPUT-DRAINED' in output
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)

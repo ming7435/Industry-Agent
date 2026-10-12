@@ -11,16 +11,23 @@ from app.workorder.policy import auto_workorder_decision
 
 
 _POLICY_AUTHORIZED_CREATE = ContextVar('policy_authorized_workorder_create', default=False)
+_RECOVERY_WORKORDER = ContextVar('recovery_workorder_id', default='')
+
+
+def recovery_workorder_id():
+    return _RECOVERY_WORKORDER.get()
 
 
 @contextmanager
-def _policy_authorized_workorder_execution():
+def _policy_authorized_workorder_execution(existing_workorder_id=''):
     """仅 Dispatcher 在服务端策略放行后的执行回调内使用，不能由请求体声明。"""
     token = _POLICY_AUTHORIZED_CREATE.set(True)
+    recovery_token = _RECOVERY_WORKORDER.set(existing_workorder_id)
     try:
         yield
     finally:
         _POLICY_AUTHORIZED_CREATE.reset(token)
+        _RECOVERY_WORKORDER.reset(recovery_token)
 
 
 class WorkOrderAgentValidator:

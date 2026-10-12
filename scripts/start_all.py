@@ -94,6 +94,7 @@ def _default_env() -> dict[str, str]:
         "MONITOR_WEB_HOST": "127.0.0.1",
         "MONITOR_WEB_PORT": "8001",
         "FACTORY_API_BASE_URL": "http://127.0.0.1:4529",
+        "PYTHONIOENCODING": "utf-8",
     }
     for key, value in defaults.items():
         if not env.get(key):
@@ -177,7 +178,12 @@ def _stream_logs(name: str, process: subprocess.Popen[str]) -> None:
 
     assert process.stdout is not None
     for line in process.stdout:
-        print(f"[{name}] {line}", end="")
+        output = f"[{name}] {line}"
+        try:
+            print(output, end="")
+        except UnicodeEncodeError:
+            encoding = sys.stdout.encoding or "utf-8"
+            print(output.encode(encoding, errors="replace").decode(encoding), end="")
 
 
 def _terminate(processes: list[tuple[str, subprocess.Popen[str]]]) -> None:
@@ -335,6 +341,8 @@ def main() -> int:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
             )
             processes.append((name, process))

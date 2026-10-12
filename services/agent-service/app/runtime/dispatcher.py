@@ -159,7 +159,8 @@ class RuntimeDispatcher:
 
         # 诊断可能已经检索了该 Action 所需的准确知识证据。
         # 只有查询已成功、未降级且规范化查询相同的记录才复用；其他搜索仍通过已注册的 Knowledge Agent 执行。
-        if canonical_capability in {"document_search", "historical_case_search", "evidence_retrieval"}:
+        if canonical_capability in {"document_search", "historical_case_search", "evidence_retrieval"} \
+                and not (state.get('runtime_recovery') and state.get('runtime_failed_action_id') == action.action_id):
             cached = self._cached_knowledge_result(state, task)
             if cached is not None:
                 self._emit(
@@ -177,11 +178,14 @@ class RuntimeDispatcher:
 
             # 本回调在执行线程中进入服务端授权域，确保审批恢复后领域门禁接受
             # 已经 Policy 核验过的 Action；请求体中的任何 approved 标记均无效。
-            scope = _policy_authorized_workorder_execution() if self.policy._effective_capability(action, state) == 'workorder_create' else nullcontext()
+            scope = _policy_authorized_workorder_execution(state.get('runtime_recovery_workorder_id', '')) \
+                if self.policy._effective_capability(action, state) == 'workorder_create' else nullcontext()
             with scope:
                 return self.harnesses[agent_name].execute_once(task) if agent_name in self.harnesses \
                     else (agent.execute(task) if callable(getattr(agent, 'execute', None)) else agent.run(task))
 
+        if state.get('runtime_recovery'):
+            self.execution_manager.prepare_resume(action, existing_workorder_id=state.get('runtime_recovery_workorder_id', ''))
         record = self.execution_manager.execute(
             action,
             execute_agent,
@@ -264,6 +268,9 @@ class RuntimeDispatcher:
             event.setdefault("trace_id", state.get("trace_id", ""))
             event["runtime_managed"] = True
             event["runtime_capability"] = capability
+            if state.get('runtime_recovery') and state.get('runtime_failed_action_id') \
+                    and state['runtime_failed_action_id'] == (state.get('next_action') or {}).get('action_id'):
+                event['review'] = True
             if capability == "diagnosis_review":
                 # 复核必须重新执行诊断，不能命中原事件版本的低置信度缓存。
                 event["review"] = True

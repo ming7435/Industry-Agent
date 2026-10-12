@@ -14,7 +14,7 @@ test('production page exposes verified adapters and explicitly unadapted install
     return respond(route,{items:[],next_cursor:''});
   });
   try {
-    await page.goto(fixture.base);await page.getByText('FreeCAD 功能与接入状态',{exact:true}).click();
+    await page.goto(fixture.base);await page.getByText('高级功能',{exact:true}).click();await page.getByText('FreeCAD 功能与接入状态',{exact:true}).click();
     await page.getByText('FEM',{exact:true}).waitFor();
     assert.match(await page.getByRole('region',{name:'FreeCAD 能力目录'}).textContent(),/已验证可用/);
     assert.match(await page.getByRole('region',{name:'FreeCAD 能力目录'}).textContent(),/待接入/);

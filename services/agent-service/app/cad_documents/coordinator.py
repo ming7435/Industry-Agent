@@ -152,16 +152,37 @@ os.replace(str(temporary),str(out/'receipt.json'))
 
 
 def discovery_program(job,directory):
-    data=dict(job_id=job.job_id,input_digest=job.input_digest,directory=str(directory))
-    return 'import FreeCAD as App,FreeCADGui as Gui,json,hashlib,os\nfrom pathlib import Path\ndata=json.loads('+repr(json.dumps(data))+')\n'+r'''
+    data=dict(job_id=job.job_id,input_digest=job.input_digest,directory=str(directory),workbench_id=job.source.get('workbench_id',''))
+    return 'import FreeCAD as App,FreeCADGui as Gui,json,hashlib,os,time\nfrom pathlib import Path\ndata=json.loads('+repr(json.dumps(data))+')\n'+r'''
 out=Path(data['directory'])
 with (out/'.execution-claimed').open('x',encoding='utf-8') as claim:claim.write(data['input_digest'])
 receipt={'job_id':data['job_id'],'input_digest':data['input_digest'],'state':'failed','snapshot':None,'artifacts':[],'validation':{},'result':{},'error_code':'discovery_failed'}
 try:
+    before=Gui.activeWorkbench().name()
+    requested=data['workbench_id']
+    if requested:
+        if requested not in Gui.listWorkbenches():raise ValueError('unknown workbench')
+        if requested!=before and not Gui.activateWorkbench(requested):raise ValueError('workbench activation failed')
+        if Gui.activeWorkbench().name()!=requested:raise ValueError('wrong active workbench')
     version=App.Version()
     fingerprint=hashlib.sha256(json.dumps(version,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')).hexdigest()
-    receipt.update(state='completed',validation={'valid':True},result={'version_fingerprint':fingerprint,'commands':sorted(Gui.listCommands())},error_code=None)
+    commands=sorted(Gui.listCommands())
+    information={}
+    for name in commands:
+        try:
+            resources=Gui.Command.get(name).getInfo()
+            information[name]={key:str(resources.get(key,'') or '')[:2048] for key in ('menuText','toolTip','shortcut')}
+        except Exception:information[name]={}
+    workbenches=[{'id':name,'label':str(getattr(workbench,'MenuText',name))[:256]} for name,workbench in Gui.listWorkbenches().items()]
+    receipt.update(state='completed',validation={'valid':True},result={'version_fingerprint':fingerprint,'runtime_pid':os.getpid(),'discovered_at':time.time(),
+                   'commands':commands,'command_info':information,'workbenches':workbenches},error_code=None)
 except Exception:pass
+finally:
+    try:
+        if requested and Gui.activeWorkbench().name()!=before:
+            if not Gui.activateWorkbench(before) or Gui.activeWorkbench().name()!=before:raise ValueError('workbench restoration failed')
+    except Exception:
+        receipt.update(state='failed',error_code='workbench_restore_failed')
 temporary=out/'receipt.tmp';temporary.write_text(json.dumps(receipt,ensure_ascii=False),encoding='utf-8')
 os.replace(str(temporary),str(out/'receipt.json'))
 '''

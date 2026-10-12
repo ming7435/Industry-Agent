@@ -181,6 +181,11 @@ class DurableJsonStore:
                     raise
                 with self._lock, closing(self._connect()) as connection, connection:
                     connection.execute("BEGIN IMMEDIATE")
+                    existing = connection.execute('SELECT payload FROM runtime_state WHERE namespace=? AND state_key=?',
+                                                  (namespace, key)).fetchone()
+                    if existing is not None:
+                        # A recovered final receipt fences late original producers.
+                        return dict(json.loads(existing['payload']))
                     if namespace == 'agent_event':
                         value = self._without_deleted_entities(connection, value)
                     connection.execute(
@@ -195,6 +200,23 @@ class DurableJsonStore:
             if monotonic() >= deadline:
                 raise PendingResultError("running")
             sleep(0.05)
+
+    def publish_recovered_event(self, key, value):
+        """Publish a server-claimed original task despite its abandoned event claim."""
+        with self._lock, closing(self._connect()) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute("SELECT payload FROM runtime_state WHERE namespace='agent_event' AND state_key=?", (key,)).fetchone()
+            if row is not None:
+                current = json.loads(row['payload'])
+                if current.get('fingerprint') != value.get('fingerprint') or (current.get('result') or {}).get('task_id') != value['result']['task_id']:
+                    raise ValueError('原事件回执身份不一致')
+                connection.execute("DELETE FROM runtime_claims WHERE namespace='agent_event' AND state_key=?", (key,))
+                return current
+            value = self._without_deleted_entities(connection, value)
+            connection.execute("INSERT INTO runtime_state(namespace,state_key,payload) VALUES ('agent_event',?,?)",
+                               (key, json.dumps(value, ensure_ascii=False, default=str)))
+            connection.execute("DELETE FROM runtime_claims WHERE namespace='agent_event' AND state_key=?", (key,))
+            return value
 
     def compare_and_set(
         self,

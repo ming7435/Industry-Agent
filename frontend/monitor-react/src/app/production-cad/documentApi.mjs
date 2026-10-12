@@ -12,5 +12,6 @@ export function createDocumentApi(request=defaultRequest) {
     head:(documentId,options)=>get(doc(documentId),options),snapshot:(documentId,revision,options)=>get(`${doc(documentId)}/snapshots/${revision}`,options),
     submit:(documentId,body,options)=>post(`${doc(documentId)}/commands`,body,options),command:(documentId,commandId,options)=>get(`${doc(documentId)}/commands/${id(commandId)}`,options),
     publish:(documentId,body,options)=>post(`${doc(documentId)}/publish`,body,options),designs:options=>directory('/designs',options),
-    propose:(documentId,body,options)=>post(`${doc(documentId)}/proposals`,body,options),capabilities:options=>get('/capabilities',options)};
+    propose:(documentId,body,options)=>post(`${doc(documentId)}/proposals`,body,options),capabilities:options=>get('/capabilities',options),
+    catalog:options=>get('/catalog',options),discover:(body,options)=>post('/catalog/discover',body,options),discovery:(jobId,options)=>get(`/catalog/jobs/${id(jobId)}`,options)};
 }

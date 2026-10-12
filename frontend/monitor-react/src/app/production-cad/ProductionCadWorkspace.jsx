@@ -28,6 +28,12 @@ const advancedExamples = {
   ...freeCadWorkbenchExamples,
   ...designTemplates,
 };
+const quickExamples = [
+  { label: '长方体', prompt: '长40mm、宽20mm、高10mm的长方体' },
+  { label: '圆柱', prompt: '直径20mm、长30mm的圆柱' },
+  { ...designTemplates.plate, label: '安装底板' },
+  { ...designTemplates.flange, label: '法兰轴套' },
+];
 
 const artifactLabels = { 'model.stl': 'STL', 'model.step': 'STEP', 'model.FCStd': 'FCStd', 'model.fcstd': 'FCStd',
   'drawing.svg': '工程图 SVG', 'drawing.pdf': '工程图 PDF', 'unfold.svg': '展开 SVG', 'unfold.dxf': '展开 DXF', 'motion.json': '运动帧 JSON' };
@@ -62,9 +68,16 @@ function withPartIdentity(record, previous) {
 
 export default function ProductionCadWorkspace() {
   const [enabled,setEnabled]=useState(false),[mode,setMode]=useState('legacy'),[capabilities,setCapabilities]=useState(null);
-  useEffect(()=>{const abort=new AbortController();freeCadRequest('/capabilities',{signal:abort.signal}).then(result=>{if(!abort.signal.aborted){setCapabilities(result);if(result.enabled===true){setEnabled(true);setMode('document');}}}).catch(()=>{});return()=>abort.abort();},[]);
+  useEffect(()=>{const abort=new AbortController();freeCadRequest('/capabilities',{signal:abort.signal}).then(result=>{if(!abort.signal.aborted){setCapabilities(result);setEnabled(result.enabled===true);}}).catch(()=>{});return()=>abort.abort();},[]);
   const names={create_primitive:'基础形体',set_primitive_dimensions:'尺寸修改',set_placement:'位置与旋转',set_label:'对象标签',set_visibility:'显示与隐藏',replace_from_spec:'按完整规格重建',publish:'保存发布'};
-  return <>{capabilities?.items?.length>0&&<details className="cad-card"><summary>FreeCAD 功能与接入状态</summary><section aria-label="FreeCAD 能力目录"><p>安装工作台不等于已接入网页。当前内核：{capabilities.version_fingerprint?.slice(0,12)||'未确认'}；AI 验证状态单独显示。</p>{capabilities.items.map(item=><div key={item.capability_id}><strong>{names[item.capability_id]||item.module}</strong> · {item.manual_verified?'已验证可用':!item.installed?'缺少依赖':item.web_adapter?'已接入待验证':'待接入'} · AI {item.ai_verified?'已验证':'未验证'}{item.disabled_reason&&<p>{item.disabled_reason}</p>}</div>)}</section></details>}<nav className="cad-actions" aria-label="建模方式">{enabled&&<><button aria-pressed={mode==='document'} onClick={()=>setMode('document')}>原生文档编辑</button><button aria-pressed={mode==='legacy'} onClick={()=>setMode('legacy')}>中文与规格生成</button></>}</nav>{mode==='document'?<Suspense fallback={<p>正在加载文档工作区…</p>}><DocumentWorkspace/></Suspense>:<LegacyProductionCadWorkspace/>}</>;
+  return <>
+    {mode==='document'?<><div className="production-cad cad-modeling-return"><button type="button" onClick={()=>setMode('legacy')}>返回简单建模</button><p>专业编辑器 · 已有个人文档和版本继续保留</p></div><Suspense fallback={<p>正在加载文档工作区…</p>}><DocumentWorkspace/></Suspense></>:<LegacyProductionCadWorkspace/>}
+    <div className="production-cad"><details className="cad-modeling-more"><summary>高级功能</summary>
+      <p>日常建模直接使用上面的需求输入和尺寸编辑。文档结构、工作台命令与接入状态保留在这里。</p>
+      {enabled&&mode!=='document'&&<button type="button" onClick={()=>setMode('document')}>打开专业文档编辑器</button>}
+      {capabilities?.items?.length>0&&<details className="cad-card"><summary>FreeCAD 功能与接入状态</summary><section aria-label="FreeCAD 能力目录"><p>安装工作台不等于已接入网页。当前内核：{capabilities.version_fingerprint?.slice(0,12)||'未确认'}；AI 验证状态单独显示。</p>{capabilities.items.map(item=><div key={item.capability_id}><strong>{names[item.capability_id]||item.module}</strong> · {item.manual_verified?'已验证可用':!item.installed?'缺少依赖':item.web_adapter?'已接入待验证':'待接入'} · AI {item.ai_verified?'已验证':'未验证'}{item.disabled_reason&&<p>{item.disabled_reason}</p>}</div>)}</section></details>}
+    </details></div>
+  </>;
 }
 
 function LegacyProductionCadWorkspace() {
@@ -253,7 +266,7 @@ function LegacyProductionCadWorkspace() {
     canApply: connected && supported && validRevision && revisionConfirmed,
     onApply: (event) => submit(event, currentSpec) } : null;
   return <section className="production-cad">
-    <header className="cad-workspace-header"><div><span className="cad-eyebrow">设计与工程</span><h1>零件设计工作台</h1><p>从需求到三维模型，再到可修改、可下载的工程图纸。</p></div><span className="cad-workspace-unit">尺寸单位 · 毫米</span></header>
+    <header className="cad-workspace-header"><div><span className="cad-eyebrow">设计与工程</span><h1>零件设计工作台</h1><p>说清楚零件和尺寸，生成后直接修改或下载。</p></div><span className="cad-workspace-unit">尺寸单位 · 毫米</span></header>
     <ol className="cad-steps" aria-label="设计步骤"><li><span>01</span>描述需求</li><li><span>02</span>生成模型与图纸</li><li><span>03</span>修改设计与导出</li></ol>
     {error && <div className="cad-alert" role="alert">{error}</div>}
     <section className="cad-card">
@@ -270,6 +283,7 @@ function LegacyProductionCadWorkspace() {
         </div>
         <label htmlFor="freecad-prompt">描述零件、尺寸和设计要求</label>
         <textarea id="freecad-prompt" rows={3} maxLength={10000} value={prompt} onChange={(event) => editPrompt(event.target.value)} disabled={locked} placeholder="说明用途、形状和尺寸。例如：法兰直径70mm、厚12mm，中心通孔16mm，四个安装孔。" />
+        <div className="cad-quick-start" role="group" aria-label="常用零件"><span>快速开始</span>{quickExamples.map(sample=><button key={sample.label} type="button" disabled={locked} onClick={()=>chooseExample(sample.prompt,sample.spec?JSON.stringify(sample.spec,null,2):'',sample.label)}>{sample.label}</button>)}</div>
         <details className="cad-expert-options cad-template-options"><summary>模板与示例</summary>
         <label htmlFor="advanced-example">选择设计模板</label>
         <select id="advanced-example" defaultValue="" disabled={locked} onChange={(event) => { const sample = advancedExamples[event.target.value]; if (sample) chooseExample(sample.prompt, sample.spec ? JSON.stringify(sample.spec, null, 2) : '', sample.label.split(' · ')[0]); }}>

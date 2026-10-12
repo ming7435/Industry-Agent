@@ -822,6 +822,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             "/api/expert/",
             "/api/trace",
             "/api/runs",
+            "/api/runtime/recovery",
             "/api/v1/runs",
             "/api/memory/",
             "/api/workorders",

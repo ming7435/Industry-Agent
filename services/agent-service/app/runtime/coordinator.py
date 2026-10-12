@@ -163,7 +163,19 @@ class RuntimeCoordinator:
         )
 
     def run(self, state: Mapping[str, Any]) -> dict[str, Any]:
+        recovery = getattr(self.container, 'recovery', None)
+        if recovery is not None and not state.get('task_id'):
+            from uuid import uuid4
+            state = {**state, 'task_id': 'TASK-' + uuid4().hex[:12].upper(),
+                     'trace_id': state.get('trace_id') or 'TRACE-' + uuid4().hex[:12].upper()}
+        if recovery is not None and state.get('task_id'):
+            with recovery.execution_scope(state['task_id']):
+                return self._run(state)
+        return self._run(state)
+
+    def _run(self, state: Mapping[str, Any]) -> dict[str, Any]:
         initial = dict(state)
+        recovery = getattr(self.container, 'recovery', None)
         knowledge_only = initial.get("entry") == "knowledge"
         source_payload = dict(initial.get("event") or {}) if initial.get("entry") == "trigger" else {
             "user_text": initial.get("user_text", ""),
@@ -179,7 +191,7 @@ class RuntimeCoordinator:
             )
         # 自然语言请求统一先经过 RouterAgent；RuntimeInputParser 只负责规范化
         # 事件结构和作为路由不可用时的确定性兜底，不再覆盖 Router 的动作意图。
-        if goal_event.source == "user" and not knowledge_only:
+        if goal_event.source == "user" and not knowledge_only and not initial.get('runtime_resume'):
             router = (getattr(self.container, "agents", {}) or {}).get("router")
             if router is not None and str(source_payload.get("user_text") or "").strip():
                 try:
@@ -230,7 +242,7 @@ class RuntimeCoordinator:
         min_evidence_score = float(os.getenv("RUNTIME_MIN_EVIDENCE_SCORE", "0.8"))
         min_confidence = float(os.getenv("RUNTIME_MIN_CONFIDENCE", "0.8"))
         evaluator = RuntimeEvaluator(min_evidence_score=min_evidence_score, min_confidence=min_confidence)
-        replan_count = 0
+        replan_count = int(initial.get('runtime_replan_count') or 0)
         self.container.trace.record(
             type="runtime", name="runtime", node="runtime", agent="runtime",
             event="goal_parsed", task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
@@ -310,7 +322,18 @@ class RuntimeCoordinator:
                 state_change={"skills": list(current.get("active_skills") or []), "step": current.get("current_step", ""), "action": action.as_dict()},
                 keys=["skills", "step", "action"], tool_name="", latency=0.0, error="",
             )
-            result = self.container.dispatcher.dispatch(action, current)
+            if recovery is not None:
+                recovery.checkpoint(current, 'running')
+            reconciled = current.pop('runtime_reconciled_action', None)
+            if isinstance(reconciled, Mapping) and reconciled.get('action_id') == action.action_id:
+                from app.agents.base import AgentResult
+                value = reconciled['result']
+                result = (AgentResult(success=bool(value['success']), output=dict(value['output']),
+                                      evidence=list(value.get('evidence') or []))
+                          if isinstance(value, Mapping) and isinstance(value.get('output'), Mapping)
+                          else AgentResult.from_value(value))
+            else:
+                result = self.container.dispatcher.dispatch(action, current)
             if not result.success:
                 if (
                     RuntimePolicy(self.capabilities)._effective_capability(action, current) == "workorder_create"
@@ -537,6 +560,13 @@ class RuntimeCoordinator:
                 keys=["validation", "step"], tool_name="", latency=0.0, error="",
             )
             evaluation = evaluator.evaluate({"domain": domain, "result": dict(result.output or {})})
+            if evaluation.status.value in {'replan', 'blocked'} or (domain == 'knowledge' and evaluation.status.value != 'final'):
+                # A successful invocation is not completion until its domain gate passes.
+                next_state['runtime_next_index'] = index
+                next_state['next_action'] = action.as_dict()
+                next_state['completed_steps'] = list(current.get('completed_steps') or [])
+                next_state['step_history'][-1]['status'] = 'validation_failed'
+                next_state['step_history'][-1]['error'] = evaluation.reason
             self.container.trace.record(
                 type="runtime", name="runtime_evaluator", node="runtime", agent="runtime",
                 event="evaluation_result", task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
@@ -573,6 +603,9 @@ class RuntimeCoordinator:
                     "done": False,
                 }
             if evaluation.status.value == "replan":
+                if initial.get('runtime_recovery'):
+                    return {'state': {**next_state, 'status': 'blocked', 'stop_reason': 'domain_validation_failed'},
+                            'action': action, 'terminal_status': 'blocked', 'terminal_reason': 'domain_validation_failed', 'done': False}
                 if replan_count < 2:
                     replan_count += 1
                     requested = self._replan_capabilities(capability, result.output or {}, plan.actions[index + 1:])
@@ -587,6 +620,7 @@ class RuntimeCoordinator:
                     next_state["runtime_next_index"] = 0
                     next_state["runtime_plan"] = plan.as_dict()
                     next_state["runtime_replan_count"] = replan_count
+                    next_state['next_action'] = self._enrich_action(plan.actions[0], next_state).as_dict() if plan.actions else {}
                     self.container.trace.record(
                         type="runtime", name="runtime", node="runtime", agent="runtime", event="replan",
                         task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
@@ -615,7 +649,7 @@ class RuntimeCoordinator:
                     "confidence": evaluation.confidence,
                     "done": False,
                 }
-            elif result.next_actions:
+            elif result.next_actions and not initial.get('runtime_recovery'):
                 # Agent 可能观察到会改变下一项有效能力的证据。决策必须留在 Runtime 契约内：
                 # 提取能力要求，请 Planner 生成新的 Action 计划，再由普通 dispatcher 选择已注册 Agent。
                 # 绝不要直接在外层循环执行 Agent 的建议。
@@ -641,6 +675,7 @@ class RuntimeCoordinator:
                     next_state["runtime_next_index"] = 0
                     next_state["runtime_plan"] = plan.as_dict()
                     next_state["runtime_replan_count"] = replan_count
+                    next_state['next_action'] = self._enrich_action(plan.actions[0], next_state).as_dict() if plan.actions else {}
                     self.container.trace.record(
                         type="runtime", name="runtime", node="runtime", agent="runtime", event="replan",
                         task_id=initial.get("task_id", ""), trace_id=initial.get("trace_id", ""),
@@ -685,6 +720,13 @@ class RuntimeCoordinator:
         # LoopEngine 按每步计时，外层须留出内层回执和轨迹落库的收尾时间。
         # 该余量不改变 ExecutionManager 对工单等写操作的单次期限。
         grace = max(1.0, float(getattr(self.container, "runtime_step_timeout_grace_seconds", 1.0)))
+        def tracked_step(current, context):
+            value = step(current, context)
+            if recovery is not None and isinstance(value.get('state'), Mapping):
+                recovery.checkpoint(value['state'], value.get('terminal_status') or 'running',
+                                    error=value.get('terminal_reason') or '')
+            return value
+
         result: LoopResult = LoopEngine(
             LoopPolicy(
                 max_iterations=max(1, len(plan.actions) * 3 + 2),
@@ -693,7 +735,7 @@ class RuntimeCoordinator:
             ),
         ).run(
             runtime_state,
-            step,
+            tracked_step,
             evaluator=evaluator,
             trace=trace,
             trace_context={"task_id": initial.get("task_id", ""), "trace_id": initial.get("trace_id", "")},
@@ -711,6 +753,20 @@ class RuntimeCoordinator:
         if result.status != "completed":
             final_state["status"] = result.status
             final_state["stop_reason"] = result.stop_reason
+        if recovery is not None:
+            saved = recovery.get(recovery.identifier(initial.get('task_id')))
+            if saved and saved.get('epoch', 0) != int(initial.get('runtime_recovery_epoch') or 0):
+                from .recovery import RecoveryConflict
+                raise RecoveryConflict('原执行尝试已失效，不能覆盖恢复状态')
+            # Loop exceptions retain the previous state; preserve the actual failed action.
+            if result.status != 'completed' and saved:
+                final_state = {**saved['state'], **{key: final_state[key] for key in
+                    ('runtime_result', 'runtime_actions', 'status', 'stop_reason') if key in final_state}}
+            error = next((item.get('error') for item in reversed(result.history) if item.get('error')), result.stop_reason)
+            if result.status == 'timeout':
+                # Fence any callback still running beyond the outer loop deadline.
+                final_state['runtime_recovery_epoch'] = int(initial.get('runtime_recovery_epoch') or 0) + 1
+            recovery.checkpoint(final_state, 'failed' if result.status == 'error' else result.status, error=error)
         return final_state
 
     def _optional_drawing_reason(self, action: ActionModel, state: Mapping[str, Any],
@@ -814,6 +870,53 @@ class RuntimeCoordinator:
                 "pending_id": str(record.get("pending_id") or ""),
             },
         })
+        return self.run(state)
+
+    def resume_failed(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        from .recovery import RecoveryConflict
+        state = dict(record['state'])
+        plan = dict(state.get('runtime_plan') or {})
+        index = int(state.get('runtime_next_index') or 0)
+        actions = list(plan.get('actions') or [])
+        if index == len(actions) and (state.get('runtime_result') or {}).get('status') == 'completed':
+            # Only result publication failed; all business actions already completed.
+            return state
+        if not 0 <= index < len(actions):
+            raise RecoveryConflict('断点没有可靠的失败步骤，不能重新执行整个任务')
+        action = ActionModel.coerce(state.get('next_action'))
+        planned = ActionModel.coerce(actions[index])
+        if action is None or planned is None or action.action_id != planned.action_id:
+            raise RecoveryConflict('断点动作与计划不一致，请核对任务')
+        event_results = getattr(self.container, 'event_results', None)
+        if event_results is not None and (state.get('maintenance_plan') or {}).get('plan_id') in event_results.deleted_plan_ids():
+            raise RecoveryConflict('原维修方案已删除，不能恢复旧工单创建动作')
+        if action.side_effect:
+            resolvers = getattr(self.container.dispatcher, 'resolvers', None)
+            capability = self.capabilities.canonical_name(action.required_capability or action.target)
+            resolver = resolvers.callback(capability, action, state) if resolvers is not None else None
+            found = resolver() if resolver is not None else None
+            if found is None and self.capabilities.canonical_name(action.required_capability) == 'workorder_create':
+                from .workorder_recovery import find_saved_order
+                tools = getattr(self.container, 'registry', None)
+                existing = find_saved_order(tools, action, state) if tools is not None else None
+                if existing and not existing.get('assignee') and existing.get('status') == 'open':
+                    state['runtime_recovery_workorder_id'] = existing['workorder_id']
+                    # Creation is confirmed. Continue only the assignment of this order.
+                    record = {**record, 'reconcile_only': False}
+            if found is None and record.get('reconcile_only'):
+                raise RecoveryConflict('写操作结果仍未知，未重复提交；请核对已有工单或生产任务')
+            if found is not None:
+                state['runtime_reconciled_action'] = {'action_id': action.action_id, 'result': found}
+        actions[index] = action.as_dict()
+        plan['actions'] = actions
+        for key in ('status', 'stop_reason', 'runtime_result', 'runtime_execution'):
+            state.pop(key, None)
+        state['runtime_resume'] = {'plan': plan, 'next_index': index}
+        state['runtime_recovery'] = True
+        state['runtime_failed_action_id'] = action.action_id
+        self.container.trace.record(type='runtime', name='task_recovery', agent='runtime',
+            event='recovery_started', task_id=state['task_id'], trace_id=state.get('trace_id', ''),
+            state_change={'recovery_id': record['recovery_id'], 'next_index': index})
         return self.run(state)
 
     @staticmethod

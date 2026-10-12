@@ -18,9 +18,9 @@ function ParameterField({ field, group, spec, disabled, onChange, onInvalid, idP
   </div>;
 }
 
-export default function DesignParameterEditor({ spec, onChange, disabled = false, onValidityChange = () => {}, allowFeatures = true, idPrefix = 'draft' }) {
+export default function DesignParameterEditor({ spec, onChange, disabled = false, onValidityChange = () => {}, allowFeatures = true, idPrefix = 'draft', openAllInitially = false }) {
   const groups = designParameterGroups(spec), [invalid, setInvalid] = useState({}), [error, setError] = useState('');
-  const [expanded, setExpanded] = useState(() => new Set(groups.slice(0, 1).map((group) => group.id)));
+  const [expanded, setExpanded] = useState(() => new Set((openAllInitially ? groups : groups.slice(0, 1)).map((group) => group.id)));
   const [part, setPart] = useState('0');
   const fields = new Set(groups.flatMap((group) => group.fields.map((field) => field.id)));
   useEffect(() => { onValidityChange(!Object.entries(invalid).some(([id, value]) => fields.has(id) && value)); }, [invalid, spec]);

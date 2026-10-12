@@ -138,6 +138,15 @@ async function open({ bigScreen = false, initialStatus = 'running', line = 'runn
   return { page, context, requests, writes, errors, refresh, pending,
     setState: (status, control = status === 'running' ? 'running' : 'stopped', health = 'normal', enabled = true) => { current = snapshot(status, health, enabled); currentLine = { state: control }; },
     setLine: value => { currentLine = { state: value }; },
+    setPanelStart: (startedAt, stoppedAt) => {
+      current = snapshot();
+      current.devices.forEach(item => Object.assign(item.latest_result.current_sample,
+        { control_reason: 'operator panel start', control_updated_at: startedAt }));
+      currentLine = { state: 'stopped', updated_at: stoppedAt / 1000,
+        devices: Object.fromEntries(definitions.map(([id]) => [id,
+          { state: 'verified', action: 'emergency_stop', snapshot: { device_id: id, status: 'emergency_stop' } }])) };
+    },
+    setStopTimestamp: stoppedAt => { currentLine = { ...currentLine, updated_at: stoppedAt / 1000 }; },
     setFailure: value => { failing = value; },
     hold: (path, value = true) => { if (value) heldEndpoints.add(path); else heldEndpoints.delete(path); },
     release: async path => {
@@ -190,6 +199,26 @@ test('匿名监控的四个工位、输送滚轮及工件在整线停机时冻�
     assert.ok(phase(resumed) >= phase(stopped) && phase(resumed) - phase(stopped) < 8,
       'Resume continues the held phase instead of skipping through the 15 seconds spent stopped');
     await view.page.locator('.factory-map').screenshot({ path: resolve(evidence, 'resumed.png') });
+    assert.deepEqual(view.writes, []); assert.deepEqual(view.errors, []);
+  } finally { await view.context.close(); }
+});
+
+test('设备已在面板启动时画面跟随最新运行数据，保留旧账本并在新停机后立即冻结', async () => {
+  const view = await open({ initialStatus: 'stopped', line: 'stopped' });
+  try {
+    const currentTime = await view.page.evaluate(() => Date.now());
+    view.setPanelStart(currentTime - 1000, currentTime - 60000);
+    await view.refresh();
+    assert.equal(await view.page.locator('.scene-motion-status.running').count(), 1);
+    assert.match(await view.page.locator('.scene-motion-status').innerText(), /待对账/);
+    assert.match(await view.page.locator('.team-access summary').innerText(), /整线已暂停/,
+      'The historic ledger must not be changed into a verified restart');
+    const first = await read(view.page); await view.page.clock.runFor(500);
+    assert.notDeepEqual(selected(await read(view.page), rollers), selected(first, rollers));
+    view.setStopTimestamp(await view.page.evaluate(() => Date.now()));
+    await view.refresh();
+    const stopped = await read(view.page); await view.page.clock.runFor(500);
+    assertFrozen(await read(view.page), stopped, 'A new stop supersedes the earlier panel start');
     assert.deepEqual(view.writes, []); assert.deepEqual(view.errors, []);
   } finally { await view.context.close(); }
 });

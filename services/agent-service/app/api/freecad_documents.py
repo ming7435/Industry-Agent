@@ -27,6 +27,11 @@ class ProposeDocument(Contract):
     expected_revision: Revision
 
 
+class DiscoverCatalog(Contract):
+    request_id: StrictStr=Field(min_length=1,max_length=128,pattern=r'^[A-Za-z0-9_-]+$')
+    workbench_id: StrictStr=Field(default='',max_length=128,pattern=r'^(?:[A-Za-z0-9_]+Workbench)?$')
+
+
 def same_origin(request):
     origin=request.headers.get('origin')
     if not origin: return  # Non-browser authenticated clients have no Origin.
@@ -81,6 +86,28 @@ def build_document_router(require_write_auth,application_factory=application_for
     def capabilities():
         from app.cad_documents.capabilities import current_capabilities
         return current_capabilities()
+
+    @router.get('/catalog')
+    def catalog():
+        from app.cad_documents.catalog import current_catalog
+        return current_catalog()
+
+    @router.post('/catalog/discover',status_code=202,dependencies=[Depends(writing)])
+    def discover(body:DiscoverCatalog,request:Request):
+        from shared.freecad_documents import canonical_digest
+        application,actor=app_actor(request)
+        job=call(application.gateway.call,'enqueue_system_job',kind='discover',
+                 request_key='catalog-'+canonical_digest([actor,body.request_id]),
+                 payload={'workbench_id':body.workbench_id,'request_actor_id':actor})
+        return {'job_id':job['job_id'],'state':'accepted'}
+
+    @router.get('/catalog/jobs/{job_id}')
+    def discovery_status(job_id:str,request:Request):
+        application,actor=app_actor(request)
+        job=call(application.gateway.native_job,job_id)
+        if job.job_kind!='discover' or job.source.get('request_actor_id')!=actor:raise HTTPException(403,'无权查询此发现任务')
+        record=call(application.gateway.job,job_id)
+        return {'job_id':job_id,'state':record.state,'error_code':record.error_code}
 
     @router.get('/designs')
     def designs(request:Request,cursor:str='',limit:int=50):

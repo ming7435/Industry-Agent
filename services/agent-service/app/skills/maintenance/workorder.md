@@ -1,5 +1,6 @@
 ---
 name: workorder_skill
+description: 当维修方案需要附带工单模板与草稿信息时使用。
 version: 1.0
 goal: 结合维修方案与工程资料生成工单草稿。
 trigger: workorder
@@ -13,47 +14,139 @@ tools:
   - submit_workorder_draft
 ---
 
-# 工单草稿准备
+# 维修工单草稿准备
 
-运行标识：`workorder_skill`。结合维修方案与工程资料生成工单草稿。
+运行标识：`workorder_skill`；所属 Agent：`maintenance`；兼容别名：无。唯一运行元数据来源是本文件 YAML。Agent 接收与转换任务，Graph 决定编排、分支、预算和降级，Skill 指导业务判断，Tools 返回真实观察，原 Result 契约限制公开结构。正文不授予新增权限。
 
-本文正文是技能说明；顶部 YAML 元数据仍由运行时加载，名称、触发条件、步骤标识、工具权限和兼容别名保持不变。
+## 技能概述（Overview）
 
-## 适用场景
+结合维修方案与工程资料生成工单草稿。 只完成本技能责任范围，保留未解决事实与下游判断边界。
 
-维修方案需要准备工单草稿和工程引用时使用；不是正式创建/派工的同义词。
+## 触发场景（When to Use）
 
-## 输入与前置条件
+trigger=workorder按上下文匹配；是否提交由constraints.need_workorder和workorder_ready共同决定。与WorkOrderAgent正式创建技能不同。
 
-- 已生成方案、设备身份、维修目标与对应图纸/BOM 引用。
-- 草稿模板及现有约束；正式执行仍需 WorkOrder 业务检查。
+不适用：不接收顶层maintenance_plan作为MaintenanceQuery输入，不直接创建/派发正式工单。
 
-## 执行步骤
+## 输入与前置条件（Inputs）
 
-以下列出本技能的步骤或兼容标识。实际顺序、分支与循环由对应 Graph 决定；这些标识不是新增节点，也不表示每次都会执行所有步骤。
+MaintenanceQuery 接收 task_id/trace_id、device_id、user_text/query、diagnosis_result/diagnosis、knowledge/cad/memory、constraints、runtime_managed、event/context。from_payload互补两种诊断字段。没有顶层 part_no/component/maintenance_plan 输入，零件目标来自 query、诊断及工程记录。实际 DiagnosisView 需 device_id/fault/cause/severity；扩展 evidence_status 等保留在 raw。缺失事实不能以默认字段值证明已核实。
 
-- `build_workorder_draft`：依据已有维修方案准备执行草稿。
-- `attach_repair_target`：附上已核对设备归属的维修目标。
-- `attach_drawing_context`：把对应设备的工程图纸引用附到草稿。
-- `submit_workorder_draft`：提交方案草稿，草稿不等于正式派工完成。
+## 执行流程（Workflow）
 
-## 可调用工具
+### 公共编排
 
-以下是本技能允许使用的工具范围，不代表每次全部调用。工具不可用时保留不可用或失败状态，不能补造成功结果。
+真实节点 prepare → collect_context → build_plan → safety_validate → validate → finish。prepare 包括初始化/技能选择/诊断评估；collect_context 包含知识及CAD收集；build_plan 包含草案及备件核查；finish 包含草稿准备与结果构建。validate_diagnosis/determine_required_parts/build_safety_steps/build_result等是追踪标签，不是独立节点。已有知识/CAD可复用；runtime_managed=True交外层Runtime检索，不再自行远程补查。
 
-- `get_workorder_template`：读取工单模板。
-- `submit_workorder_draft`：提交工单草稿。
+保留的步骤标识：`build_workorder_draft`、`attach_repair_target`、`attach_drawing_context`、`submit_workorder_draft`。结构化 tool 步骤须按绑定工具执行；字符串步骤可为内部函数/追踪标签，不等于独立图节点。
 
-## 输出与停止条件
+### 本技能业务任务
 
-输出工单草稿或草稿提交实际结果；提交草稿不代表工单已派出或维修已开始。
+在同一计划流程finish的prepare_workorder整理设备、title、plan_id、steps、repair_target与drawing_context；按需读取模板，仅方案就绪且need_workorder时提交草稿；将实际草稿回执保留到计划。
 
-## 安全边界
+## 业务判断规则（Reasoning Rules）
 
-只使用模板与草稿入口，不新增创建、派工、完成、关闭或设备控制权限。
+- 模板、草稿、正式工单是不同事实；submitted只能来自工具实际成功回执。
+- 附图沿用已有drawing_url/model_url/mesh_name/location，不用标题造图纸地址。
+- 未就绪计划仍可保留ready=False的草稿，不把它显示成已派发维修。
 
-## 代码入口
+原有约束继续适用：只使用模板与草稿入口，不新增创建、派工、完成、关闭或设备控制权限。
 
-- [maintenance Agent 入口](L:/industry_agent/services/agent-service/app/agents/maintenance/agent.py)：输入转换、技能选择与结果校验。
-- [maintenance Graph 实现](L:/industry_agent/services/agent-service/app/agents/maintenance/graph.py)：实际节点、分支与执行流程。
-- [技能注册与加载](L:/industry_agent/services/agent-service/app/skills/registry.py)：Markdown 解析、触发匹配和旧名称兼容。
+## 工具使用规范（Tools）
+
+仅在当前技能合并白名单与实际维修范围内使用工具。知识及CAD的协作读取由既有Agent/Runtime链路负责，不因正文新增对应工具。方案生成、库存读取、模板和草稿提交分开说明，不把后者当正式派单。
+
+| 工具 | 何时调用与参数 | 返回使用及失败边界 |
+| --- | --- | --- |
+| `get_workorder_template` | 需要草稿或正式创建参考时传 device_id，可选 plan。 | 读取 template_id/title/steps/source；是模板，不是已创建的维修任务。 |
+| `submit_workorder_draft` | 方案 workorder_ready 且 constraints.need_workorder 时传已构造草稿。 | 读取 draft_id/submitted/source；草稿提交不等于正式创建、派发或完成。 |
+
+所有工具仅在前置条件满足且实际路径需要时调用；允许不等于本次已调用。失败返回/异常保留到现有观察、finding或错误分支，不补造成功体。
+
+## 证据与数据真实性（Evidence Rules）
+
+关联本次设备、事件、报警与方案；知识/SOP正文、工程部件/BOM、备件记录分别保留来源。设备总图或reference_only记录不能替代故障部件依据；synthetic/degraded工程和demo_only库存不作正式就绪证明。复用同源资料不重复增加可信度，冲突留在validation_findings。
+
+## 输出规范（Output Format）
+
+使用 MaintenancePlan，必需 plan_id/diagnosis；保留 plan_kind/inspection_required、repair_target/target_part/engineering_context、repair_steps/required_tools/required_parts/safety_requirements、pre_checks/post_checks、inventory_status/part_availability、evidence/memory_evidence/source_documents、validation_findings、maintenance_required/cad_required/workorder_ready/workorder_draft 等真实字段。没有公开 stop_reason，终止原因在 Graph 状态，计划通过 findings 与 workorder_ready 表达不足。
+
+## 异常处理（Error Handling）
+
+缺诊断或证据时输出未就绪计划；工具草案、查询或库存失败保留来源和finding；互锁/液压与诊断范围错配不能套用普通换件。资料不足不补编库存、工时、备件或安全步骤已执行。Graph本身不执行无限重试；外部协作故障交原状态返回。
+
+## 停止条件（Stop Conditions）
+
+完成条件是方案结构、安全和适用工程/知识依据均校验通过；只有维修必要性和相关门禁满足才 workorder_ready=True。普通提示可观察，可靠预警可进入固定只读检查；资料不足、范围错配、安全校验失败保持False。既有一次方案流程不因正文增加独立循环预算。
+
+## 安全与权限边界（Safety & Constraints）
+
+只负责维修方案及受条件控制的草稿。不能正式创建/派发/关闭工单，不能控制机器、领料、旁路互锁或无依据确定换件。constraints.need_workorder 不绕过方案校验。
+
+## 示例（Examples）
+
+以下为隔离说明样例，不是现场执行记录。请求形状合法不代表业务门禁已通过；编号、测量和回执必须来自实际系统。
+
+### 示例输入
+
+```json
+{
+  "device_id": "D-1",
+  "query": "维修 workorder 草稿",
+  "diagnosis_result": {
+    "device_id": "D-1",
+    "fault": "主轴温度异常",
+    "cause": "待核实",
+    "severity": "high",
+    "confidence": 0.5,
+    "raw": {
+      "evidence_status": "insufficient"
+    }
+  },
+  "constraints": {
+    "need_workorder": true
+  }
+}
+```
+
+### 处理与依据
+
+计划证据不足：仅保留未就绪草稿，不能补造submitted=True。
+
+### 示例输出
+
+```json
+{
+  "plan_id": "PLAN-EXAMPLE",
+  "diagnosis": {
+    "device_id": "D-1",
+    "fault": "主轴温度异常",
+    "cause": "待核实",
+    "severity": "high",
+    "confidence": 0.5,
+    "raw": {
+      "evidence_status": "insufficient"
+    }
+  },
+  "workorder_ready": false,
+  "validation_findings": [
+    "当前证据不足，方案暂未就绪"
+  ],
+  "workorder_draft": {
+    "device_id": "D-1",
+    "ready": false,
+    "steps": []
+  }
+}
+```
+
+## 参考实现（References）
+
+- [app/agents/maintenance/agent.py](L:/industry_agent/services/agent-service/app/agents/maintenance/agent.py)
+- [app/agents/maintenance/graph.py](L:/industry_agent/services/agent-service/app/agents/maintenance/graph.py)
+- [app/agents/maintenance/schemas.py](L:/industry_agent/services/agent-service/app/agents/maintenance/schemas.py)
+- [app/agents/maintenance/validator.py](L:/industry_agent/services/agent-service/app/agents/maintenance/validator.py)
+- [app/contracts.py](L:/industry_agent/services/agent-service/app/contracts.py)
+- [app/workorder/repair_profile.py](L:/industry_agent/services/agent-service/app/workorder/repair_profile.py)
+- [app/skills/registry.py](L:/industry_agent/services/agent-service/app/skills/registry.py)
+- [app/tools/registry.py](L:/industry_agent/services/agent-service/app/tools/registry.py)

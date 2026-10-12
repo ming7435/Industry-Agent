@@ -83,7 +83,10 @@ def test_discovery_is_read_only_and_writes_version_bound_receipt(tmp_path,monkey
     monkeypatch.setenv('FREECAD_DISCOVERY_REPORT',str(tmp_path/'discovery.json'))
     monkeypatch.setattr(capabilities,'local_inventory',lambda:{'ready':True,'version_fingerprint':fingerprint})
     monkeypatch.setitem(sys.modules,'FreeCAD',types.SimpleNamespace(Version=lambda:version))
-    monkeypatch.setitem(sys.modules,'FreeCADGui',types.SimpleNamespace(listCommands=lambda:['Part_Box','Part_Cylinder']))
+    monkeypatch.setitem(sys.modules,'FreeCADGui',types.SimpleNamespace(listCommands=lambda:['Part_Box','Part_Cylinder'],
+        activeWorkbench=lambda:types.SimpleNamespace(name=lambda:'PartWorkbench'),
+        listWorkbenches=lambda:{'PartWorkbench':types.SimpleNamespace(MenuText='Part')},
+        Command=types.SimpleNamespace(get=lambda name:types.SimpleNamespace(getInfo=lambda:{'menuText':name}))))
     job=NativeJob(job_id='JOB-discover',input_digest='d'*64,job_kind='discover',owner_user_id='SYSTEM',document_id=None,expected_revision=None,envelope=None)
     class Stored(Backend):
         def complete_job(self,worker_id,receipt):return {'state':'completed'}

@@ -43,6 +43,12 @@ class AgentState(AgentExecutionState, total=False):
     runtime_policy: Dict[str, Any]
     runtime_pending_task: Dict[str, Any]
     runtime_resume: Dict[str, Any]
+    recovery_actor_id: str
+    runtime_recovery_epoch: int
+    runtime_recovery: bool
+    runtime_recovery_workorder_id: str
+    runtime_failed_action_id: str
+    runtime_reconciled_action: Dict[str, Any]
     tool_calls: List[Dict[str, Any]]
     observations: List[Dict[str, Any]]
     evidence: List[Dict[str, Any]]

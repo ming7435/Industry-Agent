@@ -200,6 +200,24 @@ class ExecutionManager:
         record.retry_count = max(0, record.attempts - 1)
         return record
 
+    def prepare_resume(self, action, *, existing_workorder_id=''):
+        """Retry failed reads or continue a verified, already-created work order."""
+        identity = self._idempotency.get(action.idempotency_key)
+        record = self._records.get(identity) if identity else None
+        if record is None or record.status == ExecutionStatus.RUNNING:
+            return
+        if record.action_fingerprint != action.fingerprint:
+            raise IdempotencyConflict('恢复动作与原执行身份不一致')
+        if action.side_effect:
+            from app.agents.base import AgentResult
+            result = AgentResult.from_value(record.result)
+            if not existing_workorder_id or record.status != ExecutionStatus.SUCCESS or result.success \
+                    or result.output.get('workorder_id') != existing_workorder_id \
+                    or (result.output.get('status') != 'waiting_for_personnel' and result.output.get('stop_reason') != 'personnel_query_failed'):
+                return
+        # Allocate a new attempt record: a late timed-out read cannot mutate it.
+        self._idempotency.pop(action.idempotency_key, None)
+
     def cancel(self, execution_id: str) -> ExecutionRecord:
         record = self._records.get(execution_id)
         if record is None:

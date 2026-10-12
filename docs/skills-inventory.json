@@ -1,0 +1,1708 @@
+{
+  "schema": "industry-agent-internal-skills-v1",
+  "external_skill_package": false,
+  "skill_count": 30,
+  "agent_count": 9,
+  "agents": {
+    "cad": {
+      "agent_entry": "services/agent-service/app/agents/cad/agent.py",
+      "graph_nodes": [
+        "finish",
+        "model_3d",
+        "plan_engineering_query",
+        "prepare",
+        "query",
+        "validate_relation",
+        "virtual_production"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": true
+        },
+        {
+          "source": "__start__",
+          "target": "virtual_production",
+          "conditional": true
+        },
+        {
+          "source": "model_3d",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "plan_engineering_query",
+          "target": "query",
+          "conditional": true
+        },
+        {
+          "source": "plan_engineering_query",
+          "target": "validate_relation",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "model_3d",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "plan_engineering_query",
+          "conditional": true
+        },
+        {
+          "source": "query",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "query",
+          "target": "plan_engineering_query",
+          "conditional": true
+        },
+        {
+          "source": "query",
+          "target": "validate_relation",
+          "conditional": true
+        },
+        {
+          "source": "validate_relation",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        },
+        {
+          "source": "virtual_production",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/cad/graph.py"
+    },
+    "diagnosis": {
+      "agent_entry": "services/agent-service/app/agents/diagnosis/agent.py",
+      "graph_nodes": [
+        "execute_observe",
+        "finish",
+        "loop_guard",
+        "prepare",
+        "reason",
+        "tool_guard",
+        "validate"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": false
+        },
+        {
+          "source": "execute_observe",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "execute_observe",
+          "target": "loop_guard",
+          "conditional": true
+        },
+        {
+          "source": "loop_guard",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "loop_guard",
+          "target": "reason",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "reason",
+          "conditional": true
+        },
+        {
+          "source": "reason",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "reason",
+          "target": "loop_guard",
+          "conditional": true
+        },
+        {
+          "source": "reason",
+          "target": "reason",
+          "conditional": true
+        },
+        {
+          "source": "reason",
+          "target": "tool_guard",
+          "conditional": true
+        },
+        {
+          "source": "reason",
+          "target": "validate",
+          "conditional": true
+        },
+        {
+          "source": "tool_guard",
+          "target": "execute_observe",
+          "conditional": true
+        },
+        {
+          "source": "tool_guard",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "tool_guard",
+          "target": "reason",
+          "conditional": true
+        },
+        {
+          "source": "validate",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "validate",
+          "target": "reason",
+          "conditional": true
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/diagnosis/graph.py"
+    },
+    "knowledge": {
+      "agent_entry": "services/agent-service/app/agents/knowledge/agent.py",
+      "graph_nodes": [
+        "finish",
+        "prepare",
+        "refine_query",
+        "rerank",
+        "retrieve",
+        "validate"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": false
+        },
+        {
+          "source": "prepare",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "retrieve",
+          "conditional": true
+        },
+        {
+          "source": "refine_query",
+          "target": "retrieve",
+          "conditional": false
+        },
+        {
+          "source": "rerank",
+          "target": "validate",
+          "conditional": false
+        },
+        {
+          "source": "retrieve",
+          "target": "refine_query",
+          "conditional": true
+        },
+        {
+          "source": "retrieve",
+          "target": "rerank",
+          "conditional": true
+        },
+        {
+          "source": "retrieve",
+          "target": "retrieve",
+          "conditional": true
+        },
+        {
+          "source": "validate",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/knowledge/graph.py"
+    },
+    "maintenance": {
+      "agent_entry": "services/agent-service/app/agents/maintenance/agent.py",
+      "graph_nodes": [
+        "build_plan",
+        "collect_context",
+        "finish",
+        "prepare",
+        "safety_validate",
+        "validate"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": false
+        },
+        {
+          "source": "build_plan",
+          "target": "safety_validate",
+          "conditional": false
+        },
+        {
+          "source": "collect_context",
+          "target": "build_plan",
+          "conditional": false
+        },
+        {
+          "source": "prepare",
+          "target": "collect_context",
+          "conditional": false
+        },
+        {
+          "source": "safety_validate",
+          "target": "validate",
+          "conditional": false
+        },
+        {
+          "source": "validate",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/maintenance/graph.py"
+    },
+    "memory": {
+      "agent_entry": "services/agent-service/app/agents/memory/agent.py",
+      "graph_nodes": [
+        "extract",
+        "finish",
+        "persist",
+        "prepare",
+        "rank_results",
+        "retrieve_memory",
+        "validate_experience"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": false
+        },
+        {
+          "source": "extract",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "extract",
+          "target": "validate_experience",
+          "conditional": true
+        },
+        {
+          "source": "persist",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "prepare",
+          "target": "extract",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "persist",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "retrieve_memory",
+          "conditional": true
+        },
+        {
+          "source": "rank_results",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "retrieve_memory",
+          "target": "rank_results",
+          "conditional": false
+        },
+        {
+          "source": "validate_experience",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "validate_experience",
+          "target": "persist",
+          "conditional": true
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/memory/graph.py"
+    },
+    "quality": {
+      "agent_entry": "services/agent-service/app/agents/quality/agent.py",
+      "graph_nodes": [
+        "finish",
+        "inspect",
+        "load_input",
+        "prepare",
+        "validate_part",
+        "virtual_size_inspection"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": true
+        },
+        {
+          "source": "__start__",
+          "target": "virtual_size_inspection",
+          "conditional": true
+        },
+        {
+          "source": "inspect",
+          "target": "validate_part",
+          "conditional": false
+        },
+        {
+          "source": "load_input",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "load_input",
+          "target": "inspect",
+          "conditional": true
+        },
+        {
+          "source": "prepare",
+          "target": "load_input",
+          "conditional": false
+        },
+        {
+          "source": "validate_part",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        },
+        {
+          "source": "virtual_size_inspection",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/quality/graph.py"
+    },
+    "report": {
+      "agent_entry": "services/agent-service/app/agents/report/agent.py",
+      "graph_nodes": [
+        "collect_context",
+        "compose",
+        "finish",
+        "persist",
+        "prepare"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": false
+        },
+        {
+          "source": "collect_context",
+          "target": "compose",
+          "conditional": true
+        },
+        {
+          "source": "collect_context",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "compose",
+          "target": "persist",
+          "conditional": false
+        },
+        {
+          "source": "persist",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "prepare",
+          "target": "collect_context",
+          "conditional": false
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/report/graph.py"
+    },
+    "router": {
+      "agent_entry": "services/agent-service/app/agents/router/agent.py",
+      "graph_nodes": [
+        "finish",
+        "prepare",
+        "route_request"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": false
+        },
+        {
+          "source": "prepare",
+          "target": "route_request",
+          "conditional": false
+        },
+        {
+          "source": "route_request",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/router/graph.py"
+    },
+    "workorder": {
+      "agent_entry": "services/agent-service/app/agents/workorder/agent.py",
+      "graph_nodes": [
+        "assign_order",
+        "create_order",
+        "dispatch_context",
+        "execute_action",
+        "finish",
+        "prepare",
+        "validate_plan"
+      ],
+      "graph_edges": [
+        {
+          "source": "__start__",
+          "target": "prepare",
+          "conditional": false
+        },
+        {
+          "source": "assign_order",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "create_order",
+          "target": "dispatch_context",
+          "conditional": true
+        },
+        {
+          "source": "create_order",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "dispatch_context",
+          "target": "assign_order",
+          "conditional": true
+        },
+        {
+          "source": "dispatch_context",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "execute_action",
+          "target": "finish",
+          "conditional": false
+        },
+        {
+          "source": "prepare",
+          "target": "validate_plan",
+          "conditional": false
+        },
+        {
+          "source": "validate_plan",
+          "target": "create_order",
+          "conditional": true
+        },
+        {
+          "source": "validate_plan",
+          "target": "execute_action",
+          "conditional": true
+        },
+        {
+          "source": "validate_plan",
+          "target": "finish",
+          "conditional": true
+        },
+        {
+          "source": "finish",
+          "target": "__end__",
+          "conditional": false
+        }
+      ],
+      "graph_file": "services/agent-service/app/agents/workorder/graph.py"
+    }
+  },
+  "skills": [
+    {
+      "agent": "cad",
+      "name": "drawing_lookup_skill",
+      "file": "services/agent-service/app/skills/cad/drawing_lookup.md",
+      "goal": "定位设备零部件、安装位置及工程图纸，验证它们的设备归属。",
+      "description": "当需按设备、部件或零件编号查询工程图、BOM、位置及装配关系时使用。",
+      "aliases": [
+        "part_search_skill",
+        "bom_analysis_skill"
+      ],
+      "triggers": [
+        "part_or_component",
+        "bom"
+      ],
+      "steps": [
+        "normalize_query",
+        "classify_engineering_request",
+        "resolve_part",
+        "plan_engineering_query",
+        "resolve_bom",
+        "merge_engineering_context",
+        "validate_engineering_context",
+        "build_result"
+      ],
+      "tools": [
+        "query_part",
+        "query_drawing",
+        "query_bom",
+        "query_relation",
+        "fetch_engineering_record"
+      ],
+      "tool_steps": [],
+      "input_model": "CADQuery",
+      "input_schema": "app.agents.cad.schemas.CADQuery",
+      "output_model": "CADResult",
+      "output_schema": "app.contracts.CADResult",
+      "document_characters": 4707,
+      "document_lines": 117,
+      "errors": []
+    },
+    {
+      "agent": "cad",
+      "name": "production_modeling_skill",
+      "file": "services/agent-service/app/skills/cad/production_modeling.md",
+      "goal": "通过同一个本地 FreeCAD MCP 工具生成并校验零件、工程图、约束装配、钣金展开和建筑模型。",
+      "description": "当结构化operation=production_modeling，需依据完整需求创建或修改本地FreeCAD设计时使用。",
+      "aliases": [],
+      "triggers": [
+        "production_modeling"
+      ],
+      "steps": [
+        "normalize_query",
+        "classify_engineering_request",
+        {
+          "id": "build_model",
+          "type": "tool",
+          "tool": "freecad_mcp",
+          "required_inputs": [
+            "spec"
+          ],
+          "failure_policy": "stop"
+        },
+        "build_result"
+      ],
+      "tools": [
+        "freecad_mcp",
+        "freecad_document_proposal"
+      ],
+      "tool_steps": [
+        {
+          "id": "build_model",
+          "tool": "freecad_mcp",
+          "required_inputs": [
+            "spec"
+          ]
+        }
+      ],
+      "input_model": "FreeCADRunRequest",
+      "input_schema": "app.agents.cad.modeling_api.FreeCADRunRequest",
+      "output_model": "dict（专属工具/接口返回）",
+      "output_schema": "",
+      "document_characters": 9503,
+      "document_lines": 161,
+      "errors": []
+    },
+    {
+      "agent": "cad",
+      "name": "virtual_production_skill",
+      "file": "services/agent-service/app/skills/cad/virtual_production.md",
+      "goal": "根据已校验的 CAD 版本生成并执行受限模拟加工任务。",
+      "description": "当已校验的CAD版本需要准备、下发、启动或同步虚拟车削任务时使用。",
+      "aliases": [],
+      "triggers": [
+        "virtual_production"
+      ],
+      "steps": [
+        {
+          "id": "prepare",
+          "type": "tool",
+          "tool": "prepare_virtual_production",
+          "required_inputs": [
+            "command_id",
+            "run",
+            "setup",
+            "material"
+          ],
+          "failure_policy": "stop"
+        },
+        {
+          "id": "submit",
+          "type": "tool",
+          "tool": "submit_virtual_production",
+          "required_inputs": [
+            "job_id",
+            "digest"
+          ],
+          "failure_policy": "stop"
+        },
+        {
+          "id": "start",
+          "type": "tool",
+          "tool": "start_virtual_production",
+          "required_inputs": [
+            "job_id",
+            "digest"
+          ],
+          "failure_policy": "stop"
+        },
+        {
+          "id": "sync",
+          "type": "tool",
+          "tool": "sync_virtual_production",
+          "required_inputs": [
+            "job_id"
+          ],
+          "failure_policy": "stop"
+        }
+      ],
+      "tools": [
+        "prepare_virtual_production",
+        "submit_virtual_production",
+        "start_virtual_production",
+        "sync_virtual_production"
+      ],
+      "tool_steps": [
+        {
+          "id": "prepare",
+          "tool": "prepare_virtual_production",
+          "required_inputs": [
+            "command_id",
+            "run",
+            "setup",
+            "material"
+          ]
+        },
+        {
+          "id": "submit",
+          "tool": "submit_virtual_production",
+          "required_inputs": [
+            "job_id",
+            "digest"
+          ]
+        },
+        {
+          "id": "start",
+          "tool": "start_virtual_production",
+          "required_inputs": [
+            "job_id",
+            "digest"
+          ]
+        },
+        {
+          "id": "sync",
+          "tool": "sync_virtual_production",
+          "required_inputs": [
+            "job_id"
+          ]
+        }
+      ],
+      "input_model": "Plan",
+      "input_schema": "app.api.production_simulation.Plan",
+      "output_model": "dict（专属工具/接口返回）",
+      "output_schema": "",
+      "document_characters": 5009,
+      "document_lines": 125,
+      "errors": []
+    },
+    {
+      "agent": "diagnosis",
+      "name": "alarm_diagnosis_skill",
+      "file": "services/agent-service/app/skills/diagnosis/alarm_diagnosis.md",
+      "goal": "结合报警定义与运行证据诊断带报警码的设备事件。",
+      "description": "当设备事件包含报警码，需要结合当前运行事实解释报警时使用。",
+      "aliases": [],
+      "triggers": [
+        "exists(alarm_code)"
+      ],
+      "steps": [
+        "query_alarm_definition",
+        "judge_alarm_evidence",
+        "enrich_with_history_or_knowledge",
+        "diagnose",
+        "validate_result",
+        "normalize_event",
+        "select_skills",
+        "generate_candidates",
+        "execute_tools",
+        "collect_evidence",
+        "build_result"
+      ],
+      "tools": [
+        "get_alarm_definition",
+        "get_device_history",
+        "get_device_logs",
+        "search_knowledge"
+      ],
+      "tool_steps": [],
+      "input_model": "AbnormalEventRequest",
+      "input_schema": "app.api.schemas.agent.AbnormalEventRequest",
+      "output_model": "DiagnosisResult",
+      "output_schema": "app.agents.diagnosis.schemas.DiagnosisResult",
+      "document_characters": 6430,
+      "document_lines": 166,
+      "errors": []
+    },
+    {
+      "agent": "diagnosis",
+      "name": "multi_metric_diagnosis_skill",
+      "file": "services/agent-service/app/skills/diagnosis/multi_metric.md",
+      "goal": "关联多个异常指标并推断共同故障原因。",
+      "description": "当同一事件有多个异常指标，需要区分共同原因与独立异常时使用。",
+      "aliases": [],
+      "triggers": [
+        "multiple_abnormal_metrics"
+      ],
+      "steps": [
+        "correlate_metrics",
+        "query_history",
+        "infer_common_causes",
+        "validate_result"
+      ],
+      "tools": [
+        "get_device_history",
+        "get_device_logs",
+        "search_knowledge"
+      ],
+      "tool_steps": [],
+      "input_model": "AbnormalEventRequest",
+      "input_schema": "app.api.schemas.agent.AbnormalEventRequest",
+      "output_model": "DiagnosisResult",
+      "output_schema": "app.agents.diagnosis.schemas.DiagnosisResult",
+      "document_characters": 6218,
+      "document_lines": 175,
+      "errors": []
+    },
+    {
+      "agent": "diagnosis",
+      "name": "no_alarm_diagnosis_skill",
+      "file": "services/agent-service/app/skills/diagnosis/no_alarm_diagnosis.md",
+      "goal": "在没有报警码时依据指标、日志和历史数据诊断异常。",
+      "description": "当事件无报警且未命中其它专用诊断技能，需要依据指标与快照判断异常时使用。",
+      "aliases": [],
+      "triggers": [
+        "no_alarm_code"
+      ],
+      "steps": [
+        "inspect_abnormal_metrics",
+        "query_context_if_needed",
+        "output_low_confidence_if_evidence_insufficient"
+      ],
+      "tools": [
+        "get_device_history",
+        "get_device_logs",
+        "search_knowledge",
+        "get_device_status"
+      ],
+      "tool_steps": [],
+      "input_model": "AbnormalEventRequest",
+      "input_schema": "app.api.schemas.agent.AbnormalEventRequest",
+      "output_model": "DiagnosisResult",
+      "output_schema": "app.agents.diagnosis.schemas.DiagnosisResult",
+      "document_characters": 4958,
+      "document_lines": 126,
+      "errors": []
+    },
+    {
+      "agent": "diagnosis",
+      "name": "safety_triage_skill",
+      "file": "services/agent-service/app/skills/diagnosis/safety_triage.md",
+      "goal": "对严重事件进行风险识别，并提出需人工或安全系统核查的处置建议。",
+      "description": "当严重事件需识别风险并给出受控核查建议时使用。",
+      "aliases": [],
+      "triggers": [
+        "severity == critical"
+      ],
+      "steps": [
+        "identify_safety_risk",
+        "retrieve_safety_sop",
+        "mark_human_or_safety_system_required"
+      ],
+      "tools": [
+        "get_alarm_definition",
+        "get_device_logs",
+        "search_knowledge"
+      ],
+      "tool_steps": [],
+      "input_model": "AbnormalEventRequest",
+      "input_schema": "app.api.schemas.agent.AbnormalEventRequest",
+      "output_model": "DiagnosisResult",
+      "output_schema": "app.agents.diagnosis.schemas.DiagnosisResult",
+      "document_characters": 6075,
+      "document_lines": 165,
+      "errors": []
+    },
+    {
+      "agent": "diagnosis",
+      "name": "trend_diagnosis_skill",
+      "file": "services/agent-service/app/skills/diagnosis/trend_diagnosis.md",
+      "goal": "诊断重复出现或持续发展的趋势性异常。",
+      "description": "当事件持续或重复出现，需要检查历史窗口和变化趋势时使用。",
+      "aliases": [],
+      "triggers": [
+        "trend_or_repeated_abnormality"
+      ],
+      "steps": [
+        "query_history",
+        "summarize_trend",
+        "infer_candidates",
+        "collect_evidence"
+      ],
+      "tools": [
+        "get_device_history",
+        "get_device_logs",
+        "search_knowledge"
+      ],
+      "tool_steps": [],
+      "input_model": "AbnormalEventRequest",
+      "input_schema": "app.api.schemas.agent.AbnormalEventRequest",
+      "output_model": "DiagnosisResult",
+      "output_schema": "app.agents.diagnosis.schemas.DiagnosisResult",
+      "document_characters": 6149,
+      "document_lines": 171,
+      "errors": []
+    },
+    {
+      "agent": "knowledge",
+      "name": "alarm_search_skill",
+      "file": "services/agent-service/app/skills/knowledge/alarm_search.md",
+      "goal": "检索报警定义以及与报警相关的技术知识。",
+      "description": "当问题提供报警编号或明确询问报警含义及关联资料时使用。",
+      "aliases": [],
+      "triggers": [
+        "exists(alarm_code)"
+      ],
+      "steps": [
+        "normalize_alarm_code",
+        "search_alarm_knowledge",
+        "fetch_document_or_chunk",
+        "validate_evidence"
+      ],
+      "tools": [
+        "search_alarm_knowledge",
+        "search_knowledge",
+        "fetch_document",
+        "fetch_chunk"
+      ],
+      "tool_steps": [],
+      "input_model": "KnowledgeQuery",
+      "input_schema": "app.agents.knowledge.schemas.KnowledgeQuery",
+      "output_model": "KnowledgeResult",
+      "output_schema": "app.contracts.KnowledgeResult",
+      "document_characters": 4994,
+      "document_lines": 122,
+      "errors": []
+    },
+    {
+      "agent": "knowledge",
+      "name": "fault_case_skill",
+      "file": "services/agent-service/app/skills/knowledge/fault_case.md",
+      "goal": "检索历史故障案例和已验证的维修经验。",
+      "description": "当问题涉及历史故障、相似案例或重复异常经验时使用。",
+      "aliases": [],
+      "triggers": [
+        "case_or_history"
+      ],
+      "steps": [
+        "search_fault_cases",
+        "search_semantic_memory",
+        "rerank_evidence",
+        "validate_evidence"
+      ],
+      "tools": [
+        "search_fault_cases",
+        "search_semantic_memory",
+        "fetch_document",
+        "fetch_chunk"
+      ],
+      "tool_steps": [],
+      "input_model": "KnowledgeQuery",
+      "input_schema": "app.agents.knowledge.schemas.KnowledgeQuery",
+      "output_model": "KnowledgeResult",
+      "output_schema": "app.contracts.KnowledgeResult",
+      "document_characters": 4801,
+      "document_lines": 121,
+      "errors": []
+    },
+    {
+      "agent": "knowledge",
+      "name": "hybrid_search_skill",
+      "file": "services/agent-service/app/skills/knowledge/hybrid_search.md",
+      "goal": "为维修依据补充混合资料源，或在没有指定专业知识源时执行混合检索。",
+      "description": "当问题无专业检索匹配，或结构化 purpose=maintenance 需要互补资料时使用。",
+      "aliases": [],
+      "triggers": [
+        "default",
+        "maintenance_evidence"
+      ],
+      "steps": [
+        "classify_query",
+        "search_knowledge",
+        "rerank_evidence",
+        "validate_evidence",
+        "normalize_query",
+        "select_sources",
+        "build_filters",
+        "search",
+        "build_evidence",
+        "rank",
+        "validate_sources",
+        "build_result"
+      ],
+      "tools": [
+        "search_knowledge",
+        "search_sop",
+        "search_manual",
+        "search_fault_cases",
+        "search_semantic_memory",
+        "fetch_document",
+        "fetch_chunk"
+      ],
+      "tool_steps": [],
+      "input_model": "KnowledgeQuery",
+      "input_schema": "app.agents.knowledge.schemas.KnowledgeQuery",
+      "output_model": "KnowledgeResult",
+      "output_schema": "app.contracts.KnowledgeResult",
+      "document_characters": 6774,
+      "document_lines": 177,
+      "errors": []
+    },
+    {
+      "agent": "knowledge",
+      "name": "manual_search_skill",
+      "file": "services/agent-service/app/skills/knowledge/manual_search.md",
+      "goal": "检索设备手册和操作说明。",
+      "description": "当请求设备手册、说明书或明确文档编号时使用。",
+      "aliases": [],
+      "triggers": [
+        "manual"
+      ],
+      "steps": [
+        "normalize_manual_query",
+        "search_manual",
+        "fetch_document_or_chunk",
+        "validate_evidence"
+      ],
+      "tools": [
+        "search_manual",
+        "search_knowledge",
+        "fetch_document",
+        "fetch_chunk"
+      ],
+      "tool_steps": [],
+      "input_model": "KnowledgeQuery",
+      "input_schema": "app.agents.knowledge.schemas.KnowledgeQuery",
+      "output_model": "KnowledgeResult",
+      "output_schema": "app.contracts.KnowledgeResult",
+      "document_characters": 6018,
+      "document_lines": 169,
+      "errors": []
+    },
+    {
+      "agent": "knowledge",
+      "name": "sop_search_skill",
+      "file": "services/agent-service/app/skills/knowledge/sop_search.md",
+      "goal": "检索标准作业规程和维修步骤。",
+      "description": "当请求SOP、规程或具体检查维修步骤时使用。",
+      "aliases": [],
+      "triggers": [
+        "sop_or_repair_steps"
+      ],
+      "steps": [
+        "classify_sop_query",
+        "search_sop",
+        "fetch_document_or_chunk",
+        "validate_evidence"
+      ],
+      "tools": [
+        "search_sop",
+        "search_manual",
+        "fetch_document",
+        "fetch_chunk"
+      ],
+      "tool_steps": [],
+      "input_model": "KnowledgeQuery",
+      "input_schema": "app.agents.knowledge.schemas.KnowledgeQuery",
+      "output_model": "KnowledgeResult",
+      "output_schema": "app.contracts.KnowledgeResult",
+      "document_characters": 6171,
+      "document_lines": 172,
+      "errors": []
+    },
+    {
+      "agent": "maintenance",
+      "name": "repair_plan_skill",
+      "file": "services/agent-service/app/skills/maintenance/repair_plan.md",
+      "goal": "依据诊断结论和证据生成可执行的维修方案。",
+      "description": "当已有诊断需形成受证据和安全约束的维修方案时使用。",
+      "aliases": [],
+      "triggers": [
+        "repair_plan"
+      ],
+      "steps": [
+        "assess_diagnosis",
+        "request_knowledge",
+        "request_cad",
+        "plan_repair",
+        "validate_plan",
+        "validate_diagnosis",
+        "determine_required_parts",
+        "build_safety_steps",
+        "build_result"
+      ],
+      "tools": [
+        "generate_repair_plan",
+        "query_inventory",
+        "query_part_availability",
+        "get_workorder_template",
+        "submit_workorder_draft"
+      ],
+      "tool_steps": [],
+      "input_model": "MaintenanceQuery",
+      "input_schema": "app.agents.maintenance.schemas.MaintenanceQuery",
+      "output_model": "MaintenancePlan",
+      "output_schema": "app.contracts.MaintenancePlan",
+      "document_characters": 5185,
+      "document_lines": 131,
+      "errors": []
+    },
+    {
+      "agent": "maintenance",
+      "name": "spare_part_skill",
+      "file": "services/agent-service/app/skills/maintenance/spare_part.md",
+      "goal": "确定维修所需备件，并核对库存和可用性。",
+      "description": "当维修目标涉及零部件或零件号，需要核查实际备件需求与可用性时使用。",
+      "aliases": [],
+      "triggers": [
+        "part_or_component"
+      ],
+      "steps": [
+        "resolve_target_part",
+        "query_inventory",
+        "query_part_availability",
+        "validate_parts"
+      ],
+      "tools": [
+        "query_inventory",
+        "query_part_availability"
+      ],
+      "tool_steps": [],
+      "input_model": "MaintenanceQuery",
+      "input_schema": "app.agents.maintenance.schemas.MaintenanceQuery",
+      "output_model": "MaintenancePlan",
+      "output_schema": "app.contracts.MaintenancePlan",
+      "document_characters": 5006,
+      "document_lines": 140,
+      "errors": []
+    },
+    {
+      "agent": "maintenance",
+      "name": "workorder_skill",
+      "file": "services/agent-service/app/skills/maintenance/workorder.md",
+      "goal": "结合维修方案与工程资料生成工单草稿。",
+      "description": "当维修方案需要附带工单模板与草稿信息时使用。",
+      "aliases": [],
+      "triggers": [
+        "workorder"
+      ],
+      "steps": [
+        "build_workorder_draft",
+        "attach_repair_target",
+        "attach_drawing_context",
+        "submit_workorder_draft"
+      ],
+      "tools": [
+        "get_workorder_template",
+        "submit_workorder_draft"
+      ],
+      "tool_steps": [],
+      "input_model": "MaintenanceQuery",
+      "input_schema": "app.agents.maintenance.schemas.MaintenanceQuery",
+      "output_model": "MaintenancePlan",
+      "output_schema": "app.contracts.MaintenancePlan",
+      "document_characters": 4931,
+      "document_lines": 136,
+      "errors": []
+    },
+    {
+      "agent": "memory",
+      "name": "experience_extraction",
+      "file": "services/agent-service/app/skills/memory/experience_extraction.md",
+      "goal": "从已关闭且可信维修验收通过的工单中提取、验证并保存经验。",
+      "description": "当需要从已关闭且具可信维修验收的工单沉淀经验时使用。",
+      "aliases": [
+        "memory_write"
+      ],
+      "triggers": [
+        "learn"
+      ],
+      "steps": [
+        "validate_closed",
+        "select_skills",
+        "validate_admission",
+        "extract_experience",
+        "dedup_experience",
+        "validate_experience",
+        "persist",
+        "build_result",
+        "fallback"
+      ],
+      "tools": [],
+      "tool_steps": [],
+      "input_model": "MemoryQuery",
+      "input_schema": "app.agents.memory.schemas.MemoryQuery",
+      "output_model": "MemoryResult",
+      "output_schema": "app.agents.memory.schemas.MemoryResult",
+      "document_characters": 4220,
+      "document_lines": 111,
+      "errors": []
+    },
+    {
+      "agent": "memory",
+      "name": "experience_retrieval",
+      "file": "services/agent-service/app/skills/memory/experience_retrieval.md",
+      "goal": "检索或列出已验证的历史维修经验。",
+      "description": "当需要查询匹配维修经验或列出近期记录时使用。",
+      "aliases": [],
+      "triggers": [
+        "search",
+        "recent"
+      ],
+      "steps": [
+        "validate_closed",
+        "select_skills",
+        "validate_search",
+        "retrieve_memory",
+        "dedup",
+        "score_experience",
+        "validate",
+        "build_result",
+        "fallback"
+      ],
+      "tools": [
+        "search_semantic_memory"
+      ],
+      "tool_steps": [],
+      "input_model": "MemoryQuery",
+      "input_schema": "app.agents.memory.schemas.MemoryQuery",
+      "output_model": "MemoryResult",
+      "output_schema": "app.agents.memory.schemas.MemoryResult",
+      "document_characters": 4029,
+      "document_lines": 110,
+      "errors": []
+    },
+    {
+      "agent": "memory",
+      "name": "memory_dedup",
+      "file": "services/agent-service/app/skills/memory/memory_dedup.md",
+      "goal": "避免同一工单的维修经验重复写入。",
+      "description": "当Memory流程读取或学习经验，需要抑制同源重复并核对部分保存时使用。",
+      "aliases": [],
+      "triggers": [
+        "always"
+      ],
+      "steps": [
+        "dedup",
+        "dedup_experience"
+      ],
+      "tools": [],
+      "tool_steps": [],
+      "input_model": "MemoryQuery",
+      "input_schema": "app.agents.memory.schemas.MemoryQuery",
+      "output_model": "MemoryResult",
+      "output_schema": "app.agents.memory.schemas.MemoryResult",
+      "document_characters": 3725,
+      "document_lines": 103,
+      "errors": []
+    },
+    {
+      "agent": "quality",
+      "name": "dimension_inspection_skill",
+      "file": "services/agent-service/app/skills/quality/dimension_inspection.md",
+      "goal": "核对生产零件与权威设计规格的尺寸或参数一致性。",
+      "description": "当生产后零件需与实际设计版本的尺寸或参数进行比较时使用。",
+      "aliases": [],
+      "triggers": [
+        "part_quality"
+      ],
+      "steps": [
+        "load_part",
+        "load_inspection_plan",
+        "inspect_dimensions",
+        "validate_part"
+      ],
+      "tools": [
+        "get_production_part",
+        "get_part_specification",
+        "inspect_part_dimensions"
+      ],
+      "tool_steps": [],
+      "input_model": "QualityQuery",
+      "input_schema": "app.agents.quality.schemas.QualityQuery",
+      "output_model": "QualityResult",
+      "output_schema": "app.contracts.QualityResult",
+      "document_characters": 4870,
+      "document_lines": 122,
+      "errors": []
+    },
+    {
+      "agent": "quality",
+      "name": "part_quality_inspection_skill",
+      "file": "services/agent-service/app/skills/quality/part_quality_inspection.md",
+      "goal": "按权威设计参数或适用检验范围检测生产零件，并支持受控质检闭环。",
+      "description": "当生产零件需要执行实际适用范围的检测，或受授权入口处理质检闭环时使用。",
+      "aliases": [],
+      "triggers": [
+        "part_quality"
+      ],
+      "steps": [
+        "load_part",
+        "load_inspection_plan",
+        "inspect_dimensions",
+        "inspect_appearance",
+        "inspect_material",
+        "inspect_function",
+        "inspect_process",
+        "validate_part",
+        "identify_part",
+        "determine_pass_fail",
+        "build_result",
+        "create_quality_check",
+        "create_closure_task",
+        "complete_closure_task",
+        "submit_quality_appeal",
+        "resolve_quality_appeal",
+        "reinspect_quality_check",
+        "release_quality_check",
+        "close_quality_check"
+      ],
+      "tools": [
+        "create_quality_check",
+        "get_production_part",
+        "get_part_specification",
+        "inspect_part_dimensions",
+        "inspect_part_appearance",
+        "inspect_part_material",
+        "inspect_part_function",
+        "inspect_part_process",
+        "create_closure_task",
+        "complete_closure_task",
+        "submit_quality_appeal",
+        "resolve_quality_appeal",
+        "reinspect_quality_check",
+        "release_quality_check",
+        "close_quality_check"
+      ],
+      "tool_steps": [],
+      "input_model": "QualityQuery",
+      "input_schema": "app.agents.quality.schemas.QualityQuery",
+      "output_model": "QualityResult",
+      "output_schema": "app.contracts.QualityResult",
+      "document_characters": 6703,
+      "document_lines": 134,
+      "errors": []
+    },
+    {
+      "agent": "quality",
+      "name": "virtual_size_inspection_skill",
+      "file": "services/agent-service/app/skills/quality/virtual_size_inspection.md",
+      "goal": "对工厂已保存的模拟加工尺寸与原设计版本执行确定性比较。",
+      "description": "当服务器授权检查已保存的虚拟加工产出及原设计摘要时使用。",
+      "aliases": [],
+      "triggers": [
+        "virtual_profile_dimensions_v1"
+      ],
+      "steps": [
+        {
+          "id": "inspect",
+          "type": "tool",
+          "tool": "inspect_virtual_output",
+          "required_inputs": [
+            "part_id",
+            "output_digest"
+          ],
+          "failure_policy": "stop"
+        }
+      ],
+      "tools": [
+        "inspect_virtual_output"
+      ],
+      "tool_steps": [
+        {
+          "id": "inspect",
+          "tool": "inspect_virtual_output",
+          "required_inputs": [
+            "part_id",
+            "output_digest"
+          ]
+        }
+      ],
+      "input_model": "QualityRequest",
+      "input_schema": "app.a2a.models.QualityRequest",
+      "output_model": "QualityResponse",
+      "output_schema": "app.a2a.models.QualityResponse",
+      "document_characters": 5375,
+      "document_lines": 145,
+      "errors": []
+    },
+    {
+      "agent": "report",
+      "name": "closure_report_skill",
+      "file": "services/agent-service/app/skills/report/closure_report.md",
+      "goal": "汇总真实业务记录和执行链路，生成闭环或链路报告。",
+      "description": "当需要汇总故障闭环或执行链路事实时使用。",
+      "aliases": [
+        "trace_report_skill"
+      ],
+      "triggers": [
+        "closure",
+        "trace"
+      ],
+      "steps": [
+        "collect_event",
+        "select_skills",
+        "collect_sources",
+        "validate_completeness",
+        "compose_report",
+        "validate_result",
+        "persist",
+        "persist_report",
+        "build_result",
+        "fallback"
+      ],
+      "tools": [
+        "get_diagnosis_record",
+        "get_maintenance_record",
+        "get_workorder",
+        "get_quality_record",
+        "get_trace_summary",
+        "persist_report"
+      ],
+      "tool_steps": [],
+      "input_model": "ReportQuery",
+      "input_schema": "app.agents.report.schemas.ReportQuery",
+      "output_model": "ReportResult",
+      "output_schema": "app.contracts.ReportResult",
+      "document_characters": 4761,
+      "document_lines": 129,
+      "errors": []
+    },
+    {
+      "agent": "report",
+      "name": "report_generation_skill",
+      "file": "services/agent-service/app/skills/report/report_generation.md",
+      "goal": "生成完整、可追溯的工业事件或维修报告。",
+      "description": "当需要依据真实事件资料生成正文报告，或为已保存报告导出文件时使用。",
+      "aliases": [],
+      "triggers": [
+        "default"
+      ],
+      "steps": [
+        "collect_sources",
+        "check_completeness",
+        "compose_report",
+        "validate_report",
+        "persist_report",
+        "generate_report_file",
+        "collect_event",
+        "validate_completeness",
+        "validate_result",
+        "build_result"
+      ],
+      "tools": [
+        "get_diagnosis_record",
+        "get_maintenance_record",
+        "get_workorder",
+        "get_quality_record",
+        "get_trace_summary",
+        "persist_report",
+        "generate_report_file"
+      ],
+      "tool_steps": [],
+      "input_model": "ReportQuery",
+      "input_schema": "app.agents.report.schemas.ReportQuery",
+      "output_model": "ReportResult",
+      "output_schema": "app.contracts.ReportResult",
+      "document_characters": 5023,
+      "document_lines": 133,
+      "errors": []
+    },
+    {
+      "agent": "router",
+      "name": "intent_routing_skill",
+      "file": "services/agent-service/app/skills/router/intent_routing.md",
+      "goal": "识别工业请求意图、提取业务实体并形成已校验的路由结果。",
+      "description": "当接收工业用户问题，需要确定目标能力与业务实体时使用。",
+      "aliases": [
+        "entity_extraction_skill"
+      ],
+      "triggers": [
+        "default"
+      ],
+      "steps": [
+        "normalize_request",
+        "select_target_agent",
+        "classify_intent",
+        "extract_entities",
+        "validate_route",
+        "build_runtime_goal"
+      ],
+      "tools": [],
+      "tool_steps": [],
+      "input_model": "AgentTask",
+      "input_schema": "app.contracts.AgentTask",
+      "output_model": "RouteResult",
+      "output_schema": "app.contracts.RouteResult",
+      "document_characters": 3591,
+      "document_lines": 113,
+      "errors": []
+    },
+    {
+      "agent": "workorder",
+      "name": "auto_assignment",
+      "file": "services/agent-service/app/skills/workorder/auto_assignment.md",
+      "goal": "按设备登记负责关系、在线可用状态和负载选择或核验派工人员。",
+      "description": "当创建流程需自动选负责人，或现有工单明确指定负责人派发时使用。",
+      "aliases": [],
+      "triggers": [
+        "assign"
+      ],
+      "steps": [
+        "collect_dispatch_context",
+        "select_assignee",
+        "assign_order"
+      ],
+      "tools": [
+        "query_technicians",
+        "query_technician_skills",
+        "query_technician_workload",
+        "query_shift",
+        "query_team_availability",
+        "assign_workorder"
+      ],
+      "tool_steps": [],
+      "input_model": "WorkOrderQuery",
+      "input_schema": "app.agents.workorder.schemas.WorkOrderQuery",
+      "output_model": "WorkOrderResult",
+      "output_schema": "app.agents.workorder.schemas.WorkOrderResult",
+      "document_characters": 4966,
+      "document_lines": 116,
+      "errors": []
+    },
+    {
+      "agent": "workorder",
+      "name": "repair_feedback",
+      "file": "services/agent-service/app/skills/workorder/repair_feedback.md",
+      "goal": "接收现场维修反馈并标记维修执行结果。",
+      "description": "当维修人员提交处理反馈或申请维修完成时使用。",
+      "aliases": [],
+      "triggers": [
+        "feedback"
+      ],
+      "steps": [
+        "initialize",
+        "load_skill",
+        "validate_plan",
+        "execute_action",
+        "validate",
+        "final"
+      ],
+      "tools": [
+        "submit_repair_feedback",
+        "mark_repair_completed"
+      ],
+      "tool_steps": [],
+      "input_model": "WorkOrderQuery",
+      "input_schema": "app.agents.workorder.schemas.WorkOrderQuery",
+      "output_model": "WorkOrderResult",
+      "output_schema": "app.agents.workorder.schemas.WorkOrderResult",
+      "document_characters": 4637,
+      "document_lines": 117,
+      "errors": []
+    },
+    {
+      "agent": "workorder",
+      "name": "workorder_create",
+      "file": "services/agent-service/app/skills/workorder/workorder_create.md",
+      "goal": "根据已验证的维修方案创建并派发维修工单。",
+      "description": "当已验证维修方案需形成正式任务，或明确创建维修工单时使用。",
+      "aliases": [],
+      "triggers": [
+        "repair_plan"
+      ],
+      "steps": [
+        "initialize",
+        "load_skill",
+        "validate_plan",
+        "create_order",
+        "collect_dispatch_context",
+        "select_assignee",
+        "assign_order",
+        "validate",
+        "final"
+      ],
+      "tools": [
+        "create_workorder",
+        "get_workorder_template",
+        "query_technicians",
+        "query_technician_skills",
+        "query_technician_workload",
+        "query_shift",
+        "query_team_availability",
+        "assign_workorder"
+      ],
+      "tool_steps": [],
+      "input_model": "WorkOrderQuery",
+      "input_schema": "app.agents.workorder.schemas.WorkOrderQuery",
+      "output_model": "WorkOrderResult",
+      "output_schema": "app.agents.workorder.schemas.WorkOrderResult",
+      "document_characters": 5615,
+      "document_lines": 136,
+      "errors": []
+    },
+    {
+      "agent": "workorder",
+      "name": "workorder_reopen",
+      "file": "services/agent-service/app/skills/workorder/workorder_reopen.md",
+      "goal": "按实际状态迁移规则重开已有工单，不重复创建任务。",
+      "description": "当已有工单需恢复为可处理状态且原状态允许重开时使用。",
+      "aliases": [],
+      "triggers": [
+        "reopen"
+      ],
+      "steps": [
+        "initialize",
+        "load_skill",
+        "validate_plan",
+        "execute_action",
+        "validate",
+        "final"
+      ],
+      "tools": [
+        "reopen_workorder",
+        "get_workorder"
+      ],
+      "tool_steps": [],
+      "input_model": "WorkOrderQuery",
+      "input_schema": "app.agents.workorder.schemas.WorkOrderQuery",
+      "output_model": "WorkOrderResult",
+      "output_schema": "app.agents.workorder.schemas.WorkOrderResult",
+      "document_characters": 4423,
+      "document_lines": 111,
+      "errors": []
+    },
+    {
+      "agent": "workorder",
+      "name": "workorder_tracking",
+      "file": "services/agent-service/app/skills/workorder/workorder_tracking.md",
+      "goal": "查询和更新工单生命周期状态。",
+      "description": "当查询工单状态或明确请求合法状态更新时使用。",
+      "aliases": [],
+      "triggers": [
+        "query"
+      ],
+      "steps": [
+        "initialize",
+        "load_skill",
+        "validate_plan",
+        "execute_action",
+        "validate",
+        "final"
+      ],
+      "tools": [
+        "get_workorder",
+        "query_workorder",
+        "update_workorder",
+        "list_workorders"
+      ],
+      "tool_steps": [],
+      "input_model": "WorkOrderQuery",
+      "input_schema": "app.agents.workorder.schemas.WorkOrderQuery",
+      "output_model": "WorkOrderResult",
+      "output_schema": "app.agents.workorder.schemas.WorkOrderResult",
+      "document_characters": 4772,
+      "document_lines": 115,
+      "errors": []
+    }
+  ],
+  "errors": []
+}

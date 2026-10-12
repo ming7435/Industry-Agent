@@ -97,7 +97,8 @@ class SkillManager:
         label, loop, explanation = AGENTS[skill.agent]
         title = next((line.lstrip("# ").strip() for line in skill.document.splitlines() if line.startswith("# ")), skill.goal or skill.name)
         return {"agent": skill.agent, "agent_label": label, "name": skill.name, "title": title,
-                "version": skill.version, "goal": skill.goal, "internal_loop": loop, "loop_description": explanation}
+                "version": skill.version, "goal": skill.goal, "internal_loop": loop, "loop_description": explanation,
+                "last_modified_at": datetime.fromtimestamp(Path(skill.path).stat().st_mtime, timezone.utc).isoformat()}
 
     def catalog(self, loop_only=True):
         return {"items": [self._summary(skill) for agent, (_, loop, _) in AGENTS.items()

@@ -1,0 +1,6 @@
+.task-recovery-list{display:grid;gap:12px;margin-top:16px}
+.task-recovery-item{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px;border:1px solid var(--border-color,#cbdcdd);border-radius:12px;background:var(--surface,#fff)}
+.task-recovery-item p{margin:7px 0;overflow-wrap:anywhere}
+.task-recovery-item small{color:var(--text-muted,#667f85);overflow-wrap:anywhere}
+.task-recovery-item button{flex-shrink:0}
+@media(max-width:760px){.task-recovery-item{align-items:stretch;flex-direction:column}}

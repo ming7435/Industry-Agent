@@ -30,10 +30,14 @@ from .policy import RuntimePolicy
 from .approval import ApprovalManager, PendingTaskStore
 
 
-def build_workorder_resolvers() -> SideEffectResolverRegistry:
+def build_workorder_resolvers(tools=None) -> SideEffectResolverRegistry:
     """无参数指纹可核对时，不把工单存在或仅有幂等键当作动作已完成。"""
 
-    return SideEffectResolverRegistry()
+    registry = SideEffectResolverRegistry()
+    if tools is not None:
+        from .workorder_recovery import resolver_factory
+        registry.register('workorder_create', resolver_factory(tools))
+    return registry
 
 
 class AgentContainer:
@@ -54,6 +58,8 @@ class AgentContainer:
         from app.harness.trace_store import MySQLTraceStore
         self.trace = TraceRecorder(store=MySQLTraceStore() if os.getenv('APP_ENV', 'development').lower() != 'testing' else None)
         self.pending_tasks = PendingTaskStore(settings.pending_task_store_path)
+        from .recovery import RecoveryManager
+        self.recovery = RecoveryManager(self.pending_tasks._store)
         self.policy = RuntimePolicy(self.capabilities, approval_lookup=self.pending_tasks.get)
         self.approvals = ApprovalManager(self.pending_tasks, trace=self.trace)
         self.execution_manager = ExecutionManager(
@@ -121,7 +127,7 @@ class AgentContainer:
         }
         self.endpoints = A2AEndpoints(self.harnesses)
         self.endpoints.register(self.a2a)
-        resolvers = build_workorder_resolvers()
+        resolvers = build_workorder_resolvers(self.registry)
         self.dispatcher = RuntimeDispatcher(
             self.capabilities,
             self.execution_manager,
@@ -156,6 +162,7 @@ class AgentContainer:
                 backend = VirtualProductionBackend(BackendServiceClient(settings.backend_service_base_url))
                 factory = VirtualFactoryClient(settings.factory_api_base_url)
                 self.virtual_production = VirtualProductionCoordinator(backend, factory, self.operations, self.trace)
+                self.virtual_production.recovery = self.recovery
                 self.virtual_production_reconciler = VirtualProductionReconciler(self.virtual_production, backend)
             except VirtualFactoryError as error:
                 self.virtual_production_error = str(error)

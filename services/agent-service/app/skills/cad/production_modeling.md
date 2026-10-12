@@ -1,5 +1,6 @@
 ---
 name: production_modeling_skill
+description: 当结构化operation=production_modeling，需依据完整需求创建或修改本地FreeCAD设计时使用。
 version: 3.3
 goal: 通过同一个本地 FreeCAD MCP 工具生成并校验零件、工程图、约束装配、钣金展开和建筑模型。
 trigger: production_modeling
@@ -16,7 +17,37 @@ tools: [freecad_mcp, freecad_document_proposal]
 failure_policy: stop
 ---
 
-# 本地 FreeCAD 建模
+# 本地FreeCAD实体建模与修改
+
+运行标识：`production_modeling_skill`；所属 Agent：`cad`；兼容别名：无。唯一运行元数据来源是本文件 YAML。Agent 接收与转换任务，Graph 决定编排、分支、预算和降级，Skill 指导业务判断，Tools 返回真实观察，原 Result 契约限制公开结构。正文不授予新增权限。
+
+## 技能概述（Overview）
+
+通过同一个本地 FreeCAD MCP 工具生成并校验零件、工程图、约束装配、钣金展开和建筑模型。 只完成本技能责任范围，保留未解决事实与下游判断边界。
+
+## 触发场景（When to Use）
+
+只匹配结构化operation=production_modeling；普通检索文字不能激活建模工具。模型树修改提案由受保护的文档入口形成，人工确认后执行。
+
+不适用：缺规格不能替用户决定尺寸，维修图纸检索不用本建模技能，BuildCAD不是当前活动建模路径。
+
+## 输入与前置条件（Inputs）
+
+自然语言/结构化建模公开输入为 FreeCADRunRequest：prompt（非空≤10000）、command_id（1–128，字母数字及_.:-）、spec可选、part_name≤120、part_number≤80。禁止控制字符。run_id由服务端command_id哈希生成FC-编号；模型不能指定路径、脚本、MCP工具名或URL。已有文档修改另用head/snapshot/prompt生成提案，绑定DOC/object_id/revision。
+
+## 执行流程（Workflow）
+
+### 公共编排
+
+真实建模分支prepare → model_3d → finish；唯一建模节点映射build_model，调用本技能结构化tool步骤freecad_mcp(spec)。文档修改提案通过既有文档队列，人工确认后执行；不是新Graph节点。BuildCAD旧兼容方法不代表活动provider：当前节点拒绝非freecad。
+
+保留的步骤标识：`normalize_query`、`classify_engineering_request`、`build_model`、`build_result`。结构化 tool 步骤须按绑定工具执行；字符串步骤可为内部函数/追踪标签，不等于独立图节点。
+
+### 本技能业务任务
+
+将原需求映射到下列完整专业协议；确定性或模型解析都要语义复核、validate_spec；缺关键参数返回questions。人工确认的结构化规格经同一MCP队列执行，校验本次manifest、实体、STEP与实际产物后展示；文档提案只能针对当前修订。
+
+### 保留的专业协议
 
 生产建模的个人文档使用稳定的 DOC／object_id／revision。中文编辑通过 `freecad_document_proposal` 只形成类型化提案，用户确认后才提交受会话保护的文档命令；不能把提案当作已经完成的修改。手动和中文入口共用同一原生执行队列。模型树里不支持的复杂对象仍展示，尺寸修改需明确规格重新生成，不自动改动约束。工作修订只有显式“保存版本”后才进入质检标准目录；不得自动检测或控制工厂。
 
@@ -68,3 +99,82 @@ failure_policy: stop
 工具仅接受上述白名单规格，服务端生成受信任的 FreeCAD 脚本，并通过实际本地 MCP 执行。用户或模型不能提交代码、路径、URL、文件名或 MCP 工具名。工具成功必须同时有实际几何校验、STEP 回读和 STL、STEP、FCStd 导出文件；请求工作台时还必须验证其额外产物及参数归属。链接只能使用工具返回值。结果失败、超时或未知时停止，不自动重放。
 
 运行记录保留原始需求、规格、节点、技能、工具、实际 MCP 调用与结果。三维文件可以交互旋转查看，设计结果不代表已通过加工验收或已开始生产。本技能不调用刀路、机床、工单或机器控制。
+
+## 业务判断规则（Reasoning Rules）
+
+- 单位/外径/孔径/长宽高/位置必须对应原需求，不能只检查数字出现过就认定语义匹配。
+- 每项用户特征必须保留；不支持/复杂不确定的需求要询问，不以简单圆柱冒充完成。
+- 模型提案、实体执行、导出校验、保存版本与生产验收分开，不以旋转摄像机冒充装配运动。
+
+## 工具使用规范（Tools）
+
+build_model绑定freecad_mcp，只接白名单结构化spec，私有freecad_tool_scope绑定本次任务；freecad_document_proposal只生成类型化命令提案，确认后才进入文档原生队列。复杂规格必须由用户核对，不靠前端伪模型替代执行。
+
+| 工具 | 何时调用与参数 | 返回使用及失败边界 |
+| --- | --- | --- |
+| `freecad_mcp` | 只有服务端绑定本次 FreeCAD 执行上下文且规格已校验时传 spec。 | 读取 status/validation/artifacts/calls；仅实体与 STEP 回读、导出文件都验证才承认完成，未知不重放。 |
+| `freecad_document_proposal` | 针对已有文档修订的中文修改，传 head/snapshot/prompt。 | 返回 ready/command/requires_confirmation 或 needs_input/questions；是提案，不是已修改模型。 |
+
+所有工具仅在前置条件满足且实际路径需要时调用；允许不等于本次已调用。失败返回/异常保留到现有观察、finding或错误分支，不补造成功体。
+
+## 证据与数据真实性（Evidence Rules）
+
+原始需求、结构化规格、本次任务、几何校验和导出manifest关联一致；单位与尺寸不猜。已有图纸/模型修订与修改提案版本一致，工具生成的产物URL才能展示。初态干涉不代表全运动轨迹无碰撞，几何校验不等于加工或生产验收。
+
+## 输出规范（Output Format）
+
+模型规格解析只返回{status:ready,spec:...}或{status:needs_input,questions:[...]}，不输出Python/Markdown或未经声明字段。真实工具回执另是字典status/answer/validation/artifacts/calls，Agent可附spec/error/error_code/error_stage/execution；HTTP运行记录另带run_id、原需求、零件及文档身份。不要把这几层合成第二套统一Result。
+
+## 异常处理（Error Handling）
+
+尺寸、单位、孔位或方向不明确进入needs_input；unsupported特征不忽略；内核、STEP回读、文件证据失败返回failed；连接超时/仍在运行保留outcome_unknown并核对原任务，不自动重放。原有螺纹可靠性限制保留，不能保证任意形体可靠出图。
+
+## 停止条件（Stop Conditions）
+
+成功须validation.valid与step_roundtrip真实为True、实体数量/正体积/尺寸符合本次spec、STL/STEP/FCStd实际导出，以及所请求工作台额外产物校验。任一缺失停止，不能生成假的下载链接。已存在目录/忙锁/上下文缺失拒绝新执行。
+
+## 安全与权限边界（Safety & Constraints）
+
+设计或修改确认不等于生产启动；本技能不生成真实机床刀路、不派工、不控制设备。用户与模型不能提交脚本、命令、路径或越权MCP操作。未保存工作修订不自动成为正式质检设计基准。
+
+## 示例（Examples）
+
+以下为隔离说明样例，不是现场执行记录。请求形状合法不代表业务门禁已通过；编号、测量和回执必须来自实际系统。
+
+### 示例输入
+
+```json
+{
+  "command_id": "example-missing-shaft",
+  "prompt": "生成一个带孔的销轴"
+}
+```
+
+### 处理与依据
+
+该输入未给尺寸；只能要求补充，不填示例30/50/10毫米。规格解析结果示例如下，不是执行回执。
+
+### 示例输出
+
+```json
+{
+  "status": "needs_input",
+  "questions": [
+    "请补充外径、长度、孔径及孔的位置和方向，并明确单位。"
+  ]
+}
+```
+
+## 参考实现（References）
+
+- [app/agents/cad/agent.py](L:/industry_agent/services/agent-service/app/agents/cad/agent.py)
+- [app/agents/cad/graph.py](L:/industry_agent/services/agent-service/app/agents/cad/graph.py)
+- [app/agents/cad/schemas.py](L:/industry_agent/services/agent-service/app/agents/cad/schemas.py)
+- [app/agents/cad/validator.py](L:/industry_agent/services/agent-service/app/agents/cad/validator.py)
+- [app/contracts.py](L:/industry_agent/services/agent-service/app/contracts.py)
+- [app/tools/query_contracts.py](L:/industry_agent/services/agent-service/app/tools/query_contracts.py)
+- [app/agents/cad/modeling_api.py](L:/industry_agent/services/agent-service/app/agents/cad/modeling_api.py)
+- [app/tools/cad/freecad_mcp.py](L:/industry_agent/services/agent-service/app/tools/cad/freecad_mcp.py)
+- [app/cad_documents/proposal.py](L:/industry_agent/services/agent-service/app/cad_documents/proposal.py)
+- [app/skills/registry.py](L:/industry_agent/services/agent-service/app/skills/registry.py)
+- [app/tools/registry.py](L:/industry_agent/services/agent-service/app/tools/registry.py)

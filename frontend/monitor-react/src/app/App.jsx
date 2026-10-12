@@ -21,6 +21,7 @@ import { createMotionClock, getMachineMotionState, getWorkshopMotionState } from
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ExpertWorkspace from './ExpertWorkspace.jsx';
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
+import TaskRecoveryPanel from './TaskRecoveryPanel.jsx';
 import { freeCadRequest } from "./production-cad/freecad.mjs";
 import PartQualityWorkspace from "./QualityWorkspace.jsx";
 import RepairCadPanel from './WorkorderDrawingPanel.jsx';
@@ -2666,6 +2667,7 @@ function LogsWorkspace({ snapshot, active = true }) {
     <section className="workspace-view active module-board logs-workspace" aria-label="日志系统" hidden={!active} style={active ? undefined : { display: "none" }}>
       <ModuleHero eyebrow="Runtime Logs" title="日志系统" text="一次完整故障闭环只形成一条运行记录：监控 → 诊断 → 维修方案 → 工单派发 → 报告中心 → 经验总结；质检始终独立成单。" action={<button className="button" type="button" onClick={refreshLogs} disabled={loading}>{loading ? "刷新中…" : "刷新运行记录"}</button>} />
       {error && <div className="workspace-notice logs-notice" role="status">日志读取提示：{error}</div>}
+      <TaskRecoveryPanel request={request} active={active} onRecovered={refreshLogs} />
       <div className="module-grid logs-stat-grid">
         <ModuleStat label="事件总数" value={records.length} text="Trace Recorder 保留记录" />
         <ModuleStat label="运行记录" value={traceCount} text="故障闭环、RAG 问答、质检与模拟生产" />

@@ -301,12 +301,35 @@ class MySQLJsonStore:
                         cursor.execute("UPDATE runtime_claims_mysql SET status='uncertain' WHERE namespace=%s AND key_hash=%s", (ns, digest))
                     raise
                 with self._session() as cursor:
+                    cursor.execute('SELECT status FROM runtime_claims_mysql WHERE namespace=%s AND key_hash=%s FOR UPDATE', (ns, digest))
+                    cursor.fetchone()
+                    cursor.execute('SELECT payload FROM runtime_records_mysql WHERE namespace=%s AND key_hash=%s FOR UPDATE', (ns, digest))
+                    existing = cursor.fetchone()
+                    if existing is not None:
+                        return _decode(existing['payload'])
                     value = self._write(cursor, namespace, key, value)
                     cursor.execute("DELETE FROM runtime_claims_mysql WHERE namespace=%s AND key_hash=%s", (ns, digest))
                 return value
             if monotonic() >= deadline:
                 raise PendingResultError("running")
             sleep(0.05)
+
+    def publish_recovered_event(self, key, value):
+        """Finish an abandoned event claim under a trusted recovery task identity."""
+        ns, digest, original = self._identity('agent_event', key)
+        with self._session() as cursor:
+            cursor.execute("INSERT INTO runtime_claims_mysql(namespace,key_hash,state_key,status) VALUES (%s,%s,%s,'running') ON DUPLICATE KEY UPDATE state_key=runtime_claims_mysql.state_key", (ns, digest, original))
+            cursor.execute('SELECT payload FROM runtime_records_mysql WHERE namespace=%s AND key_hash=%s FOR UPDATE', (ns, digest))
+            row = cursor.fetchone()
+            if row:
+                current = _decode(row['payload'])
+                if current.get('fingerprint') != value.get('fingerprint') or (current.get('result') or {}).get('task_id') != value['result']['task_id']:
+                    raise ValueError('原事件回执身份不一致')
+                cursor.execute('DELETE FROM runtime_claims_mysql WHERE namespace=%s AND key_hash=%s', (ns, digest))
+                return current
+            saved = self._write(cursor, ns, key, value)
+            cursor.execute('DELETE FROM runtime_claims_mysql WHERE namespace=%s AND key_hash=%s', (ns, digest))
+            return saved
 
     def plan_results(self):
         with self._session() as cursor:

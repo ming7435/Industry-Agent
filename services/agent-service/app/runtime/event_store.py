@@ -143,6 +143,34 @@ class EventResultStore:
             return dict(stored.get("result") or {})
         return dict(stored)
 
+    def replace_after_recovery(self, event: dict, result: Dict[str, Any], *, checkpoint=None) -> None:
+        """Publish a recovered result under the original event fingerprint, without replay."""
+        key = scoped_event_key(event)
+        with self._lock:
+            stored = self._durable.get('agent_event', key) if self._durable else self._results.get(key)
+            if stored is None:
+                source = (checkpoint or {}).get('state') or {}
+                if (checkpoint or {}).get('status') != 'resuming' or not source.get('task_id') \
+                        or source['task_id'] != result.get('task_id') or source.get('event') != event:
+                    raise EventResultConflict('缺少原任务恢复身份，不能发布事件回执')
+                from .recovery import RecoveryManager
+                first = {'_event_result_store_version': 2, 'fingerprint': RecoveryManager.event_fingerprint(event),
+                         'result': dict(result)}
+                stored = self._durable.publish_recovered_event(key, first) if self._durable else first
+            original = stored.get('result') if stored.get('_event_result_store_version') == 2 else stored
+            if not original.get('task_id') or original['task_id'] != result.get('task_id'):
+                raise EventResultConflict('恢复结果不能覆盖其他任务的事件回执')
+            updated = {**stored, 'result': dict(result)} if stored.get('_event_result_store_version') == 2 else dict(result)
+            if self._durable:
+                field = 'result' if stored.get('_event_result_store_version') == 2 else 'task_id'
+                expected = stored.get(field)
+                if self._durable.compare_and_set('agent_event', key, field, expected, updated) is None:
+                    raise EventResultConflict('原事件回执已更新，请刷新核对')
+            if not self._online:
+                self._results[key] = updated
+            if self._plan_reader is not None:
+                self._plan_reader.invalidate()
+
     def list_plan_results(self):
         """方案投影与历史日志全文分离；大历史库由单个只读任务渐进加载。"""
         if isinstance(self._durable, MySQLJsonStore):

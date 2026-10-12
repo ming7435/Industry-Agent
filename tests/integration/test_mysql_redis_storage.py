@@ -24,6 +24,57 @@ def storage_class():
     return MySQLJsonStore
 
 
+def test_recovery_publishes_original_event_with_abandoned_claim(mysql_config):
+    store = storage_class()(mysql_config)
+    value = {'_event_result_store_version': 2, 'fingerprint': 'original',
+             'result': {'task_id': 'TASK-RECOVERY', 'status': 'completed'}}
+    with pytest.raises(RuntimeError):
+        store.get_or_create('agent_event', 'abandoned-recovery', lambda: (_ for _ in ()).throw(RuntimeError('interrupted')))
+    assert store.publish_recovered_event('abandoned-recovery', value) == value
+    assert store.get_or_create('agent_event', 'abandoned-recovery', lambda: pytest.fail('producer replayed')) == value
+
+
+def test_recovery_event_receipt_fences_late_original_producer(mysql_config):
+    store = storage_class()(mysql_config)
+    entered, release = Event(), Event()
+    original = {'_event_result_store_version': 2, 'fingerprint': 'original', 'result': {'task_id': 'TASK-LATE', 'status': 'blocked'}}
+    recovered = {**original, 'result': {**original['result'], 'status': 'completed'}}
+    def produce():
+        entered.set(); release.wait(5)
+        return original
+    with ThreadPoolExecutor(1) as pool:
+        old = pool.submit(store.get_or_create, 'agent_event', 'late-recovery', produce)
+        assert entered.wait(2)
+        try:
+            assert store.publish_recovered_event('late-recovery', recovered) == recovered
+        finally:
+            release.set()
+        assert old.result() == recovered
+    assert store.get('agent_event', 'late-recovery') == recovered
+
+
+def test_runtime_recovery_lease_and_restart_on_mysql(mysql_config):
+    from app.runtime.recovery import RecoveryManager, RecoveryConflict
+    from app.runtime.action import ActionModel
+    from app.runtime.planner import Plan
+    store = storage_class()(mysql_config)
+    first, second = RecoveryManager(store), RecoveryManager(store)
+    action = ActionModel.agent('cad', {'required_capability': 'drawing_search'})
+    state = {'task_id': 'TASK-MYSQL-RECOVERY', 'runtime_plan': Plan(goal='读取', actions=[action]).as_dict(),
+             'next_action': action.as_dict(), 'runtime_next_index': 0}
+    saved = first.checkpoint(state, 'running')
+    with pytest.raises(RecoveryConflict):
+        second.resume(saved['recovery_id'], 'one', lambda record: pytest.fail('live peer replayed'))
+    first.close()
+    calls = []
+    def resume(record):
+        calls.append(record['task_id'])
+        return {**record['state'], 'runtime_result': {'status': 'completed'}}
+    assert second.resume(saved['recovery_id'], 'one', resume)['status'] == 'completed'
+    assert second.resume(saved['recovery_id'], 'one', resume)['status'] == 'completed'
+    assert calls == ['TASK-MYSQL-RECOVERY']
+
+
 @pytest.fixture(scope="module")
 def mysql_config():
     import mysql.connector

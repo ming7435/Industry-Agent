@@ -43,6 +43,7 @@ class AgentOrchestrator:
             "errors": [],
             **payload,
         }
+        state['recovery_actor_id'] = str((payload.get('context') or {}).get('recovery_actor_id') or '')
         result = dict(self.graph.invoke(state))
         result["trace"] = self.container.trace.list(
             trace_id=state["trace_id"],

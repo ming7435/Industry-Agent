@@ -11,6 +11,12 @@
 .expert-workspace button { border: 1px solid #c8dcdf; border-radius: 8px; padding: 10px 16px; background: #fff; color: #20515c; cursor: pointer; }
 .expert-catalog button { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; text-align: left; padding: 14px 18px; background: #f8fbfb; }
 .expert-catalog button span { font-size: 13px; color: #69808a; }
+.expert-catalog button .expert-skill-purpose { margin: 0; font-size: 14px; line-height: 1.6; color: #365560; }
+.expert-skill-identity code, .expert-skill-info code { font-family: Consolas, monospace; overflow-wrap: anywhere; }
+.expert-skill-info { display: flex; flex-direction: column; gap: 14px; padding: 18px; margin: 20px 0 0; background: #f5f9f9; border: 1px solid #dce8e9; border-radius: 10px; }
+.expert-skill-info div { min-width: 0; }
+.expert-skill-info dt { font-size: 13px; color: #69808a; margin-bottom: 4px; }
+.expert-skill-info dd { margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
 .expert-catalog button.is-selected { border-color: #249984; background: #ebf7f2; box-shadow: inset 4px 0 #249984; }
 .expert-workspace button:disabled { opacity: .55; cursor: default; }
 .expert-workspace button:focus-visible, .expert-workspace input:focus-visible, .expert-workspace textarea:focus-visible { outline: 2px solid #168f82; outline-offset: 3px; }
@@ -61,6 +67,24 @@
 .expert-machine-progress { margin-top: 20px; padding: 18px; background: #f0f8f5; border: 1px solid #c9e3d9; border-radius: 12px; }
 .expert-machine-progress ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; padding-left: 22px; }
 .expert-machine-progress li { padding: 8px; color: #245b51; }
+.expert-machine-progress > ol li.is-completed { color: #087f72; font-weight: 700; }
+.expert-trial-details { border-top: 1px solid #c9e3d9; margin-top: 20px; padding-top: 20px; }
+.expert-trial-details > h3 { margin: 0 0 16px; }
+.expert-trial-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin: 16px 0; }
+.expert-trial-details dl div { min-width: 0; }
+.expert-trial-details dt { color: #647e88; font-size: 14px; margin-bottom: 4px; }
+.expert-trial-details dd { margin: 0; color: #19343e; overflow-wrap: anywhere; }
+.expert-trial-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.expert-trial-detail { padding: 20px; border: 1px solid #d3e5e1; border-radius: 10px; background: #fff; min-width: 0; }
+.expert-trial-detail-wide { grid-column: 1 / -1; }
+.expert-trial-detail h4 { font-size: 18px; color: #146e65; margin: 0 0 14px; }
+.expert-trial-detail h5 { font-size: 16px; margin: 18px 0 8px; }
+.expert-trial-detail .expert-document { font-size: 15px; }
+.expert-trial-order + .expert-trial-order { border-top: 1px solid #d3e5e1; margin-top: 20px; padding-top: 10px; }
+.expert-trial-order dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.expert-trial-pending { background: #fffaf0; border: 1px solid #e7d7af; border-radius: 10px; margin-top: 16px; padding: 18px; }
+.expert-trial-pending h4 { margin: 0 0 10px; }
+@media (max-width: 680px) { .expert-trial-detail-grid { grid-template-columns: minmax(0, 1fr); } }
 .expert-machine-progress a { color: #087f72; text-decoration: underline; overflow-wrap: anywhere; }
 @media (max-width: 680px) { .expert-card { padding: 18px; } }
 @media (max-width: 680px) { .expert-document-editor { padding: 18px; } }

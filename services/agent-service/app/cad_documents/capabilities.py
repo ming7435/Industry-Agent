@@ -37,7 +37,7 @@ def runtime_inventory(runtime,probe=_process_inventory):
         process=probe(ready['pid']);created=datetime.fromisoformat(state['start_time_utc'].replace('Z','+00:00')).timestamp()
         if (Path(process['executable']).resolve()!=Path(state['executable']).resolve() or 9875 not in process['ports']
                 or abs(created-process['created_at'])>1 or not ready.get('freecad_version')):raise ValueError()
-        return {'ready':True,'version_fingerprint':canonical_digest(ready['freecad_version']),'freecad_version':ready['freecad_version'],'pid':ready['pid']}
+        return {'ready':True,'version_fingerprint':canonical_digest(ready['freecad_version']),'freecad_version':ready['freecad_version'],'pid':ready['pid'],'created_at':process['created_at']}
     except Exception:return {'ready':False,'version_fingerprint':'unknown'}
 
 

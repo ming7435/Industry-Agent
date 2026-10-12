@@ -54,10 +54,15 @@ class Business:
         return {'completed_cycles': self.cycles}
 
     def call(self, tool, arguments):
+        if tool == 'list_workorders':
+            return {'items': [order for order in self.orders.values()
+                              if order.get('device_id') == arguments.get('device_id')]}
         if tool == 'get_workorder':
             return {'workorder': self.orders.get(arguments['workorder_id'])}
         if tool == 'list_reports':
             return {'items': self.reports}
+        if tool == 'get_report':
+            return {'report': next((report for report in self.reports if report['report_id'] == arguments['report_id']), None)}
         raise AssertionError(tool)
 
 
@@ -152,6 +157,86 @@ def test_full_process_without_selected_skill_is_not_publishable(machine_trial):
     complete_business(machine_trial)
     value = machine_trial.trials.get(receipt['test_id'], ACTOR)
     assert value['status'] == 'failed' and '未调用' in value['message']
+
+
+def test_running_trial_reads_stage_and_completed_business_without_waiting_for_callback(machine_trial):
+    test = machine_trial
+    receipt = start(test)
+    diagnose(test, receipt)
+    complete_business(test)
+    order = test.backend.orders['WO-NEW']
+    order.update(plan_id='PLAN-NEW', repair_feedback={'feedback': '反馈线路检查完成'},
+                 repair_verification={'phase': 'manual_confirmation'},
+                 completed_at='2026-10-12T03:00:00+00:00')
+    stage = {'event': {'event_id': 'E-NEW', 'device_id': 'D-1', 'event_revision': 1},
+             'diagnosis': {'status': 'completed', 'summary': '刀塔超时', 'diagnosis': '反馈异常',
+                           'confidence': .91, 'evidence': ['不应展示的内部证据']},
+             'maintenance_plan': {'plan_id': 'PLAN-NEW', 'summary': '检查反馈线路', 'steps': ['检查接线', '复测就位信号']}}
+    test.trials.runtime.container.event_results = SimpleNamespace(get_result=lambda _: None, get_stage=lambda _: stage)
+    test.trials._save_changes(receipt['test_id'], status='running', workorders=[], result=None,
+                             progress=[{'label': label, 'completed': False} for label in
+                                       ('智能诊断', '维修方案', '工单派发', '维修确认', '整线复机', '汇总报告')])
+    test.backend.reports[0]['article_text'] = '本次故障处理已完成，反馈线路复测正常。'
+    value = test.trials.get(receipt['test_id'], ACTOR)
+    assert value['status'] == 'completed'
+    assert len(value['progress']) == 6 and all(step['completed'] for step in value['progress'])
+    assert value['details']['diagnosis']['summary'] == '刀塔超时'
+    assert 'evidence' not in value['details']['diagnosis']
+    assert value['details']['maintenance_plan']['steps'] == ['检查接线', '复测就位信号']
+    assert value['details']['workorders'][0]['feedback'] == '反馈线路检查完成'
+    assert value['details']['workorders'][0]['confirmation_method'] == 'manual_confirmation'
+    assert value['details']['report']['article'] == '本次故障处理已完成，反馈线路复测正常。'
+
+
+def test_late_dispatch_is_reconciled_by_exact_event_and_cancelled_trial_stays_cancelled(machine_trial):
+    test = machine_trial
+    receipt = start(test)
+    diagnose(test, receipt)
+    test.trials._save_changes(receipt['test_id'], status='failed', workorders=[], message='工单尚未返回')
+    unrelated = {**test.backend.orders['WO-NEW'], 'workorder_id': 'WO-OTHER', 'event_id': 'E-OLD', 'status': 'completed'}
+    test.backend.orders['WO-OTHER'] = unrelated
+    value = test.trials.get(receipt['test_id'], ACTOR)
+    assert value['status'] == 'awaiting_repair'
+    assert [order['workorder_id'] for order in value['workorders']] == ['WO-NEW']
+    assert value['progress'][3]['completed'] is False
+    complete_business(test)
+    test.trials._save_changes(receipt['test_id'], status='failed', cancelled_at='2026-10-12T03:01:00+00:00',
+                             message='已按用户要求停止测试')
+    value = test.trials.get(receipt['test_id'], ACTOR)
+    assert value['status'] == 'failed' and value['cancelled_at']
+    assert all(step['completed'] for step in value['progress'])
+    assert value['details']['workorders'][0]['status'] == 'completed'
+
+
+def test_partial_stage_is_visible_but_another_event_cannot_complete_this_trial(machine_trial):
+    test = machine_trial
+    receipt = start(test)
+    test.trials._save_changes(receipt['test_id'], status='running', event_id='E-NEW')
+    stage = {'event': {'event_id': 'E-NEW', 'device_id': 'D-1'},
+             'diagnosis': {'status': 'completed', 'summary': '诊断已经完成'}}
+    test.trials.runtime.container.event_results = SimpleNamespace(get_result=lambda _: None, get_stage=lambda _: stage)
+    test.backend.orders['WO-OTHER'] = {'workorder_id': 'WO-OTHER', 'event_id': 'E-OLD', 'device_id': 'D-1', 'status': 'completed'}
+    value = test.trials.get(receipt['test_id'], ACTOR)
+    assert value['progress'][0]['completed'] is True
+    assert all(not step['completed'] for step in value['progress'][1:])
+    assert value['details']['diagnosis']['summary'] == '诊断已经完成'
+    assert value['workorders'] == []
+    assert value['details']['pending_reasons']
+
+
+def test_late_callback_does_not_revive_a_cancelled_trial(machine_trial):
+    test = machine_trial
+    receipt = start(test)
+    def produce():
+        test.trials._save_changes(receipt['test_id'], status='failed', cancelled_at='2026-10-12T03:00:00+00:00',
+                                 message='已按用户要求停止测试')
+        return {'diagnosis': {'summary': '诊断已返回'}, 'maintenance_plan': {'plan_id': 'PLAN-NEW'},
+                'workorder': {'workorder_id': 'WO-NEW', 'device_id': 'D-1', 'event_id': 'E-NEW'}}
+    test.trials.handle_event({'event_id': 'E-NEW', 'device_id': 'D-1', 'alarm_code': '700006',
+                             'timestamp': datetime.now(timezone.utc).isoformat()}, produce)
+    value = test.trials.get(receipt['test_id'], ACTOR)
+    assert value['status'] == 'failed'
+    assert value['message'] == '已按用户要求停止测试'
 
 
 def test_stale_or_other_machine_event_does_not_claim_draft(machine_trial):
@@ -298,6 +383,8 @@ def test_machine_trial_real_backend_four_device_restart_and_cycle_report(expert_
         assert response.status_code == 200, response.text
         result = response.json()
         assert result['status'] == 'completed', result
+        assert result['details']['workorders'][0]['feedback'] == '模拟检修完成，刀塔反馈恢复'
+        assert result['details']['workorders'][0]['confirmation_method'] == 'manual_confirmation'
         assert all(state == 'running' for state in factory.states.values())
         assert len([c for c in factory.controls if c[1] == 'start']) == 4
         report = backend.call('get_report', {'report_id': result['report_id']})['report']

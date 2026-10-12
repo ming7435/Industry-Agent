@@ -169,4 +169,6 @@ def build_expert_router(runtime, require_auth):
     def update(agent: str, name: str, values: SkillUpdate, request: Request):
         return {**run(manager.publish, agent, name, values.model_dump(), write_actor(request)), "can_edit": True}
 
+    from app.api.skill_evolution import include_evolution_routes
+    include_evolution_routes(router, manager, write_actor, run, MachineSample)
     return router, manager

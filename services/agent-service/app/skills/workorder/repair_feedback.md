@@ -1,5 +1,6 @@
 ---
 name: repair_feedback
+description: 当维修人员提交处理反馈或申请维修完成时使用。
 version: 1.0
 goal: 接收现场维修反馈并标记维修执行结果。
 trigger: feedback
@@ -16,49 +17,120 @@ tools:
 output: WorkOrderResult
 ---
 
-# 维修执行反馈
+# 维修反馈与完成核验
 
-运行标识：`repair_feedback`。接收现场维修反馈并标记维修执行结果。
+运行标识：`repair_feedback`；所属 Agent：`workorder`；兼容别名：无。唯一运行元数据来源是本文件 YAML。Agent 接收与转换任务，Graph 决定编排、分支、预算和降级，Skill 指导业务判断，Tools 返回真实观察，原 Result 契约限制公开结构。正文不授予新增权限。
 
-本文正文是技能说明；顶部 YAML 元数据仍由运行时加载，名称、触发条件、步骤标识、工具权限和兼容别名保持不变。
+## 技能概述（Overview）
 
-## 适用场景
+接收现场维修反馈并标记维修执行结果。 只完成本技能责任范围，保留未解决事实与下游判断边界。
 
-被派工维修人员提交真实处理反馈或完成动作时使用；反馈提交与验收通过不是同一件事。
+## 触发场景（When to Use）
 
-## 输入与前置条件
+trigger=feedback匹配反馈上下文；真实action为submit_feedback或mark_repair_completed，不存在feedback业务动作。
 
-- 工单身份与实际 `repair_feedback`。
-- 完成动作需要服务端可信身份与本设备新鲜恢复数据；只有客户端 `passed=true` 不足以通过。
+不适用：反馈保存不是维修验收，通用工单动作也不代替登录人员确认与整线复机。
 
-## 执行步骤
+## 输入与前置条件（Inputs）
 
-以下列出本技能的步骤或兼容标识。实际顺序、分支与循环由对应 Graph 决定；这些标识不是新增节点，也不表示每次都会执行所有步骤。
+WorkOrderQuery 字段：task_id/trace_id、action、workorder_id/device_id/title、maintenance_plan/plan/workorder、repair_feedback/repair_verification/maintenance_confirmed_by、status/assignee/auto_dispatch/requires_approval、fault_level/priority/risk_level、idempotency_key/event_id、diagnosis_snapshot/maintenance_plan_snapshot、required_parts/closure_reason/source/context。action默认create，非create/query需workorder_id。模型没有顶层area/event/verification，不能把被忽略字段描述成已实现入口。
 
-- `initialize`：归一化本次请求、任务身份与执行上下文。
-- `load_skill`：选择当前技能并形成工具范围。
-- `validate_plan`：按当前领域规则检查方案或动作前置条件。
-- `execute_action`：按请求动作调用已允许的工单操作。
-- `validate`：核对当前动作返回和领域业务条件。
-- `final`：返回真实结果，保留业务状态与异常信息。
+## 执行流程（Workflow）
 
-## 可调用工具
+### 公共编排
 
-以下是本技能允许使用的工具范围，不代表每次全部调用。工具不可用时保留不可用或失败状态，不能补造成功结果。
+真实节点 prepare → validate_plan；创建进入 create_order，需自动派发且尚无负责人时进入 dispatch_context → assign_order；其他动作进入 execute_action；最后finish执行结果校验和final/fallback。dispatch_context合并collect_dispatch_context/select_assignee；final追踪映射为validate_result。action=assign直走execute_action，不自动运行候选选择流程。
 
-- `submit_repair_feedback`：提交实际维修反馈。
-- `mark_repair_completed`：提交维修完成动作，仍需可信恢复验证。
+保留的步骤标识：`initialize`、`load_skill`、`validate_plan`、`execute_action`、`validate`、`final`。结构化 tool 步骤须按绑定工具执行；字符串步骤可为内部函数/追踪标签，不等于独立图节点。
 
-## 输出与停止条件
+### 本技能业务任务
 
-返回 `WorkOrderResult`、反馈保存及完成动作真实结果；恢复证据不足、过期、设备不符或未通过时不能宣告完成。
+核对工单身份和当前执行状态，submit_feedback只保存feedback；mark_repair_completed按实际repair_verification及设备恢复读取核验完成，保留失败。缺恢复快照时service可尝试读取工单/状态，但并非必然取得。
 
-## 安全边界
+## 业务判断规则（Reasoning Rules）
 
-被派工人确认、恢复验收和虚拟复机另由业务链路核对；不因提交反馈就无条件启动整条产线。
+- 完成需要已派工且开始、实际反馈，以及设备身份/可运行状态/报警清除/指标/新鲜度恢复数据。
+- passed=true不能自证；inspection只读核查任务不提供维修完成证明。
+- 工具反馈参数feedback来自输入repair_feedback；身份确认和复机有另行受保护链路，不能宣称本工具自行验证登录人。
 
-## 代码入口
+原有约束继续适用：被派工人确认、恢复验收和虚拟复机另由业务链路核对；不因提交反馈就无条件启动整条产线。
 
-- [workorder Agent 入口](L:/industry_agent/services/agent-service/app/agents/workorder/agent.py)：输入转换、技能选择与结果校验。
-- [workorder Graph 实现](L:/industry_agent/services/agent-service/app/agents/workorder/graph.py)：实际节点、分支与执行流程。
-- [技能注册与加载](L:/industry_agent/services/agent-service/app/skills/registry.py)：Markdown 解析、触发匹配和旧名称兼容。
+## 工具使用规范（Tools）
+
+允许工具不等于每次都调用。创建、查询、派发、反馈、完成、重开分别执行真实业务动作；正式写入由Backend返回权威工单。Runtime/Harness和Backend共同控制权限、幂等及状态，不接受模型自报批准。
+
+| 工具 | 何时调用与参数 | 返回使用及失败边界 |
+| --- | --- | --- |
+| `submit_repair_feedback` | 执行反馈时传 workorder_id/feedback。 | 保存权威反馈；in_progress/awaiting_verification 下允许，不自动变成已完成。 |
+| `mark_repair_completed` | 维修完成动作传 workorder_id/feedback/repair_verification。 | 必须有真实设备恢复数据，单独 passed=true 无效；不能把完成等同复机授权。 |
+
+所有工具仅在前置条件满足且实际路径需要时调用；允许不等于本次已调用。失败返回/异常保留到现有观察、finding或错误分支，不补造成功体。
+
+## 证据与数据真实性（Evidence Rules）
+
+绑定工单、设备、事件和方案编号及快照。人员依据是登记负责范围/online/available等服务端事实；缓存不能覆盖数据库真实负责人。存在工单只证明存在，不能证明本次update/assign/close已完成。恢复证据要匹配本设备及时间，不重复计算同一回执。
+
+## 输出规范（Output Format）
+
+使用 agents/workorder/schemas.py 的 WorkOrderResult：action、success、workorder_id/status/priority/assignee、workorder/items/candidates/dispatch_context、validation_findings/stop_reason/error。创建成功但未派发可保留workorder_id且success=False；空列表可查询成功，单单未找到不保证有独立not_found状态。输出必须保留实际失败/未派出，而非一律completed。
+
+## 异常处理（Error Handling）
+
+输入门禁失败转fallback；执行异常仍经过最终校验。人员查询失败与无人可用分别表达；授权不足、库存不足、非法迁移、空工单不伪装成功。写操作响应超时后先查询权威结果，不把底层可能仍在运行的动作盲目重放；参数改变不能共用原幂等键或审批。
+
+## 停止条件（Stop Conditions）
+
+本次动作返回且最终校验满足才成功。waiting_for_personnel/personnel_query_failed、输入或结果校验失败按既有回退返回，不构造固定负责人。创建/派发不等于维修完成，完成不等于关闭或复机。审批只绑定特定动作、参数和任务；并发恢复由服务端领取状态控制。
+
+## 安全与权限边界（Safety & Constraints）
+
+服从Backend状态迁移及可信验收规则。requires_approval不能通过客户端approved字段取消，只有Dispatcher服务端授权域可继续。登录人员确认及复机由独立团队/设备链路核对，工单技能没有启动、停止机器工具。
+
+## 示例（Examples）
+
+以下为隔离说明样例，不是现场执行记录。请求形状合法不代表业务门禁已通过；编号、测量和回执必须来自实际系统。
+
+### 示例输入
+
+```json
+{
+  "action": "mark_repair_completed",
+  "workorder_id": "WO-EXAMPLE",
+  "repair_feedback": {
+    "feedback": "已核查现场"
+  },
+  "repair_verification": {
+    "passed": true
+  }
+}
+```
+
+### 处理与依据
+
+合法请求模型只给passed，没有device_recovery：业务应拒绝完成，不生成复机事实。
+
+### 示例输出
+
+```json
+{
+  "action": "mark_repair_completed",
+  "success": false,
+  "validation_findings": [
+    "缺少可信设备恢复数据"
+  ],
+  "stop_reason": "validation_failed"
+}
+```
+
+## 参考实现（References）
+
+- [app/agents/workorder/agent.py](L:/industry_agent/services/agent-service/app/agents/workorder/agent.py)
+- [app/agents/workorder/graph.py](L:/industry_agent/services/agent-service/app/agents/workorder/graph.py)
+- [app/agents/workorder/schemas.py](L:/industry_agent/services/agent-service/app/agents/workorder/schemas.py)
+- [app/agents/workorder/validator.py](L:/industry_agent/services/agent-service/app/agents/workorder/validator.py)
+- [app/workorder/service.py](L:/industry_agent/services/agent-service/app/workorder/service.py)
+- [app/workorder/policy.py](L:/industry_agent/services/agent-service/app/workorder/policy.py)
+- [app/runtime/policy.py](L:/industry_agent/services/agent-service/app/runtime/policy.py)
+- [app/runtime/execution.py](L:/industry_agent/services/agent-service/app/runtime/execution.py)
+- [app/skills/registry.py](L:/industry_agent/services/agent-service/app/skills/registry.py)
+- [app/tools/registry.py](L:/industry_agent/services/agent-service/app/tools/registry.py)

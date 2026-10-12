@@ -37,6 +37,16 @@ class WorkOrderAgent(BaseAgent):
         return WorkOrderQuery.from_payload(payload).model_dump(mode="json")
 
     def find_idempotent(self, request: Mapping[str, Any]) -> dict[str, Any] | None:
+        from .validator import recovery_workorder_id
+        from app.runtime.workorder_recovery import order_matches
+        existing_id = recovery_workorder_id()
+        if existing_id:
+            order = self.service.get(existing_id)
+            if not order_matches(order, request.get('idempotency_key'),
+                                 {'device_id': request.get('device_id'), 'event_id': request.get('event_id')},
+                                 request.get('maintenance_plan') or request.get('plan') or {}):
+                raise RuntimeError('原工单已变更，不能重复创建或继续派工')
+            return order
         key = str(request.get("idempotency_key") or "")
         if not key or key not in self._idempotency:
             return None

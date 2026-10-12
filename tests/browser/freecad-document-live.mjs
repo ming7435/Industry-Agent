@@ -18,7 +18,8 @@ try {
     }
   });
   await page.goto(base+'/?view=cad');
-  await page.getByRole('button',{name:'原生文档编辑',exact:true}).click();
+  await page.getByText('高级功能',{exact:true}).click();
+  await page.getByRole('button',{name:'打开专业文档编辑器',exact:true}).click();
   workspace=page.getByRole('region',{name:'个人 FreeCAD 文档'});
   await workspace.getByRole('treeitem').first().click();
   // Controlled native checkbox updates only after the asynchronous GUI command completes.
@@ -43,7 +44,8 @@ try {
   await workspace.getByRole('button',{name:'保存发布版本',exact:true}).click();
   await workspace.getByText('已发布版本 1',{exact:false}).waitFor();
   await page.reload();
-  await page.getByRole('button',{name:'原生文档编辑',exact:true}).click();
+  await page.getByText('高级功能',{exact:true}).click();
+  await page.getByRole('button',{name:'打开专业文档编辑器',exact:true}).click();
   await workspace.getByRole('treeitem',{name:/浏览器原生圆锥/}).click();
   assert.equal(await workspace.getByLabel('底径（mm）',{exact:true}).inputValue(),'44');
   if(!initialVisible) await workspace.locator('canvas').waitFor();

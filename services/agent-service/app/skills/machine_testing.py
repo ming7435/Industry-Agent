@@ -12,8 +12,25 @@ from uuid import uuid4
 from app.skills.management import AGENTS, SkillEditError
 from app.skills.registry import SkillDefinition, _parse_markdown_skill, skill_registry_scope
 from app.skills.testing import DraftRegistry, SkillTrials, fingerprint
+from app.runtime.event_store import scoped_event_key
 
 ACTIVE = {'awaiting_fault', 'running', 'awaiting_repair', 'awaiting_report'}
+
+
+def _text(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return next((value[key] for key in ('feedback', 'summary', 'text', 'message', 'description') if isinstance(value.get(key), str)), '')
+    return ''
+
+
+def _plan_details(plan):
+    steps = plan.get('repair_steps') or plan.get('steps') or []
+    return {'plan_id': plan.get('plan_id', ''), 'summary': _text(plan.get('summary') or plan.get('fault')),
+            'steps': [step if isinstance(step, str) else next((step[key] for key in
+                      ('instruction', 'action', 'description', 'title') if isinstance(step.get(key), str)), '')
+                      for step in steps if isinstance(step, (str, dict))]}
 
 
 class MachineDraftRegistry(DraftRegistry):
@@ -98,7 +115,7 @@ class MachineTrials(SkillTrials):
     @staticmethod
     def _public(record):
         public = SkillTrials._public(record)
-        public.update({key: record.get(key) for key in ('machine', 'event_id', 'workorders', 'report_id', 'progress')})
+        public.update({key: record.get(key) for key in ('machine', 'event_id', 'workorders', 'report_id', 'progress', 'details', 'cancelled_at')})
         return public
 
     def start_machine(self, agent, name, values, actor):
@@ -180,17 +197,28 @@ class MachineTrials(SkillTrials):
                         or occurred < record['created_epoch']):
                     record = None
                 else:
-                    record.update(event_id=event['event_id'], status='running', message='正在诊断并生成维修任务')
+                    record.update(event_id=event['event_id'], event={key: event.get(key) for key in
+                                  ('event_id', 'device_id', 'event_revision', 'tenant_id', 'timestamp') if key in event},
+                                  status='running', message='正在诊断并生成维修任务')
                     self._write(record)
         if not record:
             return producer()
         try:
             with skill_registry_scope(self.registries[record['test_id']]):
                 output = producer()
+            with self.manager._transaction():
+                current = json.loads(self._path(record['test_id']).read_text(encoding='utf-8'))
+                if current['status'] not in ACTIVE or current['instance'] != self.instance or current.get('cancelled_at'):
+                    return output
+            if current.get('workorders'):
+                self._save_changes(record['test_id'], flow_snapshot={key: output.get(key) for key in
+                                   ('diagnosis', 'maintenance_plan', 'status', 'stop_reason')})
+                return output
             diagnosis = output.get('diagnosis') or {}
             orders = [output['workorder']] if (output.get('workorder') or {}).get('workorder_id') else []
             self._save_changes(record['test_id'], status='awaiting_repair' if orders else 'failed',
                 result={k: diagnosis.get(k) for k in ('summary', 'diagnosis', 'recommendation')},
+                flow_snapshot={key: output.get(key) for key in ('diagnosis', 'maintenance_plan', 'status', 'stop_reason')},
                 workorders=[{k: order.get(k) for k in ('workorder_id', 'status', 'assignee')} for order in orders],
                 progress=[{'label': '智能诊断', 'completed': bool(diagnosis)},
                           {'label': '维修方案', 'completed': bool(output.get('maintenance_plan'))},
@@ -241,34 +269,118 @@ class MachineTrials(SkillTrials):
             record = self._save_changes(test_id, status='failed', message='服务已重启，请完成原工单后重新测试；原测试不能用于发布')
         if record['status'] == 'awaiting_fault' and time() - record['created_epoch'] > 120:
             record = self._save_changes(test_id, status='failed', message='监控中心尚未收到本次故障，请检查监控服务；不会自动重新触发')
-        if record['status'] in {'awaiting_repair', 'awaiting_report'}:
+        if record.get('event_id'):
             try:
-                factory, backend = self._clients()
-                orders = [backend.call('get_workorder', {'workorder_id': o['workorder_id']}).get('workorder') or {} for o in record['workorders']]
-                if any(not o.get('workorder_id') for o in orders):
-                    return self._public(self._save_changes(test_id, status='failed', message='本次测试工单已删除，无法完成试验；请先处理当前机器状态'))
-                finished = all(o.get('status') in {'completed', 'closed'} for o in orders)
-                ids = [o.get('workorder_id') for o in orders]
-                cycle = next((c for c in backend.status().get('completed_cycles', []) if set(ids).issubset(c.get('workorder_ids', []))), None) if finished else None
-                reports = backend.call('list_reports', {'workorder_id': ids[0]}).get('items', []) if cycle else []
-                report = next((r for r in reports if r.get('persisted') is True and r.get('cycle_id') == cycle.get('cycle_id')), None) if cycle else None
-                devices = {d['device_id']: d for d in factory.devices()}
-                running = bool(cycle) and all(devices.get(did, {}).get('status') == 'running' for did in record['device_ids'])
-                used = [record['agent'], record['name']] in record.get('used_skills', [])
-                progress = list(record['progress'][:3]) + [{'label': '维修确认', 'completed': finished},
-                    {'label': '整线复机', 'completed': bool(running)}, {'label': '汇总报告', 'completed': bool(report)}]
-                status = 'completed' if finished and running and report and used else 'awaiting_report' if cycle else 'awaiting_repair'
-                message = '全流程已完成，请核对实际结果后发布' if status == 'completed' else '等待维修确认及整线复机' if not cycle else '机器已复机，等待汇总报告保存'
-                if finished and running and report and not used:
-                    status, message = 'failed', '机器流程已完成，但本次故障未调用所选技能，请选择能触发该技能的场景重新测试'
-                record = self._save_changes(test_id, status=status, message=message, progress=progress,
-                    workorders=[{k: o.get(k) for k in ('workorder_id', 'status', 'assignee')} for o in orders],
-                    report_id=report.get('report_id', '') if report else '')
+                record = self._reconcile(record)
             except SkillEditError:
                 raise
             except Exception:
                 record['message'] = '业务状态暂不可读取，测试仍在等待；请稍后再查看'
         return self._public(record)
+
+    def _event_flow(self, record):
+        event = record.get('event') or {'event_id': record['event_id'], 'device_id': record['machine']['device_id']}
+        store = getattr(getattr(self.runtime, 'container', None), 'event_results', None)
+        flow = {}
+        if store is not None:
+            key = scoped_event_key(event)
+            flow = store.get_result(key) or store.get_stage(key) or {}
+            actual = flow.get('event') or {}
+            if actual and any(str(actual.get(key) or '') != str(event.get(key) or '') for key in ('event_id', 'device_id', 'tenant_id')):
+                flow = {}
+            elif actual and int(actual.get('event_revision', 1)) != int(event.get('event_revision', 1)):
+                flow = {}
+        return flow or record.get('flow_snapshot') or {'diagnosis': record.get('result') or {}}
+
+    def _reconcile(self, record):
+        factory, backend = self._clients()
+        flow = self._event_flow(record)
+        did, event_id = record['machine']['device_id'], record['event_id']
+        listed = backend.call('list_workorders', {'device_id': did}).get('items', [])
+        orders = {o['workorder_id']: o for o in listed if o.get('workorder_id') and o.get('event_id') == event_id and o.get('device_id') == did}
+        missing = bool(record.get('workorder_deleted'))
+        for tracked in record.get('workorders') or []:
+            oid = tracked['workorder_id']
+            if oid in orders:
+                continue
+            order = backend.call('get_workorder', {'workorder_id': oid}).get('workorder') or {}
+            if not order.get('workorder_id'):
+                missing = True
+            elif all(not order.get(key) or order[key] == expected for key, expected in (('event_id', event_id), ('device_id', did))):
+                orders[oid] = order
+        orders = list(orders.values())
+        diagnosis = flow.get('diagnosis') or next((o['diagnosis_snapshot'] for o in orders if o.get('diagnosis_snapshot')), {})
+        event_plan = flow.get('maintenance_plan') or {}
+        plan = event_plan if event_plan.get('plan_id') else next((o['maintenance_plan_snapshot'] for o in orders if o.get('maintenance_plan_snapshot')), event_plan)
+        plan = dict(plan)
+        if not plan.get('plan_id'):
+            plan['plan_id'] = next((o['plan_id'] for o in orders if o.get('plan_id')), '')
+        diagnosis_done = bool(diagnosis.get('summary') or diagnosis.get('diagnosis')) and diagnosis.get('status', 'completed') in {'completed', 'fallback'}
+        plan_done = bool(plan.get('plan_id'))
+        finished = bool(orders) and all(o.get('status') in {'completed', 'closed'} for o in orders)
+        ids = [o['workorder_id'] for o in orders]
+        cycle = next((c for c in backend.status().get('completed_cycles', []) if set(ids).issubset(c.get('workorder_ids', []))
+                      and c.get('state', 'running') == 'running'), None) if finished else None
+        reports = backend.call('list_reports', {'workorder_id': ids[0]}).get('items', []) if cycle else []
+        report = next((r for r in reports if r.get('persisted') is True and r.get('cycle_id') == cycle['cycle_id']
+                       and (not r.get('workorder_ids') or set(ids).issubset(r['workorder_ids']))), None) if cycle else None
+        if report and not report.get('article_text'):
+            try:
+                full_report = backend.call('get_report', {'report_id': report['report_id']}).get('report') or {}
+                if full_report.get('report_id') == report['report_id'] and full_report.get('cycle_id') == cycle['cycle_id'] and full_report.get('persisted') is True:
+                    report = full_report
+            except Exception:
+                pass
+        devices = {d['device_id']: d for d in factory.devices()}
+        running = bool(cycle) and all(devices.get(device, {}).get('status') == 'running' for device in record['device_ids'])
+        # Refresh the actual harness receipt before deciding whether the draft was exercised.
+        record = self._save_changes(record['test_id'])
+        used = [record['agent'], record['name']] in record.get('used_skills', [])
+        pending = []
+        for done, reason in ((diagnosis_done, '本轮诊断结果尚未保存。'), (plan_done, '本轮尚未生成可读取的维修方案。'),
+                             (bool(orders), '本轮尚未生成关联工单。'), (finished, '本轮关联工单尚未全部确认完成。'),
+                             (bool(cycle), '本轮整线复机记录尚未保存。'), (bool(report), '本轮汇总报告尚未保存。')):
+            if not done:
+                pending.append(reason)
+        if cycle and not running:
+            pending.append('本轮已有复机记录，但当前原测试设备未全部处于运行状态。')
+        status, message = record['status'], record.get('message', '')
+        eligible = record['instance'] == self.instance and not record.get('cancelled_at')
+        if eligible and status != 'completed':
+            if missing:
+                status, message = 'failed', '本次测试工单已删除，无法完成试验；请先处理当前机器状态'
+            elif orders:
+                complete = diagnosis_done and plan_done and finished and running and bool(report)
+                status = 'completed' if complete and used else 'awaiting_report' if cycle else 'awaiting_repair'
+                message = '全流程已完成，请核对实际结果后发布' if status == 'completed' else '维修已确认，正在同步复机和报告结果' if finished else '已同步关联工单，请维修人员确认完成'
+                if complete and not used:
+                    status, message = 'failed', '机器流程已完成，但本次故障未调用所选技能，请选择能触发该技能的场景重新测试'
+            elif plan_done and flow.get('status') not in {'blocked', 'failed'}:
+                status, message = 'running', '维修方案已生成，等待对应工单派发'
+            elif flow.get('status') in {'blocked', 'failed'}:
+                status, message = 'failed', '本轮尚未生成关联工单，请核对下方诊断和维修方案信息'
+            elif diagnosis_done and status in ACTIVE:
+                message = '智能诊断已完成，正在同步维修方案和工单'
+        details = {'diagnosis': {key: diagnosis.get(key) for key in ('status', 'summary', 'diagnosis', 'recommendation', 'confidence', 'requires_human_review')},
+                   'maintenance_plan': _plan_details(plan),
+                   'workorders': [{'workorder_id': o['workorder_id'], 'device_id': o.get('device_id', did), 'status': o.get('status'),
+                       'assignee': o.get('assignee'), 'assignee_name': o.get('assignee_name') or o.get('assignee'),
+                       'created_at': o.get('created_at'), 'completed_at': o.get('completed_at') or (o.get('repair_verification') or {}).get('confirmed_at'),
+                       'feedback': _text(o.get('repair_feedback')), 'confirmation_method': (o.get('repair_verification') or {}).get('phase') or (o.get('repair_verification') or {}).get('mode')}
+                       for o in orders],
+                   'restart': {'completed': bool(cycle), 'restarted_at': (cycle or {}).get('restarted_at'),
+                               'devices': [{'device_id': device, 'name': devices.get(device, {}).get('name') or device,
+                                            'status': devices.get(device, {}).get('status', 'unknown')} for device in record['device_ids']]},
+                   'report': {'report_id': (report or {}).get('report_id'), 'title': (report or {}).get('title'),
+                              'article': _text((report or {}).get('article_text')), 'created_at': (report or {}).get('created_at')},
+                   'pending_reasons': pending}
+        progress = [{'label': label, 'completed': completed} for label, completed in zip(
+            ('智能诊断', '维修方案', '工单派发', '维修确认', '整线复机', '汇总报告'),
+            (diagnosis_done, plan_done, bool(orders), finished, bool(cycle), bool(report)))]
+        return self._save_changes(record['test_id'], status=status, message=message, details=details, progress=progress,
+                                 workorder_deleted=missing,
+                                 workorders=[{key: o.get(key) for key in ('workorder_id', 'status', 'assignee')} for o in orders],
+                                 report_id=(report or {}).get('report_id', ''))
 
     def validate_publish(self, agent, name, values, actor):
         record = self._read(values.get('test_id', ''), actor) if values.get('test_id') else {}

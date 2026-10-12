@@ -10,6 +10,59 @@ const machine = (id, sample = {}, status = 'normal') => ({
 const devices = () => ['lathe', 'feeder', 'robot', 'inspection'].map(id => machine(id));
 const state = (options = {}) => getWorkshopMotionState({ machines: devices(), line: { state: 'running' }, runner: { enabled: true, running: true }, now, ...options });
 
+function panelRestart() {
+  const line = { state: 'stopped', updated_at: (now - 60000) / 1000,
+    devices: Object.fromEntries(devices().map(({ id }) => [id,
+      { state: 'verified', action: 'emergency_stop', snapshot: { device_id: id, status: 'emergency_stop' } }])) };
+  const machines = devices().map(item => machine(item.id, { device_id: item.id, alarm_code: null,
+    control_reason: 'operator panel start', control_updated_at: now - 30000 }));
+  return { line, machines };
+}
+
+test('fresh panel starts after an old verified stop restore only the device visualization', () => {
+  const input = panelRestart(), before = structuredClone(input);
+  const motion = state(input);
+  assert.equal(motion.running, true);
+  assert.equal(motion.validUntil, now + 10000);
+  assert.equal(motion.auditPending, true);
+  assert.match(motion.reason, /待对账/);
+  assert.deepEqual(input, before, 'Visualization must not change the line ledger or device controls');
+});
+
+test('a later line stop or incomplete panel-start evidence never resumes visualization', () => {
+  const cases = [
+    input => { input.line.updated_at = (now - 30000) / 1000; },
+    input => { delete input.line.updated_at; },
+    input => { input.line.updated_at = (now + 1000) / 1000; },
+    input => { delete input.line.devices; },
+    input => { input.machines.pop(); },
+    input => { input.machines[0].id = input.machines[1].id; },
+    input => { input.machines[0].sample.device_id = 'another-device'; },
+    input => { delete input.machines[0].sample.control_state; },
+    input => { delete input.machines[0].sample.control_updated_at; },
+    input => { input.machines[0].sample.control_updated_at = now + 1000; },
+    input => { input.machines[0].sample.control_reason = 'repair verified'; },
+    input => { input.machines[0].sample.alarm_code = 'ACTIVE-ALARM'; },
+    input => { input.machines[0].result.status = 'alarm'; },
+    input => { input.machines[0].result.status = 'fault'; },
+    input => { input.machines[0].live = false; },
+    input => { input.machines[0].sample.status = 'emergency_stop'; },
+    input => { input.machines[0].sample.timestamp = new Date(now - 15000).toISOString(); },
+    input => { input.line.devices.lathe.state = 'unconfirmed'; },
+    input => { input.line.devices.lathe.snapshot.device_id = 'wrong-device'; },
+  ];
+  for (const [index, change] of cases.entries()) {
+    const input = panelRestart(); change(input);
+    assert.equal(state(input).running, false, `Incomplete or superseded evidence case ${index}`);
+  }
+  for (const status of ['starting', 'stopping', 'failed', 'unreconciled', 'unavailable']) {
+    const input = panelRestart(); input.line.state = status;
+    assert.equal(state(input).running, false, status);
+  }
+  assert.equal(state({ ...panelRestart(), unavailable: true }).running, false);
+  assert.equal(state({ ...panelRestart(), runner: { enabled: false } }).running, false);
+});
+
 test('all four devices run only with current running samples', () => {
   assert.equal(state().running, true);
   assert.equal(state().validUntil, now + 10000);

@@ -97,6 +97,14 @@
 .production-cad .cad-workspace-header h1 { font-size: clamp(26px, 3vw, 34px); letter-spacing: -.6px; margin: 12px 0 8px; }
 .cad-workspace-header p { margin: 0; font-size: 15px; }
 .cad-workspace-unit { flex-shrink: 0; padding: 8px 12px; border: 1px solid #d2e2e4; border-radius: 7px; color: #536b73; font-size: 12px; background: #fff; }
+.cad-quick-start { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0 4px; }
+.cad-quick-start > span { font-size: 13px; color: #677f88; margin-right: 6px; }
+.production-cad .cad-quick-start button { padding: 7px 12px; font-size: 13px; background: #f7fbfa; }
+.cad-modeling-more { margin: 20px 0; padding: 16px 20px; border: 1px solid #d9e6e8; border-radius: 10px; background: #fff; }
+.cad-modeling-more > p { font-size: 13px; }
+.cad-modeling-more > .cad-card { box-shadow: none; }
+.cad-modeling-return { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 8px auto 18px; }
+.cad-modeling-return p { font-size: 13px; margin: 0; }
 .cad-eyebrow { font-size: 12px; letter-spacing: 2px; }
 .cad-steps { display: flex; gap: 26px; padding: 16px 0; list-style: none; color: #677f88; font-size: 13px; margin: 0; }
 .cad-steps li { display: flex; align-items: center; gap: 9px; }

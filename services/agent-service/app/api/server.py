@@ -36,6 +36,7 @@ from app.harness.runs import build_run_records
 from app.harness.run_business import reconcile_run_business_facts
 from app.runtime.event_store import EventResultConflict, EventResultStore, scoped_event_key
 from app.runtime.durable_store import PendingResultError
+from app.runtime.recovery import RecoveryConflict
 from app.tools.report.generate_report_file import get_report_file_path
 from app.tools.query_contracts import QueryArgumentError
 from app.clients.backend import BackendServiceError
@@ -225,10 +226,18 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     runtime = orchestrator or build_orchestrator()
+    recovery = getattr(runtime.container, 'recovery', None)
+    if recovery is not None:
+        app.add_event_handler('startup', recovery.start)
+        app.add_event_handler('shutdown', recovery.close)
+    from app.api.task_recovery import build_task_recovery_router
+    app.include_router(build_task_recovery_router(runtime, require_write_auth))
     from app.api.expert import build_expert_router
     expert_router, expert_manager = build_expert_router(runtime, require_write_auth)
     app.state.expert_skills = expert_manager
     app.include_router(expert_router)
+    app.add_event_handler('startup', expert_manager.evolution_worker.start)
+    app.add_event_handler('shutdown', expert_manager.evolution_worker.close)
     event_results = EventResultStore()
     runtime.container.event_results = event_results
     production_worker = getattr(runtime.container, 'virtual_production_reconciler', None)
@@ -286,12 +295,16 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     def guarded_question(body: UserQuestionRequest, request: Request) -> Dict[str, Any]:
         # 与实际 Router 使用同一意图解析；人工工单不经可由 context 注入的 A2A 路径。
-        forbidden = {'user_text', 'required_capabilities', 'runtime_resume', 'target_input'}
+        forbidden = {'user_text', 'required_capabilities', 'runtime_resume', 'target_input', 'recovery_actor_id',
+                     'runtime_recovery_epoch', 'runtime_recovery', 'runtime_recovery_workorder_id', 'runtime_reconciled_action'}
         if forbidden.intersection(body.context):
             raise HTTPException(422, '问答上下文不能覆盖任务正文、运行计划或内部动作')
+        context = dict(body.context)
+        if request.cookies.get('maintenance_session'):
+            context['recovery_actor_id'] = team_actor(request)['user_id']
         if body.mode == "knowledge":
             # 只读范围由顶层执行入口固定，不能被 Router 或后续重规划升级。
-            return runtime.run_knowledge(body.user_text, body.context)
+            return runtime.run_knowledge(body.user_text, context)
         from app.agents.router.agent import RouterAgent
         route = RouterAgent().run({'user_text': body.user_text, 'context': body.context})
         from app.runtime.coordinator import RuntimeInputParser
@@ -309,7 +322,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
                 result['items'] = [o for o in result.get('items', []) if actor.get('role') == 'supervisor' or o.get('assignee') == actor['user_id']]
                 result['count'] = len(result['items'])
             return result
-        return runtime.run_user(body.user_text, body.context)
+        return runtime.run_user(body.user_text, context)
 
     @app.post("/api/agent/event", deprecated=True, dependencies=[Depends(require_write_auth)])
     @app.post("/api/v1/agent/event", dependencies=[Depends(require_write_auth)])
@@ -322,8 +335,16 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
                 raise HTTPException(status_code=409, detail="旧版事件结果需先核对归属和工单，不能自动重放")
         fingerprint = sha256(json.dumps(event, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
         try:
-            return event_results.get_or_create(event_key, lambda: expert_manager.trials.handle_event(
-                event, lambda: runtime.run_abnormal_event(event)), fingerprint=fingerprint)
+            def produce_event():
+                if recovery is not None:
+                    saved = recovery.for_event(event)
+                    if saved is not None:
+                        # A lost final response must never allocate a new runtime task.
+                        return {**saved['state'], 'status': saved['status']}
+                return expert_manager.trials.handle_event(event, lambda: runtime.run_abnormal_event(event))
+            return event_results.get_or_create(event_key, produce_event, fingerprint=fingerprint)
+        except RecoveryConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         except EventResultConflict as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except PendingResultError as error:

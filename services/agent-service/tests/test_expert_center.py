@@ -1,6 +1,7 @@
 """专家中心真实 API、文件热加载和监督身份边界回归。"""
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from hashlib import sha256
@@ -95,11 +96,14 @@ def test_catalog_prioritizes_actual_internal_loops(expert_api):
     assert response.status_code == 200
     assert {item["agent"] for item in response.json()["items"]} == {"diagnosis", "knowledge", "cad"}
     assert all(item["internal_loop"] for item in response.json()["items"])
+    assert all(datetime.fromisoformat(item["last_modified_at"]).tzinfo == timezone.utc
+               for item in response.json()["items"])
     all_items = expert_api.client.get("/api/expert/skills?loop_only=false", headers=headers("worker")).json()
     assert {item["agent"] for item in all_items["items"]} == {"diagnosis", "knowledge", "cad", "maintenance"}
 
 
 def test_update_preserves_permissions_backs_up_and_reloads_second_registry(expert_api):
+    old_modified = detail(expert_api)["last_modified_at"]
     old_bytes = expert_api.path.read_bytes()
     old_payload, _ = _load_markdown_skill(expert_api.path)
     second = SkillRegistry(expert_api.root)
@@ -108,6 +112,11 @@ def test_update_preserves_permissions_backs_up_and_reloads_second_registry(exper
     response = save(expert_api, body)
     assert response.status_code == 200, response.text
     assert response.json()["revision"] != body["expected_revision"]
+    updated_modified = response.json()["last_modified_at"]
+    assert datetime.fromisoformat(updated_modified) > datetime.fromisoformat(old_modified)
+    assert detail(expert_api)["last_modified_at"] == updated_modified
+    catalog = expert_api.client.get("/api/expert/skills", headers=headers()).json()["items"]
+    assert next(item for item in catalog if item["name"] == "alarm_diagnosis_skill")["last_modified_at"] == updated_modified
     loaded = second.get("diagnosis", "alarm_diagnosis_skill")
     assert loaded.document == body["document"]
     assert loaded.version == "1.1"

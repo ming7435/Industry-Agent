@@ -1,0 +1,850 @@
+[
+  {
+    "agent": "cad",
+    "file": "services/agent-service/app/skills/cad/drawing_lookup.md",
+    "name": "drawing_lookup_skill",
+    "metadata": {
+      "name": "drawing_lookup_skill",
+      "aliases": [
+        "part_search_skill",
+        "bom_analysis_skill"
+      ],
+      "version": 1.2,
+      "goal": "定位设备零部件、安装位置及工程图纸，验证它们的设备归属。",
+      "trigger": "part_or_component",
+      "triggers": [
+        "part_or_component",
+        "bom"
+      ],
+      "steps": [
+        "normalize_query",
+        "classify_engineering_request",
+        "resolve_part",
+        "plan_engineering_query",
+        "resolve_bom",
+        "merge_engineering_context",
+        "validate_engineering_context",
+        "build_result"
+      ],
+      "tools": [
+        "query_part",
+        "query_drawing",
+        "query_bom",
+        "query_relation",
+        "fetch_engineering_record"
+      ]
+    }
+  },
+  {
+    "agent": "cad",
+    "file": "services/agent-service/app/skills/cad/production_modeling.md",
+    "name": "production_modeling_skill",
+    "metadata": {
+      "name": "production_modeling_skill",
+      "version": 3.3,
+      "goal": "通过同一个本地 FreeCAD MCP 工具生成并校验零件、工程图、约束装配、钣金展开和建筑模型。",
+      "trigger": "production_modeling",
+      "steps": [
+        "normalize_query",
+        "classify_engineering_request",
+        {
+          "id": "build_model",
+          "type": "tool",
+          "tool": "freecad_mcp",
+          "required_inputs": [
+            "spec"
+          ],
+          "failure_policy": "stop"
+        },
+        "build_result"
+      ],
+      "tools": [
+        "freecad_mcp",
+        "freecad_document_proposal"
+      ],
+      "failure_policy": "stop"
+    }
+  },
+  {
+    "agent": "cad",
+    "file": "services/agent-service/app/skills/cad/virtual_production.md",
+    "name": "virtual_production_skill",
+    "metadata": {
+      "name": "virtual_production_skill",
+      "version": 1,
+      "goal": "根据已校验的 CAD 版本生成并执行受限模拟加工任务。",
+      "trigger": "virtual_production",
+      "steps": [
+        {
+          "id": "prepare",
+          "type": "tool",
+          "tool": "prepare_virtual_production",
+          "required_inputs": [
+            "command_id",
+            "run",
+            "setup",
+            "material"
+          ],
+          "failure_policy": "stop"
+        },
+        {
+          "id": "submit",
+          "type": "tool",
+          "tool": "submit_virtual_production",
+          "required_inputs": [
+            "job_id",
+            "digest"
+          ],
+          "failure_policy": "stop"
+        },
+        {
+          "id": "start",
+          "type": "tool",
+          "tool": "start_virtual_production",
+          "required_inputs": [
+            "job_id",
+            "digest"
+          ],
+          "failure_policy": "stop"
+        },
+        {
+          "id": "sync",
+          "type": "tool",
+          "tool": "sync_virtual_production",
+          "required_inputs": [
+            "job_id"
+          ],
+          "failure_policy": "stop"
+        }
+      ],
+      "tools": [
+        "prepare_virtual_production",
+        "submit_virtual_production",
+        "start_virtual_production",
+        "sync_virtual_production"
+      ],
+      "failure_policy": "stop"
+    }
+  },
+  {
+    "agent": "diagnosis",
+    "file": "services/agent-service/app/skills/diagnosis/alarm_diagnosis.md",
+    "name": "alarm_diagnosis_skill",
+    "metadata": {
+      "name": "alarm_diagnosis_skill",
+      "version": 1,
+      "goal": "结合报警定义与运行证据诊断带报警码的设备事件。",
+      "trigger": "exists(alarm_code)",
+      "steps": [
+        "query_alarm_definition",
+        "judge_alarm_evidence",
+        "enrich_with_history_or_knowledge",
+        "diagnose",
+        "validate_result",
+        "normalize_event",
+        "select_skills",
+        "generate_candidates",
+        "execute_tools",
+        "collect_evidence",
+        "build_result"
+      ],
+      "tools": [
+        "get_alarm_definition",
+        "get_device_history",
+        "get_device_logs",
+        "search_knowledge"
+      ]
+    }
+  },
+  {
+    "agent": "diagnosis",
+    "file": "services/agent-service/app/skills/diagnosis/multi_metric.md",
+    "name": "multi_metric_diagnosis_skill",
+    "metadata": {
+      "name": "multi_metric_diagnosis_skill",
+      "version": 1,
+      "goal": "关联多个异常指标并推断共同故障原因。",
+      "trigger": "multiple_abnormal_metrics",
+      "steps": [
+        "correlate_metrics",
+        "query_history",
+        "infer_common_causes",
+        "validate_result"
+      ],
+      "tools": [
+        "get_device_history",
+        "get_device_logs",
+        "search_knowledge"
+      ]
+    }
+  },
+  {
+    "agent": "diagnosis",
+    "file": "services/agent-service/app/skills/diagnosis/no_alarm_diagnosis.md",
+    "name": "no_alarm_diagnosis_skill",
+    "metadata": {
+      "name": "no_alarm_diagnosis_skill",
+      "version": 1,
+      "goal": "在没有报警码时依据指标、日志和历史数据诊断异常。",
+      "trigger": "no_alarm_code",
+      "steps": [
+        "inspect_abnormal_metrics",
+        "query_context_if_needed",
+        "output_low_confidence_if_evidence_insufficient"
+      ],
+      "tools": [
+        "get_device_history",
+        "get_device_logs",
+        "search_knowledge",
+        "get_device_status"
+      ]
+    }
+  },
+  {
+    "agent": "diagnosis",
+    "file": "services/agent-service/app/skills/diagnosis/safety_triage.md",
+    "name": "safety_triage_skill",
+    "metadata": {
+      "name": "safety_triage_skill",
+      "version": 1,
+      "goal": "对严重事件进行安全分级并识别必须立即执行的安全控制。",
+      "trigger": "severity == critical",
+      "steps": [
+        "identify_safety_risk",
+        "retrieve_safety_sop",
+        "mark_human_or_safety_system_required"
+      ],
+      "tools": [
+        "get_alarm_definition",
+        "get_device_logs",
+        "search_knowledge"
+      ]
+    }
+  },
+  {
+    "agent": "diagnosis",
+    "file": "services/agent-service/app/skills/diagnosis/trend_diagnosis.md",
+    "name": "trend_diagnosis_skill",
+    "metadata": {
+      "name": "trend_diagnosis_skill",
+      "version": 1,
+      "goal": "诊断重复出现或持续发展的趋势性异常。",
+      "trigger": "trend_or_repeated_abnormality",
+      "steps": [
+        "query_history",
+        "summarize_trend",
+        "infer_candidates",
+        "collect_evidence"
+      ],
+      "tools": [
+        "get_device_history",
+        "get_device_logs",
+        "search_knowledge"
+      ]
+    }
+  },
+  {
+    "agent": "knowledge",
+    "file": "services/agent-service/app/skills/knowledge/alarm_search.md",
+    "name": "alarm_search_skill",
+    "metadata": {
+      "name": "alarm_search_skill",
+      "version": 1,
+      "goal": "检索报警定义以及与报警相关的技术知识。",
+      "trigger": "exists(alarm_code)",
+      "steps": [
+        "normalize_alarm_code",
+        "search_alarm_knowledge",
+        "fetch_document_or_chunk",
+        "validate_evidence"
+      ],
+      "tools": [
+        "search_alarm_knowledge",
+        "search_knowledge",
+        "fetch_document",
+        "fetch_chunk"
+      ]
+    }
+  },
+  {
+    "agent": "knowledge",
+    "file": "services/agent-service/app/skills/knowledge/fault_case.md",
+    "name": "fault_case_skill",
+    "metadata": {
+      "name": "fault_case_skill",
+      "version": 1,
+      "goal": "检索历史故障案例和已验证的维修经验。",
+      "trigger": "case_or_history",
+      "steps": [
+        "search_fault_cases",
+        "search_semantic_memory",
+        "rerank_evidence",
+        "validate_evidence"
+      ],
+      "tools": [
+        "search_fault_cases",
+        "search_semantic_memory",
+        "fetch_document",
+        "fetch_chunk"
+      ]
+    }
+  },
+  {
+    "agent": "knowledge",
+    "file": "services/agent-service/app/skills/knowledge/hybrid_search.md",
+    "name": "hybrid_search_skill",
+    "metadata": {
+      "name": "hybrid_search_skill",
+      "version": 1,
+      "goal": "为维修依据补充混合资料源，或在没有指定专业知识源时执行混合检索。",
+      "trigger": "default",
+      "triggers": [
+        "default",
+        "maintenance_evidence"
+      ],
+      "steps": [
+        "classify_query",
+        "search_knowledge",
+        "rerank_evidence",
+        "validate_evidence",
+        "normalize_query",
+        "select_sources",
+        "build_filters",
+        "search",
+        "build_evidence",
+        "rank",
+        "validate_sources",
+        "build_result"
+      ],
+      "tools": [
+        "search_knowledge",
+        "search_sop",
+        "search_manual",
+        "search_fault_cases",
+        "search_semantic_memory",
+        "fetch_document",
+        "fetch_chunk"
+      ]
+    }
+  },
+  {
+    "agent": "knowledge",
+    "file": "services/agent-service/app/skills/knowledge/manual_search.md",
+    "name": "manual_search_skill",
+    "metadata": {
+      "name": "manual_search_skill",
+      "version": 1,
+      "goal": "检索设备手册和操作说明。",
+      "trigger": "manual",
+      "steps": [
+        "normalize_manual_query",
+        "search_manual",
+        "fetch_document_or_chunk",
+        "validate_evidence"
+      ],
+      "tools": [
+        "search_manual",
+        "search_knowledge",
+        "fetch_document",
+        "fetch_chunk"
+      ]
+    }
+  },
+  {
+    "agent": "knowledge",
+    "file": "services/agent-service/app/skills/knowledge/sop_search.md",
+    "name": "sop_search_skill",
+    "metadata": {
+      "name": "sop_search_skill",
+      "version": 1,
+      "goal": "检索标准作业规程和维修步骤。",
+      "trigger": "sop_or_repair_steps",
+      "steps": [
+        "classify_sop_query",
+        "search_sop",
+        "fetch_document_or_chunk",
+        "validate_evidence"
+      ],
+      "tools": [
+        "search_sop",
+        "search_manual",
+        "fetch_document",
+        "fetch_chunk"
+      ]
+    }
+  },
+  {
+    "agent": "maintenance",
+    "file": "services/agent-service/app/skills/maintenance/repair_plan.md",
+    "name": "repair_plan_skill",
+    "metadata": {
+      "name": "repair_plan_skill",
+      "version": 1,
+      "goal": "依据诊断结论和证据生成可执行的维修方案。",
+      "trigger": "repair_plan",
+      "steps": [
+        "assess_diagnosis",
+        "request_knowledge",
+        "request_cad",
+        "plan_repair",
+        "validate_plan",
+        "validate_diagnosis",
+        "determine_required_parts",
+        "build_safety_steps",
+        "build_result"
+      ],
+      "tools": [
+        "generate_repair_plan",
+        "query_inventory",
+        "query_part_availability",
+        "get_workorder_template",
+        "submit_workorder_draft"
+      ]
+    }
+  },
+  {
+    "agent": "maintenance",
+    "file": "services/agent-service/app/skills/maintenance/spare_part.md",
+    "name": "spare_part_skill",
+    "metadata": {
+      "name": "spare_part_skill",
+      "version": 1,
+      "goal": "确定维修所需备件，并核对库存和可用性。",
+      "trigger": "part_or_component",
+      "steps": [
+        "resolve_target_part",
+        "query_inventory",
+        "query_part_availability",
+        "validate_parts"
+      ],
+      "tools": [
+        "query_inventory",
+        "query_part_availability"
+      ]
+    }
+  },
+  {
+    "agent": "maintenance",
+    "file": "services/agent-service/app/skills/maintenance/workorder.md",
+    "name": "workorder_skill",
+    "metadata": {
+      "name": "workorder_skill",
+      "version": 1,
+      "goal": "结合维修方案与工程资料生成工单草稿。",
+      "trigger": "workorder",
+      "steps": [
+        "build_workorder_draft",
+        "attach_repair_target",
+        "attach_drawing_context",
+        "submit_workorder_draft"
+      ],
+      "tools": [
+        "get_workorder_template",
+        "submit_workorder_draft"
+      ]
+    }
+  },
+  {
+    "agent": "memory",
+    "file": "services/agent-service/app/skills/memory/experience_extraction.md",
+    "name": "experience_extraction",
+    "metadata": {
+      "name": "experience_extraction",
+      "aliases": [
+        "memory_write"
+      ],
+      "version": 1.1,
+      "goal": "从已关闭且可信维修验收通过的工单中提取、验证并保存经验。",
+      "trigger": "learn",
+      "steps": [
+        "validate_closed",
+        "select_skills",
+        "validate_admission",
+        "extract_experience",
+        "dedup_experience",
+        "validate_experience",
+        "persist",
+        "build_result",
+        "fallback"
+      ],
+      "tools": [],
+      "output": "MemoryResult"
+    }
+  },
+  {
+    "agent": "memory",
+    "file": "services/agent-service/app/skills/memory/experience_retrieval.md",
+    "name": "experience_retrieval",
+    "metadata": {
+      "name": "experience_retrieval",
+      "version": 1.1,
+      "goal": "检索或列出已验证的历史维修经验。",
+      "trigger": "search",
+      "triggers": [
+        "search",
+        "recent"
+      ],
+      "steps": [
+        "validate_closed",
+        "select_skills",
+        "validate_search",
+        "retrieve_memory",
+        "dedup",
+        "score_experience",
+        "validate",
+        "build_result",
+        "fallback"
+      ],
+      "tools": [
+        "search_semantic_memory"
+      ],
+      "output": "MemoryResult"
+    }
+  },
+  {
+    "agent": "memory",
+    "file": "services/agent-service/app/skills/memory/memory_dedup.md",
+    "name": "memory_dedup",
+    "metadata": {
+      "name": "memory_dedup",
+      "version": 1,
+      "goal": "避免同一工单的维修经验重复写入。",
+      "trigger": "always",
+      "steps": [
+        "dedup",
+        "dedup_experience"
+      ],
+      "tools": [],
+      "output": "MemoryResult"
+    }
+  },
+  {
+    "agent": "quality",
+    "file": "services/agent-service/app/skills/quality/dimension_inspection.md",
+    "name": "dimension_inspection_skill",
+    "metadata": {
+      "name": "dimension_inspection_skill",
+      "version": 1,
+      "goal": "对生产零件的关键尺寸执行专项质量检测。",
+      "trigger": "part_quality",
+      "steps": [
+        "load_part",
+        "load_inspection_plan",
+        "inspect_dimensions",
+        "validate_part"
+      ],
+      "tools": [
+        "get_production_part",
+        "get_part_specification",
+        "inspect_part_dimensions"
+      ]
+    }
+  },
+  {
+    "agent": "quality",
+    "file": "services/agent-service/app/skills/quality/part_quality_inspection.md",
+    "name": "part_quality_inspection_skill",
+    "metadata": {
+      "name": "part_quality_inspection_skill",
+      "version": 1,
+      "goal": "对生产零件的尺寸、外观、材料、功能和工艺进行综合质量检测。",
+      "trigger": "part_quality",
+      "steps": [
+        "load_part",
+        "load_inspection_plan",
+        "inspect_dimensions",
+        "inspect_appearance",
+        "inspect_material",
+        "inspect_function",
+        "inspect_process",
+        "validate_part",
+        "identify_part",
+        "determine_pass_fail",
+        "build_result",
+        "create_quality_check",
+        "create_closure_task",
+        "complete_closure_task",
+        "submit_quality_appeal",
+        "resolve_quality_appeal",
+        "reinspect_quality_check",
+        "release_quality_check",
+        "close_quality_check"
+      ],
+      "tools": [
+        "create_quality_check",
+        "get_production_part",
+        "get_part_specification",
+        "inspect_part_dimensions",
+        "inspect_part_appearance",
+        "inspect_part_material",
+        "inspect_part_function",
+        "inspect_part_process",
+        "create_closure_task",
+        "complete_closure_task",
+        "submit_quality_appeal",
+        "resolve_quality_appeal",
+        "reinspect_quality_check",
+        "release_quality_check",
+        "close_quality_check"
+      ]
+    }
+  },
+  {
+    "agent": "quality",
+    "file": "services/agent-service/app/skills/quality/virtual_size_inspection.md",
+    "name": "virtual_size_inspection_skill",
+    "metadata": {
+      "name": "virtual_size_inspection_skill",
+      "version": 1,
+      "goal": "对工厂已保存的模拟加工尺寸与原设计版本执行确定性比较。",
+      "trigger": "virtual_profile_dimensions_v1",
+      "steps": [
+        {
+          "id": "inspect",
+          "type": "tool",
+          "tool": "inspect_virtual_output",
+          "required_inputs": [
+            "part_id",
+            "output_digest"
+          ],
+          "failure_policy": "stop"
+        }
+      ],
+      "tools": [
+        "inspect_virtual_output"
+      ],
+      "failure_policy": "stop"
+    }
+  },
+  {
+    "agent": "report",
+    "file": "services/agent-service/app/skills/report/closure_report.md",
+    "name": "closure_report_skill",
+    "metadata": {
+      "name": "closure_report_skill",
+      "aliases": [
+        "trace_report_skill"
+      ],
+      "version": 1.1,
+      "goal": "汇总真实业务记录和执行链路，生成闭环或链路报告。",
+      "trigger": "closure",
+      "triggers": [
+        "closure",
+        "trace"
+      ],
+      "steps": [
+        "collect_event",
+        "select_skills",
+        "collect_sources",
+        "validate_completeness",
+        "compose_report",
+        "validate_result",
+        "persist",
+        "persist_report",
+        "build_result",
+        "fallback"
+      ],
+      "tools": [
+        "get_diagnosis_record",
+        "get_maintenance_record",
+        "get_workorder",
+        "get_quality_record",
+        "get_trace_summary",
+        "persist_report"
+      ]
+    }
+  },
+  {
+    "agent": "report",
+    "file": "services/agent-service/app/skills/report/report_generation.md",
+    "name": "report_generation_skill",
+    "metadata": {
+      "name": "report_generation_skill",
+      "version": 1,
+      "goal": "生成完整、可追溯的工业事件或维修报告。",
+      "trigger": "default",
+      "steps": [
+        "collect_sources",
+        "check_completeness",
+        "compose_report",
+        "validate_report",
+        "persist_report",
+        "generate_report_file",
+        "collect_event",
+        "validate_completeness",
+        "validate_result",
+        "build_result"
+      ],
+      "tools": [
+        "get_diagnosis_record",
+        "get_maintenance_record",
+        "get_workorder",
+        "get_quality_record",
+        "get_trace_summary",
+        "persist_report",
+        "generate_report_file"
+      ]
+    }
+  },
+  {
+    "agent": "router",
+    "file": "services/agent-service/app/skills/router/intent_routing.md",
+    "name": "intent_routing_skill",
+    "metadata": {
+      "name": "intent_routing_skill",
+      "aliases": [
+        "entity_extraction_skill"
+      ],
+      "version": 1.1,
+      "goal": "识别工业请求意图、提取业务实体并形成已校验的路由结果。",
+      "trigger": "default",
+      "steps": [
+        "normalize_request",
+        "select_target_agent",
+        "classify_intent",
+        "extract_entities",
+        "validate_route",
+        "build_runtime_goal"
+      ],
+      "tools": [],
+      "required_inputs": [
+        "user_text"
+      ],
+      "optional_inputs": [
+        "context"
+      ]
+    }
+  },
+  {
+    "agent": "workorder",
+    "file": "services/agent-service/app/skills/workorder/auto_assignment.md",
+    "name": "auto_assignment",
+    "metadata": {
+      "name": "auto_assignment",
+      "version": 1,
+      "goal": "基于技能、班次、区域和负载选择维修人员。",
+      "trigger": "assign",
+      "steps": [
+        "collect_dispatch_context",
+        "select_assignee",
+        "assign_order"
+      ],
+      "tools": [
+        "query_technicians",
+        "query_technician_skills",
+        "query_technician_workload",
+        "query_shift",
+        "query_team_availability",
+        "assign_workorder"
+      ],
+      "output": "WorkOrderResult"
+    }
+  },
+  {
+    "agent": "workorder",
+    "file": "services/agent-service/app/skills/workorder/repair_feedback.md",
+    "name": "repair_feedback",
+    "metadata": {
+      "name": "repair_feedback",
+      "version": 1,
+      "goal": "接收现场维修反馈并标记维修执行结果。",
+      "trigger": "feedback",
+      "steps": [
+        "initialize",
+        "load_skill",
+        "validate_plan",
+        "execute_action",
+        "validate",
+        "final"
+      ],
+      "tools": [
+        "submit_repair_feedback",
+        "mark_repair_completed"
+      ],
+      "output": "WorkOrderResult"
+    }
+  },
+  {
+    "agent": "workorder",
+    "file": "services/agent-service/app/skills/workorder/workorder_create.md",
+    "name": "workorder_create",
+    "metadata": {
+      "name": "workorder_create",
+      "version": 1,
+      "goal": "根据已验证的维修方案创建并派发维修工单。",
+      "trigger": "repair_plan",
+      "steps": [
+        "initialize",
+        "load_skill",
+        "validate_plan",
+        "create_order",
+        "collect_dispatch_context",
+        "select_assignee",
+        "assign_order",
+        "validate",
+        "final"
+      ],
+      "tools": [
+        "create_workorder",
+        "get_workorder_template",
+        "query_technicians",
+        "query_technician_skills",
+        "query_technician_workload",
+        "query_shift",
+        "query_team_availability",
+        "assign_workorder"
+      ],
+      "output": "WorkOrderResult"
+    }
+  },
+  {
+    "agent": "workorder",
+    "file": "services/agent-service/app/skills/workorder/workorder_reopen.md",
+    "name": "workorder_reopen",
+    "metadata": {
+      "name": "workorder_reopen",
+      "version": 1,
+      "goal": "质检不通过时重新打开工单并返回返工入口。",
+      "trigger": "reopen",
+      "steps": [
+        "initialize",
+        "load_skill",
+        "validate_plan",
+        "execute_action",
+        "validate",
+        "final"
+      ],
+      "tools": [
+        "reopen_workorder",
+        "get_workorder"
+      ],
+      "output": "WorkOrderResult"
+    }
+  },
+  {
+    "agent": "workorder",
+    "file": "services/agent-service/app/skills/workorder/workorder_tracking.md",
+    "name": "workorder_tracking",
+    "metadata": {
+      "name": "workorder_tracking",
+      "version": 1,
+      "goal": "查询和更新工单生命周期状态。",
+      "trigger": "query",
+      "steps": [
+        "initialize",
+        "load_skill",
+        "validate_plan",
+        "execute_action",
+        "validate",
+        "final"
+      ],
+      "tools": [
+        "get_workorder",
+        "query_workorder",
+        "update_workorder",
+        "list_workorders"
+      ],
+      "output": "WorkOrderResult"
+    }
+  }
+]
