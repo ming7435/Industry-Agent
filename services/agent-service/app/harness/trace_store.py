@@ -5,6 +5,7 @@ from threading import Lock
 from time import monotonic
 from shared.persistence import StorageUnavailable, mysql_session, mysql_configuration
 from .runs import RUN_INDEX_SHAPE, run_index_record
+from .trace_coverage import CoverageTracker
 
 
 def _run_index_sql(shape, prefix='$'):
@@ -30,7 +31,7 @@ def _skill_window_projection():
     fields = []
     for key in ('timestamp', 'trace_record_id', 'trace_id', 'task_id', 'agent_run_id', 'agent', 'type',
                 'event', 'skill', 'skill_version', 'skill_fingerprint', 'declared_steps', 'step',
-                'run_type', 'step_run_id', 'elapsed_ms', 'error'):
+                'run_type', 'step_run_id', 'tool_name', 'tool_call_id', 'elapsed_ms', 'error'):
         fields.extend(("'%s'" % key, "JSON_EXTRACT(payload,'$.%s')" % key))
     output_fields = []
     for key in ('status', 'stop_reason', 'validation_errors', 'validation_findings', 'validation',
@@ -39,6 +40,9 @@ def _skill_window_projection():
         value = "COALESCE(JSON_EXTRACT(payload,'$.output.output.%s'),JSON_EXTRACT(payload,'$.output.%s'))" % (key, key)
         output_fields.extend(("'%s'" % key, value))
     fields.extend(("'output'", 'JSON_OBJECT(' + ','.join(output_fields) + ')'))
+    fields.extend(("'tool_result'", "JSON_OBJECT('success',COALESCE(JSON_EXTRACT(payload,'$.output.success'),"
+                   "JSON_EXTRACT(payload,'$.result.success')),'error',COALESCE(JSON_EXTRACT(payload,'$.output.error'),"
+                   "JSON_EXTRACT(payload,'$.result.error')))"))
     return 'JSON_OBJECT(' + ','.join(fields) + ')'
 
 
@@ -51,6 +55,7 @@ class MySQLTraceStore:
         self._append_lock = Lock()
         self._append_connection = None
         self._append_opened_at = self._append_last_used = 0.0
+        self._coverage = CoverageTracker()
         with mysql_session(self._config) as db:
             cursor = db.cursor()
             try:
@@ -59,6 +64,7 @@ class MySQLTraceStore:
                                'trace_id VARCHAR(255) NOT NULL, task_id VARCHAR(255) NOT NULL, '
                                'payload JSON NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, '
                                'INDEX trace_lookup(trace_id,sequence_id), INDEX task_lookup(task_id,sequence_id))')
+                self._coverage.initialize(cursor)
             finally:
                 cursor.close()
 
@@ -104,7 +110,21 @@ class MySQLTraceStore:
     def close(self):
         """释放本实例拥有的唯一写连接，不影响独立的查询事务。"""
         with self._append_lock:
-            self._discard_append_connection()
+            connection = self._append_connection
+            if connection is None:
+                return
+            try:
+                cursor = connection.cursor()
+                try:
+                    self._coverage.progress(cursor, close=True)
+                    connection.commit()
+                finally:
+                    cursor.close()
+            except Exception:
+                pass  # 关闭回执不确定时保留开放段，后续查询将尾段视为缺口。
+            finally:
+                # 清理只使用已经拥有的连接，不能在析构/测试结束后重新连接数据库。
+                self._discard_append_connection()
 
     def __del__(self):
         try:
@@ -113,13 +133,18 @@ class MySQLTraceStore:
             pass  # 构造失败或解释器退出时可能已无锁/驱动模块。
 
     def append(self, record):
-        with self._append_session() as db:
-            cursor = db.cursor()
-            try:
-                cursor.execute('INSERT INTO agent_execution_trace(trace_id,task_id,payload) VALUES (%s,%s,%s)',
-                               (str(record.get('trace_id') or ''), str(record.get('task_id') or ''), json.dumps(record, ensure_ascii=False)))
-            finally:
-                cursor.close()
+        try:
+            with self._append_session() as db:
+                cursor = db.cursor()
+                try:
+                    cursor.execute('INSERT INTO agent_execution_trace(trace_id,task_id,payload) VALUES (%s,%s,%s)',
+                                   (str(record.get('trace_id') or ''), str(record.get('task_id') or ''), json.dumps(record, ensure_ascii=False)))
+                    self._coverage.progress(cursor)
+                finally:
+                    cursor.close()
+        except BaseException:
+            self._coverage.note_failure()
+            raise
 
     def list(self, trace_id=None, task_id=None, limit=5000):
         return self._list(trace_id=trace_id, task_id=task_id, limit=limit)
@@ -131,9 +156,10 @@ class MySQLTraceStore:
         bounds = (start.astimezone(timezone.utc).replace(tzinfo=None),
                   end.astimezone(timezone.utc).replace(tzinfo=None))
         limit = max(1, min(200, int(limit)))
-        with mysql_session(self._config) as db:
+        with mysql_session({**self._config, 'time_zone': '+00:00'}) as db:
             cursor = db.cursor()
             try:
+                recording_complete = self._coverage.check(cursor, *bounds)
                 if upper is None:
                     cursor.execute('SELECT COALESCE(MAX(sequence_id),0) FROM agent_execution_trace')
                     upper = int(cursor.fetchone()[0])
@@ -144,7 +170,9 @@ class MySQLTraceStore:
                 rows = cursor.fetchall()
                 return {'items': [json.loads(row[1]) for row in rows],
                         'after': int(rows[-1][0]) if rows else after, 'upper': upper,
-                        'done': len(rows) < limit, 'complete': True, 'storage': 'mysql'}
+                        'done': len(rows) < limit, 'complete': recording_complete,
+                        'recording_complete': recording_complete, 'storage': 'mysql',
+                        'message': '' if recording_complete else '持续观测起点或缺口尚不能证明窗口完整'}
             finally:
                 cursor.close()
 

@@ -112,6 +112,7 @@ class SkillManager:
         from app.skills.registry import SkillDefinition
         current = SkillDefinition.from_payload(agent, payload, path, document)
         return {**self._summary(current), "document": document, "revision": sha256(source).hexdigest(),
+                "content_fingerprint": current.observation()['skill_fingerprint'],
                 "tools": list(current.tools), "steps": [step.id for step in current.normalized_steps()],
                 "stop_conditions": list(current.stop_conditions)}
 

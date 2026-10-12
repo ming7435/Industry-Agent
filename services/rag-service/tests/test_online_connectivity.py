@@ -98,7 +98,7 @@ def search_app(monkeypatch, pipeline_factory, store):
 
 async def post_search(app):
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://isolated") as client:
+    async with httpx.AsyncClient(transport=transport, base_url="http://isolated", headers={'Authorization': 'Bearer isolated-rag-token'}) as client:
         return await client.post("/search", json={"query": "bearing", "top_n": 1})
 
 

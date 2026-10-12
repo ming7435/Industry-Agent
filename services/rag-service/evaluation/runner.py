@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import json
+import os
 import urllib.error
 import urllib.request
 from collections.abc import Iterable
@@ -187,10 +188,14 @@ def aggregate_evaluations(
 
 
 def _request_search(base_url: str, payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+    headers = {'Content-Type': 'application/json'}
+    token = os.getenv('RAG_INTERNAL_TOKEN', '').strip()
+    if token:
+        headers['Authorization'] = 'Bearer ' + token
     request = urllib.request.Request(
         base_url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_s) as response:

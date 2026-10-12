@@ -146,10 +146,16 @@ def index_dir_for_collection(
     historical single-index layout.
     """
 
-    directory = Path(base_dir or settings.whoosh_index_dir)
+    directory = Path(base_dir or settings.whoosh_index_dir).resolve()
     if not collection_name:
         return directory
-    return directory / collection_name
+    name = str(collection_name)
+    from shared.ingestion_security import validate_collection_name
+    validate_collection_name(name)
+    candidate = (directory / name).resolve()
+    if candidate.parent != directory:
+        raise ValueError('Collection index escapes the configured root')
+    return candidate
 
 
 def open_index(index_dir: str | Path | None = None, *, recreate: bool = False) -> Any:

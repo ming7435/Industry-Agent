@@ -6,7 +6,7 @@ from app.api.team_auth import team_actor
 from app.clients.backend import BackendServiceClient
 from app.skills.evolution import SkillEvolution
 from app.skills.evolution_worker import EvolutionWorker
-from shared.persistence import StorageUnavailable
+from shared.persistence import StorageUnavailable, PendingResultError
 
 
 def include_evolution_routes(router, manager, write_actor, run, machine_model):
@@ -23,8 +23,24 @@ def include_evolution_routes(router, manager, write_actor, run, machine_model):
     def action(function, *args):
         try:
             return run(function, *args)
-        except StorageUnavailable:
+        except (StorageUnavailable, PendingResultError):
             raise HTTPException(503, '自动修改稿MySQL存储暂不可用，旧版未修改') from None
+
+    class LoopControlRequest(BaseModel):
+        model_config = ConfigDict(extra='forbid')
+        paused: bool = Field(strict=True)
+
+    @router.get('/skill-loop')
+    def loop_status(request: Request, agent: str = '', name: str = ''):
+        team_actor(request)
+        return action(manager.evolution.loop.status, agent, name)
+
+    @router.post('/skill-loop/control')
+    def loop_control(values: LoopControlRequest, request: Request):
+        actor = write_actor(request)
+        result = action(manager.evolution.loop.set_paused, values.paused, actor)
+        manager.evolution_worker.wake()
+        return {key: result[key] for key in ('paused', 'revision')}
 
     @router.get('/evolution')
     def catalog(request: Request, agent: str = '', name: str = ''):

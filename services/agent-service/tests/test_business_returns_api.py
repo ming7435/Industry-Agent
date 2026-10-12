@@ -88,12 +88,15 @@ def test_quality_input_inspection_report_and_real_tools_are_connected(business_r
     assert body['passed'] is True
     check = backend.get_quality_check(body['quality_check_id'])['quality_check']
     assert check['evidence'] and check['measurements']['diameter_mm'] == 10
-    assert body['report']['persisted'] is True
+    generated = client.post('/api/reports/generate', json={'quality_check_id': body['quality_check_id']})
+    assert generated.status_code == 200, generated.text
+    assert generated.json()['report']['persisted'] is True
     assert client.get('/api/reports').json()['count'] == 1
     records = container.trace.list(trace_id=body['trace_id'])
-    assert {r['name'] for r in records if r['event']=='agent_completed'} >= {'quality','report'}
+    assert {r['name'] for r in records if r['event']=='agent_completed'} >= {'quality'}
     tools = {r['tool_name'] for r in records if r['event']=='tool_completed'}
-    assert tools >= {'inspect_part_dimensions','inspect_part_appearance','persist_report'}
+    assert tools >= {'inspect_part_dimensions','inspect_part_appearance','create_quality_check'}
+    assert any(r.get('tool_name') == 'persist_report' for r in container.trace.list() if r['event'] == 'tool_completed')
     assert any(r.get('skill')=='part_quality_inspection_skill' for r in records)
     persisted = next(r for r in records if r.get('tool_name')=='create_quality_check' and r['event']=='tool_completed')
     assert persisted['agent_run_id'] and persisted['tool_call_id']
@@ -141,9 +144,10 @@ def test_failed_quality_rectification_reinspection_release_and_close_are_logged(
     assert client.post(f'/api/v1/quality/checks/{check_id}/release').status_code == 200
     closed=client.post(f'/api/v1/quality/checks/{check_id}/close',json={'note':'完成'})
     assert closed.status_code == 200
-    assert '初检未通过' in closed.json()['report']['summary']
-    assert '复检通过' in closed.json()['report']['summary'] and '关闭' in closed.json()['report']['summary']
     regenerated=client.post('/api/reports/generate',json={'quality_check_id':check_id})
+    assert regenerated.status_code == 200, regenerated.text
+    assert '初检未通过' in regenerated.json()['report']['summary']
+    assert '关闭' in regenerated.json()['report']['summary']
     assert '复检通过' in regenerated.json()['report']['summary']
     assert backend.get_quality_check(check_id)['quality_check']['status'] == 'closed'
     assert client.get('/api/reports').json()['items'][0]['status'] == 'completed'

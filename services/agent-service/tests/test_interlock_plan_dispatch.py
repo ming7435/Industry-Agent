@@ -103,6 +103,10 @@ def test_non_invasive_interlock_plan_dispatches_without_unrelated_cad_or_stock(t
     {"requires_human_review": True}, {"maintenance_required": False},
 ])
 def test_interlock_inspection_never_bypasses_business_gates(tmp_path, monkeypatch, changes):
+    if changes.get('maintenance_required') is False:
+        with pytest.raises(ValueError, match='无需维修'):
+            make_runtime(tmp_path, monkeypatch, **changes)
+        return
     runtime, plan = make_runtime(tmp_path, monkeypatch, **changes)
     assert auto_workorder_decision(plan.diagnosis.model_dump(mode="json"), plan.model_dump(mode="json"))[0] is False
     result = runtime.container.agents["workorder"].run({"source": "monitor", "maintenance_plan": plan.model_dump(mode="json")})

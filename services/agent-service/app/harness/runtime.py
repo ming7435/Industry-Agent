@@ -72,6 +72,10 @@ class AgentHarness:
         agent_run_id = "AGENT-RUN-" + uuid4().hex[:12].upper()
         agent_name = getattr(self.agent, "name", type(self.agent).__name__)
         context = self._agent_trace_context(task, task_id, trace_id, agent_run_id, attempt)
+        if context.get('run_type') in {'expert_trial', 'skill_replay', 'skill_loop'}:
+            context['run_type'] = 'business'
+        else:
+            context.setdefault('run_type', 'business')
         from app.skills.registry import get_skill_registry
         # 草稿试验身份由服务器作用域推导，不依赖客户端事件是否携带test_id。
         if getattr(get_skill_registry(), 'is_expert_trial', False):

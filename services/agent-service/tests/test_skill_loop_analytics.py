@@ -97,3 +97,16 @@ def test_week_boundaries_are_monday_midnight_in_china():
     assert windows['current']['start'] == '2026-10-11T16:00:00+00:00'
     assert windows['previous']['start'] == '2026-10-04T16:00:00+00:00'
     assert windows['previous']['end'] == '2026-10-11T16:00:00+00:00'
+
+
+def test_caught_tool_connection_failure_is_not_a_skill_quality_failure():
+    records = rows('fallback', validation_errors=['缺少设备证据'])
+    records.insert(1, {**records[0], 'trace_record_id': 'TOOL-1', 'event': 'tool_error',
+                       'type': 'tool', 'error': 'HTTP Error 503: unavailable', 'tool_name': 'get_device_history'})
+    result = aggregate(records)[0]
+    assert result['verdicts']['infrastructure_error'] == 1 and result['sources'] == []
+
+
+def test_mechanical_connection_evidence_is_not_network_infrastructure_error():
+    result = aggregate(rows('completed', validation_errors=['未提供电机与丝杆连接状态的现场证据']))[0]
+    assert result['verdicts']['fail'] == 1 and len(result['sources']) == 1

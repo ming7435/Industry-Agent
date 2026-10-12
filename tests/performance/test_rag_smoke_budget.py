@@ -12,7 +12,7 @@ def test_rag_search_stays_within_smoke_budget():
     request = Request(
         url,
         data=json.dumps({"query": "主轴轴承异常维修方法", "top_n": 3}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.getenv('RAG_INTERNAL_TOKEN', '')},
         method="POST",
     )
     started = time.monotonic()

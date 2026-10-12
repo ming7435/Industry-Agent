@@ -19,6 +19,7 @@ from urllib.request import urlopen
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FREECAD_PLATFORM = sys.platform
 _LOCAL_INTERNAL_TOKEN = secrets.token_urlsafe(32)
+_LOCAL_RAG_TOKEN = secrets.token_urlsafe(32)
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -118,6 +119,8 @@ def _env_for_service(service_root: Path) -> dict[str, str]:
     if not env.get("BACKEND_INTERNAL_TOKEN", "").strip() and env.get("APP_ENV", "development").lower() == "development":
         # 本地六个子进程共享一次性内部身份；不写配置文件、不输出令牌。生产仍要求显式配置。
         env["BACKEND_INTERNAL_TOKEN"] = _LOCAL_INTERNAL_TOKEN
+    if not env.get('RAG_INTERNAL_TOKEN', '').strip() and env.get('APP_ENV', 'development').lower() == 'development':
+        env['RAG_INTERNAL_TOKEN'] = _LOCAL_RAG_TOKEN
     paths = [str(PROJECT_ROOT), *[value for value in env.get("PYTHONPATH", "").split(os.pathsep) if value]]
     env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(paths))
     return env
@@ -273,7 +276,7 @@ def main() -> int:
         ),
         (
             "rag-service",
-            [python, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8020"],
+            [python, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8020"],
             PROJECT_ROOT / "services" / "rag-service",
             PROJECT_ROOT / "services" / "rag-service",
         ),
@@ -302,7 +305,10 @@ def main() -> int:
     if worker_service:
         services.insert(2, worker_service)
     monitor_port = int(launch_env["MONITOR_WEB_PORT"])
-    if not launch_env.get("BACKEND_INTERNAL_TOKEN", "").strip() and launch_env["APP_ENV"].lower() == "development":
+    if launch_env['APP_ENV'].lower() == 'development' and (
+        not launch_env.get('BACKEND_INTERNAL_TOKEN', '').strip()
+        or not launch_env.get('RAG_INTERNAL_TOKEN', '').strip()
+    ):
         # 一次性身份无法证明旧服务的身份一致，必须在启动任何子进程前拒绝混用。
         occupied = [name for name, command, _, _ in services if (port := service_port(name, command, monitor_port)) is not None and _port_in_use("127.0.0.1", port)]
         if occupied:

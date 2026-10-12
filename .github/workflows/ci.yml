@@ -68,6 +68,8 @@ jobs:
         run: |
           set -euo pipefail
           trap 'docker compose -f infra/docker/docker-compose.yml --profile apps --profile gateway down -v' EXIT
+          export BACKEND_INTERNAL_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          export RAG_INTERNAL_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
           docker pull "$MINIO_IMAGE"
           docker compose -f infra/docker/docker-compose.yml --profile apps --profile gateway up -d --build
           for url in \

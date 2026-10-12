@@ -16,6 +16,7 @@ class FakeDatabase:
     def __init__(self):
         self.connections = []
         self.rows = []
+        self.coverage = {}
         self.lock = Lock()
         self.fail_next_commit = False
         self.block_commit = False
@@ -32,6 +33,7 @@ class FakeConnection:
     def __init__(self, database):
         self.database = database
         self.pending = []
+        self.coverage_pending = {}
         self.closed = False
         self.active = False
         self.commits = 0
@@ -43,6 +45,8 @@ class FakeConnection:
 
     def commit(self):
         self.commits += 1
+        self.database.coverage.update(self.coverage_pending)
+        self.coverage_pending = {}
         if self.pending:
             if self.database.block_commit:
                 self.database.commit_entered.set()
@@ -58,6 +62,7 @@ class FakeConnection:
     def rollback(self):
         self.rollbacks += 1
         self.pending = []
+        self.coverage_pending = {}
         self.active = False
 
     def close(self):
@@ -69,7 +74,30 @@ class FakeCursor:
         self.connection = connection
 
     def execute(self, sql, parameters=()):
+        self.sql, self.parameters = sql, parameters
         if sql.startswith('CREATE TABLE'):
+            return
+        if sql.startswith('INSERT INTO agent_trace_coverage'):
+            identity, started, covered, gaps = parameters
+            self.connection.coverage_pending[identity] = {'started_at': started, 'last_covered_at': covered,
+                                                        'closed_at': None, 'gap_days': gaps}
+            self.rowcount = 1
+            return
+        if sql.startswith('UPDATE agent_trace_coverage SET last_covered_at='):
+            covered, closed, gaps, identity = parameters
+            current = self.connection.database.coverage.get(identity)
+            self.rowcount = int(bool(current and current['closed_at'] is None))
+            if self.rowcount:
+                self.connection.coverage_pending[identity] = {**current, 'last_covered_at': covered,
+                                                            'closed_at': closed, 'gap_days': gaps}
+            return
+        if sql.startswith('UPDATE agent_trace_coverage SET closed_at='):
+            closed, expired, owner = parameters
+            for key, row in self.connection.database.coverage.items():
+                if key != owner and row['closed_at'] is None and row['last_covered_at'] < expired:
+                    self.connection.coverage_pending[key] = {**row, 'closed_at': closed}
+            return
+        if sql.startswith('SELECT'):
             return
         assert sql.startswith('INSERT INTO agent_execution_trace')
         assert not self.connection.active, 'parallel users shared an open transaction'
@@ -78,6 +106,17 @@ class FakeCursor:
         record = json.loads(parameters[2])
         assert parameters[:2] == (record.get('trace_id', ''), record.get('task_id', ''))
         self.connection.pending.append(record)
+
+    def fetchone(self):
+        assert 'MAX(sequence_id)' in self.sql
+        return (len(self.connection.database.rows),)
+
+    def fetchall(self):
+        if 'FROM agent_trace_coverage' in self.sql:
+            rows = {**self.connection.database.coverage, **self.connection.coverage_pending}
+            return list(rows.values())
+        assert self.sql.startswith('SELECT sequence_id,')
+        return [(i, json.dumps(row)) for i, row in enumerate(self.connection.database.rows, 1)]
 
     def close(self):
         pass
@@ -174,3 +213,40 @@ def test_idle_or_old_connections_rotate_before_the_next_insert(database, monkeyp
     assert database.connections[-1] is not previous
     assert len(database.connections) == 3  # initialization and two append connections
     assert len(database.rows) == len(ticks)
+
+
+def test_persistent_coverage_keeps_write_gap_after_recovery_and_new_recorder(database, monkeypatch):
+    from datetime import datetime, timezone
+    from app.harness.trace_coverage import CoverageTracker
+    clock = [datetime(2026, 10, 1)]
+    monkeypatch.setattr('app.harness.trace_store.CoverageTracker', lambda: CoverageTracker(clock=lambda: clock[0]))
+    store = make_store()
+    store.append({'event': 'initial'})
+    clock[0] = datetime(2026, 10, 7)
+    database.fail_next_commit = True
+    with pytest.raises(StorageUnavailable):
+        store.append({'event': 'uncertain'})
+    clock[0] = datetime(2026, 10, 13)
+    store.append({'event': 'recovered'})
+    fresh = make_store()
+    page = fresh.skill_window_page(datetime(2026, 10, 5, tzinfo=timezone.utc), datetime(2026, 10, 12, tzinfo=timezone.utc))
+    assert page['recording_complete'] is False
+    assert any('2026-10-07' in row['gap_days'] for row in database.coverage.values())
+
+
+def test_persistent_coverage_proves_healthy_full_window(database, monkeypatch):
+    from datetime import datetime, timezone
+    from app.harness.trace_coverage import CoverageTracker
+    clock = [datetime(2026, 10, 1)]
+    monkeypatch.setattr('app.harness.trace_store.CoverageTracker', lambda: CoverageTracker(clock=lambda: clock[0]))
+    store = make_store()
+    clock[0] = datetime(2026, 10, 13)
+    page = store.skill_window_page(datetime(2026, 10, 5, tzinfo=timezone.utc), datetime(2026, 10, 12, tzinfo=timezone.utc))
+    assert page['recording_complete'] is True
+
+
+def test_close_never_opens_a_new_database_connection(database):
+    store = make_store()
+    initialization_connections = len(database.connections)
+    store.close()
+    assert len(database.connections) == initialization_connections

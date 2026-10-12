@@ -106,6 +106,7 @@ def trace_skill_node(
     @wraps(node)
     def wrapped(state: Mapping[str, Any]) -> dict[str, Any]:
         from app.skills import get_skill_registry
+        from app.skills.registry import skill_mapping_scope, observed_definition
 
         current = dict(state)
         agent = current.get("agent")
@@ -121,10 +122,12 @@ def trace_skill_node(
         requested_skills = list(selected)
         registry = getattr(agent, "skill_registry", None) or get_skill_registry()
         # 显式空值或未知技能保持未映射；只有未声明选择时才按上下文匹配。
-        definitions = registry.select(
-            agent_name, request,
-            names=requested_skills if "active_skills" in current else None,
-        )
+        with skill_mapping_scope():
+            definitions = registry.select(
+                agent_name, request,
+                names=requested_skills if "active_skills" in current else None,
+            )
+        definitions = [observed_definition(agent_name, skill.name) or skill for skill in definitions]
         # 领域 Graph 会在节点声明旁传入该绑定；基础包装器不感知领域节点名称和别名。
         skill_step_id = str(skill_step or node_name)
         match = next(
@@ -136,7 +139,8 @@ def trace_skill_node(
         started_at = datetime.now(timezone.utc).isoformat()
         started = perf_counter()
         from uuid import uuid4
-        node_context = {**bound, **(match[0].observation() if match else {}),
+        loaded = observed_definition(agent_name, skill_name)
+        node_context = {**bound, **(loaded.observation() if loaded else {}),
                         'agent': agent_name, 'skill': skill_name, 'step': step_id, 'step_run_id':'STEP-' + uuid4().hex}
         trace = getattr(agent, "runtime_trace", None) or getattr(getattr(agent, "tools", None), "trace", None)
         if trace is not None:
@@ -174,6 +178,9 @@ def trace_skill_node(
             "error": "",
         }
         output["active_agent"] = agent_name
+        loaded = observed_definition(agent_name, skill_name)
+        if loaded:
+            node_context.update(loaded.observation())
         output["current_step"] = step_id
         output["step_history"] = [*list(current.get("step_history") or []), record]
         output["completed_steps"] = [*list(current.get("completed_steps") or []), record]

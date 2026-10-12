@@ -1,5 +1,7 @@
 # RAG 服务（工业运维）
 
+除 `/health` 外，在线接口要求 `Authorization: Bearer <RAG_INTERNAL_TOKEN>`。RAG 服务、Agent 和评测工具使用同一独立令牌；令牌为空时拒绝业务请求。本地启动器自动生成本次进程共享令牌，单独启动及 Docker 部署应显式配置。生产 Compose 同时要求 `RAG_INTERNAL_TOKEN` 和 `BACKEND_INTERNAL_TOKEN`，不要复用模型提供方密钥。
+
 一个服务包含两个部分，共享同一份配置文件（`config/settings.py`）和依赖清单：
 
 | 部分 | 功能 | 入口 |

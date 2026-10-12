@@ -7,9 +7,12 @@ from urllib.request import urlopen
 import pytest
 
 
-def _request(method: str, url: str, payload: dict | None = None) -> dict | str:
+def _request(method: str, url: str, payload: dict | None = None, *, token: str = '') -> dict | str:
     body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = Request(url, data=body, method=method, headers={"Content-Type": "application/json", "Accept": "application/json"})
+    headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+    if token:
+        headers['Authorization'] = 'Bearer ' + token
+    request = Request(url, data=body, method=method, headers=headers)
     try:
         with urlopen(request, timeout=45) as response:
             raw = response.read().decode("utf-8")
@@ -62,7 +65,7 @@ def test_five_service_runtime_business_closure():
         "content": "主轴振动报警 E102 时，应检查主轴轴承、温度传感器和装配关系。",
         "collection": "maint_fault_events",
         "metadata": {"source_name": "e2e-manual", "corpus": "cases", "alarm_code": "E102"},
-    })
+    }, token=os.getenv('RAG_INTERNAL_TOKEN', ''))
     assert seeded["success"] is True
     assert seeded["pipeline_ready"] is True
     assert not seeded.get("degraded", False)

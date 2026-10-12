@@ -179,7 +179,11 @@ def test_unfinished_assigned_work_blocks_removal_but_allows_adding_devices(clien
     order_id = service.create_workorder(device_id='M1')['workorder_id']
     service.assign_workorder(order_id, owner['user_id'])
     if archived:
-        service.delete_workorder(order_id, actor_id=owner['user_id'])
+        archived_order = service.repository.get(order_id)
+        archived_order.update(deleted=True, deleted_at=service._now(), deleted_by=owner['user_id'])
+        service.repository.archive(archived_order, {
+            'audit_id': 'TEST-ARCHIVE', 'operator': owner['user_id'], 'created_at': archived_order['deleted_at'],
+        }, [])
     original_order = service.repository.get(order_id)
     response = client.post('/api/team/responsibilities', json={'responsible_device_ids': ['M2']})
     assert response.status_code == 409

@@ -26,7 +26,8 @@ def main() -> int:
         [sys.executable, "-m", "pytest", "-c", "pytest-agent.ini", "-q"],
         [sys.executable, "-m", "pytest", "-c", "pytest-rag.ini", "-q"],
         [sys.executable, "-m", "pytest", "-c", "pytest-cad.ini", "-q"],
-        [sys.executable, "-m", "pytest", "tests/integration", "tests/e2e", "tests/performance", "-o", "addopts=", "-q"],
+        [sys.executable, "-m", "pytest", "-c", "pytest-agent.ini", "tests", "--ignore=tests/integration/test_freecad_document_mysql.py", "-o", "addopts=", "-q"],
+        [sys.executable, "-m", "pytest", "-c", "pytest-backend.ini", "tests/integration/test_freecad_document_mysql.py", "-o", "addopts=", "-q"],
     ]
     results = run_commands(commands)
     failed = [result.returncode for result in results if result.returncode]

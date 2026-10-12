@@ -21,10 +21,10 @@ def test_full_evidence_driven_runtime_lifecycle(tmp_path, monkeypatch):
         operations.execute_workorder("mark_repair_completed", {"workorder_id": order_id, "feedback": "已维修"}, actor_id="OTHER")
     assert not [call for call in factory.calls if call[1] == "start"]
     stale = {"device_id": "WRONG-DEVICE", "status": "running", "checked_at": "2000-01-01T00:00:00Z", "metrics": {"pressure": 1}}
-    completed = operations.execute_workorder("mark_repair_completed", {
-        "workorder_id": order_id, "repair_feedback": {"feedback": "检修完成，已排除故障"},
-        "repair_verification": {"passed": True, "device_recovery": stale},
-    }, actor_id=backend.actor_id)
+    # This test covers the retained automatic verification path. The public
+    # manual confirmation path has its own integration and failure coverage.
+    completed = operations.repair_controller.confirm_and_restart(
+        order_id, backend.actor_id, '检修完成，已排除故障', manual_restart=False)
     assert completed["machine_control"]["state"] == "running"
     assert completed["workorder"]["status"] == "completed"
     verification = completed["workorder"]["repair_verification"]

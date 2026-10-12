@@ -327,7 +327,10 @@ class MySQLRagWriter:
     def replace_cad_document(self, document: StructuredDocument) -> dict[str, int]:
         """Persist structured CAD drawing/version/layer/entity rows for a parsed DXF/DWG."""
 
-        entities = list(document.metadata.get("cad_entities") or [])
+        source_entities = document.metadata.get("cad_entities") or []
+        if len(source_entities) > MAX_CAD_ENTITIES:
+            raise ValueError('CAD relation entity budget exceeded')
+        entities = list(source_entities)
         if document.source_format not in {"dxf", "dwg"} and not entities:
             return {
                 "drawings": 0,
@@ -347,6 +350,7 @@ class MySQLRagWriter:
         for index, entity in enumerate(entities, start=1):
             entity["entity_id"] = _entity_row_id(version_id, entity, index)
         _sync_cad_block_entity_ids(document)
+        relation_rows = _cad_relation_rows(document, entities, version_id, drawing_id, document_id)
         connection = self._get_connection()
         try:
             connection.select_db(self.config.database)
@@ -421,7 +425,6 @@ class MySQLRagWriter:
                             _json({"layer_name": layer_name}),
                         ),
                     )
-                relation_rows = _cad_relation_rows(document, entities, version_id, drawing_id, document_id)
                 annotation_count = 0
                 for row in relation_rows:
                     cursor.execute(
@@ -741,6 +744,33 @@ def _entity_row_id(version_id: str, entity: dict[str, Any], index: int) -> str:
 MAX_SPATIAL_NEIGHBORS_PER_ENTITY = 4
 MAX_SPATIAL_RELATIONS = 20000
 MAX_SPATIAL_ENTITIES = 5000
+MAX_CAD_ENTITIES = 10000
+MAX_CAD_RELATIONS = 50000
+
+
+def _check_relation_budget(entities: list[dict[str, Any]], kinds: tuple[str, ...]) -> None:
+    if len(entities) > MAX_CAD_ENTITIES:
+        raise ValueError('CAD relation entity budget exceeded')
+    count = 0
+    for kind in kinds:
+        if kind in {'device', 'block'}:
+            groups: dict[str, int] = {}
+            for entity in entities:
+                if not entity.get('entity_id'):
+                    continue
+                if kind == 'block' and entity.get('entity_type') != 'INSERT':
+                    continue
+                key = entity.get('device_id' if kind == 'device' else 'block_name')
+                if key:
+                    groups[str(key)] = groups.get(str(key), 0) + 1
+            count += sum(size * (size - 1) // 2 for size in groups.values())
+        elif kind == 'layer':
+            count += sum(bool(entity.get('entity_id')) and entity.get('layer_name') is not None for entity in entities)
+        elif kind == 'spatial':
+            size = min(MAX_SPATIAL_ENTITIES, sum(bool(entity.get('entity_id')) and isinstance(entity.get('bbox'), list) and len(entity['bbox']) == 4 for entity in entities))
+            count += min(size * (size - 1) // 2, size * MAX_SPATIAL_NEIGHBORS_PER_ENTITY, MAX_SPATIAL_RELATIONS)
+        if count > MAX_CAD_RELATIONS:
+            raise ValueError('CAD relation budget exceeded; split the drawing into smaller imports')
 
 
 def _cad_relation_rows(
@@ -752,6 +782,7 @@ def _cad_relation_rows(
 ) -> list[tuple[Any, ...]]:
     """Build every entity relation row for one drawing version."""
 
+    _check_relation_budget(entities, ('device', 'block', 'layer', 'spatial'))
     rows: list[tuple[Any, ...]] = []
     rows.extend(_device_relation_rows(entities, version_id, drawing_id, document_id))
     rows.extend(_block_relation_rows(entities, version_id, drawing_id, document_id))
@@ -768,6 +799,7 @@ def _device_relation_rows(
 ) -> list[tuple[Any, ...]]:
     """Link entities that share the same device identifier."""
 
+    _check_relation_budget(entities, ('device',))
     grouped: dict[str, list[dict[str, Any]]] = {}
     for entity in entities:
         device_id = entity.get("device_id")
@@ -809,6 +841,7 @@ def _block_relation_rows(
 ) -> list[tuple[Any, ...]]:
     """Link INSERT references that instantiate the same block definition."""
 
+    _check_relation_budget(entities, ('block',))
     grouped: dict[str, list[str]] = {}
     for entity in entities:
         if entity.get("entity_type") != "INSERT":

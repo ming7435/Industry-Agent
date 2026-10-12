@@ -11,6 +11,8 @@ services:
 
   agent-service:
     environment:
+      BACKEND_INTERNAL_TOKEN: ${BACKEND_INTERNAL_TOKEN:?set BACKEND_INTERNAL_TOKEN}
+      RAG_INTERNAL_TOKEN: ${RAG_INTERNAL_TOKEN:?set RAG_INTERNAL_TOKEN}
       APP_ENV: production
       ALLOW_DEGRADED_STORAGE: "false"
       AGENT_API_TOKEN: ${AGENT_API_TOKEN:?set AGENT_API_TOKEN for production}
@@ -23,6 +25,7 @@ services:
 
   rag-service:
     environment:
+      RAG_INTERNAL_TOKEN: ${RAG_INTERNAL_TOKEN:?set RAG_INTERNAL_TOKEN}
       APP_ENV: production
       RAG_ALLOW_LOCAL_FALLBACK: "false"
       RAG_DATA_DIR: /data/rag
@@ -38,6 +41,7 @@ services:
 
   backend-service:
     environment:
+      BACKEND_INTERNAL_TOKEN: ${BACKEND_INTERNAL_TOKEN:?set BACKEND_INTERNAL_TOKEN}
       APP_ENV: production
       BACKEND_STORAGE: mysql
 

@@ -9,7 +9,8 @@ from app.harness.trace import safe_trace_value
 
 
 VERDICTS = ('pass', 'fail', 'degraded', 'unknown', 'infrastructure_error')
-_INFRA = re.compile(r'http\s*(?:error\s*)?[45]\d\d|timeout|timed out|connection|超时|连接|余额|未配置|模型不可用|llm_unavailable|model_unavailable', re.I)
+_INFRA = re.compile(r'http\s*(?:error\s*)?[45]\d\d|timeout|timed out|connection\s*(?:error|refused|reset)|'
+                    r'超时|连接(?:失败|被拒绝|中断|不可用)|余额|未配置|模型不可用|llm_unavailable|model_unavailable', re.I)
 
 
 def week_windows(now):
@@ -38,11 +39,17 @@ def _findings(output):
     return [str(x)[:400] for x in findings[:6]] if isinstance(findings, list) else [str(findings)[:400]]
 
 
-def _verdict(terminal):
+def _verdict(terminal, group):
     if terminal is None:
         return 'unknown'
     output = _output(terminal)
     findings = _findings(output)
+    for record in group:
+        if record.get('event') in {'tool_error', 'tool_completed'}:
+            result = record.get('tool_result') or record.get('result') or record.get('output') or {}
+            tool_error = record.get('error') or (result.get('error') if isinstance(result, Mapping) else '') or ''
+            if _INFRA.search(str(tool_error)):
+                return 'infrastructure_error'
     if terminal.get('event') == 'agent_timeout' or _INFRA.search(str(terminal.get('error') or output.get('error') or '') + ' '.join(findings)):
         return 'infrastructure_error'
     if output.get('error') or terminal.get('event') == 'agent_error':
@@ -109,7 +116,7 @@ def aggregate(records, registry, complete):
                 'failure_ewma': None, 'last_gain': 'not_evaluated', 'sources': [],
                 '_executed': set(), '_declared': set()})
             mixed = sum(n == name for n, _, _ in definitions) > 1
-            verdict = _verdict(terminal)
+            verdict = _verdict(terminal, group)
             if version == 'unknown' or mixed or run_id.startswith('unknown:'):
                 verdict = 'unknown'
             row['calls'] += 1
@@ -131,6 +138,7 @@ def aggregate(records, registry, complete):
                     'task_id': terminal.get('task_id') or '', 'agent': agent, 'name': name,
                     'timestamp': terminal.get('timestamp') or '', 'version': version, 'fingerprint': fingerprint,
                     'facts': json.dumps(safe_trace_value(facts), ensure_ascii=False)[:6000]})
+                row['sources'] = row['sources'][-5:]
     for row in result.values():
         declared, executed = row.pop('_declared'), row.pop('_executed')
         executed = executed & declared

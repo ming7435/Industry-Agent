@@ -79,7 +79,12 @@ assert result.status_code == 200, result.text
 assert result.json()['machine_control']['state'] == 'running', result.text
 stored = backend.call('get_workorder', {'workorder_id': order_id})['workorder']
 assert stored['maintenance_confirmed_by'] == tech['user']['user_id']
-assert stored['repair_verification']['phase'] == 'poststart'
+assert stored['repair_verification']['phase'] == 'manual_confirmation'
+assert stored['repair_verification']['automatic_verification'] is False
+confirmation = stored['technician_confirmation']
+assert confirmation['source'] == 'backend_team_repair_confirmation'
+assert confirmation['actor_id'] == tech['user']['user_id']
+assert confirmation['workorder_id'] == order_id
 assert stored['accepted_by'] == tech['user']['user_id']
 repeat = api.post(f'/api/workorders/{order_id}/action', json={'action': 'mark_repair_completed', 'feedback': '重复确认'})
 assert repeat.status_code == 200

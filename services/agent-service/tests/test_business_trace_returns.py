@@ -153,5 +153,5 @@ def test_quality_pdf_fields_and_missing_data_have_chinese_labels():
     from app.tools.report.generate_report_file import _value_lines
     lines='\n'.join(_value_lines({'quality_check_id':'QC-1','target_type':'production_part','result':'not_tested',
                                 'measurements':{'diameter_mm':10},'reinspection':{'passed':False}}))
-    assert '质检编号: QC-1' in lines and '未检测' in lines
+    assert '质检编号：QC-1' in lines and '未检测' in lines
     assert 'quality check id' not in lines and 'not_tested' not in lines

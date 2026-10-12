@@ -75,6 +75,7 @@ class TraceRecorder:
         self._records: deque[Dict[str, Any]] = deque(maxlen=max(1, int(maxlen)))
         self.store = store
         self.storage_error = ''
+        self._failed_days = set()
 
     def record(self, **payload: Any) -> Dict[str, Any]:
         context = payload.get('context')
@@ -98,6 +99,8 @@ class TraceRecorder:
             except Exception:
                 self.storage_error = '轨迹持久化不可用，当前记录仅保留在内存'
                 record['storage_warning'] = self.storage_error
+                with self._lock:
+                    self._failed_days.add(datetime.now(timezone.utc).date().isoformat())
         with self._lock:
             self._records.append(record)
         _emit_otel(record)
@@ -140,8 +143,13 @@ class TraceRecorder:
             try:
                 result = query(start, end, after=after, upper=upper, limit=limit)
                 with self._lock:
-                    gaps = any(r.get('storage_warning') and start <= datetime.fromisoformat(r['timestamp']) < end
-                               for r in self._records)
+                    failed_days = set(self._failed_days)
+                from datetime import timedelta
+                gaps = any(datetime.fromisoformat(day).replace(tzinfo=timezone.utc) < end and
+                           datetime.fromisoformat(day).replace(tzinfo=timezone.utc) + timedelta(days=1) > start
+                           for day in failed_days)
+                if not result.get('recording_complete'):
+                    result.update(complete=False, message='尚无持续观测覆盖证明，不能用于周计划')
                 if gaps:
                     result.update(complete=False, message='窗口含未持久化事件，不能用于周计划')
                 return result

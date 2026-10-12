@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from app.chunk import ChunkerConfig
 from app.embedding import EmbeddingConfig
 
-PARSER_PIPELINE_VERSION = 1
+PARSER_PIPELINE_VERSION = 2
 
 
 @dataclass(frozen=True)

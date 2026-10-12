@@ -53,7 +53,7 @@ test('quality sidebar retains part detection rather than factory output, across 
   const {fixture,page,reads,writes,errors}=await setup();
   try {
     const entry=page.getByRole('button',{name:'质检系统',exact:true});await entry.waitFor();
-    await page.waitForFunction(()=>document.querySelector('.quality-workspace,.pq-workspace'));
+    await page.waitForFunction(()=>document.querySelector('.quality-workspace'));
     assert.equal(await page.getByRole('region',{name:'质检系统',exact:true}).count(),1);
     await page.getByRole('heading',{name:'质量检测',exact:true}).waitFor();
     await page.getByText('04898',{exact:true}).waitFor();

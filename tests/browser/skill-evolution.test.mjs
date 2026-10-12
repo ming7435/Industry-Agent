@@ -12,11 +12,11 @@ const proposal = {proposal_id:'c'.repeat(32),candidate_hash:'b'.repeat(64),agent
     trigger_summary:'现场证据不足',expected_result:'证据不足时列出待核查项，不能断言根因已经确认。',
     rules:['现场证据不足时保留不确定性。'],goal:skill.goal,version:'1.1'}};
 
-async function setup({role='technician', delayed=null, staleAfterConfirm=false,publishFailsOnce=false}={}) {
+async function setup({role='technician', delayed=null, staleAfterConfirm=false,publishFailsOnce=false,loopStats=false,controlDelay=null}={}) {
   const fixture=await centerFixture({fullApp:true}), page=await fixture.browser.newPage();
   page.setDefaultTimeout(8000);
   const writes=[], errors=[], staleRead=deferred();
-  let status=proposal.status, tested=false, published=false;
+  let status=proposal.status, tested=false, published=false,controlPending=false;
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/**',route=>{
     const req=route.request(),path=new URL(req.url()).pathname;
@@ -27,6 +27,19 @@ async function setup({role='technician', delayed=null, staleAfterConfirm=false,p
       scenarios:[{scenario_id:'turret',name:'刀塔超时'}]}]});
     if(path===`/api/expert/skills/diagnosis/${skill.name}`) return respond(route,skill);
     if(path==='/api/expert/evolution') return respond(route,{items:[{...proposal,status}],worker:{enabled:true}});
+    if(path==='/api/expert/skill-loop') return respond(route,loopStats ? {
+      kind:'skill_loop',loop_id:'2026-10-12',control:{paused:false,revision:controlPending ? 3 : 1},
+      health:{previous:{complete:true,items:[{agent:'diagnosis',name:skill.name,version:'1.0',calls:4,
+        verdicts:{pass:1,fail:1,degraded:1,unknown:0,infrastructure_error:1},coverage:{executed:2,declared:4},last_gain:'not_evaluated'}]},
+        current:{complete:false,items:[],message:'窗口尚未收集完整'}},
+      plan:{limit:3,used:1,remaining:2,selected:[{agent:'diagnosis',name:skill.name,reason:'真实窗口显示证据不足',phase:'awaiting_confirmation'}]},
+      evaluation:{status:'not_evaluated',message:'没有同基线对照，收益未评估'}
+    } : {kind:'skill_loop',health:null,plan:null,control:{paused:false},evaluation:{status:'not_evaluated'}});
+    if(path==='/api/expert/skill-loop/control') {
+      if(controlDelay) {controlPending=true;controlDelay.started.resolve();
+        return controlDelay.release.promise.then(()=>respond(route,{paused:true,revision:2})).catch(()=>{});}
+      writes.push({path,body:req.postDataJSON()});return respond(route,{paused:true,revision:2});
+    }
     if(path===`/api/expert/evolution/${proposal.proposal_id}`) {
       if(delayed) {delayed.started.resolve(); return delayed.release.promise.then(()=>respond(route,proposal)).catch(()=>{});}
       if(staleAfterConfirm && tested && status==='verifying') return respond(route,{...proposal,revision:1,
@@ -51,6 +64,50 @@ async function setup({role='technician', delayed=null, staleAfterConfirm=false,p
   return {fixture,page,writes,errors,staleRead,finish:()=>{status='awaiting_publication';}};
 }
 
+test('技能优化循环展示真实分类和周预算，暂停不操作机器',{timeout:20000},async()=>{
+  const {fixture,page,writes,errors}=await setup({loopStats:true});
+  try {
+    await page.goto(fixture.base+'/?view=expert');
+    const panel=page.getByRole('region',{name:'技能优化循环',exact:true});
+    await panel.getByText('真实窗口显示证据不足',{exact:true}).waitFor();
+    assert.match(await panel.innerText(),/基础设施异常.*1/);
+    assert.match(await panel.innerText(),/已占用.*1.*最多.*3/);
+    assert.match(await panel.innerText(),/收益未评估/);
+    await panel.getByRole('button',{name:'暂停技能优化',exact:true}).click();
+    assert.deepEqual(writes,[{path:'/api/expert/skill-loop/control',body:{paused:true}}]);
+    assert.deepEqual(errors,[]);
+  } finally {await fixture.close();}
+});
+
+test('监督人可查看 Skill Loop，但没有优化开关',{timeout:20000},async()=>{
+  const {fixture,page,writes}=await setup({loopStats:true,role:'supervisor'});
+  try {
+    await page.goto(fixture.base+'/?view=expert');
+    const panel=page.getByRole('region',{name:'技能优化循环',exact:true});
+    await panel.getByText('真实窗口显示证据不足',{exact:true}).waitFor();
+    assert.equal(await panel.getByRole('button',{name:'暂停技能优化',exact:true}).count(),0);
+    assert.deepEqual(writes,[]);
+  } finally {await fixture.close();}
+});
+
+test('迟到的优化开关回执不能覆盖更新的服务端状态',{timeout:25000},async()=>{
+  const controlDelay={started:deferred(),release:deferred()};
+  const {fixture,page,errors}=await setup({loopStats:true,controlDelay});
+  try {
+    await page.clock.install();
+    await page.goto(fixture.base+'/?view=expert');
+    const panel=page.getByRole('region',{name:'技能优化循环',exact:true});
+    await panel.getByRole('button',{name:'暂停技能优化',exact:true}).click();
+    await controlDelay.started.promise;
+    const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/expert/skill-loop');
+    await page.clock.fastForward(16000);await response;
+    controlDelay.release.resolve();
+    await panel.getByRole('button',{name:'暂停技能优化',exact:true}).waitFor({state:'visible'});
+    assert.equal(await panel.getByRole('button',{name:'恢复技能优化',exact:true}).count(),0);
+    assert.deepEqual(errors,[]);
+  } finally {controlDelay.release.resolve();await fixture.close();}
+});
+
 for(const scenario of [{name:'修改说明和预期自动填好，人工审核测试，完成后仍须点击发布'},
   {name:'自动稿测试通过后刷新技能，回执仍可核对并人工发布',refreshBeforePublish:true},
   {name:'人工发布临时失败后保留测试回执，再次审核可安全发布',publishFailsOnce:true}]) {
@@ -61,8 +118,9 @@ test(scenario.name,{timeout:30000},async()=>{
     const panel=page.getByRole('region',{name:'自动优化修改稿',exact:true});
     const editor=page.getByRole('region',{name:'技能编辑',exact:true});
     await editor.getByLabel('修改说明',{exact:true}).waitFor();
-    await page.waitForFunction(reason=>document.querySelector('[aria-label="技能编辑"] input[placeholder*="补充"]')?.value===reason,
+    await page.waitForFunction(reason=>document.getElementById('expert-change-reason')?.value===reason,
       proposal.draft.reason);
+    assert.equal(await editor.getByLabel('修改说明',{exact:true}).isEditable(),false);
     assert.equal(await editor.getByLabel('预期结果',{exact:true}).inputValue(),proposal.draft.expected_result);
     assert.equal(await editor.getByRole('button',{name:'测试修改',exact:true}).isEnabled(),false);
     await editor.getByRole('checkbox',{name:'我已审核自动修改稿及预期结果，允许开始测试'}).check();

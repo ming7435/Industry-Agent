@@ -18,7 +18,7 @@ class EvolutionWorker:
     def status(self):
         return {'enabled': bool(self.enabled), 'scan_interval_seconds': 60,
                 'model_configured': bool(getattr(self.service.client_factory(), 'available', False)),
-                'message': self.last_error or ('自动收集执行问题并生成待审核修改稿' if self.enabled else '后台自动优化未启动')}
+                'message': self.last_error or ('独立技能优化循环：按完整周计划准备修改稿，最终由人工发布' if self.enabled else '后台自动优化未启动')}
 
     def tick(self):
         try:
@@ -28,9 +28,11 @@ class EvolutionWorker:
             # 每轮每项最多一次读对账；多个进程由服务端租约/CAS隔离。
             for record in active[:4]:
                 self.service.advance(record['proposal_id'])
-            if monotonic() >= self.next_scan and getattr(self.service.client_factory(), 'available', False):
+            if monotonic() >= self.next_scan:
                 self.next_scan = monotonic() + 60
-                self.service.scan_once()
+                self.service.loop.refresh()
+                if getattr(self.service.client_factory(), 'available', False):
+                    self.service.loop.scan_once(refresh=False)
             self.last_error = ''
         except Exception:
             self.last_error = '自动优化依赖暂不可用，旧版保持不变；请检查MySQL、模型及验证服务'

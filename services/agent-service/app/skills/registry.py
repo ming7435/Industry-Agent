@@ -393,7 +393,7 @@ _SKILL_OBSERVER = ContextVar('skill_loop_observer', default=None)
 @contextmanager
 def skill_observation_scope(callback):
     """只有实际 Harness 作用域启用，只读记录选择，不干预业务循环。"""
-    token = _SKILL_OBSERVER.set((callback, set()))
+    token = _SKILL_OBSERVER.set((callback, set(), {}))
     try:
         yield
     finally:
@@ -402,15 +402,34 @@ def skill_observation_scope(callback):
 
 def _observe_skills(definitions):
     observer = _SKILL_OBSERVER.get()
-    if observer is None:
+    if observer is None or _SKILL_OBSERVATION_PAUSED.get():
         return
-    callback, seen = observer
+    callback, seen, loaded = observer
     for definition in definitions:
+        loaded[(definition.agent, definition.name)] = definition
         snapshot = definition.observation()
         key = (snapshot['agent'], snapshot['skill'], snapshot['skill_fingerprint'])
         if key not in seen:
             seen.add(key)
             callback(snapshot)
+
+
+_SKILL_OBSERVATION_PAUSED = ContextVar('skill_loop_mapping_only', default=False)
+
+
+@contextmanager
+def skill_mapping_scope():
+    """节点映射是元数据查询，不是业务重新选择或重新加载正文。"""
+    token = _SKILL_OBSERVATION_PAUSED.set(True)
+    try:
+        yield
+    finally:
+        _SKILL_OBSERVATION_PAUSED.reset(token)
+
+
+def observed_definition(agent, name):
+    observer = _SKILL_OBSERVER.get()
+    return observer[2].get((agent, name)) if observer else None
 
 
 @contextmanager

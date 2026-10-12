@@ -382,7 +382,7 @@ class RAGServiceClient:
             self.base_url + path,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             method="POST",
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers={"Content-Type": "application/json", **self._headers()},
         )
         with urlopen(request, timeout=self.timeout) as response:
             value = json.loads(response.read().decode("utf-8"))
@@ -391,9 +391,17 @@ class RAGServiceClient:
         return value
 
     def _get(self, path: str) -> Dict[str, Any]:
-        request = Request(self.base_url + path, method="GET", headers={"Accept": "application/json"})
+        request = Request(self.base_url + path, method="GET", headers=self._headers())
         with urlopen(request, timeout=self.timeout) as response:
             value = json.loads(response.read().decode("utf-8"))
         if not isinstance(value, dict):
             raise ValueError("RAG Service 返回格式错误")
         return value
+
+    @staticmethod
+    def _headers() -> dict[str, str]:
+        headers = {'Accept': 'application/json'}
+        token = os.getenv('RAG_INTERNAL_TOKEN', '').strip()
+        if token:
+            headers['Authorization'] = 'Bearer ' + token
+        return headers

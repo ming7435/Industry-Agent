@@ -53,6 +53,19 @@ def test_internal_ports_are_loopback_only():
             assert all(port.startswith("127.0.0.1:") for port in service.get("ports", [])), name
 
 
+def test_internal_credentials_are_configured_at_both_service_boundaries():
+    services = _compose()['services']
+    for credential, server in [('BACKEND_INTERNAL_TOKEN', 'backend-service'),
+                               ('RAG_INTERNAL_TOKEN', 'rag-service')]:
+        server_env = services[server]['environment']
+        agent_env = services['agent-service']['environment']
+        assert credential in server_env and credential in agent_env
+        assert server_env[credential] == agent_env[credential]
+        production = yaml.safe_load((ROOT / 'infra/docker/docker-compose.production.yml').read_text(encoding='utf-8'))
+        for consumer in (server, 'agent-service'):
+            assert ':?' in production['services'][consumer]['environment'][credential]
+
+
 def test_production_persists_rag_and_protects_gateway():
     production = yaml.safe_load((ROOT / "infra/docker/docker-compose.production.yml").read_text(encoding="utf-8"))
     services = production["services"]

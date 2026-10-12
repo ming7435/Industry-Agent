@@ -25,6 +25,8 @@
 .expert-workspace form input, .expert-workspace textarea { width: 100%; box-sizing: border-box; border: 1px solid #c9dde1; padding: 12px; border-radius: 8px; font: inherit; background: #fbfdfd; color: #243d45; }
 .expert-workspace textarea { resize: vertical; line-height: 1.65; font-weight: 400; min-height: 340px; }
 .expert-workspace input[readonly], .expert-workspace textarea[readonly] { background: #f5f8f8; }
+.expert-workspace textarea.expert-change-reason { min-height: 110px; margin-top: 8px; }
+.expert-change-note p { margin: 8px 0 0; font-size: 14px; font-weight: 400; }
 .expert-workspace .expert-save { align-self: flex-start; color: white; background: #087f72; border-color: #087f72; font-weight: 700; }
 .expert-workspace details { border-top: 1px solid #e1e9ea; margin-top: 26px; padding-top: 18px; }
 .expert-workspace summary { cursor: pointer; color: #467c80; }

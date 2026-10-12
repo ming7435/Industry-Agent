@@ -13,9 +13,8 @@ def test_event_to_closed_case_smoke(tmp_path, monkeypatch):
     operations = runtime.container.operations
     assert state["workorder"]["status"] == "in_progress"
     assert not rag.upserts and not list(runtime.container.registry.report_store.values())
-    completed = operations.execute_workorder("mark_repair_completed", {
-        "workorder_id": order_id, "repair_feedback": {"feedback": "检修完成，故障已排除"},
-    }, actor_id=backend.actor_id)
+    completed = operations.repair_controller.confirm_and_restart(
+        order_id, backend.actor_id, '检修完成，故障已排除', manual_restart=False)
     assert completed["workorder"]["status"] == "completed"
     assert completed["machine_control"]["state"] == "running"
     assert completed["workorder"]["repair_verification"]["phase"] == "poststart"

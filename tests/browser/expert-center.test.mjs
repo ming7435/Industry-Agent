@@ -83,6 +83,53 @@ async function testAndReview(page) {
   await page.getByRole('checkbox', { name: '我已核对测试结果，确认符合预期', exact: true }).check();
 }
 
+async function readOnlyNote(page) {
+  const note = page.getByRole('textbox', { name: '修改说明', exact: true });
+  await note.waitFor();
+  assert.equal(await note.isEditable(), false);
+  return note;
+}
+
+test('修改说明等待系统生成且不能手填，不虚构尚未发生的修改', async () => {
+  const { fixture, page, writes, trials, errors } = await setup();
+  try {
+    await page.goto(fixture.base + '/?view=expert');
+    const note = page.getByRole('textbox', { name: '修改说明', exact: true });
+    await note.waitFor();
+    assert.equal(await note.isEditable(), false);
+    assert.equal(await note.inputValue(), '');
+    assert.match(await note.getAttribute('placeholder'), /系统.*生成/);
+    assert.deepEqual(writes, []); assert.deepEqual(trials, []); assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+test('人工修改技能后系统摘要随实际改动更新，测试与发布使用同一说明', async () => {
+  const { fixture, page, writes, trials, errors } = await setup();
+  try {
+    await page.goto(fixture.base + '/?view=expert');
+    const document = page.getByRole('textbox', { name: '技能正文', exact: true });
+    const note = page.getByRole('textbox', { name: '修改说明', exact: true });
+    await document.waitFor();
+    const goal = page.getByRole('textbox', { name: '技能目标', exact: true });
+    await goal.fill('补查刀塔证据');
+    assert.match(await note.inputValue(), /调整技能目标.*补查刀塔证据/);
+    await goal.fill(skill.goal);
+    assert.equal(await note.inputValue(), '', '撤销目标调整后不能保留已撤销改动的说明');
+    await document.fill('核对刀塔就位信号。');
+    assert.equal(await note.isEditable(), false);
+    assert.match(await note.inputValue(), /系统.*技能正文.*核对刀塔就位信号/s);
+    await document.fill('检查主轴温度与实际负载。');
+    assert.match(await note.inputValue(), /检查主轴温度与实际负载/);
+    assert.doesNotMatch(await note.inputValue(), /核对刀塔就位信号|已验证|测试通过/);
+    const generated = await note.inputValue();
+    await testAndReview(page);
+    await page.getByRole('button', { name: '发布到系统', exact: true }).click();
+    await page.getByText('已发布到系统，新说明用于后续任务。', { exact: true }).waitFor();
+    assert.equal(trials[0].reason, generated); assert.equal(writes[0].reason, generated);
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
 test('技能目录与详情明确显示每个技能的名称、标识及作用，选择后不混用其它技能说明', async () => {
   const other = { ...skill, agent: 'knowledge', agent_label: '知识检索', name: 'manual_evidence_skill',
     title: '维修手册取证', goal: '检索当前设备手册并返回可核对的维修证据',
@@ -124,9 +171,10 @@ test('专家正文直接展示文章格式，未编辑的正文测试时保持�
     assert.equal(await editor.getByRole('listitem').count(), 2);
     assert.doesNotMatch(await editor.innerText(), /#|\*\*|`|\[检查说明\]/);
     assert.equal(await page.getByText('技能正文（Markdown）', { exact: true }).count(), 0);
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('核对现有说明');
+    await readOnlyNote(page);
     await testAndReview(page);
     assert.equal(trials[0].document, source);
+    assert.match(trials[0].reason, /本次未修改技能目标及正文/);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
@@ -145,7 +193,7 @@ test('普通文章编辑保留标题、引用、表格及示例内容，发布�
       element.focus();
     });
     await page.keyboard.insertText('人工补充反馈检查。');
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('增加反馈检查');
+    await readOnlyNote(page);
     await testAndReview(page);
     assert.match(trials[0].document, /# 报警诊断/);
     assert.match(trials[0].document, /\*\*设备\*\* 和 `alarm_code`/);
@@ -172,7 +220,7 @@ test('使用排版按钮修改标题，空正文及过长正文不能试运行',
     await editor.waitFor(); await editor.fill('人工维修经验');
     await page.getByRole('toolbar', { name: '正文排版' }).getByRole('button', { name: '标题', exact: true }).click();
     assert.equal(await editor.getByRole('heading', { name: '人工维修经验', level: 1 }).count(), 1);
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('调整标题');
+    await readOnlyNote(page);
     await testAndReview(page);
     assert.match(trials[0].document, /^# 人工维修经验/);
     await editor.fill('');
@@ -203,7 +251,7 @@ test('试运行建议以正常段落显示，粘贴正文不会执行 HTML', asy
     });
     assert.equal(await editor.locator('img, script').count(), 0);
     assert.equal(await page.evaluate(() => window.expertPasteExecuted), false);
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('核对排版');
+    await readOnlyNote(page);
     await testAndReview(page);
     const recommendation = page.getByRole('article', { name: '处理建议', exact: true });
     assert.equal(await recommendation.getByRole('heading', { name: '检查方法', level: 2 }).count(), 1);
@@ -224,7 +272,7 @@ test('专家中心只显示上次修改时间，隐藏版本和内部循环，�
     assert.doesNotMatch(await page.getByRole('region', { name: '专家中心', exact: true }).innerText(), /版本|内部循环|诊断循环/);
     assert.equal(await page.getByText('上次修改：2026-10-12 08:10:00', { exact: true }).count(), 2);
     await page.getByRole('textbox', { name: '技能正文', exact: true }).fill('报警诊断\n\n先核对当前设备，再补查缺失证据。');
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('补充设备核对');
+    await readOnlyNote(page);
     await testAndReview(page);
     await page.getByRole('button', { name: '发布到系统', exact: true }).click();
     await page.getByText('已发布到系统，新说明用于后续任务。', { exact: true }).waitFor();
@@ -262,7 +310,7 @@ test('项目现有维修人员账号可以直接更新技能', async () => {
     const document = page.getByRole('textbox', { name: '技能正文', exact: true });
     await document.waitFor(); assert.equal(await document.isEditable(), true);
     await document.fill('维修人员经验\n\n先核对报警与现场数据。');
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('补充现场经验');
+    await readOnlyNote(page);
     await testAndReview(page);
     await page.getByRole('button', { name: '发布到系统', exact: true }).click();
     await page.getByText('已发布到系统，新说明用于后续任务。', { exact: true }).waitFor();
@@ -276,7 +324,7 @@ test('版本冲突保留草稿，刷新只取新基线不自动覆盖正文', as
     await page.goto(fixture.base + '/?view=expert');
     const document = page.getByRole('textbox', { name: '技能正文', exact: true });
     await document.waitFor(); await document.fill('我的现场经验\n\n检查接线。');
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('补充');
+    await readOnlyNote(page);
     await testAndReview(page);
     await page.getByRole('button', { name: '发布到系统', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: '技能已被其它修改更新' }).waitFor();
@@ -309,7 +357,7 @@ test('测试结果必须人工核对，修改草稿或样例后立即要求重�
     await page.goto(fixture.base + '/?view=expert');
     const publish = page.getByRole('button', { name: '发布到系统', exact: true });
     await publish.waitFor(); assert.equal(await publish.isDisabled(), true);
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('验证新说明');
+    await readOnlyNote(page);
     await page.getByRole('button', { name: '测试修改', exact: true }).click();
     await page.getByRole('heading', { name: '试运行结果', exact: true }).waitFor();
     assert.equal(await publish.isDisabled(), true);
@@ -329,7 +377,7 @@ test('测试失败不允许发布；退出后迟到的测试结果不能恢复�
   const failed = await setup({ testFailure: true });
   try {
     await failed.page.goto(failed.fixture.base + '/?view=expert');
-    await failed.page.getByRole('textbox', { name: '修改说明', exact: true }).fill('验证失败');
+    await readOnlyNote(failed.page);
     await failed.page.getByRole('button', { name: '测试修改', exact: true }).click();
     await failed.page.getByRole('alert').filter({ hasText: '测试未完成' }).waitFor();
     assert.equal(await failed.page.getByRole('button', { name: '发布到系统', exact: true }).isDisabled(), true);
@@ -339,7 +387,7 @@ test('测试失败不允许发布；退出后迟到的测试结果不能恢复�
   const { fixture, page, writes } = await setup({ delayedTrial });
   try {
     await page.goto(fixture.base + '/?view=expert');
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('延迟测试');
+    await readOnlyNote(page);
     await page.getByRole('button', { name: '测试修改', exact: true }).click();
     await delayedTrial.started.promise;
     await page.locator('.team-access').evaluate(element => { element.open = true; });
@@ -397,7 +445,7 @@ test('现有机器测试等待人工维修、复机和报告，重新打开页�
   const { fixture, page, trials, writes, completions, finishReport, errors } = await setup({ machineFlow: true });
   try {
     await page.goto(fixture.base + '/?view=expert');
-    await page.getByRole('textbox', { name: '修改说明', exact: true }).fill('使用模拟机器核对全流程');
+    await readOnlyNote(page);
     await page.getByRole('button', { name: '测试修改', exact: true }).click();
     await page.getByRole('link', { name: 'WO-MACHINE-NEW', exact: true }).waitFor();
     const details = page.getByRole('region', {name:'测试详情',exact:true});

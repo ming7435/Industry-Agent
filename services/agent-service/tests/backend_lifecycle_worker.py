@@ -23,7 +23,8 @@ def main():
         team.register("隔离测试维修人员", "test-only-password", "technician", device_id)
         result, _ = team.login("隔离测试维修人员", "test-only-password")
     elif action == "prestart":
-        result = service.confirm_team_repair(values["workorder_id"], values["actor_id"], values["feedback"], values["snapshot"])
+        result = service.confirm_team_repair(values["workorder_id"], values["actor_id"], values["feedback"],
+            values.get('snapshot') or {}, manual_restart=values.get('manual_restart') is True)
     elif action == "poststart":
         result = service.finalize_team_repair(values["workorder_id"], values["snapshot"])
     else:

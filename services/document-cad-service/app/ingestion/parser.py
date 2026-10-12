@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .file_reader import PathLike, read_file
+from shared.ingestion_security import MAX_IMAGE_BYTES, local_image_path, read_image_payload
 from .models import (
     BlockType,
     BoundingBox,
@@ -123,7 +124,7 @@ def parse_document(
     elif suffix == ".txt":
         document = parse_txt(source.path)
     elif suffix in {".md", ".markdown"}:
-        document = parse_markdown(source.path, image_describer=image_describer)
+        document = parse_markdown(source.path, image_describer=image_describer, asset_root=source_root)
     elif suffix == ".docx":
         document = parse_docx(source.path, image_describer=image_describer)
     elif suffix == ".csv":
@@ -249,7 +250,7 @@ def parse_image(path: str | Path, *, image_describer: ImageDescriber | None = No
     return structured_document(source.path, [block], source_format=source.suffix.lstrip("."), assets=[asset], metadata={"recognition_status": status})
 
 
-def parse_markdown(path: str | Path, *, image_describer: ImageDescriber | None = None, vision_prompt: str = DEFAULT_VISION_PROMPT) -> StructuredDocument:
+def parse_markdown(path: str | Path, *, image_describer: ImageDescriber | None = None, vision_prompt: str = DEFAULT_VISION_PROMPT, asset_root: Path | None = None) -> StructuredDocument:
     source = DocumentSource.from_path(path, extensions={".md", ".markdown"})
     text, encoding = source.read_text()
     blocks: list[DocumentBlock] = []
@@ -293,7 +294,7 @@ def parse_markdown(path: str | Path, *, image_describer: ImageDescriber | None =
         if image_match:
             flush_text()
             reference = image_match.group(2).strip()
-            local_image = _resolve_local_image(source.path, reference)
+            local_image = _resolve_local_image(source.path, reference, asset_root=asset_root)
             if local_image is None:
                 add_text(line, {"source": "markdown_image_reference", "image_alt": image_match.group(1), "image_reference": reference, "heading_path": list(heading_path)})
             else:
@@ -927,8 +928,10 @@ def describe_visual(
 
 
 def image_asset_from_file(path: Path, *, asset_id: str = "image") -> ImageAsset:
-    data = read_file(path)
-    media_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    try:
+        data, media_type = read_image_payload(path)
+    except ValueError as exc:
+        raise ImageParseError(str(exc)) from exc
     if path.suffix.lower() == ".jp2":
         try:
             from PIL import Image
@@ -941,6 +944,8 @@ def image_asset_from_file(path: Path, *, asset_id: str = "image") -> ImageAsset:
             media_type = "image/png"
         except (ImportError, OSError, ValueError) as exc:
             raise ImageParseError(f"Unable to convert JP2 image '{path}' to PNG: {exc}") from exc
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ImageParseError('Converted image exceeds the configured byte budget')
     return ImageAsset(
         asset_id=asset_id,
         page_number=1,
@@ -1005,11 +1010,8 @@ def _docx_asset(document: Any, relationship_id: str, image_index: int) -> ImageA
         return None
 
 
-def _resolve_local_image(markdown_path: Path, reference: str) -> Path | None:
-    if re.match(r"^(?:https?:|data:|//)", reference, flags=re.IGNORECASE):
-        return None
-    candidate = (markdown_path.parent / reference.split("#", 1)[0].split("?", 1)[0]).resolve()
-    return candidate if candidate.is_file() else None
+def _resolve_local_image(markdown_path: Path, reference: str, *, asset_root: Path | None = None) -> Path | None:
+    return local_image_path(markdown_path, reference, asset_root)
 
 
 def _is_table_start(lines: list[str], index: int) -> bool:

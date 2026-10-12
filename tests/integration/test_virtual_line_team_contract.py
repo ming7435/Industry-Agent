@@ -32,7 +32,8 @@ def test_registered_team_stop_dispatch_confirm_restart(tmp_path):
             assert body['action'] in {'start', 'emergency_stop'}
             calls.append((device_id, body['action']))
             states[device_id] = 'running' if body['action'] == 'start' else 'stopped'
-            self.reply({'ok': True})
+            self.reply({'ok': True, 'action': body['action'],
+                        'device': {'device_id': device_id, 'status': states[device_id]}})
         def log_message(self, *args):
             pass
     factory = ThreadingHTTPServer(('127.0.0.1', 0), FactoryHandler)
@@ -42,6 +43,7 @@ def test_registered_team_stop_dispatch_confirm_restart(tmp_path):
     env = {**os.environ, 'PYTHON_DOTENV_DISABLED': '1', 'APP_ENV': 'testing', 'BACKEND_STORAGE': 'sqlite', 'BACKEND_SQLITE_PATH': str(tmp_path / 'backend.db'), 'BACKEND_INTERNAL_TOKEN': 'isolated-integration-token', 'AGENT_API_TOKEN': '', 'BACKEND_SERVICE_BASE_URL': f'http://127.0.0.1:{port}', 'FACTORY_API_BASE_URL': f'http://127.0.0.1:{factory.server_port}', 'FACTORY_CONTROL_MODE': 'virtual', 'RAG_ALLOW_LOCAL_FALLBACK': 'true'}
     for key in ('RAG_SERVICE_BASE_URL', 'MODEL_SERVICE_BASE_URL', 'CAD_SERVICE_BASE_URL', 'MCP_CAD_URL', 'MCP_MES_URL', 'MCP_QMS_URL', 'MCP_INVENTORY_URL'):
         env[key] = ''
+    env.update(PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
     for key in ('EVENT_STORE_PATH', 'WORKORDER_STORE_PATH', 'LEARNING_RESULT_STORE_PATH', 'REPORT_STORE_PATH', 'PENDING_TASK_STORE_PATH', 'LINE_SAFETY_STORE_PATH'):
         env[key] = str(tmp_path / (key.lower() + '.db'))
     env['PYTHONPATH'] = str(root / 'services/backend-service') + os.pathsep + str(root)

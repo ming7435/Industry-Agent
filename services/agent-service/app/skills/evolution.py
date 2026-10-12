@@ -67,7 +67,8 @@ def build_draft(current, source, client):
     findings = facts.get('validation_errors') or facts.get('validation_findings') or [] if isinstance(facts, dict) else []
     trigger_summary = '；'.join(str(item) for item in findings[:3]) if isinstance(findings, list) else str(findings)
     trigger_summary = ' '.join(trigger_summary.split())[:120] or '业务运行降级或证据不足，需要补充核查规则'
-    reason = ('优化依据：' + trigger_summary + '。修改内容：' + reason.strip()[:300])[:440]
+    planning = ('周窗口优化：' + str(source['planning_reason'])[:100] + '。') if source.get('planning_reason') else ''
+    reason = (planning + '优化依据：' + trigger_summary + '。修改内容：' + reason.strip()[:300])[:440]
     original = current['document']
     heading = re.search(r'^## 业务判断规则[^\n]*\n', original, re.M)
     if not heading:
@@ -145,9 +146,19 @@ class SkillEvolution:
 
     def scan_once(self):
         from app.skills.evolution_sources import source_records
-        records = self.list()
         for source in source_records(self.manager.trace, self.manager.registry):
+            result = self.generate_source(source)
+            if result is not None:
+                return result
+        return None
+
+    def generate_source(self, source):
+        """内部入口；来源仍来自服务器轨迹/周计划，不对客户端开放。"""
+        records = self.list()
+        for source in [source]:
             current = self.manager.detail(source['agent'], source['name'])
+            if source.get('fingerprint') and current['content_fingerprint'] != source['fingerprint']:
+                return None
             if any(r['agent'] == source['agent'] and r['name'] == source['name'] and r['status'] in ACTIVE
                    for r in records):
                 continue
@@ -161,6 +172,8 @@ class SkillEvolution:
                        'agent': source['agent'], 'name': source['name'], 'source': source,
                        'base_revision': current['revision'], 'protected_tools': current['tools'],
                        'created_at': _now(), 'updated_at': _now(), 'message': '等待生成修改稿', 'draft': None}
+            if source.get('skill_loop_id'):
+                initial['skill_loop_id'] = source['skill_loop_id']
             record = self.store.get_or_create(NS, proposal_id, lambda: initial)
             if record['status'] != 'queued':
                 continue
@@ -180,6 +193,11 @@ class SkillEvolution:
                 return self._change(record, status='generation_failed',
                                     message='模型或生成结果校验失败，旧版未修改；请检查模型服务和执行来源')
         return None
+
+    @property
+    def loop(self):
+        from app.skills.loop import SkillLoop
+        return SkillLoop(self)
 
     def _baseline(self, record):
         current = self.manager.detail(record['agent'], record['name'])

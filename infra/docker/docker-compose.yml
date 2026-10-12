@@ -122,6 +122,7 @@ services:
       MODEL_SERVICE_BASE_URL: http://model-service:8040
       RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
       RAG_ALLOWED_INGEST_ROOT: ${RAG_ALLOWED_INGEST_ROOT:-/app/services/rag-service/data}
+      RAG_INTERNAL_TOKEN: ${RAG_INTERNAL_TOKEN:-}
       RAG_EMBEDDING_DIM: ${RAG_EMBEDDING_DIM:-1024}
       OBJECT_STORAGE_ENDPOINT: minio:9000
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
@@ -181,6 +182,8 @@ services:
       SERVICE_HOST: 0.0.0.0
       SERVICE_PORT: 8010
       RAG_SERVICE_BASE_URL: http://rag-service:8020
+      RAG_INTERNAL_TOKEN: ${RAG_INTERNAL_TOKEN:-}
+      BACKEND_INTERNAL_TOKEN: ${BACKEND_INTERNAL_TOKEN:-}
       MCP_CAD_URL: http://cad-service:8050
       BACKEND_SERVICE_BASE_URL: http://backend-service:8030
       MCP_MES_URL: http://backend-service:8030
@@ -296,6 +299,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       BACKEND_STORAGE: ${BACKEND_STORAGE:-mysql}
+      BACKEND_INTERNAL_TOKEN: ${BACKEND_INTERNAL_TOKEN:-}
       REDIS_URL: redis://redis:6379/0
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306

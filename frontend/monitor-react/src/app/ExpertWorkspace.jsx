@@ -8,6 +8,13 @@ import './expert.css';
 const endpoint = skill => `/api/expert/skills/${encodeURIComponent(skill.agent)}/${encodeURIComponent(skill.name)}`;
 const identity = skill => skill ? `${skill.agent}/${skill.name}` : '';
 const fields = skill => ({ version: skill.version, goal: skill.goal, document: skill.document, reason: '' });
+const draftReason = (baseline, draft) => {
+  const excerpt = value => value.replace(/\s+/g, ' ').trim().slice(0, 150);
+  const changes = [];
+  if (draft.goal !== baseline.goal) changes.push(`调整技能目标：${excerpt(draft.goal)}`);
+  if (draft.document !== baseline.document) changes.push(`更新技能正文，当前内容摘要：${excerpt(draft.document)}`);
+  return changes.length ? `系统生成：${changes.join('；')}。以上为草稿变更摘要，实际效果待测试核对。` : '';
+};
 const modifiedTime = (value, empty = '暂无修改记录') => {
   const date = new Date(typeof value === 'number' && value < 1e12 ? value * 1000 : value);
   if (!value || Number.isNaN(date.getTime())) return empty;
@@ -232,7 +239,11 @@ export default function ExpertWorkspace({ actor }) {
 
   const change = key => event => {
     manualMode.current=true;
-    setDraft(previous => ({ ...previous, [key]: event.target.value }));
+    const value = event.target.value;
+    setDraft(previous => {
+      const next = { ...previous, [key]: value };
+      return { ...next, reason: draftReason(current, next) };
+    });
     setTrial(null); setReviewed(false);
   };
   const changeSample = key => event => {
@@ -257,11 +268,14 @@ export default function ExpertWorkspace({ actor }) {
         if (id === sequence.current) setProposal(previous=>({...previous,...value}));
         return;
       }
+      const testedDraft = { ...draft, reason: draft.reason ||
+        '系统生成：本次未修改技能目标及正文，仅对当前技能进行全流程测试，实际效果待测试核对。' };
+      setDraft(testedDraft);
       const value = await request(endpoint(current) + '/machine-test', { method: 'POST', signal: controller.signal,
-        body: JSON.stringify({ expected_revision: current.revision, ...draft, machine: sample }) });
+        body: JSON.stringify({ expected_revision: current.revision, ...testedDraft, machine: sample }) });
       if (id !== sequence.current) return;
       setTrial(value);
-      sessionStorage.setItem(receiptKey, JSON.stringify({ skill: current, revision: current.revision, draft, machine: sample, test_id: value.test_id }));
+      sessionStorage.setItem(receiptKey, JSON.stringify({ skill: current, revision: current.revision, draft: testedDraft, machine: sample, test_id: value.test_id }));
       if (value.status === 'failed') setError(value.message || '全流程测试未完成。');
     } catch(e) { if (id === sequence.current && e.name !== 'AbortError') setError(e.message); }
     finally { if (id === sequence.current) { setBusy(false); setTesting(false); } }
@@ -281,8 +295,11 @@ export default function ExpertWorkspace({ actor }) {
   function adoptBaseline() {
     if (!remote) return;
     // 本地没修改的字段采用远端新版，修改过的字段必须由专家对照后保留/合并。
-    setDraft(previous => ({ ...previous, ...Object.fromEntries(['version', 'goal', 'document'].map(key =>
-      [key, previous[key] === current[key] ? remote[key] : previous[key]])) }));
+    setDraft(previous => {
+      const next = { ...previous, ...Object.fromEntries(['version', 'goal', 'document'].map(key =>
+        [key, previous[key] === current[key] ? remote[key] : previous[key]])) };
+      return { ...next, reason: draftReason(remote, next) };
+    });
     setCurrent(remote); setRemote(null);
     setTrial(null); setReviewed(false);
     setMessage('已采用新基线，尚未保存；请核对合并后的草稿。');
@@ -331,10 +348,25 @@ export default function ExpertWorkspace({ actor }) {
           {proposal && <p>这是系统自动生成的待审核稿，并未替换线上技能。修改说明包含触发原因，预期结果用于核对实际测试。</p>}
           <label>技能目标<input value={draft.goal} onChange={change('goal')} readOnly={!editable || Boolean(proposal)} disabled={locked} required maxLength={300} /></label>
           <ExpertDocument value={draft.document} label="技能正文" readOnly={!editable || Boolean(proposal)} disabled={locked}
-            onChange={document => { setDraft(previous => ({ ...previous, document })); setTrial(null); setReviewed(false); }} />
+            onChange={document => {
+              manualMode.current=true;
+              setDraft(previous => {
+                const next = { ...previous, document };
+                return { ...next, reason: draftReason(current, next) };
+              });
+              setTrial(null); setReviewed(false);
+            }} />
           {documentError && <p className="expert-alert" role="alert">{documentError}</p>}
-          {editable && <><label>修改说明<input value={draft.reason} onChange={change('reason')} readOnly={Boolean(proposal)} disabled={locked}
-            required maxLength={500} placeholder="说明补充了哪些判断、取证或处理经验" /></label>
+          {editable && <><div className="expert-change-note">
+            <label htmlFor="expert-change-reason">修改说明</label>
+            <textarea id="expert-change-reason" className="expert-change-reason" value={draft.reason} readOnly rows={4}
+              aria-describedby="expert-change-reason-help" placeholder="等待系统生成修改稿后自动填写，无需手动输入。" />
+            <p id="expert-change-reason-help">{proposal
+              ? '由技能优化系统生成，包含触发原因和具体改动；无需手动填写。'
+              : draft.reason
+                ? '系统根据当前草稿自动整理修改说明。请核对正文及预期结果，测试后再发布。'
+                : '尚未回填自动修改稿。系统生成后会自动填写；人工调整正文或目标时，也会自动整理变更摘要。'}</p>
+          </div>
             {sample && <section className="expert-trial" aria-label="模拟机器全流程测试">
               <h3>模拟机器全流程测试</h3>
               <p>使用监控中心现有模拟机器。触发故障后按正常规则暂停整线、诊断并派工；维修确认后复机并保存汇总报告。</p>

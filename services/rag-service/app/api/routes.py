@@ -25,7 +25,7 @@ from time import perf_counter
 from typing import Any, Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from loguru import logger
 
@@ -47,7 +47,9 @@ from app.retrieval import Hit
 from .indexing import UnifiedExperienceIndexer
 from app.corpus import normalize_corpus
 
-router = APIRouter()
+from .auth import require_rag_identity
+
+router = APIRouter(dependencies=[Depends(require_rag_identity)])
 
 _PROBE_METHODS: tuple[str, ...] = ("health", "ping", "is_ready")
 """Optional readiness hooks a component may expose; otherwise assembly is enough."""
@@ -354,14 +356,16 @@ async def upsert_document(request: DocumentUpsertRequest) -> dict[str, Any]:
 @router.post("/upsert", include_in_schema=False)
 async def legacy_upsert(payload: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     record = dict(payload.get("record") or payload)
-    return await upsert_document(
-        DocumentUpsertRequest(
+    try:
+        request = DocumentUpsertRequest(
             document_id=str(record.get("document_id") or record.get("experience_id") or record.get("id") or ""),
             content=str(record.get("content") or ""),
             metadata={key: value for key, value in record.items() if key not in {"document_id", "experience_id", "id", "content"}},
             collection=str(payload.get("collection") or record.get("collection") or "maint_fault_events"),
         )
-    )
+    except ValueError:
+        raise HTTPException(422, 'Invalid document input or collection') from None
+    return await upsert_document(request)
 
 
 @router.post("/documents/ingest")
@@ -381,7 +385,11 @@ async def ingest_document(request: DocumentIngestRequest) -> dict[str, Any]:
             content = str(record.get("content") or record.get("text") or "")
             metadata = dict(record.get("metadata") or {})
             metadata.update({key: value for key, value in record.items() if key not in {"document_id", "experience_id", "id", "content", "text", "metadata", "chunks"}})
-            store.upsert(document_id, content, metadata, request.collection or str(record.get("collection") or ""), record.get("chunks"))
+            collection = request.collection or str(record.get('collection') or '')
+            if collection:
+                from shared.ingestion_security import validate_collection_name
+                validate_collection_name(collection)
+            store.upsert(document_id, content, metadata, collection, record.get("chunks"))
             loaded += 1
         except Exception as error:
             errors.append("line %d: %s" % (line_number, error))

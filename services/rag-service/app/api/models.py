@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from shared.ingestion_security import validate_collection_name
 
 
 class SearchRequest(BaseModel):
@@ -213,7 +214,21 @@ class DocumentUpsertRequest(BaseModel):
     collection: str = "maint_fault_events"
     chunks: list[dict[str, Any]] = Field(default_factory=list)
 
+    @field_validator('collection')
+    @classmethod
+    def valid_collection(cls, value: str) -> str:
+        if value:
+            validate_collection_name(value)
+        return value
+
 
 class DocumentIngestRequest(BaseModel):
     path: str = Field(..., min_length=1)
     collection: str = ""
+
+    @field_validator('collection')
+    @classmethod
+    def valid_collection(cls, value: str) -> str:
+        if value:
+            validate_collection_name(value)
+        return value
