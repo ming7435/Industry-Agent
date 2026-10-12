@@ -3,6 +3,7 @@ import re
 import time
 
 from shared import simulated_part_design_quality as sim
+from .records import ExactInspectionRecords
 
 
 def key(actor, value):
@@ -12,7 +13,7 @@ def key(actor, value):
 
 class SimulatedQualityService:
     def __init__(self, repository):
-        self.repository = repository
+        self.repository = repository if isinstance(repository, ExactInspectionRecords) else ExactInspectionRecords(repository)
 
     def _read(self, actor, pointer):
         if not pointer: return None
@@ -53,7 +54,7 @@ class SimulatedQualityService:
         return {'basis': self.basis(actor, run_id), 'latest': self._read(actor, saved) if saved else None}
 
     def designs(self, actor):
-        records = [r for r in self.repository.list_records('simulated_quality_basis') if r.get('actor_id') == actor]
+        records = self.repository.list_actor_records('simulated_quality_basis', actor)
         result = []
         for saved in records[-20:]:
             basis = sim.verify_basis(saved['basis'])

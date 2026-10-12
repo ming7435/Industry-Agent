@@ -336,6 +336,97 @@ def test_native_json_key_normalization_cannot_invalidate_complex_standards_or_re
     assert service.detect('U-1', 'another-native-json', flange(), station())['status'] == 'partial'
 
 
+def test_json_float_reformatting_preserves_exact_saved_standards_and_refresh_results(service, monkeypatch):
+    # Reproduce the measured SQL boundary, not a different CAD standard or tolerance.
+    raw = getattr(service.repository, 'raw', service.repository)
+    save = raw.save_record
+    def binary_json_save(kind, key, payload):
+        reformatted = json.loads(json.dumps(payload), parse_float=lambda text: float(format(float(text), '.15g')))
+        return save(kind, key, reformatted)
+    monkeypatch.setattr(raw, 'save_record', binary_json_save)
+    run = flange()
+    run['validation']['bounds_mm'][2] = 10.000000199999999
+    run['spec']['operations'][3]['radius'] = 1.0000000000000002
+    first = service.detect('U-1', 'precision-first', run, station())
+    refreshed = SimulatedQualityService(service.repository)
+    saved = refreshed.design('U-1', run['run_id'])
+    z = next(p for p in saved['basis']['parameters'] if p['key'] == 'model.bounds_mm.2')
+    assert z['expected'] == '10.000000199999999'
+    assert saved['basis']['validation']['bounds_mm'][2] == 10.000000199999999
+    assert saved['basis']['spec']['operations'][3]['radius'] == 1.0000000000000002
+    assert saved['latest'] == first
+    assert refreshed.request('U-1', 'precision-first') == first
+    assert refreshed.designs('U-1')[0]['part_number'] == '62017'
+    second = refreshed.detect('U-1', 'precision-second', run, station())
+    assert second['status'] == 'partial' and second['batch_id'] != first['batch_id']
+    assert second['item_summary']['rates']['qualified'] is not None
+    assert refreshed.request('U-1', 'precision-second') == second
+    assert len(refreshed.repository.list_records('simulated_quality_batch')) == 2
+
+
+def test_legacy_unwrapped_quality_records_keep_all_original_integrity_gates(service):
+    first = service.detect('U-1', 'legacy-encoding', plate(), station())
+    raw = getattr(service.repository, 'raw', service.repository)
+    for kind, identity in [
+        ('simulated_quality_basis', sim.digest(['U-1', plate()['run_id']])),
+        ('simulated_quality_batch', first['batch_id']),
+        ('simulated_quality_request', sim.digest(['U-1', 'legacy-encoding'])),
+    ]:
+        raw.save_record(kind, identity, service.repository.get_record(kind, identity))
+    assert service.request('U-1', 'legacy-encoding') == first
+    assert service.design('U-1', plate()['run_id'])['latest'] == first
+    identity = sim.digest(['U-1', plate()['run_id']])
+    changed = raw.get_record('simulated_quality_basis', identity)
+    changed['basis']['spec']['operations'][0]['length'] = 101
+    raw.save_record('simulated_quality_basis', identity, changed)
+    with pytest.raises(ValueError):
+        service.basis('U-1', plate()['run_id'])
+
+
+def test_corrupt_other_users_envelope_cannot_block_my_design_list(service):
+    first = service.detect('U-1', 'my-good-batch', plate(), station())
+    service.detect('U-2', 'other-batch', plate(), station())
+    raw = getattr(service.repository, 'raw', service.repository)
+    other_key = sim.digest(['U-2', plate()['run_id']])
+    corrupt = raw.get_record('simulated_quality_basis', other_key)
+    corrupt['payload_json'] = '{broken'
+    raw.save_record('simulated_quality_basis', other_key, corrupt)
+    assert service.designs('U-1') == [{'run_id': plate()['run_id'], 'part_name': '安装底板', 'part_number': '92531'}]
+    assert service.request('U-1', 'my-good-batch') == first
+    with pytest.raises(ValueError):
+        service.designs('U-2')
+    with pytest.raises(ValueError):
+        service.basis('U-2', plate()['run_id'])
+
+
+def test_envelope_owner_cannot_disagree_with_the_saved_record_owner(service):
+    service.detect('U-1', 'owner-integrity', plate(), station())
+    raw = getattr(service.repository, 'raw', service.repository)
+    identity = sim.digest(['U-1', plate()['run_id']])
+    envelope = raw.get_record('simulated_quality_basis', identity)
+    envelope['actor_id'] = 'U-2'
+    raw.save_record('simulated_quality_basis', identity, envelope)
+    with pytest.raises(ValueError):
+        service.basis('U-1', plate()['run_id'])
+
+
+@pytest.mark.parametrize('envelope', [
+    {'schema': 'unknown', 'actor_id': 'U-1', 'payload_json': '{}'},
+    {'schema': 'simulated-quality-record-v1', 'actor_id': 'U-1', 'payload_json': '[]'},
+    {'schema': 'simulated-quality-record-v1', 'actor_id': 'U-1', 'payload_json': '{broken'},
+    {'schema': 'simulated-quality-record-v1', 'actor_id': 'U-1', 'payload_json': '{"value":NaN}'},
+    {'schema': 'simulated-quality-record-v1', 'actor_id': 'U-1', 'payload_json': 123},
+    {'schema': 'simulated-quality-record-v1', 'actor_id': 'U-1', 'payload_json': '{}', 'passed': True},
+    {'schema': 'simulated-quality-record-v1', 'payload_json': '{"actor_id":"U-1"}'},
+])
+def test_invalid_saved_quality_envelopes_never_return_trusted_records(service, envelope):
+    raw = getattr(service.repository, 'raw', service.repository)
+    identity = sim.digest(['U-1', plate()['run_id']])
+    raw.save_record('simulated_quality_basis', identity, envelope)
+    with pytest.raises(ValueError):
+        service.basis('U-1', plate()['run_id'])
+
+
 def test_actual_sheet_metal_and_bim_design_fields_keep_their_units_while_pending():
     run = flange(); run['spec'] = {'units': 'mm', 'sheet_metal': {'width': 100, 'base_length': 80,
         'flange_length': 40, 'thickness': 2, 'bend_radius': 3, 'bend_angle': 90, 'k_factor': .4}}

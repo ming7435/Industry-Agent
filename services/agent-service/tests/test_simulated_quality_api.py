@@ -1,6 +1,7 @@
 """Agent HTTP -> actual Backend router/repository -> saved inspection results."""
 import importlib
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import time
@@ -144,4 +145,35 @@ def test_complex_model_standard_and_partial_result_flow_through_both_http_layers
     assert result.json()['counts']['pending'] == 10
     assert result.json()['rates'] == {'qualified': None, 'defect': None, 'coverage': 0.0}
     assert client.get('/api/quality/simulation/requests/complex').json() == result.json()
+    assert repo.list_records('quality') == []
+
+
+def test_detection_refresh_and_repeat_survive_database_float_reformatting(connected, monkeypatch):
+    client, app, repo, calls = connected
+    save = repo.save_record
+    def binary_json_save(kind, key, payload):
+        return save(kind, key, json.loads(json.dumps(payload),
+            parse_float=lambda text: float(format(float(text), '.15g'))))
+    monkeypatch.setattr(repo, 'save_record', binary_json_save)
+    app.state.cad_spec = {'units': 'mm', 'operations': [
+        {'type': 'gear', 'module': 2, 'teeth': 20, 'width': 10, 'pressure_angle': 20}]}
+    app.state.cad_proof = {'valid': True, 'step_roundtrip': True, 'solid_count': 1,
+                           'bounds_mm': [44.00000020000001, 44.00000020000001, 10.000000199999999]}
+    url = '/api/quality/simulation/designs/' + RUN_ID
+    standard = client.get(url)
+    assert standard.status_code == 200, standard.text
+    first = client.post('/api/quality/simulation/detect', json={'design_run_id': RUN_ID, 'request_id': 'precise-first'})
+    assert first.status_code == 200, first.text
+    refresh = client.get(url)
+    assert refresh.status_code == 200, refresh.text
+    assert refresh.json()['basis'] == standard.json()['basis']
+    assert refresh.json()['latest'] == first.json()
+    replay = client.get('/api/quality/simulation/requests/precise-first')
+    assert replay.status_code == 200 and replay.json() == first.json()
+    again = client.post('/api/quality/simulation/detect', json={'design_run_id': RUN_ID, 'request_id': 'precise-second'})
+    assert again.status_code == 200, again.text
+    assert again.json()['batch_id'] != first.json()['batch_id']
+    assert again.json()['item_summary']['rates']['qualified'] is not None
+    assert client.get('/api/quality/simulation/designs').status_code == 200
+    assert len(repo.list_records('simulated_quality_batch')) == 2
     assert repo.list_records('quality') == []
