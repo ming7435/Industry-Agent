@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { request } from './apiRequest.mjs';
 import ExpertDocument from './ExpertDocument.jsx';
 import ExpertTrialDetails from './ExpertTrialDetails.jsx';
+import SkillEvolutionPanel from './SkillEvolutionPanel.jsx';
 import './expert.css';
 
 const endpoint = skill => `/api/expert/skills/${encodeURIComponent(skill.agent)}/${encodeURIComponent(skill.name)}`;
@@ -244,6 +245,7 @@ export default function ExpertWorkspace({ actor }) {
       {loading && <p role="status">正在读取当前技能…</p>}
       {error && <p className="expert-alert" role="alert">{error}</p>}
       {message && <p className="expert-message" role="status">{message}</p>}
+      {current && <SkillEvolutionPanel key={actor.user_id + '/' + identity(current)} actor={actor} skill={current} machines={machines} />}
       {current && draft && <section className="expert-card" aria-label="技能编辑">
         <div className="expert-section-title"><h2>{current.title}</h2><button type="button" onClick={refresh} disabled={locked}>刷新技能</button></div>
         <dl className="expert-skill-info" aria-label="技能信息">
