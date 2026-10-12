@@ -12,7 +12,7 @@
 * 根据项目数据布局生成的类型化 Milvus 集合（例如
   `data/alarms` -> `industry_rag_alarm_codes`, `data/sop` -> `industry_rag_sop`），
   元数据列只作为细化筛选层使用；
-* 使用同一个向量化工厂（`app.embedding.model.get_embedder`），确保文档和查询共享同一组权重；
+* 使用同一个向量化工厂（`app.embedding.models.get_embedder`），确保文档和查询共享同一组权重；
 * 语料标签（`alarms` / `cases` / `manuals` / `sop`）在读取时由
   `app/corpus.py` 根据 `source_name` / `source_path` / `metadata_json` 推导，
   因此即使集合是在本代码存在之前入库的，也能正确分组；

@@ -1,0 +1,147 @@
+.result-prose{min-width:0;color:#344e59;font-size:15px;line-height:1.85;overflow-wrap:anywhere}
+.result-prose>p{margin:0;white-space:pre-line}
+.result-prose h3,.result-prose h4,.result-prose h5,.result-prose h6{margin:0;color:#183640;font-size:15px;font-weight:650;line-height:1.6}
+.result-prose strong{display:inline;margin:0;color:#193c47;font-weight:650}
+.result-prose ul,.result-prose ol{margin-bottom:0;padding-left:24px}
+.result-prose li{padding-left:4px;white-space:pre-line}
+.result-prose li+li{margin-top:8px}
+.result-prose li::marker{color:#16776f;font-weight:600}
+.result-prose code{padding:2px 5px;background:#eef3f4;border-radius:4px;font-size:.9em}
+.result-prose pre{max-width:100%;padding:14px;border:1px solid #dce7e9;border-radius:8px;white-space:pre-wrap}
+.result-prose pre code{padding:0;background:none}
+.result-prose .result-fields{margin-bottom:0;padding:0}
+.result-fields>div{display:grid;grid-template-columns:112px minmax(0,1fr);gap:16px;padding:8px 0;border-bottom:1px solid #e9eff0}
+.result-fields>div:first-child{padding-top:0}
+.result-fields>div:last-child{padding-bottom:0;border-bottom:0}
+.result-fields dt{color:#637880;font-size:13px;font-weight:500}
+.result-fields dd{margin:0;white-space:pre-line}
+.result-data-cards{display:grid;gap:12px}
+.result-data-card{padding:14px;background:#f8fbfb;border:1px solid #dfe9e9;border-radius:8px}
+.diagnosis-workspace .result-diagnosis-grid{display:grid;grid-template-columns:1fr;gap:18px}
+.diagnosis-workspace .result-card{min-width:0;padding:24px;background:#fff;border:1px solid #d9e7e8;border-radius:12px}
+.diagnosis-workspace .result-card h3{margin:0 0 16px;font-size:17px;color:#163b44;line-height:1.5}
+.diagnosis-workspace .result-summary-card{grid-column:1/-1;border-top:3px solid #4aa699}
+.diagnosis-workspace .diagnosis-summary{margin-top:18px;max-width:90ch;font-size:17px;font-weight:400;line-height:1.9}
+.diagnosis-workspace .diagnosis-summary h4{font-size:15px;color:#667f86;font-weight:500}
+.diagnosis-workspace .result-evidence-card{grid-column:1/-1}
+.diagnosis-workspace .notice-banner{margin-top:20px;line-height:1.8}
+.maintenance-workspace .maintenance-plan-panel{padding:24px;gap:20px}
+.maintenance-workspace .maintenance-plan-heading{align-items:flex-start;gap:20px}
+.maintenance-workspace .maintenance-plan-meta{max-width:45%;overflow-wrap:anywhere}
+.maintenance-workspace .maintenance-plan-diagnosis{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.maintenance-workspace .maintenance-plan-diagnosis>div{min-width:0;padding:20px}
+.maintenance-workspace .maintenance-plan-diagnosis .result-prose{margin-top:10px}
+.maintenance-plan-diagnosis .result-prose strong{display:inline;margin:0}
+.maintenance-plan-diagnosis .result-prose p{margin:0;line-height:1.85}
+.maintenance-workspace .result-plan-fault{font-size:16px;color:#173c46}
+.maintenance-workspace .result-plan-label{margin:18px 0 0;font-size:13px;font-weight:500;color:#6b8188}
+.result-plan-meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;font-size:13px;color:#6b8188}
+.result-risk{padding:4px 10px;border-radius:6px;background:#fff3df;color:#8b560c;font-weight:600}
+.maintenance-workspace .maintenance-plan-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.maintenance-workspace .maintenance-plan-section{min-width:0;padding:20px}
+.maintenance-workspace .maintenance-plan-section.is-wide{grid-column:1/-1}
+.maintenance-workspace .maintenance-plan-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.maintenance-workspace .maintenance-plan-section-head h3{font-size:16px;font-weight:650}
+.maintenance-workspace .maintenance-plan-section>ol,.maintenance-workspace .maintenance-plan-section>ul{font-size:15px;line-height:1.85;padding-left:24px;gap:12px}
+.maintenance-workspace .maintenance-plan-section>ol>li,.maintenance-workspace .maintenance-plan-section>ul>li{padding-left:6px}
+.maintenance-workspace .maintenance-plan-section>ol>li::marker{color:#16776f;font-weight:650}
+.workorder-detail-page .maintenance-sheet{gap:20px;padding:24px}
+.workorder-detail-page .sheet-section{min-width:0;padding:22px}
+.workorder-detail-page .sheet-section h3{font-size:19px;line-height:1.6}
+.workorder-detail-page .basic-grid strong{font-size:15px;font-weight:600;line-height:1.6}
+.workorder-detail-page .fault-meta-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 20px;margin:18px 0;padding-bottom:18px;border-bottom:1px solid #e2ebed}
+.fault-meta-list dt{font-size:12px;color:#6b8188;margin-bottom:5px}
+.fault-meta-list dd{margin:0;font-size:14px;line-height:1.7;color:#254752;overflow-wrap:anywhere}
+.workorder-detail-page .fault-symptom{margin-top:16px}
+.workorder-detail-page .saved-feedback-preview{margin-top:24px;padding-top:22px;border-top:1px solid #e2ebed}
+.workorder-detail-page .saved-feedback-preview>h4{margin:0 0 14px;font-size:15px;color:#183d47}
+.workorder-detail-page .feedback-card label{display:block;margin:18px 0 8px;font-size:14px;color:#395760}
+.workorder-detail-page .feedback-card textarea{box-sizing:border-box;min-height:180px;padding:14px;font-size:14px;line-height:1.9;resize:vertical}
+.workorder-detail-page .feedback-card>p{margin:14px 0;color:#6a8088;font-size:13px;line-height:1.8}
+.workorder-detail-page .sheet-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}
+.workorder-detail-page .sheet-actions .button{max-width:100%;white-space:normal;line-height:1.6}
+.result-prose>:first-child{margin-top:0}
+.result-prose>:not(:first-child),.maintenance-plan-diagnosis .result-prose>:not(:first-child){margin-top:14px}
+.platform-shell.workbench .content-shell .workorder-page .workorder-detail-page{gap:20px;padding:0;border:0;background:transparent;box-shadow:none;min-height:0}
+.workorder-page .workorder-titlebar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px;padding:24px;border:1px solid #d9e7e4;border-top:3px solid #45a58e;border-radius:10px;background:#fff}
+.workorder-page .module-hero h1{font-size:24px;line-height:1.5}
+.workorder-page .workorder-titlebar h1{font-size:20px;line-height:1.5;letter-spacing:0;overflow-wrap:anywhere}
+.workorder-page .button{font-size:13px;padding:8px 12px}
+.workorder-page .workorder-status-badge,.workorder-page .sheet-status{font-size:12px;padding:6px 10px}
+.workorder-page .result-prose{font-size:14px;line-height:1.8}
+.workorder-page .result-prose h3,.workorder-page .result-prose h4,.workorder-page .result-prose h5,.workorder-page .result-prose h6{font-size:14px}
+.workorder-page .workorder-titlebar-actions{align-items:center;flex-wrap:wrap;align-self:start}
+.workorder-identity{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 24px;margin:20px 0 0;padding-top:18px;border-top:1px solid #e3ece9}
+.workorder-identity>div{min-width:0}
+.workorder-identity dt{margin-bottom:5px;color:#6b8180;font-size:12px}
+.workorder-identity dd{margin:0;color:#274c4a;font-size:14px;line-height:1.7;overflow-wrap:anywhere}
+.workorder-page .workorder-queue-list{grid-template-columns:1fr;gap:10px}
+.workorder-page .workorder-queue-item{padding:16px 18px;align-items:flex-start}
+.workorder-page .workorder-queue-item .workorder-queue-copy{display:grid;gap:10px;flex:1;min-width:0}
+.workorder-page .workorder-queue-item .workorder-queue-title{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.workorder-page .workorder-queue-item strong{font-size:14px;line-height:1.6;white-space:normal;overflow-wrap:anywhere}
+.workorder-page .workorder-queue-item .workorder-queue-title small{color:#55736c;font-size:12px;white-space:normal}
+.workorder-page .workorder-queue-item .workorder-queue-identity{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 22px}
+.workorder-page .workorder-queue-identity>span{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;color:#6a7f7c;font-size:12px;line-height:1.7}
+.workorder-page .workorder-queue-identity b{color:#2c514a;font-size:13px;font-weight:500;overflow-wrap:anywhere}
+.workorder-page .workorder-queue-item em{padding:6px 10px;font-size:12px;line-height:1.5}
+.workorder-page .maintenance-sheet{padding:0;border:0;border-radius:0;background:transparent;overflow:visible;grid-template-rows:auto auto auto;gap:16px}
+.workorder-page .sheet-heading{padding:20px 24px;border:1px solid #dce8e4;border-radius:10px;background:#f6faf8}
+.workorder-page .sheet-heading h2{font-size:18px;line-height:1.5}
+.workorder-page .sheet-heading p.sheet-subtitle{font-size:13px;line-height:1.8}
+.workorder-page .basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.workorder-page .basic-grid>div{padding:15px 18px;border-radius:8px;background:#fff}
+.workorder-page .sheet-execution-grid{grid-template-columns:1fr;gap:20px}
+.workorder-page .sheet-section{padding:24px;border:1px solid #dce8e4;border-radius:10px;background:#fff;overflow:visible}
+.workorder-section-heading{display:flex;align-items:center;gap:12px}
+.workorder-page .workorder-section-heading h2,.workorder-page .workorder-section-heading h3{margin:0;font-size:16px;line-height:1.6;color:#193e37}
+.workorder-section-index{display:grid;place-items:center;flex:0 0 auto;width:36px;height:36px;border-radius:8px;background:#eaf5ef;color:#227862;font-size:14px;font-weight:650}
+.workorder-page .fault-meta-list{grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;margin:22px 0;padding-bottom:22px}
+.workorder-fault-layout{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:20px;align-items:start}
+.workorder-fault-text{min-width:0}
+.workorder-page .fault-symptom{max-width:100%;margin-top:0;padding:16px;border:1px solid #e2ebe7;border-radius:8px;background:#f8fbf9;font-size:14px;line-height:1.8}
+.workorder-fault-analysis{margin-top:20px}
+.workorder-fault-analysis>h4{margin:0 0 12px;font-size:14px;font-weight:600;color:#254d43}
+.workorder-page .workorder-fault-text .result-prose>p{line-height:1.8}
+.workorder-page .workorder-plan-source{margin:18px 0;color:#667e76;font-size:13px;line-height:1.7;overflow-wrap:anywhere}
+.workorder-page .workorder-task-card>.maintenance-plan-section{margin-top:20px;padding:20px;border-color:#e3ebe7;border-radius:8px;background:#f8fbf9}
+.workorder-page .workorder-task-card .maintenance-plan-section-head{margin-bottom:14px}
+.workorder-page .workorder-task-card .maintenance-plan-section-head h3{font-size:15px}
+.workorder-page .workorder-task-card .maintenance-plan-section-head>span{color:#778a81;font-size:12px}
+.workorder-page .workorder-task-card ol,.workorder-page .workorder-task-card ul{margin:0;padding-left:24px;font-size:14px;line-height:1.8}
+.workorder-page .workorder-task-card li+li{margin-top:12px}
+.workorder-page .workorder-task-card li::marker{color:#20806a;font-weight:650}
+.workorder-task-support{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:16px}
+.workorder-task-support .maintenance-plan-section{min-width:0;padding:18px;border-color:#e3ebe7;border-radius:8px;background:#f8fbf9}
+.workorder-page .saved-feedback-preview{margin:22px 0;padding:20px;border:1px solid #e1ebe6;border-radius:8px;background:#f8fbf9}
+.workorder-page .feedback-card label{margin-top:22px}
+.workorder-page .feedback-card textarea{min-height:150px;font-size:14px;line-height:1.8}
+.workorder-page .sheet-actions{justify-content:flex-end;padding-top:18px;border-top:1px solid #e3ebe7}
+.workorder-page .workorder-timeline{padding:22px 24px;border-radius:10px;background:#fff}
+.workorder-timeline .workorder-section-heading{justify-content:space-between}
+.workorder-timeline .workorder-section-heading>span{color:#73867e;font-size:12px}
+.workorder-time-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:8px 0 0}
+.workorder-time-grid>div{min-width:0;padding:12px 14px;border:1px solid #e2ebe7;border-radius:8px;background:#f8fbf9}
+.workorder-time-grid dt{margin-bottom:8px;color:#71847b;font-size:12px}
+.workorder-time-grid dd{margin:0;color:#31574c;font-size:13px;line-height:1.8;overflow-wrap:anywhere}
+.workorder-page .workorder-bigscreen-grid.cad-only{height:540px;min-height:540px;min-width:0}
+.workorder-page .repair-visual-head{padding:20px 24px}
+.workorder-page .repair-visual-head h2{font-size:16px;line-height:1.6}
+.workorder-page .fault-summary-card .repair-visual-head{padding:16px;align-items:flex-start;flex-wrap:wrap}
+.workorder-page .fault-summary-card .repair-visual-head p{font-size:12px;line-height:1.8}
+.workorder-page .fault-summary-card .repair-visual-actions{justify-content:flex-start}
+.workorder-page .fault-summary-card .repair-visual-panel{grid-template-rows:auto auto minmax(0,1fr) auto}
+.workorder-page .fault-summary-card .repair-visual-head{grid-row:1}
+.workorder-page .fault-summary-card .repair-visual-panel>label.maintenance-plan-section{grid-row:2}
+.workorder-page .fault-summary-card .repair-visual-body{grid-row:3;height:100%;min-height:0}
+.workorder-page .fault-summary-card .repair-visual-panel>div.maintenance-plan-section{grid-row:4}
+.workorder-page .fault-summary-card .repair-cad-scene,.workorder-page .fault-summary-card .repair-drawing-frame{height:100%;min-height:0}
+.workorder-page .cad-scene-status{padding:20px;font-size:13px;overflow-wrap:anywhere}
+.workorder-page .cad-scene-status strong{font-size:16px}
+.workorder-page .repair-visual-head p{line-height:1.8;overflow-wrap:anywhere}
+.workorder-page .repair-visual-panel>.maintenance-plan-section{padding:16px 24px;font-size:13px;line-height:1.8}
+@media(max-width:1050px){.diagnosis-workspace .result-diagnosis-grid,.maintenance-workspace .maintenance-plan-diagnosis,.maintenance-workspace .maintenance-plan-grid{grid-template-columns:1fr}.workorder-detail-page .sheet-execution-grid{grid-template-columns:1fr}}
+@media(max-width:1050px){.workorder-page .workorder-queue-item .workorder-queue-identity{grid-template-columns:1fr}.workorder-page .fault-meta-list{grid-template-columns:repeat(2,minmax(0,1fr))}.workorder-time-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.workorder-fault-layout{grid-template-columns:1fr}}
+@media(max-width:640px){.diagnosis-workspace .result-card,.maintenance-workspace .maintenance-plan-panel,.workorder-detail-page .maintenance-sheet{padding:18px}.maintenance-workspace .maintenance-plan-diagnosis>div,.maintenance-workspace .maintenance-plan-section,.workorder-detail-page .sheet-section{padding:16px}.result-fields>div{grid-template-columns:84px minmax(0,1fr);gap:12px}.maintenance-workspace .maintenance-plan-meta{max-width:100%}.workorder-detail-page .basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.workorder-detail-page .fault-meta-list{grid-template-columns:1fr}.diagnosis-workspace .diagnosis-summary{font-size:16px}}
+@media(max-width:640px){.workorder-page .workorder-titlebar{grid-template-columns:1fr;padding:18px;gap:16px}.workorder-page .workorder-titlebar h1{font-size:18px}.workorder-identity{grid-template-columns:1fr;gap:12px}.workorder-page .workorder-titlebar-actions{justify-content:space-between}.workorder-page .maintenance-sheet{padding:0}.workorder-page .sheet-heading,.workorder-page .sheet-section,.workorder-page .workorder-timeline{padding:18px}.workorder-page .basic-grid>div{padding:12px}.workorder-page .fault-meta-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.workorder-page .fault-symptom{padding:14px}.workorder-page .workorder-queue-item{padding:14px;gap:10px}.workorder-task-support{grid-template-columns:1fr}.workorder-page .saved-feedback-preview{padding:14px}.workorder-time-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.workorder-page .workorder-bigscreen-grid.cad-only{height:540px;min-height:540px}.workorder-page .repair-visual-head{align-items:flex-start;flex-direction:column;padding:18px}.workorder-page .repair-visual-actions{justify-content:flex-start}.workorder-page .sheet-actions{justify-content:flex-start}}
+@media(max-width:640px){.workorder-page .fault-summary-card .workorder-bigscreen-grid.cad-only{height:620px;min-height:620px}}

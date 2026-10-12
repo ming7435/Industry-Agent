@@ -21,6 +21,8 @@ def fingerprint(values):
 
 
 class DraftRegistry(SkillRegistry):
+    is_expert_trial = True
+
     def __init__(self, root, definitions):
         super().__init__(root)
         self.definitions = definitions

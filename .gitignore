@@ -32,6 +32,10 @@ runtime_pending_task
 runtime_pending_tasks.sqlite3
 evaluation-results/
 
+# Local backups and generated exports
+.local-backups/
+output/
+
 # Editors / OS
 .idea/
 .vscode/

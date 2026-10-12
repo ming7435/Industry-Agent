@@ -31,29 +31,18 @@ def warning_runtime(tmp_path, monkeypatch):
     return runtime, event
 
 
-def test_warning_flows_through_real_runtime_to_exact_device_owner_without_cad_or_parts(tmp_path, monkeypatch):
+def test_nonrepair_warning_finishes_without_a_plan_or_order(tmp_path, monkeypatch):
     runtime, event = warning_runtime(tmp_path, monkeypatch)
     result = runtime.run_abnormal_event(event)
     plan = result['maintenance_plan']
-    assert plan.get('plan_kind') == 'inspection', result.get('runtime_result')
-    assert plan['maintenance_required'] is False and plan['inspection_required'] is True
-    assert plan['workorder_ready'] is True and plan['cad_required'] is False, plan['validation_findings']
-    assert plan['validation_findings'] == [] and plan['required_parts'] == []
+    assert plan == {}
     assert result['runtime_result']['status'] == 'completed', result['runtime_result']
     orders = runtime.container.workorder_service.list()
-    assert len(orders) == 1
-    order = orders[0]
-    assert order['assignee'] == 'TEST-REGISTERED-U1' and order['device_id'] == 'M-WARNING'
-    assert order['title'].startswith('现场检查：')
-    assert order['maintenance_plan_snapshot']['plan_kind'] == 'inspection'
+    assert orders == []
     assert runtime.test_reservations == []
     assert not any(operation in {'stop_device', 'start_device', 'stop_line', 'start_line'}
                    for _, operation, _ in runtime.test_boundary.calls)
-    repeated = runtime.container.agents['workorder'].run({
-        'maintenance_plan': plan, 'source': 'monitor', 'event_id': event['event_id'],
-        'idempotency_key': order['idempotency_key']})
-    assert repeated.workorder_id == order['workorder_id']
-    assert len(runtime.container.workorder_service.list()) == 1
+    assert result['runtime_result']['stop_reason'] == 'no_repair_required'
 
 
 def test_saved_inspection_retains_type_without_rewriting_repair_necessity():
@@ -78,26 +67,21 @@ def test_maintenance_receives_current_event_disposition_not_only_diagnosis(tmp_p
         'evidence': ['当前采样报警记录'], 'maintenance_required': False, 'disposition': 'operator_check'},
         'knowledge': {'documents': [{'document_id': 'SOP-WARNING'}]}}
     task = RuntimeDispatcher._task_for_agent('repair_planning', state, {})
-    plan = runtime.container.agents['maintenance'].run(task)
-    assert plan.plan_kind != 'inspection' and plan.workorder_ready is False
+    with pytest.raises(ValueError, match='无需维修'):
+        runtime.container.agents['maintenance'].run(task)
 
 
-def test_warning_waits_for_its_owner_then_dispatches_original_check_order(tmp_path, monkeypatch):
+def test_nonrepair_warning_does_not_wait_for_an_owner_or_dispatch_on_login(tmp_path, monkeypatch):
     runtime, event = warning_runtime(tmp_path, monkeypatch)
     candidates = runtime.test_boundary.responses[('mes', 'query_technicians')]['items']
     candidates[0]['primary_device_id'] = 'M-OTHER'
     result = runtime.run_abnormal_event(event)
-    assert result['runtime_result']['status'] == 'waiting_for_personnel', result['runtime_result']
+    assert result['runtime_result']['status'] == 'completed', result['runtime_result']
     orders = runtime.container.workorder_service.list()
-    assert len(orders) == 1 and not orders[0].get('assignee')
-    assert orders[0]['maintenance_plan_snapshot']['plan_kind'] == 'inspection'
+    assert orders == []
     candidates[0]['primary_device_id'] = 'M-WARNING'
-    continued = runtime.container.agents['workorder'].run({
-        'maintenance_plan': result['maintenance_plan'], 'source': 'monitor',
-        'event_id': event['event_id'], 'idempotency_key': orders[0]['idempotency_key']})
-    assert continued.success and continued.workorder_id == orders[0]['workorder_id']
-    assert continued.assignee == 'TEST-REGISTERED-U1'
-    assert len(runtime.container.workorder_service.list()) == 1
+    assert not result['maintenance_plan']
+    assert runtime.container.workorder_service.list() == []
     assert runtime.test_reservations == []
 
 

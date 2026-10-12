@@ -15,7 +15,8 @@ import { request } from "./apiRequest.mjs";
 import { getTeamSession, subscribeTeamSession } from '../teamSession.mjs';
 import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, executionReviewView, inspectionWorkorderView, loadMaintenancePlans, loadMaintenanceOrders, maintenanceDispatchView, maintenanceHistoryNotice, maintenanceReferenceDrawings, maintenanceWorkType, retryMaintenancePlan } from "./maintenanceWorkspace.mjs";
 import { publishMaintenanceChange, subscribeMaintenanceChanges, rememberDeletedMaintenancePlans } from './maintenanceChanges.mjs';
-import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks } from "./textFormatting.mjs";
+import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks, displayRiskLevel, resultListItems, normalizeResultText } from "./textFormatting.mjs";
+import ResultText from './ResultText.jsx';
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
 import { createMotionClock, getMachineMotionState, getWorkshopMotionState } from "./workshopMotion.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
@@ -2456,16 +2457,17 @@ function DiagnosisWorkspace({ snapshot, sample }) {
         <ModuleStat label="置信度" value={confidence} text="诊断结果参考" />
         <ModuleStat label="当前报警" value={alarm} text={view.workflowReason || "持续监测中"} />
       </div>
-      <div className="answer-grid diagnosis-content-grid">
-        <section className="panel module-panel">
+      <div className="answer-grid diagnosis-content-grid result-diagnosis-grid">
+        <section className="panel module-panel result-card result-summary-card" aria-label="诊断结论">
           <div className="panel-heading"><div><span className="eyebrow">诊断结论</span><h2>当前判断</h2></div></div>
-          <FormattedText value={view.summary} className="diagnosis-summary" />
+          <ResultText value={view.summary} className="diagnosis-summary" />
           {view.statusHint && <div className="notice-banner" role="status">{view.statusHint}</div>}
           {view.error && <div className="inline-error" role="alert">诊断暂未完成，请稍后重试或联系维修人员。</div>}
-          {view.cause && <div className="diagnosis-recommendation"><span className="section-kicker">根因判断</span><FormattedText value={view.cause} /></div>}
-          {view.recommendation && <div className="diagnosis-recommendation"><span className="section-kicker">处置建议</span><FormattedText value={view.recommendation} /></div>}
-          {view.nextAction && <div className="diagnosis-recommendation"><span className="section-kicker">下一步</span><FormattedText value={view.nextAction} /></div>}
         </section>
+        {view.cause && <section className="result-card" aria-label="根因分析"><h3>根因分析</h3><ResultText value={view.cause} /></section>}
+        {view.recommendation && <section className="result-card" aria-label="处置建议"><h3>处置建议</h3><ResultText value={view.recommendation} /></section>}
+        {view.nextAction && <section className="result-card" aria-label="下一步操作"><h3>下一步操作</h3><ResultText value={view.nextAction} /></section>}
+        {view.evidence.length > 0 && <section className="result-card result-evidence-card" aria-label="诊断依据"><h3>诊断依据</h3><ResultText value={view.evidence} /></section>}
       </div>
     </section>
   );
@@ -2850,10 +2852,14 @@ function ReportWorkspace({ snapshot, active = true }) {
 }
 
 
-function IncidentTimeline({ record }) {
+function IncidentTimeline({ record, compact = false }) {
   const times = recordTimes(record);
   const labels = {event:'报警发生',diagnosis:'诊断完成',plan:'方案生成',order:'工单创建',updated:'工单更新'};
   const identity = incidentIdentity(record);
+  if (compact) return <section className="maintenance-plan-panel workorder-timeline" aria-label="故障与处理时间">
+    <div className="workorder-section-heading"><h2>处理时间</h2><span>北京时间</span></div>
+    <dl className="workorder-time-grid">{Object.entries(labels).filter(([key]) => key !== 'order' && key !== 'updated' || record.workorder_id).map(([key,label]) => <div key={key}><dt>{label}</dt><dd>{formatRecordTime(times[key])}</dd></div>)}</dl>
+  </section>;
   return <section className="maintenance-plan-panel" aria-label="故障与处理时间">
     <h2>故障与处理时间（北京时间）</h2>
     <p>{record.device_name || record.device_id}{record.device_model ? ` · 型号 ${record.device_model}` : ''} · 报警 {identity.alarm_code || '待确认'}{identity.event_id ? ` · ${identity.event_id}` : ''}</p>
@@ -2898,6 +2904,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
   const plan = selectedRecord ? buildMaintenancePlanView({ plan: selectedRecord, diagnosis: selectedRecord.diagnosis }) : null;
   const diagnosis = getLatestDiagnosis(snapshot, sample);
   const currentPipeline = getLatestPipeline(snapshot, sample);
+  const currentNoRepair = buildDiagnosisView(snapshot, sample).noRepairRequired;
   const generating = matchesIncident(diagnosis,incident) && (['running','recovering'].includes(diagnosis.workflow_status)
     || diagnosis.status === 'running' || (matchesIncident(currentPipeline,incident) && currentPipeline.status === 'running'));
 
@@ -3063,7 +3070,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
           </div>;
         })}</div> : <WorkspaceEmpty eyebrow="维修方案" title={history?.status === "loading" ? "正在读取已有维修方案" : history?.status === "failed" ? "历史方案暂未读出" : "暂无已生成的维修方案"} text={history?.status === "loading" ? "后台只读加载较大的历史记录，请稍候；这里不会将尚未读出的方案判断为不存在。" : "诊断生成方案后会自动显示；未满足派发条件的方案也可查看。"} />}
       </section>
-      {currentAlarm && !currentRecord && <div className="workspace-notice" role="status">{generating ? `当前报警 ${currentAlarm}：诊断已完成，维修方案正在生成或校验；生成后自动显示，无需刷新。` : history?.status === "ready" && !error ? `当前设备 ${currentDevice} 的报警 ${currentAlarm} 尚无本次故障对应的维修方案；列表中保留的是已有方案。` : `正在核对当前设备 ${currentDevice} 的报警 ${currentAlarm} 对应方案；历史记录尚未完整读出，不能判定方案不存在。`}</div>}
+      {currentAlarm && !currentRecord && <div className="workspace-notice" role="status">{currentNoRepair ? `当前报警 ${currentAlarm}：诊断判定无需维修，不生成维修方案和工单；请按智能诊断中的建议处理。` : generating ? `当前报警 ${currentAlarm}：诊断已完成，维修方案正在生成或校验；生成后自动显示，无需刷新。` : history?.status === "ready" && !error ? `当前设备 ${currentDevice} 的报警 ${currentAlarm} 尚无本次故障对应的维修方案；列表中保留的是已有方案。` : `正在核对当前设备 ${currentDevice} 的报警 ${currentAlarm} 对应方案；历史记录尚未完整读出，不能判定方案不存在。`}</div>}
       {selectedRecord && <><div className="workspace-notice" role="status">{hasCurrentDiagnosis ? "当前设备方案" : "历史 / 其他设备方案"} · {selectedRecord.device_id} · 报警 {selectedRecord.alarm_code || "待确认"}{selectedRecord.event_id ? ` · ${selectedRecord.event_id}` : ""}{linkedOrders.length ? ` · 已关联工单 ${linkedOrders.map(order => order.workorder_id).join("、")}` : actor?.user_id ? " · 当前账号未读取到关联工单，派发情况以授权工单列表为准" : " · 工单关联情况需登录后在工单系统查看"}</div><IncidentTimeline record={selectedRecord} /><MaintenanceDispatchStatus record={selectedRecord} hasOrder={linkedOrders.length > 0} /><MaintenancePlanPanel plan={plan} record={selectedRecord} hasCurrentDiagnosis={hasCurrentDiagnosis} /></>}
     </section>
   );
@@ -3105,6 +3112,7 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
   const incidentKey = JSON.stringify(incident);
   const currentPlanRecord = buildMaintenanceWorkspaceRecords({ snapshot }).find(record => matchesIncident(record,incident));
   const hasVisibleIncidentOrder = orders.some(order => matchesIncident({...order,alarm_code:getWorkorderAlarmCode(order)},incident));
+  const currentNoRepair = buildDiagnosisView(snapshot, sample).noRepairRequired;
   const selectedOrder = orders.find((order) => order.workorder_id === selectedId)
     || (!hasCurrentIncident ? orders[0] : undefined);
 
@@ -3306,14 +3314,14 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
         {orders.length ? (
           <div className="workorder-queue-list">
             {orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => { explicitSelection.current = true; setSelectedId(order.workorder_id); }}>
-              <span><strong>{getWorkorderDisplayTitle(order, order.repair_target, { snapshot })}</strong><small>{maintenanceWorkType(order).label} · {order.workorder_id} · {order.device_id}</small></span>
+              <span className="workorder-queue-copy"><span className="workorder-queue-title"><strong>{getWorkorderDisplayTitle(order, order.repair_target, { snapshot })}</strong><small>{maintenanceWorkType(order).label}</small></span><span className="workorder-queue-identity"><span>工单编号 <b>{order.workorder_id}</b></span><span>设备 <b>{order.device_id}</b></span><span>负责人 <b>{order.assignee_name || order.assignee || '未分配'}</b></span></span></span>
               <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{inspectionWorkorderView(order).statusLabel || labelFor(workorderStatusLabels, order.status)}</em>
             </button>)}
           </div>
         ) : <div className="workorder-queue-empty" role="status">{loadState === "loading" ? "正在读取已派发工单及任务内容，请稍候…" : loadState === "failed" ? "工单暂未读出，请查看错误提示或点击刷新工单重试。" : "暂无可见工单；已有有效诊断和方案后，系统自动派发给负责该设备且已登录的维修人员，任务生成后自动显示。"}</div>}
         {!selectedOrder && error && <div className="inline-error" role="alert">工单读取失败：{error}</div>}
       </section>
-      {loadState === "ready" && hasCurrentIncident && !hasVisibleIncidentOrder && <div className="workspace-notice" role="status">当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统正在核对本次方案、当前报警和设备负责人，派发后自动显示。{currentPlanRecord ? '工程资料待核实项将保留在任务内。' : '需先有本次故障对应的已保存方案；已删除的方案不会自动恢复。'}</div>}
+      {loadState === "ready" && hasCurrentIncident && !hasVisibleIncidentOrder && <div className="workspace-notice" role="status">{currentNoRepair ? `当前报警 ${currentIncidentCode}：诊断判定无需维修，不生成维修方案和工单；请按智能诊断中的建议处理。` : <>当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统正在核对本次方案、当前报警和设备负责人，派发后自动显示。{currentPlanRecord ? '工程资料待核实项将保留在任务内。' : '需先有本次故障对应的已保存方案；已删除的方案不会自动恢复。'}</>}</div>}
       {(selectedOrder || loadState === "ready") && <WorkorderDetail
         order={selectedOrder || null}
         sample={sample}
@@ -3363,6 +3371,7 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
     || (String(sample?.device_id || "") === String(order.device_id || "") ? sample : {});
   const target = resolveRepairTarget(order, matchedSample);
   const sheet = buildWorkorderSheet({ order, target, diagnosis: matchedDiagnosis, context: { snapshot, sample: matchedSample, recoverySample } });
+  const executionPlan = buildMaintenancePlanView({ order, diagnosis: matchedDiagnosis });
   const workType = maintenanceWorkType(order);
   const inspectionResult = inspectionWorkorderView(order);
   const review = executionReviewView(order);
@@ -3373,17 +3382,18 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
         <div>
           <span className="eyebrow">{workType.inspection ? "检查工单详情" : "维修工单详情"}</span>
           <h1>{getWorkorderDisplayTitle(order, target, { snapshot, sample: matchedSample, fault: matchedDiagnosis.fault || matchedDiagnosis.summary })}</h1>
-          <p>{order.workorder_id} · {order.device_id} · {order.assignee_name || order.assignee || "未分配"}{order.event_id ? ` · 故障事件 ${order.event_id}` : ''}</p>
+          <dl className="workorder-identity">
+            <div><dt>工单编号</dt><dd>{order.workorder_id}</dd></div>
+            <div><dt>设备编号</dt><dd>{order.device_id}</dd></div>
+            <div><dt>负责人</dt><dd>{order.assignee_name || order.assignee || "未分配"}</dd></div>
+            <div><dt>故障事件</dt><dd>{order.event_id || '未记录'}</dd></div>
+            <div><dt>报警代码</dt><dd>{getWorkorderAlarmCode(order) || incidentIdentity(order).alarm_code || '待确认'}</dd></div>
+            {order.device_name && <div><dt>设备名称</dt><dd>{order.device_name}</dd></div>}
+            {order.device_model && <div><dt>设备型号</dt><dd>{order.device_model}</dd></div>}
+          </dl>
         </div>
         <div className="workorder-titlebar-actions"><span className={`workorder-status-badge ${order.status === "closed" || order.status === "completed" ? "done" : "pending"}`}>{statusLabel}</span><button className="button danger-button" type="button" disabled={busy || readOnly} onClick={() => onDelete?.(order)}>删除工单</button></div>
       </header>
-
-      <IncidentTimeline record={order} />
-
-      {sheet.dispatchMode === 'fault_followup' && <section className="maintenance-plan-panel" aria-label="工单任务范围">
-        <h2>故障处理任务</h2><p>关联维修方案：{order.plan_id}。原方案已保留；先完成现场核查，涉及拆修或换件前需补齐相应工程与备件依据。</p>
-        <PlanList title="本工单处理步骤" items={sheet.taskSteps} ordered />
-      </section>}
 
       {(review.required || revalidation?.message) && <section className="maintenance-plan-panel" aria-label="方案执行复核">
         <h2>{review.required ? review.label : '方案校验结果'}</h2>
@@ -3392,10 +3402,8 @@ function WorkorderDetail({ order, sample, snapshot, diagnosis = {}, busy, error,
         {revalidation?.message && <p role="status">{revalidation.message}</p>}
       </section>}
 
-      <div className="workorder-bigscreen-grid cad-only">
-        <RepairCadPanel key={`${order.workorder_id}:${order.device_id}`} order={order} target={target} />
-      </div>
-      <WorkorderSheet sheet={sheet} workType={workType} inspectionResult={inspectionResult} review={review} confirmationRevision={revalidation?.revision || 0} busy={busy} error={error} onUpdate={onUpdate} readOnly={readOnly} />
+      <WorkorderSheet sheet={sheet} executionPlan={executionPlan} planId={order.plan_id || executionPlan.planId} workType={workType} inspectionResult={inspectionResult} review={review} confirmationRevision={revalidation?.revision || 0} busy={busy} error={error} onUpdate={onUpdate} readOnly={readOnly} localization={<div className="workorder-bigscreen-grid cad-only"><RepairCadPanel key={`${order.workorder_id}:${order.device_id}`} order={order} target={target} /></div>} />
+      <IncidentTimeline record={order} compact />
     </section>
   );
 }
@@ -3430,8 +3438,8 @@ function MaintenancePlanPanel({ plan, record, hasCurrentDiagnosis }) {
       ) : (
         <>
           <div className="maintenance-plan-diagnosis">
-            <div><span>故障分析</span><strong>{diagnosis.fault || diagnosis.summary || "待确认"}</strong><p>{diagnosis.cause || diagnosis.diagnosis || "暂无原因分析"}</p></div>
-            <div><span>建议与风险</span><strong>{diagnosis.recommendation || "按方案步骤执行并复测"}</strong><p>{diagnosis.severity || plan.riskLevel || "风险等级待确认"}{plan.estimatedTime ? ` · 预计 ${plan.estimatedTime}` : ""}{hasCurrentDiagnosis ? " · 当前设备方案" : " · 已保存方案"}</p></div>
+            <div><span className="section-kicker">故障判断</span><ResultText value={diagnosis.fault || diagnosis.summary || "待确认"} className="result-plan-fault" /><h4 className="result-plan-label">原因分析</h4><ResultText value={diagnosis.cause || diagnosis.diagnosis || "暂无原因分析"} /></div>
+            <div><span className="section-kicker">处置建议</span><ResultText value={diagnosis.recommendation || "按方案步骤执行并复测"} /><div className="result-plan-meta"><span className="result-risk">{displayRiskLevel(plan.riskLevel || diagnosis.severity)}</span>{plan.estimatedTime && <span>预计用时：{plan.estimatedTime}</span>}<span>{hasCurrentDiagnosis ? "当前设备方案" : "已保存方案"}</span></div></div>
           </div>
           {drawings.length > 0 && <section className="maintenance-plan-section" aria-label="设备图纸参考">
             <div className="maintenance-plan-section-head"><h3>设备图纸参考</h3><span>{drawings.length} 项</span></div>
@@ -3439,9 +3447,12 @@ function MaintenancePlanPanel({ plan, record, hasCurrentDiagnosis }) {
             <p className="maintenance-plan-muted">可查看设备模型和图纸；目标部件的 BOM、尺寸、材料等工程资料仍以校验结果为准。</p>
           </section>}
           <div className="maintenance-plan-grid">
-            <PlanList title={workType.inspection ? "检查步骤" : "维修步骤"} items={plan.steps} ordered />
-            <PlanList title="工具与备件" items={[...plan.tools.map((item) => `工具：${item}`), ...plan.parts.map((item) => `备件：${item}`)]} />
-            <PlanList title="安全与检查" items={[...plan.safety, ...plan.preChecks, ...plan.postChecks]} />
+            <PlanList title="安全要求" items={plan.safety} />
+            <PlanList title={workType.inspection ? "检查前确认" : "维修前检查"} items={plan.preChecks} />
+            <PlanList title={workType.inspection ? "检查步骤" : "维修步骤"} items={plan.steps} ordered wide />
+            <PlanList title="工具清单" items={plan.tools} />
+            <PlanList title="备件清单" items={plan.parts} />
+            <PlanList title={workType.inspection ? "检查后核验" : "维修后验收"} items={plan.postChecks} wide />
           </div>
         </>
       )}
@@ -3449,18 +3460,21 @@ function MaintenancePlanPanel({ plan, record, hasCurrentDiagnosis }) {
   );
 }
 
-function PlanList({ title, items = [], ordered = false }) {
-  const values = items.filter(Boolean);
-  return <section className="maintenance-plan-section"><div className="maintenance-plan-section-head"><h3>{title}</h3><span>{values.length} 项</span></div>{values.length ? (ordered ? <ol>{values.map((item, index) => <li key={`${item}-${index}`}><FormattedText value={item} /></li>)}</ol> : <ul>{values.map((item, index) => <li key={`${item}-${index}`}><FormattedText value={item} /></li>)}</ul>) : <p className="maintenance-plan-muted">暂无记录</p>}</section>;
+function PlanList({ title, items = [], ordered = false, wide = false }) {
+  const values = resultListItems(items);
+  return <section className={`maintenance-plan-section${wide?' is-wide':''}`} aria-label={title}><div className="maintenance-plan-section-head"><h3>{title}</h3><span>{values.length} 项</span></div>{values.length ? (ordered ? <ol>{values.map((item, index) => <li key={index}><ResultText value={item} /></li>)}</ol> : <ul>{values.map((item, index) => <li key={index}><ResultText value={item} /></li>)}</ul>) : <p className="maintenance-plan-muted">暂无记录</p>}</section>;
 }
 
-function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionResult = inspectionWorkorderView(), review = executionReviewView(), confirmationRevision = 0, busy, error, onUpdate, readOnly = false }) {
+function WorkorderSheet({ sheet, executionPlan = {}, planId = '', localization, workType = maintenanceWorkType(), inspectionResult = inspectionWorkorderView(), review = executionReviewView(), confirmationRevision = 0, busy, error, onUpdate, readOnly = false }) {
   const [repairFeedback, setRepairFeedback] = useState(sheet.feedback || "");
   const [feedbackSavedId, setFeedbackSavedId] = useState("");
   useEffect(() => {
     setFeedbackSavedId("");
   }, [sheet.workorderId, confirmationRevision]);
   const isDone = ["completed", "closed"].includes(sheet.status);
+  const followup = sheet.dispatchMode === 'fault_followup';
+  const taskSteps = followup ? sheet.taskSteps : review.required ? [] : sheet.taskSteps.length ? sheet.taskSteps : executionPlan.steps || [];
+  const showTasks = followup || taskSteps.length > 0;
   const completionVerified = isDone && (sheet.machineControl?.state === 'running' && sheet.machineControl?.restart_method === 'manual_confirmation'
     || sheet.verificationPhase === 'poststart' && (!review.required || review.humanConfirmed));
   async function saveRecord() {
@@ -3471,34 +3485,49 @@ function WorkorderSheet({ sheet, workType = maintenanceWorkType(), inspectionRes
     <section className="maintenance-sheet" aria-label={workType.inspection ? "自动派发检查工单" : "自动派发维修工单"}>
       <div className="sheet-heading">
         <div>
-          <span className="eyebrow">自动派发工单</span>
+          <span className="eyebrow">执行信息</span>
           <h2>{workType.inspection ? "检查工单" : "维修工单"}</h2>
-          <p className="sheet-subtitle">{workType.inspection ? `${workType.description} 检查通过后自动核验整线复机；仍有异常保留待处理。` : "故障确认后由系统自动派出，维修人员按维修方案执行并提交反馈。"}</p>
+          <p className="sheet-subtitle">{workType.inspection ? `${workType.description} 检查通过后自动核验整线复机；仍有异常保留待处理。` : "按本工单处理步骤执行，记录现场处理过程与复测结果。"}</p>
         </div>
         <span className={isDone ? "sheet-status done" : "sheet-status"}>{inspectionResult.statusLabel || labelFor(workorderStatusLabels, sheet.status)}</span>
       </div>
 
       <div className="basic-grid">
-        <div><span>工单编号</span><strong>{sheet.workorderId || "--"}</strong></div>
-        <div><span>设备</span><strong>{sheet.deviceId || "--"}</strong></div>
         <div><span>{workType.inspection ? "检查负责人" : "维修负责人"}</span><strong>{sheet.assignee}</strong></div>
         <div><span>派发方式</span><strong>{sheet.autoDispatched ? "系统自动派发" : "系统工单"}</strong></div>
       </div>
 
       <div className="sheet-execution-grid">
         <section className="sheet-section fault-summary-card">
-          <span className="section-kicker">故障信息</span>
-          <h3>{sheet.title}</h3>
-          <div className="fault-meta-list">
-            <span>故障部件：{sheet.partName}</span>
-            <span>料号：{sheet.partNo}</span>
-            <span>所属系统：{sheet.system}</span>
-            <span>位置：{sheet.location}</span>
+          <div className="workorder-section-heading"><span className="workorder-section-index" aria-hidden="true">01</span><div><span className="section-kicker">故障信息</span><h3>故障描述与定位</h3></div></div>
+          <dl className="fault-meta-list">
+            <div><dt>故障部件</dt><dd>{sheet.partName}</dd></div>
+            <div><dt>料号</dt><dd>{sheet.partNo}</dd></div>
+            <div><dt>所属系统</dt><dd>{sheet.system}</dd></div>
+            <div><dt>位置</dt><dd>{sheet.location}</dd></div>
+          </dl>
+          <div className="workorder-fault-layout">
+            <div className="workorder-fault-text">
+              <ResultText value={sheet.faultSymptom} className="fault-symptom" />
+              {sheet.faultAnalysis && sheet.faultAnalysis !== normalizeResultText(sheet.faultSymptom) && <section className="workorder-fault-analysis" aria-label="工单故障分析"><h4>故障分析</h4><ResultText value={sheet.faultAnalysis} /></section>}
+            </div>
+            {localization}
           </div>
-          <FormattedText value={`故障表现：${sheet.faultSymptom}`} className="fault-symptom" />
         </section>
+        {showTasks && <section className="sheet-section workorder-task-card" aria-label="工单任务范围">
+          <div className="workorder-section-heading"><span className="workorder-section-index" aria-hidden="true">02</span><div><span className="section-kicker">执行要求</span><h3>处理步骤与执行要求</h3></div></div>
+          {planId && <p className="workorder-plan-source">关联维修方案：{planId}</p>}
+          {followup && <ResultText value="原方案已保留；先完成现场核查，涉及拆修或换件前需补齐相应工程与备件依据。" />}
+          <PlanList title="本工单处理步骤" items={taskSteps} ordered wide />
+          {!followup && !review.required && <div className="workorder-task-support">
+            {executionPlan.safety?.length > 0 && <PlanList title="安全要求" items={executionPlan.safety} />}
+            {executionPlan.preChecks?.length > 0 && <PlanList title="执行前检查" items={executionPlan.preChecks} />}
+            {executionPlan.postChecks?.length > 0 && <PlanList title="完成后验收" items={executionPlan.postChecks} />}
+          </div>}
+        </section>}
         <section className="sheet-section feedback-card">
-          <div className="sheet-subhead"><div><span className="section-kicker">WorkOrder 执行反馈</span><h3>{workType.inspection ? "检查结果与核验" : "完成后提交结果"}</h3></div></div>
+          <div className="workorder-section-heading"><span className="workorder-section-index" aria-hidden="true">{showTasks?'03':'02'}</span><div><span className="section-kicker">执行反馈</span><h3>{workType.inspection ? "检查结果与核验" : "处理记录与结果"}</h3></div></div>
+          {sheet.feedback && <section className="saved-feedback-preview" aria-label="已保存处理记录"><h4>已保存处理记录</h4><ResultText value={sheet.feedback} /></section>}
           <label htmlFor="repair-feedback">处理说明</label>
           <textarea id="repair-feedback" value={repairFeedback} onChange={(event) => setRepairFeedback(event.target.value)} placeholder={workType.inspection ? "填写检查结果或未解决原因" : "填写实际完成的维修处理和结果"} disabled={busy || readOnly || sheet.status === 'closed'} />
           {error && <div className="inline-error">{error}</div>}

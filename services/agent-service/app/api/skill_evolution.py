@@ -50,8 +50,16 @@ def include_evolution_routes(router, manager, write_actor, run, machine_model):
         result = action(manager.evolution.confirm, proposal_id, values.candidate_hash,
                         values.machine.model_dump(), actor, resolve_actor)
         manager.evolution_worker.wake()
-        return {key: result.get(key) for key in ('proposal_id', 'status', 'message', 'confirmed_by', 'confirmation_id')}
+        return {key: result.get(key) for key in ('proposal_id', 'revision', 'status', 'message', 'confirmed_by', 'confirmation_id')}
 
     @router.post('/evolution/{proposal_id}/reject')
     def reject(proposal_id: str, values: HashRequest, request: Request):
         return action(manager.evolution.reject, proposal_id, values.candidate_hash, write_actor(request))
+
+    @router.post('/evolution/{proposal_id}/publish')
+    def publish(proposal_id: str, values: HashRequest, request: Request):
+        actor = write_actor(request)
+        token = request.cookies.get('maintenance_session', '')
+        result = action(manager.evolution.publish, proposal_id, values.candidate_hash, actor,
+                        lambda: BackendServiceClient().resolve_session(token))
+        return {key: result.get(key) for key in ('proposal_id', 'status', 'message', 'published_by', 'edit_id')}

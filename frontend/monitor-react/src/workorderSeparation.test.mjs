@@ -16,6 +16,27 @@ test("workorder titles identify the actual machine and current fault", () => {
   assert.equal(title, "ELITE ROBOTS CS612 六轴协作机器人 · 控制器通讯异常");
 });
 
+test('长篇诊断不能成为工单标题，完整分析与压力数据保留在正文',()=>{
+  const narrative='设备 TRAK-TC820LTYSI-001 触发报警 700010「液压压力未达到」，液压总压力 697→567 psi，尾座夹紧压力 694→548 psi，呈典型液压系统整体压力跌落特征。'.repeat(3);
+  const order={device_id:'TRAK-TC820LTYSI-001',title:'设备维修工单',alarm_code:'700010',diagnosis_context:{summary:narrative}};
+  const original=structuredClone(order);
+  const title=getWorkorderDisplayTitle(order,{}, {fault:narrative});
+  assert.equal(title,'TRAK TC820LTYsi 车削中心 · 液压压力未达到');
+  const sheet=buildWorkorderSheet({order,target:{symptom:'压力下降'},diagnosis:{summary:narrative}});
+  assert.equal(sheet.faultAnalysis,narrative);
+  assert.deepEqual(order,original);
+});
+
+test('原标题包含读数而诊断摘要较短时，缩标题仍完整保留原始故障记录',()=>{
+  const narrative='设备触发报警 700010「液压压力未达到」，现场测得 0.42 MPa，设定范围 0.60–0.80 MPa。'.repeat(3);
+  const order={device_id:'TRAK-TC820LTYSI-001',title:narrative,alarm_code:'700010',diagnosis_context:{summary:'液压压力异常'}};
+  const sheet=buildWorkorderSheet({order,target:{symptom:'液压压力低于设定值。'},diagnosis:{summary:'液压压力异常'}});
+  assert.ok(sheet.title.length<=80);
+  assert.ok(sheet.faultAnalysis.includes(narrative));
+  assert.ok(sheet.faultAnalysis.includes('液压压力异常'));
+  assert.equal(order.title,narrative);
+});
+
 test("frontend separates maintenance plan fields from the WorkOrder sheet", () => {
   const order = {
     workorder_id: "WO-1",

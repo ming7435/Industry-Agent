@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -119,7 +119,7 @@ class SkillManager:
         with self._transaction():
             return self._detail(agent, name)
 
-    def update(self, agent, name, values, actor, *, require_trial=False):
+    def update(self, agent, name, values, actor, *, require_trial=False, publication_fence=None):
         with self._transaction():
             skill, path = self._find(agent, name)
             original = path.read_bytes()
@@ -166,7 +166,10 @@ class SkillManager:
                 os.chmod(temporary, path.stat().st_mode)
                 if path.read_bytes() != original:
                     raise SkillEditError(409, "技能文件刚被修改，请刷新后重试")
-                os.replace(temporary, path)
+                # 自动发布的内部行锁栅栏必须贴近真正的文件写入；普通人工发布不变。
+                # 此回调不接受客户端参数，且不把远程请求放入文件/数据库事务。
+                with publication_fence(audit) if publication_fence else nullcontext():
+                    os.replace(temporary, path)
             finally:
                 if temporary is not None:
                     temporary.unlink(missing_ok=True)
@@ -183,5 +186,5 @@ class SkillManager:
                     warning = "更新已保存到文档；数据库审计暂不可用，本地修订记录已保留"
             return {**self._detail(agent, name), "edit_id": edit_id, "warning": warning}
 
-    def publish(self, agent, name, values, actor):
-        return self.update(agent, name, values, actor, require_trial=True)
+    def publish(self, agent, name, values, actor, *, publication_fence=None):
+        return self.update(agent, name, values, actor, require_trial=True, publication_fence=publication_fence)

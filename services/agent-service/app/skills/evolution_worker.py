@@ -24,7 +24,7 @@ class EvolutionWorker:
         try:
             records = self.service.list()
             active = [r for r in records if r['status'] in
-                      {'confirmed', 'verification_starting', 'verifying', 'publishing'}]
+                      {'generating', 'confirmed', 'verification_starting', 'verifying', 'awaiting_publication', 'publishing'}]
             # 每轮每项最多一次读对账；多个进程由服务端租约/CAS隔离。
             for record in active[:4]:
                 self.service.advance(record['proposal_id'])

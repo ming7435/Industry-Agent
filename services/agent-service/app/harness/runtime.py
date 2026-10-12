@@ -72,6 +72,10 @@ class AgentHarness:
         agent_run_id = "AGENT-RUN-" + uuid4().hex[:12].upper()
         agent_name = getattr(self.agent, "name", type(self.agent).__name__)
         context = self._agent_trace_context(task, task_id, trace_id, agent_run_id, attempt)
+        from app.skills.registry import get_skill_registry
+        # 草稿试验身份由服务器作用域推导，不依赖客户端事件是否携带test_id。
+        if getattr(get_skill_registry(), 'is_expert_trial', False):
+            context['run_type'] = 'expert_trial'
         record = {
             "type": "agent", "name": agent_name, "agent": agent_name,
             "agent_run_id": agent_run_id, "task_id": task_id,
@@ -82,12 +86,17 @@ class AgentHarness:
         return record, started
 
     def _run_bound(self, task: Any, record: dict[str, Any]) -> Any:
+        from app.skills.registry import skill_observation_scope
         tools = getattr(self.agent, "tools", None)
         bind_trace = getattr(tools, "trace_context", None)
-        if callable(bind_trace):
-            with bind_trace(task_id=record["task_id"], trace_id=record["trace_id"], context=record["context"]):
-                return self.agent.run(task)
-        return self.agent.run(task)
+        def observe(snapshot):
+            self.trace.record(**{**record, **snapshot, 'type': 'skill_observation',
+                                 'event': 'skill_observed', 'observation_kind': 'selected_definition'})
+        with skill_observation_scope(observe):
+            if callable(bind_trace):
+                with bind_trace(task_id=record["task_id"], trace_id=record["trace_id"], context=record["context"]):
+                    return self.agent.run(task)
+            return self.agent.run(task)
 
     def _finish_attempt(self, event: str, task: Any, record: dict[str, Any], started: float, *, result: Any = None, error: Exception | None = None) -> None:
         details: dict[str, Any] = {"elapsed_ms": round((perf_counter() - started) * 1000, 2)}

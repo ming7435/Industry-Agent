@@ -12,9 +12,9 @@ const response = (body, status = 200) => ({ status, ok: status < 400, json: asyn
 const loginA = () => setTeamSessionActor(actorA, { force: true });
 const stale = error => error.sessionChanged === true && error.name === 'AbortError';
 
-test('会话保护范围排除公开方案与CAD外部账号', () => {
+test('会话保护范围排除公开方案与CAD服务状态', () => {
   for (const path of ['/api/workorders', '/api/workorders/W/action', '/api/workorders/W/revalidate-plan', '/api/maintenance/plans/delete', '/api/maintenance/plans/P/retry', '/api/team/me', '/api/team/reminders']) assert.equal(isTeamSessionPath(path), true, path);
-  for (const path of ['/api/maintenance/plans', '/api/reports', '/api/quality/checks', '/api/cad/resolve', '/api/cad/buildcad/auth/status', '/api/team/devices', '/api/team/line', '/api/team/login', '/api/team/register']) assert.equal(isTeamSessionPath(path), false, path);
+  for (const path of ['/api/maintenance/plans', '/api/reports', '/api/quality/checks', '/api/cad/resolve', '/api/cad/freecad/status', '/api/team/devices', '/api/team/line', '/api/team/login', '/api/team/register']) assert.equal(isTeamSessionPath(path), false, path);
 });
 
 test('公共整线状态在登录或退出期间仍能交付，两个请求入口一致', async () => {
@@ -57,8 +57,8 @@ test('403权限不足和503临时故障都不清有效维修会话', async () =>
   }
 });
 
-test('CAD外部401和登录凭据错误401不清当前维修账号', async () => {
-  for (const invoke of [() => request('/api/cad/buildcad/auth/status'), () => teamRequest('login', { username: 'isolated', password: 'synthetic' })]) {
+test('CAD服务401和登录凭据错误401不清当前维修账号', async () => {
+  for (const invoke of [() => request('/api/cad/freecad/status'), () => teamRequest('login', { username: 'isolated', password: 'synthetic' })]) {
     loginA(); globalThis.fetch = async () => response({ detail: '隔离账号校验失败' }, 401);
     await assert.rejects(invoke(), error => error.status === 401);
     assert.equal(getTeamSession().actor, actorA);

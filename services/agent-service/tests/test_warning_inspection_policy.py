@@ -45,9 +45,10 @@ def test_reliable_warning_has_operator_check_disposition_before_evidence_is_atta
     assert policy.disposition_decision(diagnosis)[0] == "operator_check"
 
 
-def test_reliable_warning_can_dispatch_fixed_inspection_without_repair_bom():
+def test_nonrepair_warning_does_not_dispatch_even_a_fixed_inspection_plan():
     allowed, reason = policy.auto_workorder_decision(warning(), inspection_plan())
-    assert allowed, reason
+    assert not allowed
+    assert '无需维修' in reason
 
 
 @pytest.mark.parametrize("disposition", ["no_action", "monitor_only", "maintenance_required", "emergency_stop"])
@@ -99,7 +100,7 @@ def test_formal_high_severity_repair_keeps_existing_automatic_dispatch_gate():
 
 def test_diagnosis_view_raw_keeps_warning_evidence_and_human_review_gate():
     diagnosis = {"confidence": 0.91, "maintenance_required": False, "raw": warning()}
-    assert policy.auto_workorder_decision(diagnosis, inspection_plan())[0] is True
+    assert policy.auto_workorder_decision(diagnosis, inspection_plan())[0] is False
     diagnosis["raw"]["requires_human_review"] = True
     assert policy.auto_workorder_decision(diagnosis, inspection_plan())[0] is False
 

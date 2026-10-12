@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from hashlib import sha256
+import json
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,6 +118,15 @@ class SkillDefinition:
             normalized.append(step)
         return normalized
 
+    def observation(self) -> dict[str, Any]:
+        """从真正加载的对象取语义指纹，不事后读取可能已更新的文件。"""
+        canonical = json.dumps({'metadata': dict(self.metadata), 'document': self.document,
+                                'version': self.version, 'goal': self.goal},
+                               sort_keys=True, ensure_ascii=False, default=str)
+        return {'agent': self.agent, 'skill': self.name, 'skill_version': self.version,
+                'skill_fingerprint': sha256(canonical.encode('utf-8')).hexdigest(),
+                'declared_steps': [step.id for step in self.normalized_steps()]}
+
     def execute_tool_step(
         self,
         step_id: str,
@@ -185,7 +196,9 @@ class SkillRegistry:
             self._signatures.pop(agent, None)
 
     def get(self, agent: str, name: str) -> SkillDefinition | None:
-        return next((item for item in self.list(agent) if name == item.name or name in item.aliases), None)
+        result = next((item for item in self.list(agent) if name == item.name or name in item.aliases), None)
+        _observe_skills([result] if result else [])
+        return result
 
     def validate_tools(self, available_tools: Iterable[str]) -> None:
         """校验活动 Skill 的名称和工具引用。"""
@@ -256,15 +269,19 @@ class SkillRegistry:
             )
         ]
         if specialized:
-            return [
+            result = [
                 item for item in available
                 if item in specialized or item.is_always
             ]
+            _observe_skills(result)
+            return result
         fallback = [
             item for item in available
             if item.is_default or item.is_always
         ]
-        return fallback or available[:1]
+        result = fallback or available[:1]
+        _observe_skills(result)
+        return result
 
     @staticmethod
     def merge_tools(skills: List[SkillDefinition]) -> List[str]:
@@ -370,6 +387,30 @@ def _trigger_matches(trigger: str, context: Mapping[str, Any], text: str) -> boo
 
 _REGISTRY = SkillRegistry()
 _TRIAL_REGISTRY = ContextVar('expert_trial_registry', default=None)
+_SKILL_OBSERVER = ContextVar('skill_loop_observer', default=None)
+
+
+@contextmanager
+def skill_observation_scope(callback):
+    """只有实际 Harness 作用域启用，只读记录选择，不干预业务循环。"""
+    token = _SKILL_OBSERVER.set((callback, set()))
+    try:
+        yield
+    finally:
+        _SKILL_OBSERVER.reset(token)
+
+
+def _observe_skills(definitions):
+    observer = _SKILL_OBSERVER.get()
+    if observer is None:
+        return
+    callback, seen = observer
+    for definition in definitions:
+        snapshot = definition.observation()
+        key = (snapshot['agent'], snapshot['skill'], snapshot['skill_fingerprint'])
+        if key not in seen:
+            seen.add(key)
+            callback(snapshot)
 
 
 @contextmanager

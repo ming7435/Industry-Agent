@@ -42,6 +42,10 @@ export default function ExpertWorkspace({ actor }) {
   const [testing, setTesting] = useState(false);
   const [machines, setMachines] = useState([]);
   const [feedback, setFeedback] = useState('');
+  const [proposal, setProposal] = useState(null);
+  const [approvedDraft, setApprovedDraft] = useState(false);
+  const [receiptRefresh,setReceiptRefresh] = useState(0);
+  const manualMode = useRef(false);
   const sequence = useRef(0);
   const action = useRef(null);
   const editable = ['technician', 'supervisor'].includes(actor?.role) && current?.can_edit === true;
@@ -49,7 +53,9 @@ export default function ExpertWorkspace({ actor }) {
   const documentError = draft && (!draft.document.trim() ? '请填写技能正文。' : draft.document.length > 24000 ? '技能正文最多填写 24000 个字符，请适当精简。' : '');
   const receiptKey = `expert-machine-test:${actor?.user_id || ''}`;
   const machine = machines.find(item => item.device_id === sample?.device_id);
-  const locked = busy || loading || activeTrial(trial);
+  const autoRunning = ['confirmed', 'verification_starting', 'verifying', 'publishing'].includes(proposal?.status);
+  const autoFrozen = Boolean(proposal && proposal.status !== 'awaiting_confirmation');
+  const locked = busy || loading || activeTrial(trial) || autoRunning;
 
   useEffect(() => {
     if (!actor?.user_id) return undefined;
@@ -89,6 +95,16 @@ export default function ExpertWorkspace({ actor }) {
   }, [trial?.test_id, activeTrial(trial)]);
 
   useEffect(() => {
+    if (!proposal?.test_id || proposal.confirmed_by !== actor?.user_id || trial?.test_id === proposal.test_id) return undefined;
+    const controller = new AbortController();
+    const id = sequence.current;
+    request(`/api/expert/tests/${encodeURIComponent(proposal.test_id)}`, {signal:controller.signal}).then(value => {
+      if (!controller.signal.aborted && id === sequence.current) setTrial(value);
+    }).catch(e => { if (e.name !== 'AbortError' && id === sequence.current) setError(e.message); });
+    return () => controller.abort();
+  }, [proposal?.test_id, proposal?.confirmed_by, actor?.user_id, trial?.test_id, receiptRefresh]);
+
+  useEffect(() => {
     if (!actor?.user_id) return undefined;
     const controller = new AbortController();
     setError('');
@@ -106,6 +122,7 @@ export default function ExpertWorkspace({ actor }) {
     action.current?.abort();
     setCurrent(null); setDraft(null); setRemote(null); setError(''); setMessage(''); setBusy(false);
     setTrial(null); setReviewed(false); setTesting(false); setSample(null);
+    setProposal(null); setApprovedDraft(false); manualMode.current=false;
     if (!selected || !actor?.user_id) return undefined;
     const controller = new AbortController(); action.current = controller;
     setLoading(true);
@@ -131,13 +148,36 @@ export default function ExpertWorkspace({ actor }) {
     return !dirty || window.confirm('当前技能有未保存修改，确定离开并放弃草稿吗？');
   }
 
+  function adoptAutomatic(value, force=false) {
+    if (!current || actor?.role !== 'technician' || value.agent !== current.agent || value.name !== current.name) return;
+    if (proposal?.proposal_id === value.proposal_id) {
+      if (Number(value.revision) < Number(proposal.revision)) return;
+      if (['rejected','stale','verification_failed'].includes(value.status) && !activeTrial(trial)) {
+        setProposal(null);setApprovedDraft(false);setDraft(fields(current));setTrial(null);
+      } else setProposal(value);
+      return;
+    }
+    if (!value.draft || value.base_revision !== current.revision ||
+        !['awaiting_confirmation','confirmed','verification_starting','verifying','awaiting_publication'].includes(value.status) ||
+        (value.confirmed_by && value.confirmed_by !== actor.user_id)) return;
+    if (force ? !mayDiscard() : dirty || trial || manualMode.current) return;
+    const generated=value.draft;
+    setProposal(value);setApprovedDraft(false);setReviewed(false);setTrial(null);manualMode.current=false;
+    setDraft({version:generated.version,goal:generated.goal,document:generated.document,reason:generated.reason});
+    setSample(value.machine || {...sampleFor(current),device_id:sample?.device_id || '',scenario_id:sample?.scenario_id || '',
+      expected:generated.expected_result || '按追加规则补查证据、明确不确定项，保留原审批、安全和验收门禁。'});
+    setMessage('自动修改稿已填入正文、修改说明和预期结果；审核及测试后仍须人工发布。');
+  }
+
   async function refresh() {
     if (!selected || locked) return;
     const id = ++sequence.current;
     action.current?.abort();
     const controller = new AbortController(); action.current = controller;
     setLoading(true); setError(''); setMessage('');
-    setTrial(null); setReviewed(false);
+    if (!proposal) setTrial(null);
+    else setReceiptRefresh(value=>value+1);
+    setReviewed(false);
     try {
       const value = await request(endpoint(selected), { signal: controller.signal });
       if (id !== sequence.current) return;
@@ -156,44 +196,67 @@ export default function ExpertWorkspace({ actor }) {
 
   async function save(event) {
     event.preventDefault();
-    if (!editable || busy || loading || remote || documentError || trial?.baseline_changed || trial?.status !== 'completed' || !reviewed) return;
+    if (!editable || busy || loading || remote || documentError || trial?.baseline_changed || trial?.status !== 'completed' || !reviewed ||
+        (proposal && proposal.status !== 'awaiting_publication')) return;
     const id = ++sequence.current;
     action.current?.abort();
     const controller = new AbortController(); action.current = controller;
     setBusy(true); setError(''); setMessage('');
     try {
-      const value = await request(endpoint(current), { method: 'POST', signal: controller.signal,
+      let value;
+      if (proposal) {
+        const result = await request(`/api/expert/evolution/${encodeURIComponent(proposal.proposal_id)}/publish`,
+          {method:'POST',signal:controller.signal,body:JSON.stringify({candidate_hash:proposal.candidate_hash})});
+        if (result.status !== 'published') {
+          if (id === sequence.current) {setProposal(previous=>({...previous,...result}));setMessage(result.message || '发布结果待核对，未重新写入。');}
+          return;
+        }
+        value = await request(endpoint(current), {signal:controller.signal});
+      } else value = await request(endpoint(current), { method: 'POST', signal: controller.signal,
         body: JSON.stringify({ expected_revision: current.revision, ...draft, test_id: trial.test_id, human_confirmed: true }) });
       if (id !== sequence.current) return;
       setCurrent(value); setDraft(fields(value));
       setTrial(null); setReviewed(false);
+      setProposal(null);setApprovedDraft(false);manualMode.current=true;
       sessionStorage.removeItem(receiptKey);
       setItems(previous => previous.map(item => identity(item) === identity(value) ? value : item));
       setMessage(value.warning || '已发布到系统，新说明用于后续任务。');
     } catch(e) { if (id === sequence.current && e.name !== 'AbortError') {
-      setError(e.message); setTrial(null); setReviewed(false);
+      setError(e.message);
+      if (!proposal) setTrial(null);
+      else setReceiptRefresh(value=>value+1);
+      setReviewed(false);
     } }
     finally { if (id === sequence.current) setBusy(false); }
   }
 
   const change = key => event => {
+    manualMode.current=true;
     setDraft(previous => ({ ...previous, [key]: event.target.value }));
     setTrial(null); setReviewed(false);
   };
   const changeSample = key => event => {
+    if (!proposal) manualMode.current=true;
     const value = event.target.value;
     setSample(previous => ({ ...previous, [key]: value, ...(key === 'device_id' ? {
       scenario_id: machines.find(item => item.device_id === value)?.scenarios[0]?.scenario_id || '' } : {}) }));
     setTrial(null); setReviewed(false);
+    setApprovedDraft(false);
   };
   async function testDraft(event) {
-    if (!editable || locked || remote || !event.currentTarget.form.reportValidity()) return;
+    if (!editable || locked || remote || (proposal && (!approvedDraft || autoFrozen)) || !event.currentTarget.form.reportValidity()) return;
     if (documentError) { setError(documentError); return; }
     const id = ++sequence.current;
     action.current?.abort();
     const controller = new AbortController(); action.current = controller;
     setBusy(true); setTesting(true); setTrial(null); setReviewed(false); setError(''); setMessage('');
     try {
+      if (proposal) {
+        const value = await request(`/api/expert/evolution/${encodeURIComponent(proposal.proposal_id)}/confirm`,
+          {method:'POST',signal:controller.signal,body:JSON.stringify({candidate_hash:proposal.candidate_hash,machine:sample})});
+        if (id === sequence.current) setProposal(previous=>({...previous,...value}));
+        return;
+      }
       const value = await request(endpoint(current) + '/machine-test', { method: 'POST', signal: controller.signal,
         body: JSON.stringify({ expected_revision: current.revision, ...draft, machine: sample }) });
       if (id !== sequence.current) return;
@@ -245,7 +308,8 @@ export default function ExpertWorkspace({ actor }) {
       {loading && <p role="status">正在读取当前技能…</p>}
       {error && <p className="expert-alert" role="alert">{error}</p>}
       {message && <p className="expert-message" role="status">{message}</p>}
-      {current && <SkillEvolutionPanel key={actor.user_id + '/' + identity(current)} actor={actor} skill={current} machines={machines} />}
+      {current && <SkillEvolutionPanel key={actor.user_id + '/' + identity(current)} actor={actor} skill={current}
+        onCandidate={adoptAutomatic} onAdopt={value=>adoptAutomatic(value,true)} loadedRecord={proposal} canAdopt={!locked} />}
       {current && draft && <section className="expert-card" aria-label="技能编辑">
         <div className="expert-section-title"><h2>{current.title}</h2><button type="button" onClick={refresh} disabled={locked}>刷新技能</button></div>
         <dl className="expert-skill-info" aria-label="技能信息">
@@ -264,23 +328,28 @@ export default function ExpertWorkspace({ actor }) {
           <button type="button" onClick={adoptBaseline}>确认已核对，采用新基线</button>
         </section>}
         <form onSubmit={save}>
-          <label>技能目标<input value={draft.goal} onChange={change('goal')} readOnly={!editable} disabled={locked} required maxLength={300} /></label>
-          <ExpertDocument value={draft.document} label="技能正文" readOnly={!editable} disabled={locked}
+          {proposal && <p>这是系统自动生成的待审核稿，并未替换线上技能。修改说明包含触发原因，预期结果用于核对实际测试。</p>}
+          <label>技能目标<input value={draft.goal} onChange={change('goal')} readOnly={!editable || Boolean(proposal)} disabled={locked} required maxLength={300} /></label>
+          <ExpertDocument value={draft.document} label="技能正文" readOnly={!editable || Boolean(proposal)} disabled={locked}
             onChange={document => { setDraft(previous => ({ ...previous, document })); setTrial(null); setReviewed(false); }} />
           {documentError && <p className="expert-alert" role="alert">{documentError}</p>}
-          {editable && <><label>修改说明<input value={draft.reason} onChange={change('reason')} disabled={locked}
+          {editable && <><label>修改说明<input value={draft.reason} onChange={change('reason')} readOnly={Boolean(proposal)} disabled={locked}
             required maxLength={500} placeholder="说明补充了哪些判断、取证或处理经验" /></label>
             {sample && <section className="expert-trial" aria-label="模拟机器全流程测试">
               <h3>模拟机器全流程测试</h3>
               <p>使用监控中心现有模拟机器。触发故障后按正常规则暂停整线、诊断并派工；维修确认后复机并保存汇总报告。</p>
-              <label>测试设备<select value={sample.device_id} onChange={changeSample('device_id')} disabled={locked} required>
+              <label>测试设备<select value={sample.device_id} onChange={changeSample('device_id')} disabled={locked || autoFrozen} required>
                 <option value="">请选择本人负责的设备</option>
                 {machines.map(item => <option key={item.device_id} value={item.device_id}>{item.name}</option>)}</select></label>
-              <label>模拟故障<select value={sample.scenario_id} onChange={changeSample('scenario_id')} disabled={locked} required>
+              <label>模拟故障<select value={sample.scenario_id} onChange={changeSample('scenario_id')} disabled={locked || autoFrozen} required>
                 <option value="">请选择故障场景</option>
                 {machine?.scenarios.map(item => <option key={item.scenario_id} value={item.scenario_id}>{item.name} · 报警 {item.alarm_code}</option>)}</select></label>
-              <label>预期结果<textarea value={sample.expected} onChange={changeSample('expected')} disabled={locked} required maxLength={2000} rows={3} /></label>
-              <button type="button" onClick={testDraft} disabled={locked || Boolean(remote) || !sample.scenario_id}>{testing ? '测试进行中…' : '测试修改'}</button>
+              <label htmlFor="expert-expected-result">预期结果</label><textarea id="expert-expected-result" value={sample.expected}
+                onChange={changeSample('expected')} disabled={locked || autoFrozen} required maxLength={2000} rows={3} />
+              {proposal?.status === 'awaiting_confirmation' && <label className="expert-review"><input type="checkbox"
+                checked={approvedDraft} disabled={locked} onChange={event=>setApprovedDraft(event.target.checked)} /> 我已审核自动修改稿及预期结果，允许开始测试</label>}
+              <button type="button" onClick={testDraft} disabled={locked || Boolean(remote) || !sample.scenario_id ||
+                (Boolean(proposal) && (!approvedDraft || autoFrozen))}>{testing ? '测试进行中…' : '测试修改'}</button>
               {trial && <section className="expert-machine-progress" aria-label="全流程进度">
                 <p role="status">{trial.message}</p>
                 <ol>{trial.progress?.map(item => <li key={item.label} className={item.completed ? 'is-completed' : ''}>{item.label}：{item.completed ? '已完成' : '等待完成'}</li>)}</ol>
@@ -298,13 +367,14 @@ export default function ExpertWorkspace({ actor }) {
               </section>}
               {trial?.status === 'completed' && <section className="expert-test-result" aria-label="试运行结果">
                 <h3>试运行结果</h3><p>{trial.scope}</p>
-                <h4>预期结果</h4><ExpertDocument value={trial.sample?.expected} label="预期结果" readOnly />
+                <h4>预期结果</h4><ExpertDocument value={trial.sample?.expected || sample?.expected} label="预期结果" readOnly />
                 <label className="expert-review"><input type="checkbox" checked={reviewed} disabled={busy || loading || trial.baseline_changed}
                   onChange={event => setReviewed(event.target.checked)} /> 我已核对测试结果，确认符合预期</label>
               </section>}
             </section>}
             <p>整线复机、报告保存且所选技能实际执行后，才能核对发布。草稿修改后需要重新测试。</p>
-            <button className="expert-save" type="submit" disabled={busy || loading || Boolean(remote) || Boolean(documentError) || trial?.baseline_changed || trial?.status !== 'completed' || !reviewed}>
+            <button className="expert-save" type="submit" disabled={busy || loading || Boolean(remote) || Boolean(documentError) || trial?.baseline_changed || trial?.status !== 'completed' || !reviewed ||
+              (Boolean(proposal) && proposal.status !== 'awaiting_publication')}>
               {busy && !testing ? '正在发布…' : '发布到系统'}</button></>}
         </form>
         <details><summary>查看受保护的执行规则（只读）</summary>

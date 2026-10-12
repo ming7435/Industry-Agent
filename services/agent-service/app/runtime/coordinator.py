@@ -589,6 +589,26 @@ class RuntimeCoordinator:
                 state_change={"status": evaluation.status.value, "reason": evaluation.reason, "recommended_action": evaluation.recommended_action},
                 keys=["status", "reason", "recommended_action"], tool_name="", latency=0.0, error="",
             )
+            if initial.get('entry') == 'trigger' and domain == 'diagnosis' and evaluation.status.value == 'final':
+                from app.workorder.policy import maintenance_decision, disposition_decision
+                required, reason = maintenance_decision(result.output, next_state.get('event') or {})
+                # Only an explicit nonrepair conclusion finishes the incident.
+                # Missing classification must not be presented as a safe result.
+                if not required and reason in {'业务字段判定无需维修', '诊断判定无需维修'}:
+                    disposition, _ = disposition_decision(result.output, next_state.get('event') or {})
+                    completed = {**next_state, 'status': 'completed', 'stop_reason': 'no_repair_required',
+                                 'maintenance_required': False, 'disposition': disposition,
+                                 'maintenance_reason': reason, 'maintenance_plan': {}, 'workorder': {},
+                                 'runtime_next_index': len(plan.actions),
+                                 'next_action': ActionModel.final(payload={'reason': 'no_repair_required'}).as_dict()}
+                    self.container.trace.record(
+                        type='runtime', name='runtime', node='runtime', agent='runtime', event='repair_not_required',
+                        task_id=initial.get('task_id', ''), trace_id=initial.get('trace_id', ''),
+                        state_change={'disposition': disposition, 'maintenance_required': False, 'reason': reason},
+                        keys=['disposition', 'maintenance_required', 'reason'], tool_name='', latency=0.0, error='',
+                    )
+                    return {'state': completed, 'action': action, 'terminal_status': 'completed',
+                            'terminal_reason': 'no_repair_required', 'evidence_score': evaluation.evidence_score, 'done': True}
             if domain == "knowledge" and evaluation.status.value != "final":
                 # Knowledge Graph 已完成自己的有界补检；仍缺证据时不能把
                 # “剩余计划”误当作补检计划，直接启动维修和派工。

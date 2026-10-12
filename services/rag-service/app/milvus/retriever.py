@@ -114,7 +114,7 @@ def _build_expression(filters: dict[str, Any] | None) -> tuple[str, dict[str, An
 def _embed_query(embedder: Any, query: str) -> list[float]:
     """Encode one query with whatever the embedder exposes.
 
-    :class:`~app.embedding.model.QueryEmbedder` offers ``embed_query``, while a
+    :class:`~app.embedding.models.QueryEmbedder` offers ``embed_query``, while a
     plain embedding client only offers ``embed_texts``. Both are accepted so the
     retriever keeps working when a client is injected.
 
@@ -237,7 +237,7 @@ class DenseRetriever:
             dim: Expected vector dimension; defaults to ``settings.embedding_dim``.
             embedding_dim: Alias of ``dim``.
             embedder: Query embedder; defaults to the process-wide
-                :func:`app.embedding.model.get_embedder`.
+                :func:`app.embedding.models.get_embedder`.
             client: Pre-built Milvus client, mainly for tests.
         """
         self.uri = uri or settings.milvus_uri

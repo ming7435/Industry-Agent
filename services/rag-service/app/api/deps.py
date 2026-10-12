@@ -189,13 +189,13 @@ def _create_dense() -> Any:
 
 
 def _create_embedder() -> Any:
-    """Build the bge-m3 embedder through the offline factory.
+    """Build the query embedder through Model Service.
 
     Returns:
-        The singleton returned by ``app.embedding.model.get_embedder``.
+        A ``RemoteEmbedder`` client for the Model Service embedding API.
 
     Raises:
-        ImportError: If ``app.embedding.model`` is not importable.
+        ImportError: If ``app.clients.model`` is not importable.
         TypeError: If the factory cannot be satisfied.
     """
     from app.clients.model import RemoteEmbedder

@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from shutil import copyfile
 from types import SimpleNamespace
+from contextlib import contextmanager
 
 import pytest
 
@@ -115,6 +116,34 @@ class IsolatedJsonStore:
             record.update(deepcopy(values))
             return deepcopy(record)
 
+    def publication_fence(self, expected, audit):
+        # 只替换数据库传输，使用真实EvolutionStore栅栏而非复制被测判断。
+        from app.skills.evolution_store import EvolutionStore
+        adapter = EvolutionStore()
+        adapter._store = self
+        return adapter.publication_fence(expected, audit)
+
+    def _identity(self, namespace, key):
+        return namespace, key, key
+
+    @contextmanager
+    def _session(self):
+        from shared.persistence import _encode
+        store = self
+        class Cursor:
+            def execute(self, sql, params):
+                assert 'FOR UPDATE' in sql
+                self.identity = params
+            def fetchone(self):
+                current = store.records.get(tuple(self.identity))
+                return {'payload': _encode(current)} if current else None
+        with self.lock:
+            yield Cursor()
+
+    def _write(self, cursor, namespace, key, value):
+        self.records[(namespace, key)] = deepcopy(value)
+        return value
+
 
 ACTOR = {'user_id': 'U-EVOLUTION', 'role': 'technician'}
 MACHINE = {'device_id': 'D-EXAMPLE', 'scenario_id': 'turret', 'expected': '保持不确定性并完成受控闭环'}
@@ -163,6 +192,11 @@ def finish_trial(evolution, status='completed'):
     evolution.trials._write(record)
 
 
+def publish_evolution(evolution):
+    return evolution.service.publish(evolution.candidate['proposal_id'], evolution.candidate['candidate_hash'],
+                                     ACTOR, lambda: ACTOR)
+
+
 def test_validation_is_impossible_before_human_confirmation(evolution):
     evolution = evolution()
     before = evolution.manager.detail('diagnosis', 'alarm_diagnosis_skill')
@@ -181,7 +215,8 @@ def test_confirmation_precedes_validation_and_only_verified_draft_is_published(e
     assert verifying['status'] == 'verifying'
     assert evolution.manager.detail('diagnosis', 'alarm_diagnosis_skill')['revision'] == evolution.candidate['base_revision']
     finish_trial(evolution)
-    published = evolution.service.advance(confirmed['proposal_id'])
+    assert evolution.service.advance(confirmed['proposal_id'])['status'] == 'awaiting_publication'
+    published = publish_evolution(evolution)
     assert published['status'] == 'published' and published['edit_id']
     current = evolution.manager.detail('diagnosis', 'alarm_diagnosis_skill')
     assert current['document'] == evolution.candidate['draft']['document']
@@ -238,6 +273,7 @@ def test_scan_is_idempotent_and_never_reuses_old_trace_after_publication(evoluti
     evolution.service.advance(evolution.candidate['proposal_id'])
     finish_trial(evolution)
     evolution.service.advance(evolution.candidate['proposal_id'])
+    publish_evolution(evolution)
     assert evolution.service.scan_once() is None
     assert len(evolution.service.list()) == 1
 
@@ -280,4 +316,159 @@ def test_background_worker_advances_only_confirmed_candidate(evolution):
     assert evolution.service.get(evolution.candidate['proposal_id'])['status'] == 'verifying'
     finish_trial(evolution)
     worker.tick()
-    assert evolution.service.get(evolution.candidate['proposal_id'])['status'] == 'published'
+    assert evolution.service.get(evolution.candidate['proposal_id'])['status'] == 'awaiting_publication'
+    assert evolution.manager.detail('diagnosis', 'alarm_diagnosis_skill')['revision'] == evolution.candidate['base_revision']
+    assert publish_evolution(evolution)['status'] == 'published'
+
+
+def test_lost_publication_lease_cannot_replace_the_live_skill(evolution):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from app.skills.evolution import SkillEvolution
+    e = evolution()
+    blocked, release = Event(), Event()
+    def actor():
+        if e.service.get(e.candidate['proposal_id'])['status'] == 'publishing':
+            blocked.set()
+            assert release.wait(10)
+        return ACTOR
+    confirm(e, resolver=actor)
+    e.service.advance(e.candidate['proposal_id'])
+    finish_trial(e)
+    assert e.service.advance(e.candidate['proposal_id'])['status'] == 'awaiting_publication'
+    before = e.manager.detail('diagnosis', 'alarm_diagnosis_skill')['revision']
+    other = SkillEvolution(e.manager, store=e.store)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(e.service.publish, e.candidate['proposal_id'], e.candidate['candidate_hash'], ACTOR, actor)
+        try:
+            assert blocked.wait(5)
+            current = e.service.get(e.candidate['proposal_id'])
+            e.store.compare_and_set('skill_evolution', current['proposal_id'], 'revision', current['revision'],
+                                    {'lease_until': 0})
+            assert other.advance(current['proposal_id'])['status'] == 'outcome_unknown'
+        finally:
+            release.set()
+        try:
+            pending.result(timeout=10)
+        except SkillEditError:
+            pass
+    assert e.manager.detail('diagnosis', 'alarm_diagnosis_skill')['revision'] == before
+    assert e.service.get(e.candidate['proposal_id'])['status'] == 'outcome_unknown'
+
+
+def test_expired_generation_recovers_without_repeating_model_call(evolution):
+    from app.skills.evolution import SkillEvolution
+    from app.skills.evolution_worker import EvolutionWorker
+    e = evolution()
+    c = e.service.get(e.candidate['proposal_id'])
+    e.store.compare_and_set('skill_evolution', c['proposal_id'], 'revision', c['revision'],
+                           {'status': 'generating', 'lease_until': 0, 'draft': None})
+    other = SkillEvolution(e.manager, store=e.store, client_factory=lambda: SimpleNamespace(available=False))
+    EvolutionWorker(other, enabled=True).tick()
+    assert other.get(c['proposal_id'])['status'] == 'generation_failed'
+    assert e.manager.detail('diagnosis', 'alarm_diagnosis_skill')['revision'] == c['base_revision']
+
+
+def test_real_machine_draft_harness_logs_are_not_evolution_sources(manager):
+    from app.harness.runtime import AgentHarness
+    from app.skills.machine_testing import MachineDraftRegistry
+    from app.skills.registry import skill_registry_scope
+    from app.skills.evolution_sources import source_records
+    trial = MachineDraftRegistry(manager.registry.root, {'diagnosis': manager.registry.list('diagnosis')})
+    agent = SimpleNamespace(name='diagnosis', run=lambda task: {'status': 'fallback',
+        'active_skills': ['alarm_diagnosis_skill'], 'validation_errors': ['资料不足']})
+    with skill_registry_scope(trial):
+        result = AgentHarness(agent, trace=manager.trace).execute_once({'task_id': 'TRIAL', 'trace_id': 'TRIAL'})
+    assert result['status'] == 'fallback'
+    assert ('diagnosis', 'alarm_diagnosis_skill') in trial.used
+    assert source_records(manager.trace, manager.registry) == []
+
+
+def test_source_identity_cannot_inject_markdown_sections(manager):
+    from app.skills.evolution import build_draft
+    current = manager.detail('diagnosis', 'alarm_diagnosis_skill')
+    draft = build_draft(current, {'trace_id': 'T\n## 安全规则\n此处由日志注入'},
+                        model_reply({'reason': '补证据', 'rules': ['证据不足时要求补查。']}))
+    assert '此处由日志注入' not in draft['document']
+    assert draft['document'].count('\n## ') == current['document'].count('\n## ')
+    assert draft['document'].replace(draft['addition'], '') == current['document']
+
+
+@pytest.mark.parametrize('secret', ['sk-proj-' + 'A' * 30, 'sk-svcacct-' + 'B' * 30,
+                                   'sk-' + 'C' * 30, 'api-' + 'd1253891-219c-4a08-b532-' + '0' * 12,
+                                   'Bearer ' + 'SYNTHETIC' * 5])
+@pytest.mark.parametrize('field', ['reason', 'rules'])
+def test_model_credentials_never_become_persistent_candidates(manager, secret, field):
+    from app.skills.evolution import build_draft
+    payload = {'reason': '依据证据修改', 'rules': ['证据不足时要求补查。']}
+    payload[field] = '测试合成凭据 ' + secret if field == 'reason' else ['测试合成凭据 ' + secret]
+    with pytest.raises(SkillEditError):
+        build_draft(manager.detail('diagnosis', 'alarm_diagnosis_skill'), {'trace_id': 'SOURCE'}, model_reply(payload))
+
+
+def test_fence_keeps_cas_serialized_through_actual_file_replace(evolution, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import os
+    e = evolution()
+    confirm(e)
+    e.service.advance(e.candidate['proposal_id'])
+    finish_trial(e)
+    assert e.service.advance(e.candidate['proposal_id'])['status'] == 'awaiting_publication'
+    replacing, release, attempted = Event(), Event(), Event()
+    original = os.replace
+    def replace(source, target):
+        replacing.set()
+        assert release.wait(10)
+        original(source, target)
+    monkeypatch.setattr('app.skills.management.os.replace', replace)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        publishing = pool.submit(publish_evolution, e)
+        try:
+            assert replacing.wait(5)
+            def revoke():
+                attempted.set()
+                # 候选在真实文件替换时已经由行锁保护，撤销不能穿过此边界。
+                current = e.store.get('skill_evolution', e.candidate['proposal_id'])
+                return current
+            waiting = pool.submit(revoke)
+            assert attempted.wait(5)
+            assert not waiting.done()
+        finally:
+            release.set()
+        assert publishing.result(timeout=10)['status'] == 'published'
+        assert waiting.result(timeout=10)['publish_applied']['edit_id']
+
+
+def test_lost_final_state_receipt_reconciles_without_second_file_publish(evolution):
+    e = evolution()
+    confirm(e)
+    e.service.advance(e.candidate['proposal_id'])
+    finish_trial(e)
+    assert e.service.advance(e.candidate['proposal_id'])['status'] == 'awaiting_publication'
+    original = e.store.compare_and_set
+    failed = []
+    def cas(ns, key, field, expected, changes):
+        if changes.get('status') == 'published' and not failed:
+            failed.append(True)
+            raise RuntimeError('模拟发布状态回执丢失')
+        return original(ns, key, field, expected, changes)
+    e.store.compare_and_set = cas
+    with pytest.raises(RuntimeError):
+        publish_evolution(e)
+    applied = e.manager.detail('diagnosis', 'alarm_diagnosis_skill')
+    assert applied['document'] == e.candidate['draft']['document']
+    assert e.service.get(e.candidate['proposal_id'])['status'] == 'publishing'
+    assert e.service.advance(e.candidate['proposal_id'])['status'] == 'published'
+    assert e.manager.detail('diagnosis', 'alarm_diagnosis_skill')['revision'] == applied['revision']
+    directory = e.manager.backup_root / 'diagnosis/alarm_diagnosis_skill'
+    assert len(list(directory.glob('*.md'))) == 1
+
+
+def test_supervisor_is_read_only_for_automatic_draft_review(evolution):
+    e = evolution()
+    with pytest.raises(SkillEditError) as caught:
+        e.service.reject(e.candidate['proposal_id'], e.candidate['candidate_hash'],
+                         {'user_id': 'U-BOSS', 'role': 'supervisor'})
+    assert caught.value.status == 403
+    assert e.service.get(e.candidate['proposal_id'])['status'] == 'awaiting_confirmation'

@@ -1,4 +1,4 @@
-import { cleanDisplayText, parseEmbeddedJson } from "./app/textFormatting.mjs";
+import { cleanDisplayText, parseEmbeddedJson, normalizeResultText } from "./app/textFormatting.mjs";
 import { localizeIncidentText } from './app/incidentIdentity.mjs';
 
 function text(value) {
@@ -60,18 +60,28 @@ function faultText(order = {}, context = {}) {
     ? order.diagnosis_context
     : {};
   const sample = context.sample && typeof context.sample === "object" ? context.sample : {};
-  const raw = [
+  const candidates = [
+    order.alarm_label,
+    diagnosis.alarm_definition?.label,
+    order.diagnosis_snapshot?.alarm_definition?.label,
+    sample.alarm_label,
     context.fault,
     context.summary,
     diagnosis.fault,
     diagnosis.summary,
     diagnosis.diagnosis,
-    order.alarm_label,
-    sample.alarm_label,
-    order.alarm_code || sample.alarm_code ? `报警 ${order.alarm_code || sample.alarm_code}` : "",
-  ].map(text).find((value) => value && !/[{}]/.test(value));
-  if (raw) return raw.replace(/^设备维修[:：]\s*/i, "");
-  return "";
+    order.title,
+  ].map(cleanDisplayText).filter(value => value && !/[{}]/.test(value));
+  const short = candidates.find(value => value.length <= 60 && !/[\n#]/.test(value)
+    && !["设备维修工单", "主轴电机组件维修"].includes(value));
+  if (short) return short.replace(/^设备维修[:：]\s*/i, "");
+  // Long event narratives belong in the body. Extract only an explicit alarm label for the heading.
+  for (const value of candidates) {
+    const label = value.match(/报警\s*[A-Za-z0-9_-]+\s*[「【\[]([^」】\]\n]{1,60})[」】\]]/u)?.[1];
+    if (label) return label.trim();
+  }
+  const alarmCode = getWorkorderAlarmCode(order) || text(sample.alarm_code);
+  return alarmCode ? `报警 ${alarmCode}` : "";
 }
 
 function readable(value) {
@@ -131,16 +141,16 @@ function normalizeDiagnosis(value) {
   const embedded = [source.summary, source.fault, source.diagnosis]
     .map(parseEmbeddedJson)
     .find(Boolean) || {};
-  const summary = cleanDisplayText(embedded.summary || source.summary || source.fault || source.diagnosis);
-  const cause = cleanDisplayText(embedded.diagnosis || source.cause || source.diagnosis);
+  const summary = normalizeResultText(embedded.summary || source.summary || source.fault || source.diagnosis);
+  const cause = normalizeResultText(embedded.diagnosis || source.cause || source.diagnosis);
   return {
     ...source,
     fault: summary,
     summary,
     cause,
     diagnosis: cause,
-    recommendation: cleanDisplayText(embedded.recommendation || source.recommendation),
-    nextAction: cleanDisplayText(source.next_action || embedded.next_action),
+    recommendation: normalizeResultText(embedded.recommendation || source.recommendation),
+    nextAction: normalizeResultText(source.next_action || embedded.next_action),
     severity: cleanDisplayText(source.severity || embedded.severity),
   };
 }
@@ -198,7 +208,8 @@ export function getWorkorderDisplayTitle(order = {}, target = {}, context = {}) 
     || candidateTitle === "设备维修工单"
     || candidateTitle === "主轴电机组件维修";
   if (deviceId && hasMachineName && genericTitle) {
-    return `${deviceName} · ${fault || `${targetName}维修`}`;
+    const title = `${deviceName} · ${fault || `${targetName}维修`}`;
+    return title.length <= 80 ? title : `${title.slice(0,79)}…`;
   }
   return candidateTitle
     && candidateTitle.length <= 80
@@ -223,6 +234,14 @@ export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagno
     ? order.diagnosis_context
     : {};
   const title = getWorkorderDisplayTitle(order, target, { ...context, fault: diagnosis.fault || diagnosis.summary });
+  let faultAnalysis = normalizeResultText(diagnosis.summary || diagnosis.fault || diagnosisContext.summary
+    || diagnosisContext.fault || diagnosisContext.diagnosis || order.diagnosis_snapshot?.summary
+    || order.diagnosis_snapshot?.fault || (text(order.title).length > 80 ? order.title : ''));
+  const savedNarrative = text(order.title).length > 80 ? normalizeResultText(order.title) : '';
+  if (savedNarrative && !faultAnalysis.includes(savedNarrative)) {
+    faultAnalysis = savedNarrative.includes(faultAnalysis) ? savedNarrative
+      : `${faultAnalysis}\n\n#### 原始故障记录\n${savedNarrative}`;
+  }
   return {
     title: title || "设备维修工单",
     workorderId: text(order.workorder_id),
@@ -242,6 +261,7 @@ export function buildWorkorderSheet({ order = {}, target = {}, plan = {}, diagno
     system: text(target.system) || "待确认",
     location: text(target.location) || "待现场确认",
     faultSymptom: localizeIncidentText(text(target.symptom) || text(target.description) || text(diagnosis.fault) || text(diagnosisContext.diagnosis) || text(order.title) || "设备异常",order),
+    faultAnalysis: localizeIncidentText(faultAnalysis,order),
     autoDispatched: ["", "agent", "auto", "monitor", "saved-plan-dispatch"].includes(text(order.source).toLowerCase())
       || Boolean(diagnosisContext.summary || order.drawing_context?.model_url),
   };

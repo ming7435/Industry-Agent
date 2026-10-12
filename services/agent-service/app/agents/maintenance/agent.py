@@ -33,6 +33,11 @@ class MaintenanceAgent(BaseAgent):
 
     def run(self, task: Any) -> MaintenancePlan:
         payload = {"query": task} if isinstance(task, str) else dict(task or {})
+        diagnosis = payload.get('diagnosis_result') or payload.get('diagnosis') or {}
+        if hasattr(diagnosis, 'model_dump'):
+            diagnosis = diagnosis.model_dump(mode='json')
+        if diagnosis and not maintenance_decision(diagnosis, payload.get('event') or {})[0]:
+            raise ValueError('诊断判定无需维修，不生成维修方案或工单')
         output = self.graph.invoke({"agent": self, "request": payload})
         result = output.get("result")
         if result is None:

@@ -25,6 +25,26 @@ def _run_index_sql(shape, prefix='$'):
 _RUN_INDEX_PROJECTION = _run_index_sql(RUN_INDEX_SHAPE)
 
 
+def _skill_window_projection():
+    """仅传统计所需字段，不能复制完整任务、模型上下文或工具返回正文。"""
+    fields = []
+    for key in ('timestamp', 'trace_record_id', 'trace_id', 'task_id', 'agent_run_id', 'agent', 'type',
+                'event', 'skill', 'skill_version', 'skill_fingerprint', 'declared_steps', 'step',
+                'run_type', 'step_run_id', 'elapsed_ms', 'error'):
+        fields.extend(("'%s'" % key, "JSON_EXTRACT(payload,'$.%s')" % key))
+    output_fields = []
+    for key in ('status', 'stop_reason', 'validation_errors', 'validation_findings', 'validation',
+                'error', 'success', 'summary', 'active_skills', 'source', 'model', 'cached'):
+        # AgentResult 的内层 output 和直接业务结果都兼容。
+        value = "COALESCE(JSON_EXTRACT(payload,'$.output.output.%s'),JSON_EXTRACT(payload,'$.output.%s'))" % (key, key)
+        output_fields.extend(("'%s'" % key, value))
+    fields.extend(("'output'", 'JSON_OBJECT(' + ','.join(output_fields) + ')'))
+    return 'JSON_OBJECT(' + ','.join(fields) + ')'
+
+
+_SKILL_WINDOW_PROJECTION = _skill_window_projection()
+
+
 class MySQLTraceStore:
     def __init__(self, config=None):
         self._config = dict(config or mysql_configuration())
@@ -103,6 +123,30 @@ class MySQLTraceStore:
 
     def list(self, trace_id=None, task_id=None, limit=5000):
         return self._list(trace_id=trace_id, task_id=task_id, limit=limit)
+
+    def skill_window_page(self, start, end, after=0, upper=None, limit=200):
+        from datetime import timezone
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            raise ValueError('技能观测窗口必须有时区且结束晚于开始')
+        bounds = (start.astimezone(timezone.utc).replace(tzinfo=None),
+                  end.astimezone(timezone.utc).replace(tzinfo=None))
+        limit = max(1, min(200, int(limit)))
+        with mysql_session(self._config) as db:
+            cursor = db.cursor()
+            try:
+                if upper is None:
+                    cursor.execute('SELECT COALESCE(MAX(sequence_id),0) FROM agent_execution_trace')
+                    upper = int(cursor.fetchone()[0])
+                cursor.execute('SELECT sequence_id,' + _SKILL_WINDOW_PROJECTION +
+                               ' FROM agent_execution_trace WHERE created_at>=%s AND created_at<%s'
+                               ' AND sequence_id>%s AND sequence_id<=%s ORDER BY sequence_id ASC LIMIT %s',
+                               (*bounds, max(0, int(after)), max(0, int(upper)), limit))
+                rows = cursor.fetchall()
+                return {'items': [json.loads(row[1]) for row in rows],
+                        'after': int(rows[-1][0]) if rows else after, 'upper': upper,
+                        'done': len(rows) < limit, 'complete': True, 'storage': 'mysql'}
+            finally:
+                cursor.close()
 
     def list_run_index(self, limit=5000):
         return [run_index_record(record) for record in self._list(limit=limit, projection=_RUN_INDEX_PROJECTION)]

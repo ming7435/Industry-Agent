@@ -43,7 +43,7 @@ def test_monitor_proxy_keeps_cad_payload_and_pdf_download_headers(monkeypatch):
         def do_POST(self):
             seen.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
             self.send_response(202); self.send_header("Content-Type", "application/json")
-            self.send_header("Set-Cookie", "buildcad_oauth=test-nonce; HttpOnly; SameSite=Lax; Path=/api/cad/buildcad")
+            self.send_header("Set-Cookie", "upstream_session=test-nonce; HttpOnly; SameSite=Lax; Path=/api/cad/freecad")
             self.end_headers(); self.wfile.write(b'{}')
         def do_GET(self):
             self.send_response(200); self.send_header("Content-Type", "application/pdf"); self.send_header("Content-Disposition", 'attachment; filename="drawing.pdf"'); self.end_headers(); self.wfile.write(b"%PDF-test-adapter")
@@ -56,10 +56,9 @@ def test_monitor_proxy_keeps_cad_payload_and_pdf_download_headers(monkeypatch):
     monkeypatch.setattr(monitor, "AGENT_SERVICE_BASE_URL", f"http://127.0.0.1:{agent.server_port}")
     try:
         root = f"http://127.0.0.1:{proxy.server_port}"
-        with urlopen(Request(root + "/api/cad/buildcad/auth/start", data=json.dumps({"command_id": "one", "prompt": "需求"}).encode(), headers={"Content-Type": "application/json", "Origin": root})) as response:
+        with urlopen(Request(root + "/api/cad/freecad/runs", data=json.dumps({"command_id": "one", "prompt": "需求"}).encode(), headers={"Content-Type": "application/json", "Origin": root})) as response:
             assert response.status == 202
-            assert "buildcad_oauth=" in response.headers["Set-Cookie"]
-            assert "HttpOnly" in response.headers["Set-Cookie"]
+            assert response.headers.get("Set-Cookie") is None
         assert seen == [{"command_id": "one", "prompt": "需求"}]
         with urlopen(root + "/api/reports/RPT-test/pdf?download=1") as response:
             assert response.headers["Content-Type"] == "application/pdf"

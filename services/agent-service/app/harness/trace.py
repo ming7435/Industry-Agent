@@ -79,7 +79,8 @@ class TraceRecorder:
     def record(self, **payload: Any) -> Dict[str, Any]:
         context = payload.get('context')
         if isinstance(context, Mapping):
-            for key in ('agent_run_id', 'tool_call_id', 'step_run_id', 'agent', 'skill', 'step', 'run_type', 'event_id'):
+            for key in ('agent_run_id', 'tool_call_id', 'step_run_id', 'agent', 'skill', 'skill_version',
+                        'skill_fingerprint', 'declared_steps', 'step', 'run_type', 'event_id'):
                 if key not in payload and key in context:
                     payload[key] = context[key]
         # 稳定身份先保留预算，避免大输入把关联编号挤出日志。
@@ -131,6 +132,27 @@ class TraceRecorder:
     def clear(self) -> None:
         with self._lock:
             self._records.clear()
+
+    def skill_window_page(self, start, end, after=0, upper=None, limit=200):
+        """固定上界的窗口页；内存及写失败数据绝不冒充完整持久化窗口。"""
+        query = getattr(self.store, 'skill_window_page', None)
+        if callable(query):
+            try:
+                result = query(start, end, after=after, upper=upper, limit=limit)
+                with self._lock:
+                    gaps = any(r.get('storage_warning') and start <= datetime.fromisoformat(r['timestamp']) < end
+                               for r in self._records)
+                if gaps:
+                    result.update(complete=False, message='窗口含未持久化事件，不能用于周计划')
+                return result
+            except Exception:
+                self.storage_error = '技能运行窗口存储查询不可用'
+                return {'items': [], 'after': after, 'upper': upper, 'done': True,
+                        'complete': False, 'storage': 'unavailable', 'message': self.storage_error}
+        with self._lock:
+            records = [dict(r) for r in self._records if start <= datetime.fromisoformat(r['timestamp']) < end]
+        return {'items': records[:max(1, min(200, int(limit)))], 'after': 0, 'upper': 0, 'done': True,
+                'complete': False, 'storage': 'memory', 'message': '仅有内存样本，不能声称完整周统计'}
 
     def list_run_index(self, limit: int = 5000) -> List[Dict[str, Any]]:
         from .runs import run_index_record

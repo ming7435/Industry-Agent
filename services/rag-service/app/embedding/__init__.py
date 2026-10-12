@@ -1,8 +1,8 @@
 """Embedding pipeline for retrieval-ready chunks.
 
-``models`` / ``pipeline`` belong to the offline half (chunk -> vector records),
-``model`` to the shared factory (:func:`~app.embedding.model.get_embedder`) the
-online dense route uses so documents and queries share SiliconFlow BGE-M3.
+``models`` contains the embedding client and shared query factory
+(:func:`~app.embedding.models.get_embedder`); ``pipeline`` turns chunks into
+vector records so documents and queries share SiliconFlow BGE-M3.
 """
 
 from .models import (

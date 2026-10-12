@@ -32,7 +32,6 @@ from app.tools.cad import (
     query_relation as query_relation_tool,
 )
 from app.tools.diagnosis import get_active_alarms as get_active_alarms_tool
-from app.tools.cad.buildcad_mcp import buildcad_mcp
 from app.tools.cad.freecad_mcp import freecad_mcp
 from app.cad_documents.proposal import document_proposal_tool
 from app.tools.diagnosis import get_alarm_definition, get_device_history, get_device_logs, get_device_status
@@ -206,7 +205,6 @@ class ToolRegistry:
             ToolDefinition("query_drawing", self.query_drawing, "从 CAD 服务查询图纸引用和定位元数据", "cad", "query_drawing", generic_parameters, True),
             ToolDefinition("query_relation", self.query_relation, "从 CAD 服务查询装配关系", "cad", "query_relation", generic_parameters, True),
             ToolDefinition("fetch_engineering_record", self.fetch_engineering_record, "从 CAD 服务获取完整工程记录", "cad", "fetch_engineering_record", generic_parameters, True),
-            ToolDefinition("buildcad_mcp", buildcad_mcp, "调用已授权 BuildCAD MCP 的实际工具", "local", "buildcad_mcp", {"type": "object", "properties": {"tool_name": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["tool_name", "arguments"], "additionalProperties": False}, False, local_only=True),
             ToolDefinition("freecad_mcp", freecad_mcp, "通过本地 FreeCAD MCP 创建并校验真实实体", "local", "freecad_mcp", {"type": "object", "properties": {"spec": {"type": "object"}}, "required": ["spec"], "additionalProperties": False}, False, local_only=True),
             ToolDefinition("freecad_document_proposal", document_proposal_tool, "按文档修订解析中文修改提案，不执行CAD", "local", "freecad_document_proposal", {"type":"object","properties":{"head":{"type":"object"},"snapshot":{"type":"object"},"prompt":{"type":"string"}},"required":["head","snapshot","prompt"],"additionalProperties":False}, False, local_only=True),
             ToolDefinition("generate_repair_plan", self.generate_repair_plan, "生成维修计划草案", "local", "generate_repair_plan", generic_parameters, True),

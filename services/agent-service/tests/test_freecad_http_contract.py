@@ -6,6 +6,14 @@ import pytest
 
 from app.api.server import create_app
 from app.harness.trace import TraceRecorder
+from app.tools.registry import ToolRegistry
+
+
+def test_cad_registry_excludes_retired_remote_modeling_tool():
+    tools = ToolRegistry()
+    assert 'buildcad_mcp' not in tools.definitions
+    assert tools.definitions['freecad_mcp'].local_only is True
+    assert tools.definitions['freecad_document_proposal'].local_only is True
 
 
 @pytest.mark.parametrize('method,path', [

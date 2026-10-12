@@ -10,7 +10,7 @@ from starlette.routing import compile_path
 import monitor_web_server as monitor
 
 
-DISPATCH_PATH = "/api/cad/buildcad/runs"
+DISPATCH_PATH = "/api/cad/freecad/runs"
 
 
 @pytest.fixture
@@ -133,10 +133,10 @@ def test_host_must_use_current_proxy_port(proxy_boundary):
 
 
 @pytest.mark.parametrize("path", [
-    "/api/cad/buildcad/auth/start",
-    "/api/cad/buildcad/runs/",
-    "/api/cad/%62uildcad/runs",
-    "/api/cad/buildcad%2Fruns",
+    "/api/cad/freecad/documents",
+    "/api/cad/freecad/runs/",
+    "/api/cad/%66reecad/runs",
+    "/api/cad/freecad%2Fruns",
 ])
 def test_production_prepare_dispatch_and_encoded_paths_share_the_guard(proxy_boundary, path):
     proxy, seen, send = proxy_boundary
@@ -147,9 +147,9 @@ def test_production_prepare_dispatch_and_encoded_paths_share_the_guard(proxy_bou
 
 @pytest.mark.parametrize("suffix", ["%0A", "%0A/"])
 def test_prepare_route_terminal_newline_match_is_also_guarded(proxy_boundary, suffix):
-    path = "/api/cad/buildcad/auth/start" + suffix
+    path = "/api/cad/freecad/documents" + suffix
     # 真实 FastAPI/Starlette 匹配器接受最终解码换行，尾斜杠变体可被重定向归一化。
-    route_regex, _, _ = compile_path("/api/cad/buildcad/auth/start")
+    route_regex, _, _ = compile_path("/api/cad/freecad/documents")
     assert route_regex.match(unquote(path).rstrip("/")) is not None
     proxy, seen, send = proxy_boundary
     status, _ = send(path=path, host=f"evil.example:{proxy.server_port}")

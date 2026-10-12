@@ -46,8 +46,16 @@ def maintenance_decision(
     diagnosis = diagnosis or {}
     event = event or {}
     plan = plan or {}
-    sources = (plan, diagnosis, event, diagnosis.get("alarm_definition") or {})
+    raw = diagnosis.get('raw')
+    if isinstance(raw, Mapping):
+        diagnosis = {**raw, **diagnosis}
+    # A plan cannot override the diagnosis's decision that no repair is needed.
+    sources = (diagnosis, event, plan, diagnosis.get("alarm_definition") or {})
     for source in sources:
+        if not isinstance(source, Mapping):
+            continue
+        if source.get('disposition') in {'no_action', 'monitor_only', 'operator_check'}:
+            return False, '诊断判定无需维修'
         for key in ("maintenance_required", "requires_maintenance"):
             value = _as_bool(source.get(key)) if isinstance(source, Mapping) else None
             if value is not None:
@@ -76,6 +84,9 @@ def auto_workorder_decision(
     if isinstance(raw, Mapping):
         diagnosis = {**raw, **diagnosis}
     plan = plan or {}
+    required, reason = maintenance_decision(diagnosis, event, plan)
+    if not required:
+        return False, reason
     if plan.get("plan_kind") == "inspection":
         allowed, reason = inspection_decision(diagnosis, event, plan)
         if not allowed:

@@ -1,4 +1,4 @@
-import { cleanDisplayText, cleanEvidenceText, parseEmbeddedJson } from "./textFormatting.mjs";
+import { cleanDisplayText, cleanEvidenceText, parseEmbeddedJson, normalizeResultText } from "./textFormatting.mjs";
 import { currentIncident, matchesIncident } from './incidentIdentity.mjs';
 
 function resolveCurrentSample(snapshot, sample) {
@@ -55,12 +55,12 @@ export function buildDiagnosisView(snapshot, sample) {
   const embedded = [latest.summary, latest.diagnosis, latest.fault]
     .map(parseEmbeddedJson)
     .find(Boolean) || {};
-  const summary = cleanDisplayText(embedded.summary || latest.summary || latest.fault || latest.diagnosis);
-  const cause = cleanDisplayText(embedded.diagnosis || latest.cause || latest.diagnosis);
+  const summary = normalizeResultText(embedded.summary || latest.summary || latest.fault || latest.diagnosis);
+  const cause = normalizeResultText(embedded.diagnosis || latest.cause || latest.diagnosis);
   // 模型有时会在顶层字段保存通用的生命周期值（例如“诊断完成”），而有用的建议位于结构化 JSON 中。
   // 优先使用结构化操作文本。
-  const recommendation = cleanDisplayText(embedded.recommendation || latest.recommendation);
-  const nextAction = cleanDisplayText(latest.next_action || embedded.next_action);
+  const recommendation = normalizeResultText(embedded.recommendation || latest.recommendation);
+  const nextAction = normalizeResultText(latest.next_action || embedded.next_action);
   const pipeline = isCurrent ? getLatestPipeline(snapshot, sample) : {};
   const status = isCurrent ? String(latest.status || diagnosis.status || "waiting") : "waiting";
   const evidenceInsufficient = latest.evidence_status === "insufficient";
@@ -68,6 +68,10 @@ export function buildDiagnosisView(snapshot, sample) {
   const labels = { completed: "诊断已返回", waiting: "等待诊断", running: "正在诊断", recovering: "正在回查结果",
     blocked: "诊断待核实", failed: "诊断调用失败", unknown: "结果待确认", idle: "等待异常事件", fallback: "诊断待核实" };
   const resultReturned = ["completed", "fallback"].includes(status);
+  const treatment = {...(latest.raw || {}), ...latest};
+  const noRepairRequired = resultReturned && !reviewRequired && !evidenceInsufficient
+    && (treatment.maintenance_required === false
+      || ['no_action', 'monitor_only', 'operator_check'].includes(treatment.disposition));
   const statusLabel = resultReturned && evidenceInsufficient ? "诊断待核实"
     : resultReturned && reviewRequired ? "诊断待核实"
     : Object.hasOwn(labels, status) ? labels[status] : "诊断状态待确认";
@@ -75,7 +79,9 @@ export function buildDiagnosisView(snapshot, sample) {
   const workflowStatus = [pipeline.status, pipeline.runtime_result?.status].includes("blocked") ? "blocked"
     : String(pipeline.status || pipeline.runtime_result?.status || latest.workflow_status || "");
   const stopReason = String(pipeline.stop_reason || pipeline.runtime_result?.stop_reason || "");
-  const workflowReason = workflowStatus === "blocked"
+  const workflowReason = noRepairRequired
+    ? `诊断判定无需维修，${treatment.disposition === 'operator_check' ? '按诊断建议进行现场核查' : treatment.disposition === 'no_action' ? '暂无需进一步处理' : '继续监测'}，不生成维修方案和工单。`
+    : workflowStatus === "blocked"
     ? "未完成自动派工，请联系维修人员确认方案和设备负责人。"
     : ["running", "recovering"].includes(workflowStatus) ? "后续流程仍在处理；维修方案与工单状态以实际执行结果为准。"
     : workflowStatus === "unknown" ? "后续处理结果尚未确认，请稍后查看工单状态。"
@@ -94,6 +100,7 @@ export function buildDiagnosisView(snapshot, sample) {
     statusHint,
     workflowStatus,
     workflowReason,
+    noRepairRequired,
     stopReason,
     error: cleanDisplayText(latest.error),
     summary: isCurrent ? (summary || "等待诊断结果") : (currentAlarm ? `正在等待报警 ${currentAlarm} 的诊断结果` : "等待诊断结果"),

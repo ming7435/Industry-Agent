@@ -2,6 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDiagnosisView, getLatestDiagnosis } from "./diagnosisView.mjs";
 
+test('无需维修的诊断说明不显示派工失败', () => {
+  const sample = {device_id:'D-NO-REPAIR', alarm_code:'700044'};
+  const diagnosis = {...sample, status:'completed', confidence:.826, evidence_status:'ready',
+    maintenance_required:false, disposition:'monitor_only', summary:'主轴驱动优化中，继续观察'};
+  const view = buildDiagnosisView({diagnosis:{latest:diagnosis, pipeline:{event:sample,
+    diagnosis, status:'blocked', runtime_result:{status:'blocked',stop_reason:'replan_limit_exceeded'}}}}, sample);
+  assert.match(view.workflowReason, /无需维修/);
+  assert.match(view.workflowReason, /不生成维修方案和工单/);
+  assert.doesNotMatch(view.statusHint, /未完成自动派工|联系维修人员确认方案/);
+});
+
+test('需维修的诊断继续显示真实派发阻塞', () => {
+  const sample = {device_id:'D-REPAIR', alarm_code:'700010'};
+  const diagnosis = {...sample,status:'completed',maintenance_required:true,disposition:'maintenance_required'};
+  const view = buildDiagnosisView({diagnosis:{latest:diagnosis,pipeline:{status:'blocked'}}},sample);
+  assert.match(view.workflowReason,/未完成自动派工/);
+});
+
 test('同设备再次出现同一报警时旧事件诊断不能冒充本次完成', () => {
   const snapshot={device_id:'D',trigger_history:[{abnormal_event:{device_id:'D',alarm_code:'700010',event_id:'E-NEW'}}],
     diagnosis:{latest:{device_id:'D',alarm_code:'700010',event_id:'E-OLD',status:'completed',summary:'上次结果'}}};

@@ -136,7 +136,8 @@ def trace_skill_node(
         started_at = datetime.now(timezone.utc).isoformat()
         started = perf_counter()
         from uuid import uuid4
-        node_context = {**bound, 'agent': agent_name, 'skill': skill_name, 'step': step_id, 'step_run_id':'STEP-' + uuid4().hex}
+        node_context = {**bound, **(match[0].observation() if match else {}),
+                        'agent': agent_name, 'skill': skill_name, 'step': step_id, 'step_run_id':'STEP-' + uuid4().hex}
         trace = getattr(agent, "runtime_trace", None) or getattr(getattr(agent, "tools", None), "trace", None)
         if trace is not None:
             trace.record(

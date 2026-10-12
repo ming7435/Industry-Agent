@@ -846,7 +846,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         cad_write = (
             method != "GET"
             and path_parts[:2] == ["api", "cad"]
-            and len(path_parts) > 2 and path_parts[2] in {"buildcad", "freecad"}
+            and len(path_parts) > 2 and path_parts[2] == "freecad"
         )
         production_write = method != 'GET' and path_parts[:3] == ['api', 'production', 'virtual']
         expert_write = method != 'GET' and path_parts[:2] == ['api', 'expert']
@@ -888,9 +888,6 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
                 for header in ('X-Content-Type-Options','Content-Security-Policy'):
                     if response.headers.get(header):
                         self.send_header(header,response.headers[header])
-                if path_parts[:4] == ["api", "cad", "buildcad", "auth"]:
-                    for cookie in response.headers.get_all("Set-Cookie", []):
-                        self.send_header("Set-Cookie", cookie)
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
@@ -898,9 +895,6 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             payload = error.read() or json.dumps({"error": str(error)}, ensure_ascii=False).encode("utf-8")
             self.send_response(error.code)
             self.send_header("Content-Type", error.headers.get("Content-Type", "application/json; charset=utf-8"))
-            if path_parts[:4] == ["api", "cad", "buildcad", "auth"]:
-                for cookie in error.headers.get_all("Set-Cookie", []):
-                    self.send_header("Set-Cookie", cookie)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)

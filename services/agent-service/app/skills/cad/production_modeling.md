@@ -29,7 +29,7 @@ failure_policy: stop
 
 只匹配结构化operation=production_modeling；普通检索文字不能激活建模工具。模型树修改提案由受保护的文档入口形成，人工确认后执行。
 
-不适用：缺规格不能替用户决定尺寸，维修图纸检索不用本建模技能，BuildCAD不是当前活动建模路径。
+不适用：缺规格不能替用户决定尺寸，维修图纸检索不用本建模技能。
 
 ## 输入与前置条件（Inputs）
 
@@ -39,7 +39,7 @@ failure_policy: stop
 
 ### 公共编排
 
-真实建模分支prepare → model_3d → finish；唯一建模节点映射build_model，调用本技能结构化tool步骤freecad_mcp(spec)。文档修改提案通过既有文档队列，人工确认后执行；不是新Graph节点。BuildCAD旧兼容方法不代表活动provider：当前节点拒绝非freecad。
+真实建模分支prepare → model_3d → finish；唯一建模节点映射build_model，调用本技能结构化tool步骤freecad_mcp(spec)。文档修改提案通过既有文档队列，人工确认后执行；不是新Graph节点。建模节点仅接受本地freecad。
 
 保留的步骤标识：`normalize_query`、`classify_engineering_request`、`build_model`、`build_result`。结构化 tool 步骤须按绑定工具执行；字符串步骤可为内部函数/追踪标签，不等于独立图节点。
 

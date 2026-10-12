@@ -9,7 +9,7 @@ from threading import Event, Lock, Thread
 from shared.workorder_dispatch import followup_values, validate_followup_order
 from app.agents.workorder.agent import WorkOrderAgent
 from app.runtime.policy import RuntimePolicy
-from app.workorder.policy import auto_workorder_decision
+from app.workorder.policy import auto_workorder_decision, maintenance_decision
 from app.workorder.validator import WorkOrderValidator
 from app.workorder.service import WorkOrderService
 
@@ -87,6 +87,8 @@ class SavedPlanDispatcher:
                 if not candidates:
                     continue
                 diagnosis = record.get('diagnosis') or plan.get('diagnosis') or {}
+                if not maintenance_decision(diagnosis, event, plan)[0]:
+                    continue
                 try:
                     WorkOrderValidator.validate_plan(plan)
                     allowed, _ = auto_workorder_decision(diagnosis, plan, event)
