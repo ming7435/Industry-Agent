@@ -118,7 +118,7 @@ class SkillManager:
         with self._transaction():
             return self._detail(agent, name)
 
-    def update(self, agent, name, values, actor):
+    def update(self, agent, name, values, actor, *, require_trial=False):
         with self._transaction():
             skill, path = self._find(agent, name)
             original = path.read_bytes()
@@ -128,6 +128,8 @@ class SkillManager:
             payload, _ = _parse_markdown_skill(original.decode("utf-8"), path)
             if set(skill.tools) - self.available_tools:
                 raise SkillEditError(503, "该技能引用的工具尚未注册，不能发布更新")
+            if require_trial:
+                self.trials.validate_publish(agent, name, values, actor)
             # 仅这两个元数据字段可编辑；正文即使含 YAML，也不会成为运行权限。
             payload = dict(payload)
             payload.update(goal=values["goal"].strip(), version=values["version"].strip())
@@ -148,6 +150,8 @@ class SkillManager:
                      "actor_id": actor["user_id"], "old_revision": old_revision, "new_revision": revision,
                      "old_version": skill.version, "new_version": payload["version"], "reason": values["reason"].strip(),
                      "timestamp": datetime.now(timezone.utc).isoformat(), "state": "prepared"}
+            if require_trial:
+                audit.update(test_id=values["test_id"], human_confirmed=True)
             audit_path = directory / (edit_id + ".json")
             audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
             temporary = None
@@ -177,3 +181,6 @@ class SkillManager:
                 if self.trace.storage_error:
                     warning = "更新已保存到文档；数据库审计暂不可用，本地修订记录已保留"
             return {**self._detail(agent, name), "edit_id": edit_id, "warning": warning}
+
+    def publish(self, agent, name, values, actor):
+        return self.update(agent, name, values, actor, require_trial=True)

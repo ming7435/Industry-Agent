@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping
 from uuid import uuid4
 import os
+from contextlib import nullcontext
+from functools import wraps
 from app.workorder.validator import WorkOrderValidator
 from app.a2a.requests import A2ARequests
 from app.closure import ClosureService
@@ -17,6 +19,24 @@ class _IncompleteLearningStage(RuntimeError):
     def __init__(self, result: Mapping[str, Any], message: str) -> None:
         super().__init__(message)
         self.result = dict(result)
+
+
+def expert_order_scope(method):
+    """后续人工操作与经验总结沿用该测试的冻结草稿。"""
+    @wraps(method)
+    def scoped(self, *args, **kwargs):
+        trials = getattr(self, 'expert_trials', None)
+        if method.__name__ == 'summarize_repair':
+            order_id = args[0] if args else kwargs.get('workorder_id', '')
+            completing = False
+        else:
+            payload = (args[1] if len(args) > 1 else kwargs.get('payload')) or {}
+            order_id = payload.get('workorder_id', '')
+            completing = (args[0] if args else kwargs.get('action')) == 'mark_repair_completed'
+        scope = trials.order_scope(order_id, completing=completing, actor_id=kwargs.get('actor_id', '')) if trials and order_id else nullcontext()
+        with scope:
+            return method(self, *args, **kwargs)
+    return scoped
 
 
 class RuntimeOperations:
@@ -179,6 +199,7 @@ class RuntimeOperations:
                     result['report'] = {'persisted':False,'status':'incomplete','error':str(error),'stop_reason':'report_generation_failed'}
         return result
 
+    @expert_order_scope
     def execute_workorder(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router", *, actor_id: str = "") -> Dict[str, Any]:
         """API/事件入口：所有工单业务动作都通过 WorkOrder Agent。"""
 
@@ -354,6 +375,7 @@ class RuntimeOperations:
                     )
         return result
 
+    @expert_order_scope
     def summarize_repair(self, workorder_id: str, *, sync_knowledge: bool = False) -> Dict[str, Any]:
         """Summarize a saved completed incident; never send equipment commands."""
         from shared.repair_experience import manual_restart_cycle

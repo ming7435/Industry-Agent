@@ -92,6 +92,10 @@ class AgentHarness:
     def _finish_attempt(self, event: str, task: Any, record: dict[str, Any], started: float, *, result: Any = None, error: Exception | None = None) -> None:
         details: dict[str, Any] = {"elapsed_ms": round((perf_counter() - started) * 1000, 2)}
         if event == "agent_completed":
+            from app.skills.registry import get_skill_registry
+            registry = get_skill_registry()
+            if hasattr(registry, 'record_execution'):
+                registry.record_execution(str(getattr(self.agent, 'name', '')).lower(), result)
             details["output"] = self._trace_payload(result)
         else:
             details.update({"error": str(error), "input": self._trace_payload(task)})
@@ -126,7 +130,8 @@ class AgentHarness:
                 max_workers=1,
                 thread_name_prefix="agent-runtime",
             )
-            future = executor.submit(self._run_bound, abnormal_event, record)
+            from contextvars import copy_context
+            future = executor.submit(copy_context().run, self._run_bound, abnormal_event, record)
             try:
                 result = future.result(timeout=self.config.timeout_seconds)
                 self._finish_attempt("agent_completed", abnormal_event, record, started, result=result)

@@ -71,12 +71,14 @@ class DiagnosisAgent(BaseAgent):
         tools: Optional[ToolRegistry] = None,
         knowledge_provider: Optional[Callable[[Mapping[str, Any], str], Mapping[str, Any]]] = None,
         run_cache: Optional[DiagnosisRunCache] = None,
+        skill_registry: Any = None,
     ) -> None:
 
         self.client = client if client is not None else get_default_llm_client()
 
         self.tools = tools or ToolRegistry()
         self.knowledge_provider = knowledge_provider
+        self.skill_registry = skill_registry
         self.run_cache = run_cache if run_cache is not None else DiagnosisRunCache()
         self.graph = build_diagnosis_graph()
 

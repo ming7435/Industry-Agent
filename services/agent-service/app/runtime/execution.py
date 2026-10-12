@@ -143,7 +143,8 @@ class ExecutionManager:
             record.attempts += 1
             self._emit("execution_start", record, trace_context)
             executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-execution")
-            future = executor.submit(handler)
+            from contextvars import copy_context
+            future = executor.submit(copy_context().run, handler)
             attempt = {"attempt": record.attempts, "status": "RUNNING"}
             try:
                 record.result = future.result(timeout=float(timeout_seconds or self.timeout_seconds))

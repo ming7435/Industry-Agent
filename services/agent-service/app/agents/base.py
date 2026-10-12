@@ -119,7 +119,7 @@ def trace_skill_node(
         if isinstance(selected, str):
             selected = [selected]
         requested_skills = list(selected)
-        registry = get_skill_registry()
+        registry = getattr(agent, "skill_registry", None) or get_skill_registry()
         # 显式空值或未知技能保持未映射；只有未声明选择时才按上下文匹配。
         definitions = registry.select(
             agent_name, request,

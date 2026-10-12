@@ -322,7 +322,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
                 raise HTTPException(status_code=409, detail="旧版事件结果需先核对归属和工单，不能自动重放")
         fingerprint = sha256(json.dumps(event, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
         try:
-            return event_results.get_or_create(event_key, lambda: runtime.run_abnormal_event(event), fingerprint=fingerprint)
+            return event_results.get_or_create(event_key, lambda: expert_manager.trials.handle_event(
+                event, lambda: runtime.run_abnormal_event(event)), fingerprint=fingerprint)
         except EventResultConflict as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except PendingResultError as error:

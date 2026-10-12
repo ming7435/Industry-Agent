@@ -60,15 +60,16 @@ def load_diagnosis_skill(state: DiagnosisGraphState) -> Dict[str, Any]:
     runtime = state["agent_state"]
     skill = tool_policy.select_skill(state["event"])
     selected_names = list(skill.get("skills") or [skill["name"]])
+    registry = getattr(state.get("agent"), "skill_registry", None) or get_skill_registry()
     definitions = [
         definition
         for name in selected_names
-        if (definition := get_skill_registry().get("diagnosis", name)) is not None
+        if (definition := registry.get("diagnosis", name)) is not None
     ]
     runtime.active_skills = [definition.name for definition in definitions] or selected_names
     runtime.active_skill = "+".join(runtime.active_skills)
     runtime.allowed_tools = list(skill["allowed_tools"])
-    for tool in get_skill_registry().merge_tools(definitions):
+    for tool in registry.merge_tools(definitions):
         if tool not in runtime.allowed_tools:
             runtime.allowed_tools.append(tool)
     if bool((state.get("event") or {}).get("runtime_managed")):

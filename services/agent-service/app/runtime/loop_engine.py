@@ -129,7 +129,8 @@ class LoopEngine:
             )
             started = perf_counter()
             executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-loop")
-            future = executor.submit(step, dict(state), context)
+            from contextvars import copy_context
+            future = executor.submit(copy_context().run, step, dict(state), context)
             try:
                 raw = future.result(timeout=float(self.policy.timeout_seconds))
             except TimeoutError:

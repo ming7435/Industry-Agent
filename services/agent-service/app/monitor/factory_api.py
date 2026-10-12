@@ -110,6 +110,33 @@ class FactoryApiClient:
             )
         return result
 
+    def scenario_request(self, path, body=None):
+        """固定模拟工厂地址上的故障场景接口；禁止用于真实设备。"""
+        import os
+        if os.getenv('FACTORY_CONTROL_MODE', '').lower() != 'virtual':
+            raise FactoryApiError('故障测试只适用于模拟工厂')
+        request = Request(self.base_url + path, headers={'Content-Type': 'application/json'},
+                          data=None if body is None else json.dumps(body).encode(),
+                          method='GET' if body is None else 'POST')
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                result = json.loads(response.read().decode('utf-8'))
+        except (HTTPError, URLError, TimeoutError, ValueError) as error:
+            raise FactoryApiError('模拟故障接口暂不可用') from error
+        if not isinstance(result, dict) or result.get('error'):
+            raise FactoryApiError('模拟故障操作未确认，请检查机器状态')
+        return result
+
+    def scenarios(self, device_id):
+        return self.scenario_request('/api/scenarios?' + urlencode({'device_id': device_id}))
+
+    def start_scenario(self, scenario_id, device_id):
+        from urllib.parse import quote
+        return self.scenario_request('/api/scenarios/' + quote(scenario_id, safe='') + '/start', {'device_id': device_id})
+
+    def stop_scenarios(self):
+        return self.scenario_request('/api/scenarios/stop', {})
+
 
 class FactorySnapshotProvider:
     """把工厂快照转换为监控器使用的 ``DeviceSample``。"""

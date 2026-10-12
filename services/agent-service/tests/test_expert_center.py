@@ -61,8 +61,33 @@ def update_body(api):
 
 
 def save(api, body, actor="boss", origin="http://testserver"):
-    return api.client.post("/api/expert/skills/diagnosis/alarm_diagnosis_skill", json=body,
-                           headers=headers(actor, origin))
+    # 原有文件/权限回归也使用新的公开测试发布契约。
+    if not body.get('test_id') and origin == 'http://testserver' and actor in {'boss', 'worker'} and not set(body) - {
+        'expected_revision', 'goal', 'version', 'document', 'reason', 'test_id', 'human_confirmed'
+    } and all(str(body.get(key, '')).strip() for key in ('goal', 'document', 'reason')):
+        from test_expert_trials import install_model
+        install_model(api)
+        started = api.client.post('/api/expert/skills/diagnosis/alarm_diagnosis_skill/test',
+                                  json={**{k: v for k, v in body.items() if k not in {'test_id', 'human_confirmed'}},
+                                        'sample': {'alarm_code': '700006', 'alarm_definition': '刀塔分度超时',
+                                                   'scenario': '样例刀塔分度超时，现场待核实', 'expected': '检查分度机构'}},
+                                  headers=headers(actor))
+        if started.status_code == 200:
+            from time import monotonic, sleep
+            result = started.json()
+            deadline = monotonic() + 15
+            while result['status'] == 'running' and monotonic() < deadline:
+                sleep(.01)
+                result = api.client.get('/api/expert/tests/' + result['test_id'], headers=headers(actor)).json()
+            body = {**body, 'test_id': result['test_id'], 'human_confirmed': True}
+    # 这些回归隔离文件更新/权限逻辑；生产的机器闭环门禁另有完整测试。
+    trials = api.client.app.state.expert_skills.trials
+    trials.require_machine_publish = False
+    try:
+        return api.client.post("/api/expert/skills/diagnosis/alarm_diagnosis_skill", json=body,
+                               headers=headers(actor, origin))
+    finally:
+        trials.require_machine_publish = True
 
 
 def test_catalog_prioritizes_actual_internal_loops(expert_api):
@@ -153,6 +178,11 @@ def test_alias_and_unknown_agent_not_write_targets(expert_api):
 
 def test_file_failure_retains_original(expert_api, monkeypatch):
     body = update_body(expert_api)
+    from test_expert_trials import install_model, trial
+    install_model(expert_api)
+    result = trial(expert_api, body)
+    assert result['status'] == 'completed'
+    body.update(test_id=result['test_id'], human_confirmed=True)
     before = expert_api.path.read_bytes()
     monkeypatch.setattr("app.skills.management.os.replace", lambda *a: (_ for _ in ()).throw(OSError("测试写入故障")))
     assert save(expert_api, body).status_code == 503
@@ -163,11 +193,11 @@ def test_file_failure_retains_original(expert_api, monkeypatch):
 def test_changed_markdown_enters_real_diagnosis_context(expert_api, monkeypatch):
     from app.agents.diagnosis.graph import load_diagnosis_skill
     from app.agents.diagnosis.schemas import DiagnosisState
+    body = update_body(expert_api)
+    assert save(expert_api, body).status_code == 200
     monkeypatch.setattr("app.agents.diagnosis.graph.get_skill_registry", lambda: expert_api.registry)
     monkeypatch.setattr("app.agents.diagnosis.graph.tool_policy.select_skill", lambda event: {
         "name": "alarm_diagnosis_skill", "allowed_tools": ["get_device_logs"]})
-    body = update_body(expert_api)
-    assert save(expert_api, body).status_code == 200
     runtime = DiagnosisState(abnormal_event={"alarm_code": "ALM-TEST"})
     load_diagnosis_skill({"event": {"alarm_code": "ALM-TEST"}, "agent_state": runtime})
     assert body["document"] in "\n".join(m["content"] for m in runtime.messages)

@@ -11,6 +11,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
@@ -366,10 +369,21 @@ def _trigger_matches(trigger: str, context: Mapping[str, Any], text: str) -> boo
 
 
 _REGISTRY = SkillRegistry()
+_TRIAL_REGISTRY = ContextVar('expert_trial_registry', default=None)
+
+
+@contextmanager
+def skill_registry_scope(registry):
+    """把草稿限制在当前故障链路，不能污染其它并发任务。"""
+    token = _TRIAL_REGISTRY.set(registry)
+    try:
+        yield
+    finally:
+        _TRIAL_REGISTRY.reset(token)
 
 
 def get_skill_registry() -> SkillRegistry:
-    return _REGISTRY
+    return _TRIAL_REGISTRY.get() or _REGISTRY
 
 
 __all__ = ["SkillDefinition", "SkillRegistry", "get_skill_registry"]
