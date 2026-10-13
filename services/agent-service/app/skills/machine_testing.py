@@ -119,6 +119,9 @@ class MachineTrials(SkillTrials):
         return public
 
     def start_machine(self, agent, name, values, actor):
+        from app.skills.optimization import verification_mode
+        if verification_mode(agent, name) != 'machine_flow':
+            raise SkillEditError(422, '此技能使用本领域任务样例验证，不能触发模拟机器故障')
         factory, backend = self._clients()
         if actor.get('role') != 'technician':
             raise SkillEditError(403, '请使用负责设备的维修人员账号测试')
@@ -397,6 +400,17 @@ class MachineTrials(SkillTrials):
 
     def validate_publish(self, agent, name, values, actor):
         record = self._read(values.get('test_id', ''), actor) if values.get('test_id') else {}
+        from app.skills.optimization import verification_mode, assessment_keys
+        if record.get('mode') == 'machine_flow' and verification_mode(agent, name) != 'machine_flow':
+            raise SkillEditError(409, '机器流程回执不能代替此技能的领域验证')
+        if record.get('mode') in {'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
+            mode = verification_mode(agent, name)
+            assessment = record.get('assessment') or {}
+            if (record.get('mode') != mode or assessment.get('accepted') is not True or
+                    assessment.get('basis') != mode + '_receipt' or
+                    any(assessment.get('criteria', {}).get(k) is not True for k in assessment_keys(mode))):
+                raise SkillEditError(409, '领域验证未通过，不能发布')
+            return super().validate_publish(agent, name, values, actor)
         if self.require_machine_publish and record.get('mode') != 'machine_flow':
             raise SkillEditError(409, '请先完成模拟机器全流程测试，并人工核对结果后发布')
         if record.get('mode') == 'machine_flow':

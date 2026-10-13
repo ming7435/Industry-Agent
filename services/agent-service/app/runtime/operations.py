@@ -166,6 +166,7 @@ class RuntimeOperations:
                     "reviewer": str(values.get("reviewer") or "quality-agent"),
                     "risk_level": str(values.get("risk_level") or "R1"),
                 }
+            if isinstance(state,dict):state['_quality_write_started']=True
             if self.quality_harness is not None:
                 from app.agents.quality.agent import QUALITY_CLOSURE_AUTHORITY
                 persisted = self.quality_harness.execute_once({**dict(state), '_closure_authority':QUALITY_CLOSURE_AUTHORITY,
@@ -176,6 +177,7 @@ class RuntimeOperations:
                 # 小型隔离测试容器没有 Harness，仍执行原存储；不伪造 Agent 事件。
                 check = self.closure_service.record_part_quality(record_payload,operator=str(values.get('reviewer') or 'quality-agent'))
             result["quality_check_id"] = check["quality_check_id"]
+            if isinstance(state,dict):state['_quality_write_started']=False
             result['quality_check'] = check
             if result.get('batch_id') and hasattr(self.closure_service, 'get_batch_quality'):
                 try:
@@ -409,7 +411,7 @@ class RuntimeOperations:
             return {'action': 'summarize', 'success': False, 'stop_reason': 'summary_pending',
                     'error': str(error), 'experience': {}}
 
-    def execute_memory(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router") -> Dict[str, Any]:
+    def execute_memory(self, action: str, payload: Mapping[str, Any] | None = None, from_agent: str = "router", *, actor_id: str = '') -> Dict[str, Any]:
         """API/事件入口：所有经验检索和学习动作都通过 Memory Agent。"""
 
         values = dict(payload or {})
@@ -426,10 +428,19 @@ class RuntimeOperations:
             "quality": dict(values.get("quality") or {}),
             'experience': dict(values.get('experience') or {}),
             "report": dict(values.get("report") or {}),
+            'recovery_actor_id':actor_id,
         }
-        return self.requests.access_memory(state, action=action, query=str(values.get("query") or ""), from_agent=from_agent)
+        from .service_exceptions import record_service_failure
+        try:
+            result=self.requests.access_memory(state, action=action, query=str(values.get("query") or ""), from_agent=from_agent)
+        except Exception as error:
+            record_service_failure(getattr(self,'recovery',None),'memory',state,error)
+            raise
+        if result.get('error') and result.get('stop_reason')!='validation_failed' and not result.get('policy_status'):
+            record_service_failure(getattr(self,'recovery',None),'memory',state,result['error'])
+        return result
 
-    def inspect_part(self, part_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    def inspect_part(self, part_id: str, payload: Mapping[str, Any], *, actor_id: str = '') -> Dict[str, Any]:
         values = dict(payload)
         values.update({"part_id": part_id, "inspection_type": "part_quality", "action": "inspect_part"})
         state = {
@@ -439,8 +450,19 @@ class RuntimeOperations:
             "context": values,
             "diagnosis": {},
             "maintenance_plan": {},
+            'part_id':part_id,'recovery_actor_id':actor_id,'subject_summary':'零件 '+part_id+' 检测服务异常',
         }
-        result = self.inspect_quality(state, from_agent="router", quality_payload=values, persist=True)
+        from .service_exceptions import record_service_failure
+        try:
+            result = self.inspect_quality(state, from_agent="router", quality_payload=values, persist=True)
+        except Exception as error:
+            record_service_failure(getattr(self,'recovery',None),'quality',state,error,
+                status='outcome_unknown' if state.get('_quality_write_started') else 'failed')
+            raise
+        errors=[str(receipt['error']) for receipt in (result.get('quality_validation') or {}).values()
+                if isinstance(receipt,Mapping) and receipt.get('error')]
+        if errors:
+            record_service_failure(getattr(self,'recovery',None),'quality',{**state,'quality':result},'；'.join(errors))
         return {**result, 'task_id':state['task_id'], 'trace_id':state['trace_id']}
 
     def execute_quality_action(self, harness, operation: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:

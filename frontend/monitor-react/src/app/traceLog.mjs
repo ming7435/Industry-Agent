@@ -109,7 +109,7 @@ function firstPresent(record, keys) {
   return null;
 }
 
-export function traceDetailSections(record) {
+export function traceDetailSections(record, formatValue = formatTraceValue) {
   const summary = traceEventSummary(record);
   const operation = {
     类型: record?.type || "未知",
@@ -126,11 +126,11 @@ export function traceDetailSections(record) {
   const context = firstPresent(record, ["context", "runtime_context", "execution_context", "state", "trace_context"]);
   const returnBody = firstPresent(record, ["output", "result", "return_body", "response", "body", "data", "state_change"]);
   return [
-    { key: "operation", title: "执行操作", value: formatTraceValue(operation) },
-    { key: "tool", title: "工具调用与输入", value: formatTraceValue(toolInput) },
-    { key: "context", title: "输入上下文", value: formatTraceValue(context) },
-    { key: "return", title: "返回体", value: formatTraceValue(returnBody) },
-    { key: "raw", title: "完整事件", value: formatTraceValue(record) },
+    { key: "operation", title: "执行操作", value: formatValue(operation) },
+    { key: "tool", title: "工具调用与输入", value: formatValue(toolInput) },
+    { key: "context", title: "输入上下文", value: formatValue(context) },
+    { key: "return", title: "返回体", value: formatValue(returnBody) },
+    { key: "raw", title: "完整事件", value: formatValue(record) },
   ];
 }
 
@@ -281,7 +281,7 @@ export function buildAgentInvocations(records = []) {
 
   const invocationGroups = [...groups.values()];
   source.forEach((record) => {
-    if (isAgentLifecycle(record) || (!isToolRecord(record) && record.type !== 'agent_step')) return;
+    if (isAgentLifecycle(record) || (!isToolRecord(record) && !['agent_step','skill_review'].includes(record.type))) return;
     const group = nearestGroup(record, invocationGroups);
     if (group) group.records.push(record);
   });
@@ -291,15 +291,16 @@ export function buildAgentInvocations(records = []) {
     .sort((left, right) => left.first_index - right.first_index)
     .map((group) => {
       const groupedRecords = group.records;
-      const started = groupedRecords.find((record) => String(record?.event || "").toLowerCase() === "agent_started") || groupedRecords[0];
-      const finished = [...groupedRecords].reverse().find((record) => ["agent_completed", "agent_error", "agent_timeout", "agent_failed"].includes(String(record?.event || "").toLowerCase())) || groupedRecords[groupedRecords.length - 1];
+      const businessRecords = groupedRecords.filter(record => record.type !== 'skill_review');
+      const started = businessRecords.find((record) => String(record?.event || "").toLowerCase() === "agent_started") || businessRecords[0];
+      const finished = [...businessRecords].reverse().find((record) => ["agent_completed", "agent_error", "agent_timeout", "agent_failed"].includes(String(record?.event || "").toLowerCase())) || businessRecords[businessRecords.length - 1];
       const agent = group.agent || recordAgentName(started) || "未知 Agent";
       const invocationNo = (agentCounters.get(agent) || 0) + 1;
       agentCounters.set(agent, invocationNo);
-      const inputRecord = groupedRecords.find((record) => isAgentLifecycle(record) && firstPresent(record, ["input", "request", "payload", "state"]))
-        || groupedRecords.find((record) => firstPresent(record, ["input", "request", "arguments", "payload", "state"]));
-      const outputRecord = [...groupedRecords].reverse().find((record) => isAgentLifecycle(record) && firstPresent(record, ["output", "result", "return_body", "response", "body", "data", "state_change"]))
-        || [...groupedRecords].reverse().find((record) => firstPresent(record, ["output", "result", "return_body", "response", "body", "data", "state_change"]));
+      const inputRecord = businessRecords.find((record) => isAgentLifecycle(record) && firstPresent(record, ["input", "request", "payload", "state"]))
+        || businessRecords.find((record) => firstPresent(record, ["input", "request", "arguments", "payload", "state"]));
+      const outputRecord = [...businessRecords].reverse().find((record) => isAgentLifecycle(record) && firstPresent(record, ["output", "result", "return_body", "response", "body", "data", "state_change"]))
+        || [...businessRecords].reverse().find((record) => firstPresent(record, ["output", "result", "return_body", "response", "body", "data", "state_change"]));
       const startedAt = started?.timestamp || groupedRecords[0]?.timestamp || "";
       const endedAt = finished?.timestamp || "";
       return {
@@ -315,10 +316,14 @@ export function buildAgentInvocations(records = []) {
         ended_at: endedAt,
         duration: durationText(finished),
         input: firstPresent(inputRecord, ["input", "request", "arguments", "payload", "state"]),
-        context: mergeContexts(groupedRecords),
+        context: mergeContexts(businessRecords),
         output: firstPresent(outputRecord, ["output", "result", "return_body", "response", "body", "data", "state_change"]),
         error: groupedRecords.find((record) => record?.error)?.error || "",
         tool_calls: buildToolCalls(groupedRecords),
+        skill_reviews: groupedRecords.filter(record => record.type === 'skill_review').map(record => ({
+          skill: record.skill || '', skill_fingerprint: record.skill_fingerprint || '',
+          status: record.status, output: record.output, message: record.message || '',
+        })),
         skill_steps: groupedRecords.filter(record => record.type === 'agent_step' && record.event !== 'step_started').map(record => ({
           name: record.name, skill: record.skill || record.state_change?.skill || '',
           step: record.step || record.state_change?.step || record.name, status: eventStatus(record),

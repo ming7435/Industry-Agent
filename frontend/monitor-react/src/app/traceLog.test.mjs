@@ -157,6 +157,40 @@ test("marks an incomplete Agent invocation as running and an errored one as abno
   assert.equal(invocations[1].error, "模型不可用");
 });
 
+test("技能只读核查归属原调用，不能替换业务输出或改写完成状态", () => {
+  const owner = {agent:'workorder',agent_run_id:'WO-RUN-1',trace_id:'TRACE-1',task_id:'TASK-1'};
+  const records = [
+    {...owner,type:'agent',event:'agent_started',input:{device_id:'D-1'}},
+    {...owner,type:'agent',event:'agent_completed',output:{status:'assigned',workorder_id:'WO-1'}},
+    {...owner,type:'skill_review',event:'skill_review_completed',skill:'auto_assignment',
+      status:'completed',skill_fingerprint:'a'.repeat(64),output:{highlights:[{path:'/output/status',value:'assigned'}],missing:[]}},
+    {...owner,type:'skill_review',event:'skill_review_unverified',skill:'workorder_create',
+      status:'not_verified',message:'核查队列已满'},
+    {...owner,agent_run_id:'OTHER-RUN',type:'skill_review',event:'skill_review_completed',skill:'repair_feedback',
+      output:{highlights:[],missing:[]}},
+  ];
+  const actual = buildAgentInvocations(records)[0];
+  assert.equal(actual.status,'已完成');
+  assert.deepEqual(actual.output,{status:'assigned',workorder_id:'WO-1'});
+  assert.equal(actual.skill_reviews.length,2);
+  assert.deepEqual(actual.skill_reviews.map(r=>r.skill),['auto_assignment','workorder_create']);
+  assert.equal(actual.skill_reviews[0].skill_fingerprint,'a'.repeat(64));
+  assert.equal(actual.tool_calls.length,0);
+});
+
+for (const terminal of ['agent_error',null]) test(`业务输出缺失时核查不能填充业务输出：${terminal || '执行中'}`,()=>{
+  const owner={agent:'workorder',agent_run_id:'WO-PARTIAL',trace_id:'TRACE-PARTIAL',task_id:'TASK-PARTIAL'};
+  const records=[{...owner,type:'agent',event:'agent_started',timestamp:'2026-10-13T01:00:00Z'}];
+  if(terminal) records.push({...owner,type:'agent',event:terminal,timestamp:'2026-10-13T01:00:01Z'});
+  records.push({...owner,type:'skill_review',event:'skill_review_completed',status:'completed',
+    timestamp:'2026-10-13T01:00:02Z',skill:'auto_assignment',output:{highlights:[],missing:['/input/feedback']}});
+  const actual=buildAgentInvocations(records)[0];
+  assert.equal(actual.status,terminal ? '异常' : '执行中');
+  assert.equal(actual.output,null);
+  assert.equal(actual.skill_reviews.length,1);
+  assert.notEqual(actual.ended_at,'2026-10-13T01:00:02Z');
+});
+
 test("matches lifecycle events through event id when task ids differ", () => {
   const run = {
     run_type: "fault",

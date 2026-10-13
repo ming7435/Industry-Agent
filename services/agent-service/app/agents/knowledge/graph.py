@@ -52,6 +52,7 @@ class KnowledgeGraphState(AgentExecutionState, total=False):
     route: str
     query_refined: bool
     result: KnowledgeResult
+    skill_plan_used: bool
 
 
 def initialize(state: KnowledgeGraphState) -> Dict[str, Any]:
@@ -121,7 +122,10 @@ def plan_retrieval(state: KnowledgeGraphState) -> Dict[str, Any]:
         planned = ["fetch_chunk"] + [item for item in planned if item != "fetch_chunk"]
     elif request.get("document_id"):
         planned = ["fetch_document"] + [item for item in planned if item != "fetch_document"]
-    return {"retrieval_plan": planned, "pending_tools": list(planned), "route": "retrieve"}
+    from .planning import skill_plan
+    skills = get_skill_registry().select('knowledge', names=state.get('active_skills') or [])
+    planned, consumed = skill_plan(state['agent'], skills, request, planned)
+    return {"retrieval_plan": planned, "pending_tools": list(planned), "skill_plan_used": consumed, "route": "retrieve"}
 
 
 def retrieve(state: KnowledgeGraphState) -> Dict[str, Any]:

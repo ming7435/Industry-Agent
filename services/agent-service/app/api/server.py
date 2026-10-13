@@ -232,6 +232,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         app.add_event_handler('shutdown', recovery.close)
     from app.api.task_recovery import build_task_recovery_router
     app.include_router(build_task_recovery_router(runtime, require_write_auth))
+    from app.api.service_exceptions import build_service_exception_router
+    app.include_router(build_service_exception_router(runtime, require_write_auth))
     from app.api.expert import build_expert_router
     expert_router, expert_manager = build_expert_router(runtime, require_write_auth)
     app.state.expert_skills = expert_manager
@@ -543,13 +545,13 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return remove_maintenance_plans(body.plan_ids, request)
 
     @app.get("/api/workorders")
-    def workorders(request: Request) -> Dict[str, Any]:
+    def workorders(request: Request, summary: bool = False) -> Dict[str, Any]:
         started = perf_counter()
         actor = team_actor(request)
         # 列表读取不执行 Agent；权威工单仍来自同一个 Backend 数据源。
         backend = BackendServiceClient()
         try:
-            result = backend.call('list_workorders', {})
+            result = backend.call('list_workorders', {'summary':True} if summary else {})
         except BackendServiceError:
             raise HTTPException(502, '工单读取失败，请稍后重试；已有工单未删除') from None
         if (not isinstance(result, Mapping) or result.get('success') is False
@@ -560,7 +562,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         items = [o for o in result.get('items', []) if not o.get('deleted_at')
                  and (actor['role'] == 'supervisor' or o.get('assignee') == actor['user_id'])]
         from app.workorder.recovery_result import with_current_restart_results
-        visible = with_current_restart_results([reviewed_workorder(o) for o in items], backend)
+        projected = summary and result.get('summary') is True
+        visible = items if projected else with_current_restart_results([reviewed_workorder(o) for o in items], backend)
         logging.getLogger('uvicorn.error').info(
             'workorder_list_read role=%s visible_count=%d source_count=%d restart_result_count=%d elapsed_ms=%.3f',
             actor['role'], len(visible), len(result['items']),
@@ -575,7 +578,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             for revision in order.get('plan_revisions') or []:
                 related_ids.extend((revision.get('previous_plan_id'), revision.get('plan_id')))
             deleted_plans.update(str(value) for value in related_ids if value)
-        return {'items': visible, 'count': len(visible), 'backend': 'backend-service', 'deleted_plan_ids':sorted(deleted_plans)}
+        return {'items': visible, 'count': len(visible), 'backend': 'backend-service', 'deleted_plan_ids':sorted(deleted_plans), 'summary':bool(projected)}
 
     @app.post("/api/workorders", dependencies=[Depends(require_write_auth)])
     def workorder_create(body: WorkOrderCreateRequest, request: Request) -> Dict[str, Any]:
@@ -585,6 +588,23 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.get("/api/workorders/{workorder_id}")
     def workorder(workorder_id: str, request: Request) -> Dict[str, Any]:
         actor = team_actor(request)
+        if getattr(getattr(runtime.container, 'registry', None), 'backend_base_url', ''):
+            backend=BackendServiceClient()
+            try:
+                result=backend.call('get_workorder',{'workorder_id':workorder_id})
+            except BackendServiceError:
+                raise HTTPException(502,'工单详情暂不可用，请稍后重试') from None
+            order=result.get('workorder',result)
+            if not isinstance(order,Mapping) or order.get('workorder_id')!=workorder_id or result.get('found') is False:
+                raise HTTPException(404,'工单不存在')
+            if order.get('deleted_at'):
+                raise HTTPException(404,'工单不存在')
+            if actor['role']!='supervisor' and order.get('assignee')!=actor['user_id']:
+                raise HTTPException(403,'只能读取本人被派发的工单')
+            from app.workorder.review import reviewed_workorder
+            from app.workorder.recovery_result import with_current_restart_results
+            visible=with_current_restart_results([reviewed_workorder(order)],backend)[0]
+            return {**result,**visible,'workorder':visible}
         if actor['role'] != 'supervisor':
             require_assignee(workorder_id, actor)
         from app.workorder.review import reviewed_workorder
@@ -612,19 +632,45 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return result
 
     @app.get("/api/reports")
-    def reports(workorder_id: str = "") -> Dict[str, Any]:
+    def reports(workorder_id: str = "", summary: bool = False) -> Dict[str, Any]:
         """通过 Runtime 向报告工作台提供已持久化的报告。"""
 
         try:
-            return runtime.container.registry.list_reports(workorder_id=workorder_id)
+            options = {'workorder_id': workorder_id}
+            if summary:
+                options['summary'] = True
+            return runtime.container.registry.list_reports(**options)
         except Exception:
             raise HTTPException(502,'报告存储暂不可用，历史报告未删除，请检查 Backend/MySQL') from None
 
-    def _load_report(report_id: str) -> tuple[str, Dict[str, Any]]:
+    def _load_report(report_id: str, display: bool = False, request: Request | None = None) -> tuple[str, Dict[str, Any]]:
         """从当前配置的报告存储读取报告，并兼容历史外层编号。"""
 
+        if report_id.startswith('EXR-'):
+            if request is None:
+                raise HTTPException(401,'请登录维修小组账号')
+            actor = team_actor(request)
+            cases = getattr(getattr(runtime.container,'recovery',None),'cases',None)
+            if cases is None:
+                raise HTTPException(503,'异常报告记录服务不可用')
+            case_id = 'EXC-' + report_id[4:]
+            try:
+                item = cases.get(case_id)
+            except KeyError:
+                raise HTTPException(404,'异常报告不存在') from None
+            except Exception:
+                raise HTTPException(503,'异常报告记录暂不可读取，原失败任务保留') from None
+            if not cases.permitted(item,actor):
+                raise HTTPException(403,'无权读取其它人员的异常报告')
+            try:
+                return report_id,cases.report(case_id)
+            except Exception:
+                raise HTTPException(503,'异常报告记录暂不可读取，原失败任务保留') from None
         registry = runtime.container.registry
-        result = registry.mcp.call("mes", "get_report", {"report_id": report_id}) if registry.backend_base_url else registry.report_store.get(report_id)
+        arguments = {'report_id': report_id}
+        if display:
+            arguments['display'] = True
+        result = registry.mcp.call("mes", "get_report", arguments) if registry.backend_base_url else registry.report_store.get(report_id)
         if isinstance(result, dict) and "report" in result:
             if result.get("found", result.get("success", bool(result.get("report")))):
                 return report_id, dict(result.get("report") or {})
@@ -643,15 +689,17 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         raise HTTPException(status_code=404, detail="report not found")
 
     @app.get("/api/reports/{report_id}")
-    def report(report_id: str) -> Dict[str, Any]:
-        storage_id, report_value = _load_report(report_id)
+    def report(report_id: str, request: Request, display: bool = False) -> Dict[str, Any]:
+        storage_id, report_value = _load_report(report_id, display, request)
         return {"success": True, "found": True, "report_id": storage_id, "report": report_value}
 
     @app.post("/api/reports/{report_id}/pdf", dependencies=[Depends(require_write_auth)])
-    def generate_report_pdf(report_id: str) -> Dict[str, Any]:
+    def generate_report_pdf(report_id: str, request: Request) -> Dict[str, Any]:
         """根据已持久化报告生成真实 PDF 文件。"""
 
-        _, report_value = _load_report(report_id)
+        _, report_value = _load_report(report_id, request=request)
+        if report_value.get('scope') == 'service_exception_record' and report_value.get('status') != 'completed':
+            raise HTTPException(409,'请先保存人工处理反馈，再生成异常处理报告 PDF')
         arguments = {'report':report_value,'format':'pdf','path':str(get_report_file_path(report_id,'pdf'))}
         harness = getattr(runtime.container,'harnesses',{}).get('report')
         if harness is not None:
@@ -670,16 +718,18 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return {**result, "open_url": f"/api/reports/{report_id}/pdf", "download_url": f"/api/reports/{report_id}/pdf"}
 
     @app.get('/api/reports/{report_id}/json')
-    def download_report_data(report_id: str):
+    def download_report_data(report_id: str, request: Request):
         """Download complete source facts, including all samples and tool receipts."""
-        _, report_value = _load_report(report_id)
+        _, report_value = _load_report(report_id, request=request)
         safe_id = ''.join(char for char in report_id if char.isalnum() or char in '-_')
         return JSONResponse(report_value, headers={'Content-Disposition': f'attachment; filename="report-{safe_id}.json"'})
 
     @app.get("/api/reports/{report_id}/pdf")
-    def open_report_pdf(report_id: str, download: bool = False) -> FileResponse:
+    def open_report_pdf(report_id: str, request: Request, download: bool = False) -> FileResponse:
         """打开已生成的 PDF；传入 download=1 时强制浏览器下载。"""
 
+        if report_id.startswith('EXR-'):
+            _load_report(report_id, request=request)
         path = get_report_file_path(report_id, "pdf")
         if not path.is_file():
             raise HTTPException(status_code=404, detail="PDF 尚未生成，请先点击生成 PDF")
@@ -739,6 +789,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
 
     @app.delete("/api/reports/{report_id}", dependencies=[Depends(require_write_auth)])
     def delete_report(report_id: str) -> Dict[str, Any]:
+        if report_id.startswith('EXR-'):
+            raise HTTPException(405,'异常报告是失败任务的处理记录，不通过普通报告删除入口移除')
         storage_id, _ = _load_report(report_id)
         result = runtime.container.registry.delete_report(report_id=storage_id)
         if not result.get("deleted"):
@@ -832,15 +884,23 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return {"items": items, "count": len(items), "backend": runtime.container.closure_service.backend}
 
     @app.post("/api/quality/parts/{part_id}", dependencies=[Depends(require_write_auth)])
-    def part_quality(part_id: str, request: PartQualityRequest) -> Dict[str, Any]:
+    def part_quality(part_id: str, request: PartQualityRequest, http_request: Request) -> Dict[str, Any]:
         """通过 Orchestrator 的 A2A 入口检测生产零件质量。"""
 
-        quality_result = runtime.container.operations.inspect_part(part_id, request.model_dump(mode="json"))
+        from app.api.service_exceptions import optional_actor_id
+        try:
+            quality_result = runtime.container.operations.inspect_part(part_id, request.model_dump(mode="json"),actor_id=optional_actor_id(http_request))
+        except Exception:
+            raise HTTPException(503,'零件检测服务异常，不能判定合格；请查看失败日志及异常核查记录，核对原检测保存结果') from None
         return serialize_api_response(quality_result)
 
     @app.post("/api/experience/search", dependencies=[Depends(require_write_auth)])
-    def experience_search(request: ExperienceSearchRequest) -> Dict[str, Any]:
-        return runtime.container.operations.execute_memory("search", request.model_dump(mode="json"), from_agent="router")
+    def experience_search(request: ExperienceSearchRequest, http_request: Request) -> Dict[str, Any]:
+        from app.api.service_exceptions import optional_actor_id
+        try:
+            return runtime.container.operations.execute_memory("search", request.model_dump(mode="json"), from_agent="router",actor_id=optional_actor_id(http_request))
+        except Exception:
+            raise HTTPException(503,'经验检索服务暂不可用，已保留失败原因供异常核查；不会默认返回经验') from None
 
     # 生产建模只增加 CAD 专用路由，不替换维修定位或其他服务接口。
     from app.agents.cad.modeling_api import build_freecad_router
@@ -851,10 +911,10 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     production = getattr(runtime.container, 'virtual_production', None)
     app.include_router(build_virtual_production_router(production, production.backend if production else None, require_write_auth))
     from app.api.quality_simulation import build_simulation_router
-    app.include_router(build_simulation_router(require_write_auth))
-    app.include_router(build_freecad_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
+    app.include_router(build_simulation_router(require_write_auth,recovery=getattr(runtime.container,'recovery',None)))
+    app.include_router(build_freecad_router(require_write_auth, trace=getattr(runtime.container, "trace", None),recovery=getattr(runtime.container,'recovery',None)))
     from app.api.freecad_documents import build_document_router
-    app.include_router(build_document_router(require_write_auth))
+    app.include_router(build_document_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
     return app
 
 

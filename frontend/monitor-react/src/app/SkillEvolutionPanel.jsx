@@ -95,15 +95,19 @@ export default function SkillEvolutionPanel({ actor, skill, onCandidate, onAdopt
         </details>
       </>}
       {detail.status==='awaiting_confirmation' && detail.draft && (technician ? <>
-        <p className="skill-evolution-note">模拟验证会触发所选虚拟故障并暂停模拟产线；测试工单的维修确认仍按现有流程处理。</p>
+        <p className="skill-evolution-note">{(detail.verification_mode || skill.optimization?.mode) === 'review_flow'
+          ? '使用本技能的输入输出样例验证只读核查规则，不改变业务结果、执行操作或控制设备。'
+          : ['knowledge_flow','cad_spec_flow'].includes(detail.verification_mode || skill.optimization?.mode)
+          ? '使用本技能的隔离任务样例验证，不触发虚拟故障或设备控制。'
+          : '模拟验证会触发所选虚拟故障并暂停模拟产线；测试工单的维修确认仍按现有流程处理。'}</p>
         <div className="skill-evolution-actions">
           {loadedId!==detail.proposal_id && <button type="button" disabled={busy || !canAdopt}
             onClick={()=>onAdopt?.(detail)}>载入此修改稿</button>}
           {loadedId===detail.proposal_id && <p>修改说明和预期已填好，请在下方审核并测试。</p>}
           <button type="button" disabled={busy} onClick={()=>submit('reject')}>拒绝此修改稿</button>
         </div>
-      </> : <p>当前身份只查看；请由负责模拟设备的维修人员确认修改稿。</p>)}
-      {detail.test_id && <p>验证记录：{detail.test_id}。测试工单可在工单系统处理。</p>}
+      </> : <p>当前身份只查看；请由有权限的维修人员确认修改稿。</p>)}
+      {detail.test_id && <p>验证记录：{detail.test_id}。请核对下方对应测试结果。</p>}
       {detail.status==='awaiting_publication' && <p>测试通过不等于生效。请在下方核对测试结果，再点击发布到系统。</p>}
       {detail.status==='published' && <p>人工已发布，新版生效；旧版备份和发布审计已保留。</p>}
     </div>}

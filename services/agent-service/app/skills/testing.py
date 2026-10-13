@@ -83,8 +83,10 @@ class SampleTools:
 
 
 class TrialClient:
-    def __init__(self, client):
+    def __init__(self, client, purpose='diagnosis'):
         self.client = copy(client)
+        self.purpose = purpose
+        self.timeout = min(float(getattr(client, 'timeout', 45)), 45)
         self.deadline = monotonic() + 180
         self.calls = 0
         self.last_candidate = None
@@ -96,11 +98,13 @@ class TrialClient:
         if self.calls > 6 or remaining <= 0:
             raise TimeoutError('样例测试已达到时间或调用次数限制')
         if hasattr(self.client, 'timeout'):
-            self.client.timeout = min(float(self.client.timeout), 45, remaining)
+            self.client.timeout = min(float(self.client.timeout), self.timeout, 45, remaining)
         messages = [{'role': 'system', 'content':
+                     ('这是隔离技能任务验证。仅使用提供的问题与资料，不能操作生产或设备，不能把人工预期当作事实。'
+                      if self.purpose != 'diagnosis' else
                      '当前为专家技能的隔离故障样例试运行。工具只读取人工样例，不能查询真实设备或操作业务。'
                      '最终 JSON 的 confidence 必须是 0 到 1 之间的数值，例如 0.5，不使用“高/中/低”文字。'
-                     '资料不足时保留不确定性和较低置信度，不能为了完成测试编造证据。'}, *messages]
+                     '资料不足时保留不确定性和较低置信度，不能为了完成测试编造证据。')}, *messages]
         response = self.client.chat(messages, **kwargs)
         from app.agents.diagnosis.parsing import assistant_message, parse_final_json
         message = assistant_message(response)
@@ -151,7 +155,7 @@ class SkillTrials:
 
     @staticmethod
     def _public(record):
-        return {key: record.get(key) for key in ('test_id', 'status', 'mode', 'scope', 'created_at',
+        return {key: record.get(key) for key in ('test_id', 'status', 'mode', 'scope', 'created_at', 'assessment',
                                                 'sample', 'result', 'message')}
 
     def get(self, test_id, actor):
@@ -167,6 +171,14 @@ class SkillTrials:
     def _dependencies(self, agent):
         return {path.name: sha256(path.read_bytes()).hexdigest()
                 for path in sorted((self.manager.registry.root / agent).glob('*.md'))}
+
+    def start_task(self, agent, name, values, actor):
+        from app.skills.task_testing import validate_task
+        from app.skills.optimization import verification_mode
+        if actor.get('role') != 'technician' or not actor.get('user_id'):
+            raise SkillEditError(403, '请由维修人员审核并验证任务样例')
+        sample = validate_task(agent, name, values.get('task'))
+        return self.start(agent, name, {**values, 'sample': sample, 'task_mode': verification_mode(agent, name)}, actor)
 
     def start(self, agent, name, values, actor):
         with self.lock:
@@ -194,12 +206,14 @@ class SkillTrials:
                 if self._dependencies(agent) != dependencies:
                     raise SkillEditError(409, '线上技能正在变化，请刷新后重新测试')
                 registry = DraftRegistry(self.manager.registry.root, {agent: definitions})
-                mode = 'diagnosis' if agent == 'diagnosis' else 'instruction_preview'
+                mode = values.get('task_mode') or ('diagnosis' if agent == 'diagnosis' else 'instruction_preview')
                 record = {'test_id': uuid4().hex, 'actor_id': actor['user_id'], 'agent': agent, 'name': name,
-                          'fingerprint': fingerprint(values), 'dependencies': dependencies,
+                          'fingerprint': fingerprint(values), 'dependencies': dependencies, 'baseline_revision': current['revision'],
                           'status': 'running', 'mode': mode, 'instance': self.instance, 'created_epoch': time(),
                           'created_at': datetime.now(timezone.utc).isoformat(), 'sample': values['sample'],
-                          'scope': ('使用现有诊断流程和草稿技能，只读取提供的样例数据。' if mode == 'diagnosis' else
+                          'scope': ('只读技能核查验证：使用样例输入输出；不执行工单、质检、报告保存、生产或设备控制。' if mode == 'review_flow' else
+                                    '隔离任务验证：执行检索图或规格解析，不操作机器、不生成实体、不写业务数据。' if mode in {'knowledge_flow', 'cad_spec_flow'} else
+                                    '使用现有诊断流程和草稿技能，只读取提供的样例数据。' if mode == 'diagnosis' else
                                     '故障样例说明试读：核对修改后的说明；不运行该智能体的业务工具或固定流程。'),
                           'result': None, 'message': '样例试运行中，请等待结果'}
                 self._write(record)
@@ -217,9 +231,23 @@ class SkillTrials:
             from app.agents.diagnosis.agent import DiagnosisAgent
             from app.agents.diagnosis.parsing import assistant_message, parse_final_json
             sample = record['sample']
-            client = TrialClient(self.client_factory())
+            client = TrialClient(self.client_factory(), record['mode'])
             if not client.available:
                 raise TrialFailure('尚未配置模型服务，无法试运行，请联系管理员。')
+            if record['mode'] in {'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
+                from app.skills.task_testing import execute_task
+                output, criteria = execute_task(record, registry, client)
+                with self.manager._transaction():
+                    criteria.update(baseline_unchanged=self.manager._detail(record['agent'], record['name'])['revision'] == record['baseline_revision'],
+                                    dependencies_unchanged=self._dependencies(record['agent']) == record['dependencies'])
+                    accepted = all(criteria.values())
+                    record.update(status='completed' if accepted else 'failed', result=output,
+                        message='任务验证通过，等待人工核对并发布。' if accepted else '任务验证未通过或候选未实际参与决策，旧版保留。',
+                        assessment={'schema': 1, 'assessment_id': record['test_id'], 'agent': record['agent'], 'name': record['name'],
+                            'trial_fingerprint': record['fingerprint'], 'completed_at': datetime.now(timezone.utc).isoformat(),
+                            'accepted': accepted, 'criteria': criteria, 'basis': record['mode'] + '_receipt'})
+                    self._write(record)
+                return
             if record['mode'] == 'diagnosis':
                 tools = SampleTools(sample)
                 event = {'event_id': 'SAMPLE-' + record['test_id'], 'device_id': 'EXPERT-SAMPLE',

@@ -1,7 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { createEquator300 } from "./equator300.js";
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import "../styles.css";
 import machineImage from "../assets/trak-tc820-machine-transparent.png";
 import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getDeviceDisplayName, getWorkorderAlarmCode, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
@@ -12,17 +9,19 @@ import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { request } from "./apiRequest.mjs";
+import {peekWorkspaceRead,readWorkspace,startWorkspacePrefetch,workspaceRunVersion,workspaceRunTraceIds} from './workspaceReads.mjs';
 import { getTeamSession, subscribeTeamSession } from '../teamSession.mjs';
 import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, executionReviewView, inspectionWorkorderView, loadMaintenancePlans, loadMaintenanceOrders, maintenanceDispatchView, maintenanceHistoryNotice, maintenanceReferenceDrawings, maintenanceWorkType, retryMaintenancePlan } from "./maintenanceWorkspace.mjs";
 import { publishMaintenanceChange, subscribeMaintenanceChanges, rememberDeletedMaintenancePlans } from './maintenanceChanges.mjs';
 import { cleanDisplayText, cleanEvidenceText, selectAgentAnswer, splitInlineMarkdown, splitTextBlocks, displayRiskLevel, resultListItems, normalizeResultText } from "./textFormatting.mjs";
 import ResultText from './ResultText.jsx';
 import { formatMonitorHealth, monitorEvidenceReason } from "./monitorDisplay.mjs";
-import { createMotionClock, getMachineMotionState, getWorkshopMotionState } from "./workshopMotion.mjs";
+import { getMachineMotionState, getWorkshopMotionState, machineStatus, machineStatusLabel } from "./workshopMotion.mjs";
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ExpertWorkspace from './ExpertWorkspace.jsx';
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
 import TaskRecoveryPanel from './TaskRecoveryPanel.jsx';
+import ServiceExceptionPanel from './ServiceExceptionPanel.jsx';
 import { freeCadRequest } from "./production-cad/freecad.mjs";
 import PartQualityWorkspace from "./QualityWorkspace.jsx";
 import RepairCadPanel from './WorkorderDrawingPanel.jsx';
@@ -30,6 +29,8 @@ import "../workbench.css";
 import TeamAccess from '../TeamAccess.jsx';
 import SupervisorQueue from '../SupervisorQueue.jsx';
 import '../team.css';
+
+const Machine3DScene = lazy(() => import("./Machine3DScene.jsx"));
 
 const workshopMachines = [
   {
@@ -710,6 +711,9 @@ function App() {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
   const result = selectedMachine?.result || null;
   const sample = result?.current_sample || selectedMachine?.sample || null;
+  const prefetchContext=useRef(null);
+  prefetchContext.current={snapshot,sample};
+  useEffect(()=>startWorkspacePrefetch({chooseOrder:items=>preferredWorkorderId(items,prefetchContext.current.sample,prefetchContext.current.snapshot)}),[]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -792,6 +796,8 @@ function App() {
         {(logsVisited || activeView === "logs") && <LogsWorkspace active={!bigScreen && activeView === "logs"} snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace />}
         {(reportVisited || activeView === "report") && <ReportWorkspace active={!bigScreen && activeView === "report"} snapshot={snapshot} />}
+        {!bigScreen && teamActor && ['diagnosis','maintenance','workorder','rag','logs','quality','cad','report'].includes(activeView) &&
+          <ServiceExceptionPanel key={`${teamActor.user_id}:${teamActor.role}:${activeView}`} request={request} actor={teamActor} view={activeView} />}
         {toast && <div className="toast-message" role="status">{toast}</div>}
         {(bigScreen || activeView !== "quality") && (error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
       </main>
@@ -866,6 +872,7 @@ function WorkshopMap({ machines, motion = getWorkshopMotionState(), selectedMach
   return (
     <section className="panel workshop-panel">
       <div className="factory-map" aria-label="车间设备分布图">
+        <Suspense fallback={<div className="machine-3d-canvas" role="status">正在加载车间视图…</div>}>
         <Machine3DScene
           machines={machines}
           motion={motion}
@@ -874,6 +881,7 @@ function WorkshopMap({ machines, motion = getWorkshopMotionState(), selectedMach
           viewMode={viewMode}
           onSelect={(machineId) => onSelectMachine(machineId || selectedMachine?.id)}
         />
+        </Suspense>
         <div className="scene-overlay">
           <div>
             <span className="eyebrow">车间总览</span>
@@ -931,1257 +939,6 @@ function DeviceAlertBoard({ machines = [], onSelectMachine }) {
     </section>
   );
 }
-
-function machineStatus(machine, result) {
-  if (!machine?.live) return "idle";
-  if (result?.status === "fault") return "fault";
-  if (result?.status === "alarm") return "alarm";
-  if (result?.status === "warning") return "warning";
-  const motionState = getMachineMotionState(machine);
-  if (motionState === "stopped") return "stopped";
-  if (motionState !== "running") return "unknown";
-  return "normal";
-}
-
-function machineStatusLabel(status) {
-  if (status === "fault") return "故障";
-  if (status === "alarm") return "报警";
-  if (status === "warning") return "预警";
-  if (status === "idle") return "未接入";
-  if (status === "stopped") return "已停止";
-  if (status === "unknown") return "待确认";
-  return "正常";
-}
-
-// 世界坐标中的工位；三个机器人交接目标都保持在其 2.22 单位的工作范围内。
-const workshopLayout = Object.freeze({
-  robot: [5.8, -.15],
-  pickup: [4.7, 1.12],
-  inspection: [7.6, 1],
-  qualified: [7.65, -1.3],
-  rework: [6.65, -2.1],
-  robotReach: 2.22,
-});
-
-function Machine3DScene({ machines = [], motion, selectedMachineId, status, viewMode, onSelect }) {
-  const mountRef = useRef(null);
-  const onSelectRef = useRef(onSelect);
-  const machinesRef = useRef(machines);
-  const motionRef = useRef(motion);
-  const motionClockRef = useRef(null);
-  if (!motionClockRef.current) motionClockRef.current = createMotionClock();
-  const applyViewRef = useRef(null);
-  const viewModeRef = useRef(viewMode || "iso");
-  const selectedMachineIdRef = useRef(selectedMachineId);
-  const updateSelectionRef = useRef(null);
-  const hoverTimerRef = useRef(null);
-  const hoveredMachineRef = useRef(null);
-  const [hoveredLabel, setHoveredLabel] = useState(null);
-  const sceneMachineState = useMemo(
-    () => machines.map((machine) => machine.id).join("|"),
-    [machines],
-  );
-
-  useEffect(() => {
-    onSelectRef.current = onSelect;
-  }, [onSelect]);
-  useEffect(() => {
-    machinesRef.current = machines;
-    updateSelectionRef.current?.(selectedMachineIdRef.current);
-  }, [machines]);
-  useEffect(() => { motionRef.current = motion; }, [motion]);
-  useEffect(() => {
-    viewModeRef.current = viewMode || "iso";
-    applyViewRef.current?.(viewModeRef.current);
-  }, [viewMode]);
-  useEffect(() => {
-    selectedMachineIdRef.current = selectedMachineId;
-    updateSelectionRef.current?.(selectedMachineId);
-  }, [selectedMachineId]);
-
-  useEffect(() => {
-    const mount = mountRef.current;
-    if (!mount) return undefined;
-
-    const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog(0xf3f6f4, 14, 52);
-
-    const camera = new THREE.PerspectiveCamera(39, mount.clientWidth / mount.clientHeight, 0.1, 100);
-    const compactScene = mount.clientWidth < 600;
-    if (compactScene) {
-      camera.fov = 55;
-      camera.updateProjectionMatrix();
-    }
-    camera.position.set(compactScene ? 13 : 10.4, compactScene ? 12 : 5.7, compactScene ? 40 : 13.7);
-    camera.lookAt(1.3, .75, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, compactScene ? 1.25 : 1.5));
-    renderer.setSize(mount.clientWidth, mount.clientHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
-    mount.appendChild(renderer.domElement);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(1.3, .75, 0);
-    controls.enableDamping = true;
-    controls.dampingFactor = .08;
-    controls.minDistance = 6.2;
-    controls.maxDistance = compactScene ? 55 : 22;
-    controls.minPolarAngle = Math.PI * .16;
-    controls.maxPolarAngle = Math.PI * .49;
-    controls.enablePan = true;
-    controls.panSpeed = .55;
-    controls.rotateSpeed = .55;
-    controls.zoomSpeed = .72;
-    const applyCameraView = (mode) => {
-      if (mode === "top") {
-        camera.position.set(1.3, compactScene ? 33 : 18, .1);
-        controls.target.set(1.3, 0, -.2);
-        controls.enableRotate = false;
-      } else if (mode === "line") {
-        camera.position.set(compactScene ? 7 : 3.8, compactScene ? 10 : 4.5, compactScene ? 40 : 17);
-        controls.target.set(1.3, .55, .2);
-        controls.enableRotate = true;
-      } else {
-        camera.position.set(compactScene ? 13 : 10.4, compactScene ? 12 : 5.7, compactScene ? 40 : 13.7);
-        controls.target.set(1.3, .75, 0);
-        controls.enableRotate = true;
-      }
-      camera.lookAt(controls.target);
-      controls.update();
-    };
-    applyViewRef.current = applyCameraView;
-    applyCameraView(viewModeRef.current);
-
-    const machineById = new Map(machinesRef.current.map((machine) => [machine.id, machine]));
-    const getCurrentMachine = (id) => machinesRef.current.find((machine) => machine.id === id);
-    const currentStatusForMachine = (id) => {
-      const machine = getCurrentMachine(id);
-      return machineStatus(machine, machine?.result);
-    };
-    const statusForMachine = (id) => machineStatus(machineById.get(id), machineById.get(id)?.result);
-    const colorForMachine = (id) => statusColor(statusForMachine(id));
-    const selectionEffects = [];
-    const machineHalos = [];
-    const statusMaterials = [];
-    const isSelectedMachine = (id) => id === selectedMachineIdRef.current;
-    const updateSelection = (id) => {
-      machineHalos.forEach(({ machineId, ring }) => {
-        const current = currentStatusForMachine(machineId);
-        const alert = ["fault", "alarm", "warning"].includes(current);
-        const color = current === "fault" ? 0xe13b35 : current === "alarm" ? 0xd27a12 : current === "warning" ? 0xe0a229 : 0x14aa72;
-        ring.visible = alert || machineId === id;
-        ring.material.color.setHex(alert ? color : 0x14aa72);
-        ring.material.emissive.setHex(alert ? color : 0x14aa72);
-      });
-      selectionEffects.forEach(({ machineId, material, selectedValue, defaultValue, property }) => {
-        material[property] = machineId === id ? selectedValue : defaultValue;
-      });
-      statusMaterials.forEach(({ machineId, material }) => {
-        const color = statusColor(currentStatusForMachine(machineId));
-        material.color.setHex(color);
-        material.emissive.setHex(color);
-      });
-    };
-    updateSelectionRef.current = updateSelection;
-    const isAlertStatus = (localStatus) => {
-      return localStatus === "fault" || localStatus === "alarm" || localStatus === "warning";
-    };
-    const labelForMachine = (id) => {
-      if (id === "EQUATOR300-VISUAL") {
-        const simulatedMachine = getCurrentMachine("RENISHAW-EQUATOR300-001");
-        const localStatus = machineStatus(simulatedMachine, simulatedMachine?.result);
-        return {
-          id,
-          name: "Renishaw Equator 300",
-          type: "模拟工厂质检工位 · 动画仅示意",
-          status: localStatus,
-          statusLabel: simulatedMachine ? machineStatusLabel(localStatus) : "无设备数据",
-        };
-      }
-      const machine = getCurrentMachine(id);
-      if (!machine) return null;
-      const localStatus = currentStatusForMachine(id);
-      return {
-        id,
-        name: machine.name || id,
-        type: machine.type || "设备",
-        status: localStatus,
-        statusLabel: machineStatusLabel(localStatus),
-      };
-    };
-    const accent = statusColor(status);
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xd9ddde, roughness: .63, metalness: .03 });
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0xd7dedf, roughness: .8, metalness: .04, side: THREE.DoubleSide });
-    const safetyMat = new THREE.MeshStandardMaterial({ color: 0xd9a21b, roughness: .58, metalness: .04 });
-    const conveyorMat = new THREE.MeshStandardMaterial({ color: 0x405057, roughness: .6, metalness: .18 });
-    const conveyorEdgeMat = new THREE.MeshStandardMaterial({ color: 0x687b80, roughness: .4, metalness: .5 });
-    const blockMat = new THREE.MeshStandardMaterial({ color: 0x647177, roughness: .72, metalness: .08 });
-    const roofMat = new THREE.MeshStandardMaterial({ color: 0x2b3338, roughness: .75, metalness: .05 });
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc9d1d3, roughness: .43, metalness: .25 });
-    const solidBodyMat = new THREE.MeshStandardMaterial({ color: 0x859399, roughness: .46, metalness: .32 });
-    const darkMat = new THREE.MeshStandardMaterial({ color: 0x22272d, roughness: .7, metalness: .2, transparent: true, opacity: .86 });
-    const lightMat = new THREE.MeshStandardMaterial({ color: 0xb9bec2, roughness: .55, metalness: .12, transparent: true, opacity: .68 });
-    const glassMat = new THREE.MeshStandardMaterial({ color: 0x71969c, roughness: .12, metalness: .04, transparent: true, opacity: .35, side: THREE.DoubleSide, depthWrite: false });
-    const accentMat = new THREE.MeshStandardMaterial({ color: accent, roughness: .42, metalness: .12, emissive: accent, emissiveIntensity: .08 });
-    statusMaterials.push({ machineId: "TRAK-TC820LTYSI-001", material: accentMat });
-    const innerMat = new THREE.MeshStandardMaterial({ color: 0x95a0a5, roughness: .52, metalness: .28 });
-    const railMat = new THREE.MeshStandardMaterial({ color: 0x49545a, roughness: .36, metalness: .45 });
-    const rawMat = new THREE.MeshStandardMaterial({ color: 0xb7822a, roughness: .42, metalness: .22, emissive: 0x3a2300, emissiveIntensity: .05 });
-    const cutMetalMat = new THREE.MeshStandardMaterial({ color: 0xcbd2d7, roughness: .32, metalness: .72 });
-    const cutterMat = new THREE.MeshStandardMaterial({ color: 0x425059, roughness: .28, metalness: .78 });
-    const chipMat = new THREE.MeshStandardMaterial({ color: 0xc3c9c9, roughness: .3, metalness: .82 });
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x263238, transparent: true, opacity: .42 });
-    const hitMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .001, depthWrite: false });
-    const raycaster = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
-    const interactiveObjects = [];
-    const alertEffects = [];
-
-    const registerMachineObject = (root, id, hitTarget) => {
-      root.userData.machineId = id;
-      root.traverse((object) => {
-        object.userData.machineId = id;
-      });
-      if (hitTarget) interactiveObjects.push(hitTarget);
-      return root;
-    };
-
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -.36;
-    // 不透明墙面/顶棚的阴影投射会在环氧地面上形成很大的三角形斑块。
-    floor.receiveShadow = false;
-    scene.add(floor);
-
-    const addSceneBox = (size, position, material, rotation = [0, 0, 0]) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
-      mesh.position.set(...position);
-      mesh.rotation.set(...rotation);
-      mesh.castShadow = !material.transparent && size[1] > .05;
-      mesh.receiveShadow = material !== wallMat && !material.transparent;
-      scene.add(mesh);
-      return mesh;
-    };
-
-    addSceneBox([26, 2.6, .08], [0, .92, -7.2], wallMat);
-    addSceneBox([.08, 2.25, 12.5], [-12.3, .78, -.6], wallMat);
-    addSceneBox([.08, 2.25, 12.5], [12.3, .78, -.6], wallMat);
-    addSceneBox([24, .08, .12], [0, 2.32, -6.95], roofMat);
-    addSceneBox([.12, .08, 12], [-11.5, 2.16, -.8], roofMat);
-    addSceneBox([.12, .08, 12], [11.5, 2.16, -.8], roofMat);
-
-    // 使用略微抬高并带边缘收口的工业地面标线，避免与地面共面产生闪烁。
-    const lineEdgeMat = new THREE.MeshStandardMaterial({ color: 0x707875, roughness: .78 });
-    const addFloorLine = (size, position, paint) => {
-      addSceneBox([size[0] + .035, .017, size[2] + .035], [position[0], -.332, position[2]], lineEdgeMat);
-      addSceneBox([size[0], .019, size[2]], [position[0], -.313, position[2]], paint);
-    };
-    addFloorLine([6.8, 0, .075], [0, 0, 2], safetyMat);
-    addFloorLine([6.8, 0, .075], [0, 0, -1.95], safetyMat);
-    addFloorLine([.075, 0, 3.95], [-3.4, 0, .02], safetyMat);
-    addFloorLine([.075, 0, 3.95], [3.4, 0, .02], safetyMat);
-    const aisleMat = new THREE.MeshStandardMaterial({ color: 0xf4f4ed, roughness: .7 });
-    addFloorLine([17, 0, .045], [0, 0, 2.52], aisleMat);
-    addFloorLine([17, 0, .045], [0, 0, 3.92], aisleMat);
-
-    const addConveyor = (size, position, rotation = [0, 0, 0], edgeNormal = new THREE.Vector3(0, 0, 1)) => {
-      addSceneBox(size, position, conveyorMat, rotation);
-      addSceneBox(
-        [size[0], .035, .08],
-        [position[0] - edgeNormal.x * size[2] / 2, position[1] + .06, position[2] - edgeNormal.z * size[2] / 2],
-        conveyorEdgeMat,
-        rotation,
-      );
-      addSceneBox(
-        [size[0], .035, .08],
-        [position[0] + edgeNormal.x * size[2] / 2, position[1] + .06, position[2] + edgeNormal.z * size[2] / 2],
-        conveyorEdgeMat,
-        rotation,
-      );
-    };
-
-    const conveyorRollers = [];
-    const conveyorFlights = [];
-    const yAxis = new THREE.Vector3(0, 1, 0);
-    const addConveyorSegment = (start, end, width = .52, flightCount = 6) => {
-      const from = new THREE.Vector3(start[0], -.08, start[1]);
-      const to = new THREE.Vector3(end[0], -.08, end[1]);
-      const delta = new THREE.Vector3().subVectors(to, from);
-      const length = delta.length();
-      const center = new THREE.Vector3().addVectors(from, to).multiplyScalar(.5);
-      const yaw = Math.atan2(delta.x, delta.z);
-      const rotation = [0, yaw - Math.PI / 2, 0];
-
-      const direction = delta.clone().normalize();
-      const normal = new THREE.Vector3(-direction.z, 0, direction.x);
-      addConveyor([length, .13, width], [center.x, center.y, center.z], rotation, normal);
-      const rollerCount = Math.max(3, Math.round(length / .27));
-      for (let index = 0; index <= rollerCount; index += 1) {
-        const t = index / rollerCount;
-        const point = from.clone().lerp(to, t);
-        const roller = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, width + .1, 16), railMat);
-        roller.position.set(point.x, .03, point.z);
-        roller.quaternion.setFromUnitVectors(yAxis, normal);
-        scene.add(roller);
-        conveyorRollers.push(roller);
-      }
-
-      for (let index = 0; index < flightCount; index += 1) {
-        const flight = new THREE.Mesh(new THREE.BoxGeometry(.08, .035, width + .06), railMat);
-        flight.userData.offset = index / flightCount;
-        flight.quaternion.setFromAxisAngle(yAxis, yaw - Math.PI / 2);
-        flight.castShadow = true;
-        scene.add(flight);
-        conveyorFlights.push({ mesh: flight, start: from, end: to });
-      }
-    };
-
-    // 原料进入送料机；加工件沿出料线到机械臂，再送 Equator300 检测。
-    addConveyorSegment([-5.68, 2.45], [-5.68, .72], .55, 0);
-    addConveyorSegment([2.45, 1.12], [4.85, 1.12], .55, 0);
-
-    addSceneBox([1.45, .42, .75], [-6.15, -.08, -6.15], blockMat);
-    addSceneBox([1.55, .13, .85], [-6.15, .22, -6.15], roofMat);
-    addSceneBox([1.35, .38, .72], [6.05, -.08, -6.15], blockMat);
-    addSceneBox([1.45, .12, .82], [6.05, .18, -6.15], roofMat);
-    const fenceFrameMat = new THREE.MeshStandardMaterial({ color: 0x596970, roughness: .46, metalness: .55 });
-    const fenceGlassMat = new THREE.MeshStandardMaterial({ color: 0x9bbfc4, roughness: .18, transparent: true, opacity: .24, depthWrite: false, side: THREE.DoubleSide });
-    for (const x of [-3.25, -1.65, -.05, 1.55, 3.15]) {
-      addSceneBox([.065, 1.22, .065], [x, .31, -2.25], fenceFrameMat);
-      addSceneBox([.16, .035, .16], [x, -.32, -2.25], fenceFrameMat);
-    }
-    for (let i = 0; i < 3; i += 1) {
-      const x = -2.45 + i * 1.6;
-      addSceneBox([1.49, 1.06, .018], [x, .32, -2.25], fenceGlassMat);
-      addSceneBox([1.54, .04, .06], [x, .89, -2.25], fenceFrameMat);
-      addSceneBox([1.54, .04, .06], [x, -.25, -2.25], fenceFrameMat);
-    }
-    // 带边框的亚克力安全门，包含铰链、把手和顶部导轨。
-    addSceneBox([1.49, 1.06, .018], [2.35, .32, -2.25], fenceGlassMat);
-    addSceneBox([1.52, .045, .07], [2.35, .89, -2.25], fenceFrameMat);
-    addSceneBox([1.52, .045, .07], [2.35, -.25, -2.25], fenceFrameMat);
-    addSceneBox([.05, 1.14, .07], [1.59, .32, -2.25], fenceFrameMat);
-    addSceneBox([.05, 1.14, .07], [3.11, .32, -2.25], fenceFrameMat);
-    for (const y of [.02, .66]) addSceneBox([.09, .11, .12], [1.59, y, -2.17], railMat);
-    addSceneBox([.035, .25, .09], [2.96, .28, -2.14], railMat);
-    addSceneBox([6.48, .045, .07], [-.05, .94, -2.25], fenceFrameMat);
-    for (const x of [-8.9, 8.9]) {
-      const z = -6.35;
-      addSceneBox([.85, 1.65, .62], [x, .5, z], solidBodyMat);
-      addSceneBox([.62, .35, .025], [x, .95, z + .33], darkMat);
-      addSceneBox([.08, .2, .05], [x + .32, .45, z + .34], railMat);
-      for (let i = 0; i < 5; i += 1) addSceneBox([.48, .014, .015], [x, .15 + i * .055, z + .33], railMat);
-      for (const footX of [-.3, .3]) addSceneBox([.1, .08, .1], [x + footX, -.32, z], railMat);
-    }
-
-    for (let index = 0; index < 10; index += 1) {
-      const x = index % 2 === 0 ? -10.8 : 10.8;
-      const z = -5.7 + Math.floor(index / 2) * 2.8;
-      const column = new THREE.Mesh(new THREE.CylinderGeometry(.06, .06, 2.6, 12), blockMat);
-      column.position.set(x, .92, z);
-      column.castShadow = true;
-      scene.add(column);
-    }
-
-    const addMachineHalo = (id, position, radius = 1.45) => {
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(radius, .035, 8, 64),
-        new THREE.MeshStandardMaterial({
-          color: 0x14aa72,
-          emissive: 0x14aa72,
-          emissiveIntensity: .35,
-          transparent: true,
-          opacity: .9,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.set(position[0], -.28, position[2]);
-      ring.visible = false;
-      scene.add(ring);
-      machineHalos.push({ machineId: id, ring });
-      return ring;
-    };
-
-    const addMachineAlert = (id, position) => {
-      const glow = new THREE.PointLight(0xff2525, 0, 4.8);
-      glow.position.set(position[0], 1.05, position[2]);
-      scene.add(glow);
-      alertEffects.push({ id, glow });
-      return glow;
-    };
-
-    const towerLamps = [];
-    const addTowerLamp = (id, x, y, z) => {
-      addSceneBox([.08, .28, .08], [x, y - .16, z], railMat);
-      const lamps = [0xb83436, 0xe6a729, 0x36977f].map((color, index) => {
-        const material = new THREE.MeshStandardMaterial({ color, roughness: .3, emissive: color, emissiveIntensity: .06 });
-        const lens = new THREE.Mesh(new THREE.CylinderGeometry(.083, .083, .09, 20), material);
-        lens.position.set(x, y + index * .095, z);
-        scene.add(lens);
-        return material;
-      });
-      towerLamps.push({ id, lamps });
-    };
-
-    const addBarFeeder = () => {
-      const id = "LNS-QL-SERVO-80-S2-001";
-      const color = colorForMachine(id);
-      const accentLocal = new THREE.MeshStandardMaterial({ color, roughness: .4, metalness: .12, emissive: color, emissiveIntensity: isSelectedMachine(id) ? .16 : .05 });
-      statusMaterials.push({ machineId: id, material: accentLocal });
-      selectionEffects.push({ machineId: id, material: accentLocal, property: "emissiveIntensity", selectedValue: .16, defaultValue: .05 });
-      const feederWhiteMat = new THREE.MeshStandardMaterial({ color: 0xe6e9ec, roughness: .56, metalness: .08 });
-      const feederPanelMat = new THREE.MeshStandardMaterial({ color: 0xcfd5d8, roughness: .5, metalness: .12 });
-      const feederGlassMat = new THREE.MeshStandardMaterial({ color: 0x9eb9c0, roughness: .2, metalness: .04, transparent: true, opacity: .42, side: THREE.DoubleSide });
-      const feederGroup = new THREE.Group();
-      const feederRollers = [];
-      feederGroup.position.set(-4.15, .12, .13);
-      feederGroup.rotation.y = 0;
-      feederGroup.scale.set(.86, .86, .86);
-      scene.add(feederGroup);
-      addMachineHalo(id, [feederGroup.position.x, feederGroup.position.y, feederGroup.position.z], 1.5);
-      addMachineAlert(id, [feederGroup.position.x, feederGroup.position.y, feederGroup.position.z]);
-      addTowerLamp(id, -3.9, 1.7, .1);
-
-      const addFeederBox = (size, position, material, rotation = [0, 0, 0]) => {
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
-        mesh.position.set(...position);
-        mesh.rotation.set(...rotation);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        feederGroup.add(mesh);
-        return mesh;
-      };
-
-      const addFeederCylinder = (radius, length, position, material, rotation = [0, 0, 0], segments = 24) => {
-        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, segments), material);
-        mesh.position.set(...position);
-        mesh.rotation.set(...rotation);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        feederGroup.add(mesh);
-        return mesh;
-      };
-
-      const addTubeBetween = (start, end, radius, material) => {
-        const from = new THREE.Vector3(...start);
-        const to = new THREE.Vector3(...end);
-        const direction = new THREE.Vector3().subVectors(to, from);
-        const length = direction.length();
-        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 16), material);
-        mesh.position.copy(from.add(to).multiplyScalar(.5));
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        feederGroup.add(mesh);
-        return mesh;
-      };
-
-      addFeederBox([4.3, .08, 1.08], [0, .06, 0], railMat);
-      addFeederBox([4.05, .08, .1], [0, .18, -.48], darkMat);
-      addFeederBox([4.05, .08, .1], [0, .18, .48], darkMat);
-      addFeederBox([.18, .16, .24], [-1.92, .13, -.48], darkMat);
-      addFeederBox([.18, .16, .24], [-1.92, .13, .48], darkMat);
-      addFeederBox([.18, .16, .24], [1.92, .13, -.48], darkMat);
-      addFeederBox([.18, .16, .24], [1.92, .13, .48], darkMat);
-
-      addFeederBox([1.05, .78, .82], [-.35, .55, .03], feederPanelMat);
-      addFeederBox([.86, .52, .06], [-.35, .58, .46], feederWhiteMat);
-      addFeederBox([.5, .08, .08], [-.35, .9, .5], accentLocal);
-      addFeederBox([.42, .18, .04], [-.35, .46, .5], darkMat);
-
-      addTubeBetween([-1.45, .16, -.42], [-.82, .88, -.2], .035, railMat);
-      addTubeBetween([1.45, .16, -.42], [.82, .88, -.2], .035, railMat);
-      addTubeBetween([-1.45, .16, .42], [-.82, .88, .2], .035, railMat);
-      addTubeBetween([1.45, .16, .42], [.82, .88, .2], .035, railMat);
-
-      addFeederBox([4.1, .24, .72], [0, 1.02, 0], feederWhiteMat);
-      addFeederBox([4.28, .14, .84], [0, 1.2, 0], feederPanelMat);
-      addFeederBox([.34, .74, .84], [-2.0, .9, 0], feederPanelMat);
-      addFeederBox([.34, .66, .84], [2.0, .86, 0], feederPanelMat);
-      addFeederBox([3.75, .08, .64], [0, 1.37, -.18], feederWhiteMat, [-.18, 0, 0]);
-      addFeederBox([1.05, .055, .34], [-.82, 1.45, -.36], feederGlassMat, [-.18, 0, 0]);
-      addFeederBox([1.05, .055, .34], [.82, 1.45, -.36], feederGlassMat, [-.18, 0, 0]);
-      addFeederBox([4.08, .08, .12], [0, 1.31, .46], darkMat);
-      for (const x of [-1.5, -.5, .5, 1.5]) {
-        addFeederBox([.025, .18, .012], [x, 1.08, .435], railMat);
-      }
-      for (const x of [-1.55, 1.55]) {
-        addFeederBox([.18, .62, .55], [x, -.28, 0], feederPanelMat);
-        addFeederBox([.38, .07, .65], [x, -.61, 0], railMat);
-      }
-      for (let i = 0; i < 8; i += 1) {
-        addFeederBox([.016, .14, .012], [-.58 + i * .065, .55, .502], railMat);
-      }
-      addFeederBox([.42, .18, .012], [.35, .6, .504], darkMat);
-      addFeederBox([.22, .045, .014], [.35, .6, .514], accentLocal);
-
-      addFeederBox([3.85, .09, .24], [.18, .88, .43], conveyorMat);
-      addFeederCylinder(.09, 4.25, [.18, .94, .55], conveyorMat, [0, 0, Math.PI / 2], 32);
-      addFeederCylinder(.045, 4.0, [.08, 1.03, .43], rawMat, [0, 0, Math.PI / 2], 24);
-      const pusher = addFeederBox([.18, .16, .28], [-1.72, 1.03, .55], accentLocal);
-      addFeederBox([1.05, .09, .18], [1.28, 1.02, .58], accentLocal);
-      addFeederBox([.42, .18, .24], [2.1, .96, .55], darkMat);
-
-      addFeederBox([3.35, .055, .06], [0, .78, -.35], railMat);
-      addFeederBox([3.35, .055, .06], [0, .78, .35], railMat);
-
-      for (let index = 0; index < 8; index += 1) {
-        const roller = new THREE.Mesh(new THREE.CylinderGeometry(.055, .055, .78, 18), railMat);
-        roller.position.set(-1.45 + index * .42, .82, 0);
-        roller.rotation.x = Math.PI / 2;
-        roller.castShadow = true;
-        feederGroup.add(roller);
-        feederRollers.push(roller);
-      }
-
-      for (let index = 0; index < 4; index += 1) {
-        const wheelX = index < 2 ? -1.82 : 1.82;
-        const wheelZ = index % 2 === 0 ? -.55 : .55;
-        addFeederCylinder(.09, .08, [wheelX, .04, wheelZ], darkMat, [Math.PI / 2, 0, 0], 20);
-      }
-
-      const hitBox = new THREE.Mesh(new THREE.BoxGeometry(4.7, 1.6, 1.3), hitMat);
-      hitBox.position.set(0, .78, .02);
-      feederGroup.add(hitBox);
-      registerMachineObject(feederGroup, id, hitBox);
-      return { feederGroup, feederRollers, pusher };
-    };
-
-    const addRobotCell = () => {
-      const id = "ELITE-CS612-ROBOT-001";
-      const color = colorForMachine(id);
-      const accentLocal = new THREE.MeshStandardMaterial({ color, roughness: .38, metalness: .16, emissive: color, emissiveIntensity: isSelectedMachine(id) ? .18 : .06 });
-      statusMaterials.push({ machineId: id, material: accentLocal });
-      selectionEffects.push({ machineId: id, material: accentLocal, property: "emissiveIntensity", selectedValue: .18, defaultValue: .06 });
-      const robotShellMat = new THREE.MeshStandardMaterial({ color: 0xf1f3f5, roughness: .34, metalness: .08 });
-      const robotArmMat = new THREE.MeshStandardMaterial({ color: 0xcfd4d8, roughness: .24, metalness: .62 });
-      const robotBandMat = new THREE.MeshStandardMaterial({ color: 0x172b68, roughness: .28, metalness: .2 });
-      const robotDarkMat = new THREE.MeshStandardMaterial({ color: 0x2a2f35, roughness: .42, metalness: .4 });
-      const robotGroup = new THREE.Group();
-      robotGroup.position.set(workshopLayout.robot[0], -.25, workshopLayout.robot[1]);
-      scene.add(robotGroup);
-      addMachineHalo(id, [robotGroup.position.x, robotGroup.position.y, robotGroup.position.z], .85);
-      addMachineAlert(id, [robotGroup.position.x, robotGroup.position.y, robotGroup.position.z]);
-      addTowerLamp(id, workshopLayout.robot[0], 1.42, workshopLayout.robot[1]);
-
-      const addRobotCylinder = (radius, length, position, material, rotation = [0, 0, 0], segments = 40) => {
-        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, segments), material);
-        mesh.position.set(...position);
-        mesh.rotation.set(...rotation);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        robotGroup.add(mesh);
-        return mesh;
-      };
-
-      const addRobotBox = (size, position, material, rotation = [0, 0, 0]) => {
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
-        mesh.position.set(...position);
-        mesh.rotation.set(...rotation);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        robotGroup.add(mesh);
-        return mesh;
-      };
-
-      const addJoint = (radius, material) => {
-        const joint = new THREE.Group();
-        const shell = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, .26, 32), material);
-        shell.rotation.x = Math.PI / 2;
-        shell.castShadow = true;
-        joint.add(shell);
-        const cap = new THREE.Mesh(new THREE.CylinderGeometry(radius * .79, radius * .79, .028, 32), robotBandMat);
-        cap.rotation.x = Math.PI / 2;
-        cap.position.z = .145;
-        joint.add(cap);
-        joint.castShadow = true;
-        robotGroup.add(joint);
-        return joint;
-      };
-      const addLink = (radius, length, material) => {
-        const link = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * .94, length, 24), material);
-        link.castShadow = true;
-        robotGroup.add(link);
-        return link;
-      };
-      addRobotCylinder(.45, .08, [0, .05, 0], robotDarkMat);
-      addRobotCylinder(.31, .32, [0, .27, 0], robotShellMat);
-      addRobotCylinder(.32, .045, [0, .46, 0], robotBandMat);
-      addRobotBox([.22, .1, .1], [.28, .12, 0], robotDarkMat);
-      const shoulderJoint = addJoint(.26, robotShellMat);
-      const elbowJoint = addJoint(.23, robotShellMat);
-      const wristJoint = addJoint(.17, robotShellMat);
-      const upperLink = addLink(.145, 1.14, robotArmMat);
-      const foreLink = addLink(.12, 1.14, robotArmMat);
-      const wristBand = addLink(.175, .05, robotBandMat);
-      const attachedTool = new THREE.Group();
-      robotGroup.add(attachedTool);
-      const toolFlange = new THREE.Mesh(new THREE.CylinderGeometry(.13, .13, .08, 24), robotDarkMat);
-      attachedTool.add(toolFlange);
-      const gripperBody = new THREE.Mesh(new THREE.BoxGeometry(.28, .1, .2), robotDarkMat);
-      gripperBody.position.y = -.1;
-      attachedTool.add(gripperBody);
-      const makeFinger = (z) => {
-        const finger = new THREE.Mesh(new THREE.BoxGeometry(.055, .26, .05), robotArmMat);
-        finger.position.set(0, -.25, z);
-        attachedTool.add(finger);
-        return finger;
-      };
-      const attachedFingerA = makeFinger(.13);
-      const attachedFingerB = makeFinger(-.13);
-      const cable = new THREE.Mesh(new THREE.CylinderGeometry(.035, .035, .28, 12), robotDarkMat);
-      cable.rotation.z = Math.PI / 2;
-      cable.position.set(.29, .14, 0);
-      robotGroup.add(cable);
-      const hitBox = new THREE.Mesh(new THREE.BoxGeometry(2.9, 2.2, 2.2), hitMat);
-      hitBox.position.set(.72, 1.0, 0);
-      robotGroup.add(hitBox);
-      registerMachineObject(robotGroup, id, hitBox);
-      return {
-        robotGroup,
-        shoulderJoint,
-        elbowJoint,
-        wristJoint,
-        upperLink,
-        foreLink,
-        wristBand,
-        toolCarrier: attachedTool,
-        fingerA: attachedFingerA,
-        fingerB: attachedFingerB,
-      };
-    };
-
-    const feederCell = addBarFeeder();
-    const robotCell = addRobotCell();
-    const inspection = createEquator300();
-    inspection.root.position.set(workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]);
-    scene.add(inspection.root);
-    addMachineHalo("RENISHAW-EQUATOR300-001", [workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]], .95);
-    addMachineAlert("RENISHAW-EQUATOR300-001", [workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]]);
-    const inspectionHitBox = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.76, 1.6), hitMat);
-    inspectionHitBox.position.set(workshopLayout.inspection[0], .56, workshopLayout.inspection[1]);
-    scene.add(inspectionHitBox);
-    registerMachineObject(inspection.root, "EQUATOR300-VISUAL", inspectionHitBox);
-    inspectionHitBox.userData.machineId = "EQUATOR300-VISUAL";
-    addTowerLamp("RENISHAW-EQUATOR300-001", workshopLayout.inspection[0], 1.57, workshopLayout.inspection[1]);
-
-    const group = new THREE.Group();
-    group.position.set(.05, -.1, -.08);
-    group.rotation.y = 0;
-    group.scale.set(.82, .82, .82);
-    scene.add(group);
-
-    const addBox = (name, size, position, material, rotation = [0, 0, 0]) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
-      mesh.name = name;
-      mesh.position.set(...position);
-      mesh.rotation.set(...rotation);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), edgeMat);
-      edges.position.copy(mesh.position);
-      edges.rotation.copy(mesh.rotation);
-      edges.scale.copy(mesh.scale);
-      group.add(edges);
-      return mesh;
-    };
-
-    addBox("machine-base", [4.65, .52, 1.68], [0, .28, 0], darkMat);
-    addBox("left-headstock-cabinet", [1.08, 1.88, 1.66], [-1.78, 1.4, 0], darkMat);
-    addBox("transparent-main-shell", [3.35, 1.78, 1.58], [-.15, 1.4, 0], bodyMat);
-    addBox("rear-column", [.45, 1.95, 1.58], [-2.2, 1.44, 0], solidBodyMat);
-    const machineDoor = new THREE.Group();
-    machineDoor.position.set(-1.62, 1.42, .89);
-    group.add(machineDoor);
-    const doorBox = (size, position, material) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
-      mesh.position.set(...position);
-      machineDoor.add(mesh);
-      return mesh;
-    };
-    doorBox([1.68, 1.18, .025], [.9, 0, 0], glassMat);
-    doorBox([1.8, .075, .08], [.9, .64, 0], solidBodyMat);
-    doorBox([1.8, .075, .08], [.9, -.64, 0], solidBodyMat);
-    doorBox([.075, 1.3, .08], [.04, 0, 0], solidBodyMat);
-    doorBox([.075, 1.3, .08], [1.76, 0, 0], solidBodyMat);
-    doorBox([.075, .32, .075], [1.65, -.06, .09], railMat);
-    addBox("right-slanted-cover", [.86, 1.56, 1.5], [1.32, 1.38, .04], bodyMat, [0, 0, -0.18]);
-    addBox("control-panel", [.45, 1.22, .18], [1.98, 1.5, .78], darkMat, [0, 0, -0.24]);
-    addBox("top-service-rail", [3.12, .16, 1.34], [-.24, 2.28, 0], darkMat);
-    addBox("status-strip", [1.82, .06, .08], [-.42, 2.39, .7], accentMat);
-    addBox("chip-conveyor-neck", [1.12, .28, .34], [2.38, 1.0, .22], darkMat, [0, 0, .4]);
-    addBox("chip-bin", [.7, .58, .7], [3.0, .76, .22], bodyMat);
-    addBox("front-service-panel", [2.68, .5, .08], [-.36, .58, .86], lightMat);
-    for (let i = 0; i < 9; i += 1) addBox("cabinet-vent", [.23, .018, .014], [1.34, 1.9 - i * .06, .83], railMat);
-    for (let i = 0; i < 6; i += 1) addBox("panel-key", [.035, .035, .018], [1.94 + (i % 2) * .09, 1.95 - Math.floor(i / 2) * .1, .89], lightMat);
-    addBox("panel-screen", [.27, .24, .025], [1.97, 1.66, .9], glassMat);
-    addBox("nameplate", [.46, .12, .02], [-1.8, 1.9, .85], railMat);
-    addBox("left-foot", [.25, .5, .22], [-1.85, -.02, .56], darkMat);
-    addBox("right-foot", [.25, .5, .22], [1.55, -.02, .56], darkMat);
-
-    addBox("inner-bed", [2.45, .18, .46], [-.35, 1.02, .4], innerMat);
-    addBox("linear-guide-left", [2.35, .055, .055], [-.32, 1.16, .22], railMat);
-    addBox("linear-guide-right", [2.35, .055, .055], [-.32, 1.16, .58], railMat);
-    addBox("tailstock-shadow", [.42, .44, .5], [.9, 1.26, .38], innerMat);
-
-    const spindleChuck = new THREE.Group();
-    spindleChuck.name = "spindleChuck";
-    spindleChuck.position.set(-1.12, 1.36, .78);
-    group.add(spindleChuck);
-
-    const chuckBody = new THREE.Mesh(new THREE.CylinderGeometry(.29, .29, .22, 48), railMat);
-    chuckBody.rotation.z = Math.PI / 2;
-    chuckBody.castShadow = true;
-    spindleChuck.add(chuckBody);
-
-    const chuckFace = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .04, 48), accentMat);
-    chuckFace.position.x = .13;
-    chuckFace.rotation.z = Math.PI / 2;
-    spindleChuck.add(chuckFace);
-
-    for (let index = 0; index < 3; index += 1) {
-      const angle = index * (Math.PI * 2 / 3);
-      const jaw = new THREE.Mesh(new THREE.BoxGeometry(.16, .06, .24), cutterMat);
-      jaw.position.set(.17, Math.cos(angle) * .16, Math.sin(angle) * .16);
-      jaw.rotation.x = angle;
-      jaw.castShadow = true;
-      spindleChuck.add(jaw);
-    }
-
-    const machiningWorkpiece = new THREE.Mesh(new THREE.CylinderGeometry(.13, .13, .88, 48), cutMetalMat);
-    machiningWorkpiece.name = "machiningWorkpiece";
-    machiningWorkpiece.position.x = .48;
-    machiningWorkpiece.rotation.z = Math.PI / 2;
-    machiningWorkpiece.castShadow = true;
-    spindleChuck.add(machiningWorkpiece);
-
-    const toolSlide = new THREE.Group();
-    toolSlide.name = "toolSlide";
-    toolSlide.position.set(.32, 1.27, .55);
-    group.add(toolSlide);
-
-    const toolCarriage = new THREE.Mesh(new THREE.BoxGeometry(.56, .34, .42), innerMat);
-    toolCarriage.castShadow = true;
-    toolSlide.add(toolCarriage);
-
-    const turret = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .25, 8), railMat);
-    turret.rotation.x = Math.PI / 2;
-    turret.position.set(-.05, .08, .24);
-    turret.castShadow = true;
-    toolSlide.add(turret);
-
-    const cutter = new THREE.Mesh(new THREE.ConeGeometry(.06, .34, 4), cutterMat);
-    cutter.name = "cutterTip";
-    cutter.position.set(-.33, .08, .24);
-    cutter.rotation.z = Math.PI / 2;
-    cutter.rotation.y = Math.PI / 4;
-    cutter.castShadow = true;
-    toolSlide.add(cutter);
-
-    const cutterGlow = new THREE.PointLight(0xffc05a, .9, 1.3);
-    cutterGlow.name = "cuttingGlow";
-    cutterGlow.position.set(-.45, .08, .24);
-    toolSlide.add(cutterGlow);
-
-    const loadingArm = new THREE.Group();
-    loadingArm.name = "loadingArm";
-    loadingArm.position.set(-2.02, 1.62, .62);
-    group.add(loadingArm);
-    const armRail = new THREE.Mesh(new THREE.BoxGeometry(.08, .72, .08), railMat);
-    armRail.castShadow = true;
-    loadingArm.add(armRail);
-    const armFingerA = new THREE.Mesh(new THREE.BoxGeometry(.08, .08, .38), cutterMat);
-    armFingerA.position.set(.18, -.33, .12);
-    loadingArm.add(armFingerA);
-    const armFingerB = armFingerA.clone();
-    armFingerB.position.z = -.12;
-    loadingArm.add(armFingerB);
-
-    addTowerLamp("TRAK-TC820LTYSI-001", -1.35, 2.05, -.08);
-    // 送料管和出料滑槽共用机床轴线，但分别服务两端。
-    addSceneBox([1.2, .12, .17], [-1.93, .98, .56], railMat);
-    addSceneBox([1.1, .055, .27], [2.37, .31, 1.02], innerMat, [0, 0, -.16]);
-    addSceneBox([.09, .14, .28], [2.82, .28, 1.02], railMat);
-
-    const createRawPart = (offset) => {
-      const part = new THREE.Group();
-      part.userData.offset = offset;
-      part.name = "rawBarStock";
-      const bar = new THREE.Mesh(new THREE.CylinderGeometry(.11, .11, .66, 32), rawMat);
-      bar.rotation.z = Math.PI / 2;
-      bar.castShadow = true;
-      part.add(bar);
-      const end = new THREE.Mesh(new THREE.CylinderGeometry(.115, .115, .025, 32), darkMat);
-      end.position.x = -.35;
-      end.rotation.z = Math.PI / 2;
-      part.add(end);
-      scene.add(part);
-      return part;
-    };
-
-    const createScrewPart = (offset = 0, material = cutMetalMat) => {
-      const part = new THREE.Group();
-      part.userData.offset = offset;
-      part.name = "screwPart";
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, .42, 32), material);
-      body.rotation.z = Math.PI / 2;
-      body.castShadow = true;
-      part.add(body);
-
-      const collar = new THREE.Mesh(new THREE.CylinderGeometry(.09, .09, .08, 32), material);
-      collar.position.x = -.23;
-      collar.rotation.z = Math.PI / 2;
-      collar.castShadow = true;
-      part.add(collar);
-
-      const slot = new THREE.Mesh(new THREE.BoxGeometry(.018, .13, .018), darkMat);
-      slot.position.x = -.275;
-      slot.castShadow = true;
-      part.add(slot);
-
-      scene.add(part);
-      return part;
-    };
-
-    const createFinishedPart = (offset) => {
-      const part = createScrewPart(offset);
-      part.name = "finishedParts";
-      const bore = new THREE.Mesh(new THREE.CylinderGeometry(.022, .022, .44, 24), darkMat);
-      bore.rotation.z = Math.PI / 2;
-      bore.scale.set(1, 1, 1);
-      part.add(bore);
-      return part;
-    };
-
-    const rawParts = [createRawPart(0), createRawPart(.48)];
-    const finishedParts = [createFinishedPart(.05), createFinishedPart(.34), createFinishedPart(.68)];
-    const carriedScrew = createScrewPart(0, cutMetalMat);
-    if (robotCell?.toolCarrier) {
-      robotCell.toolCarrier.add(carriedScrew);
-      carriedScrew.position.set(0, -.35, 0);
-      carriedScrew.rotation.set(0, 0, 0);
-      carriedScrew.scale.setScalar(.78);
-      carriedScrew.visible = false;
-    }
-
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0x566978, roughness: .6, metalness: .22 });
-    const boxPosition = new THREE.Vector3(workshopLayout.qualified[0], -.16, workshopLayout.qualified[1]);
-    const rejectPosition = new THREE.Vector3(workshopLayout.rework[0], -.16, workshopLayout.rework[1]);
-    const rejectMat = new THREE.MeshStandardMaterial({ color: 0x9a7250, roughness: .68, metalness: .08 });
-    const addBin = (position, material, label) => {
-      const { x, y, z } = position;
-      addSceneBox([1.05, .12, .82], [x, y, z], material);
-      for (const side of [-1, 1]) {
-        addSceneBox([.08, .47, .82], [x + side * .52, y + .25, z], material);
-        addSceneBox([.16, .065, .28], [x + side * .56, y + .51, z], railMat);
-        for (const offset of [-.22, .22]) addSceneBox([.025, .4, .08], [x + side * .565, y + .25, z + offset], railMat);
-      }
-      for (const side of [-1, 1]) {
-        addSceneBox([1.05, .47, .08], [x, y + .25, z + side * .41], material);
-        for (const offset of [-.35, .35]) addSceneBox([.045, .4, .025], [x + offset, y + .25, z + side * .455], railMat);
-      }
-      addSceneBox([1.15, .065, .07], [x, y + .51, z + .41], railMat);
-      const canvas = document.createElement("canvas");
-      canvas.width = 256;
-      canvas.height = 96;
-      const context = canvas.getContext("2d");
-      context.fillStyle = "#e4e8e7";
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = "#26343b";
-      context.font = "bold 46px sans-serif";
-      context.textAlign = "center";
-      context.fillText(label, 128, 66);
-      const texture = new THREE.CanvasTexture(canvas);
-      const sticker = new THREE.Mesh(new THREE.PlaneGeometry(.5, .18), new THREE.MeshStandardMaterial({ map: texture, roughness: .75 }));
-      sticker.position.set(x, y + .26, z + .457);
-      scene.add(sticker);
-    };
-    addBin(boxPosition, boxMat, "合格品");
-    addBin(rejectPosition, rejectMat, "待处理");
-
-    const boxedScrews = Array.from({ length: 9 }, (_, index) => {
-      const screw = createScrewPart(index / 9, cutMetalMat);
-      screw.position.set(
-        boxPosition.x - .28 + (index % 3) * .22,
-        boxPosition.y + .16 + Math.floor(index / 3) * .035,
-        boxPosition.z - .2 + Math.floor(index / 3) * .18,
-      );
-      screw.rotation.set(0, 0, 0);
-      screw.scale.setScalar(.72);
-      return screw;
-    });
-    const chips = Array.from({ length: 18 }, (_, index) => {
-      const spark = index < 3;
-      const material = spark ? new THREE.MeshBasicMaterial({ color: 0xffba63 }) : chipMat;
-      const chip = new THREE.Mesh(new THREE.TorusGeometry(spark ? .01 : .033, spark ? .004 : .008, 4, 10, Math.PI * 1.3), material);
-      chip.userData.offset = index / 18;
-      chip.castShadow = true;
-      group.add(chip);
-      return chip;
-    });
-
-    addMachineHalo("TRAK-TC820LTYSI-001", [group.position.x, group.position.y, group.position.z], 2.05);
-    addMachineAlert("TRAK-TC820LTYSI-001", [group.position.x, group.position.y, group.position.z]);
-    const machineHitBox = new THREE.Mesh(new THREE.BoxGeometry(5.1, 2.8, 2.3), hitMat);
-    machineHitBox.position.set(.08, 1.15, .05);
-    group.add(machineHitBox);
-    registerMachineObject(group, "TRAK-TC820LTYSI-001", machineHitBox);
-
-    const ambient = new THREE.HemisphereLight(0xffffff, 0xb8c5c9, 1.4);
-    scene.add(ambient);
-    const key = new THREE.DirectionalLight(0xffffff, 2.3);
-    key.position.set(3, 5, 4);
-    key.castShadow = true;
-    scene.add(key);
-    const rim = new THREE.DirectionalLight(accent, .9);
-    rim.position.set(-3, 2.5, -2);
-    scene.add(rim);
-
-    const toolHomePosition = new THREE.Vector3(0, 1.35, .48);
-    const toRobotLocal = (point, y) => new THREE.Vector3(point[0] - workshopLayout.robot[0], y, point[1] - workshopLayout.robot[1]);
-    const toolPickHoverPosition = toRobotLocal(workshopLayout.pickup, 1.12);
-    const toolPickPosition = toRobotLocal(workshopLayout.pickup, .7);
-    const toolLiftPosition = new THREE.Vector3(.1, 1.42, 1.12);
-    const toolInspectHoverPosition = toRobotLocal(workshopLayout.inspection, 1.13);
-    const toolInspectDropPosition = toRobotLocal(workshopLayout.inspection, .58);
-    const toolQualifiedHoverPosition = toRobotLocal(workshopLayout.qualified, 1.25);
-    const toolQualifiedDropPosition = toRobotLocal(workshopLayout.qualified, .95);
-    const toolReworkHoverPosition = toRobotLocal(workshopLayout.rework, 1.25);
-    const toolReworkDropPosition = toRobotLocal(workshopLayout.rework, .95);
-    const handoffScrew = finishedParts[0];
-    const tempA = new THREE.Vector3();
-    const tempB = new THREE.Vector3();
-    const tempC = new THREE.Vector3();
-    const tempD = new THREE.Vector3();
-    const buildMotionPath = (points) => {
-      const segments = [];
-      let total = 0;
-      for (let index = 0; index < points.length - 1; index += 1) {
-        const from = points[index];
-        const to = points[index + 1];
-        const length = from.distanceTo(to);
-        segments.push({ from, to, length });
-        total += length;
-      }
-      return { segments, total };
-    };
-    const rawMotionPath = buildMotionPath([
-      new THREE.Vector3(-5.68, .08, 2.45),
-      new THREE.Vector3(-5.68, .08, .72),
-    ]);
-    const finishedMotionPath = buildMotionPath([
-      new THREE.Vector3(2.45, .08, 1.12),
-      new THREE.Vector3(4.7, .08, 1.12),
-    ]);
-    const pointOnMotionPath = (path, progress, target) => {
-      let distance = Math.max(0, Math.min(1, progress)) * path.total;
-      for (const segment of path.segments) {
-        if (distance <= segment.length) {
-          return target.copy(segment.from).lerp(segment.to, segment.length ? distance / segment.length : 0);
-        }
-        distance -= segment.length;
-      }
-      const lastSegment = path.segments[path.segments.length - 1];
-      return target.copy(lastSegment.to);
-    };
-
-    const moveBetween = (from, to, progress) => tempA.copy(from).lerp(to, progress);
-    const moveOverArc = (from, via, to, progress) => {
-      tempB.copy(from).lerp(via, progress);
-      tempC.copy(via).lerp(to, progress);
-      return tempA.copy(tempB).lerp(tempC, progress);
-    };
-    const easeInOut = (value) => value * value * (3 - 2 * value);
-    const handoffPickWorld = new THREE.Vector3(workshopLayout.pickup[0], .08, workshopLayout.pickup[1]);
-    const armUp = new THREE.Vector3(0, 1, 0);
-    const shoulderPoint = new THREE.Vector3(0, .7, 0);
-    const armAxis = new THREE.Vector3(0, 1, 0);
-    const elbowPoint = new THREE.Vector3();
-    const armDirection = new THREE.Vector3();
-    const bendDirection = new THREE.Vector3();
-    const placeArmLink = (mesh, start, end, length) => {
-      mesh.position.copy(start).add(end).multiplyScalar(.5);
-      mesh.quaternion.setFromUnitVectors(armAxis, tempD.copy(end).sub(start).normalize());
-      mesh.scale.y = start.distanceTo(end) / length;
-    };
-    const poseRobot = (target) => {
-      const distance = Math.min(2.26, Math.max(.01, armDirection.copy(target).sub(shoulderPoint).length()));
-      armDirection.normalize();
-      bendDirection.copy(armUp).addScaledVector(armDirection, -armUp.dot(armDirection)).normalize();
-      if (bendDirection.lengthSq() < .001) bendDirection.set(0, 0, 1);
-      const height = Math.sqrt(Math.max(0, 1.14 * 1.14 - distance * distance / 4));
-      elbowPoint.copy(shoulderPoint).addScaledVector(armDirection, distance / 2).addScaledVector(bendDirection, height);
-      robotCell.shoulderJoint.position.copy(shoulderPoint);
-      robotCell.elbowJoint.position.copy(elbowPoint);
-      robotCell.wristJoint.position.copy(target);
-      placeArmLink(robotCell.upperLink, shoulderPoint, elbowPoint, 1.14);
-      placeArmLink(robotCell.foreLink, elbowPoint, target, 1.14);
-      robotCell.wristBand.position.copy(target).addScaledVector(armUp, -.12);
-      robotCell.toolCarrier.position.copy(target);
-    };
-
-    let frameId = 0;
-    const animate = () => {
-      frameId = window.requestAnimationFrame(animate);
-      const now = performance.now();
-      const liveMotion = motionRef.current;
-      const { time, delta } = motionClockRef.current.tick(now, Boolean(liveMotion?.running) && Date.now() <= liveMotion.validUntil && !document.hidden);
-      const alertTime = now * .001;
-      const cutCycle = (Math.sin(time * 1.05) + 1) / 2;
-      const lineCycle = (time * .18) % 1;
-      const robotCycle = (time % 12) / 12;
-
-      const machining = robotCycle < .38;
-      spindleChuck.rotation.x = machining ? time * 8.6 : 0;
-      machiningWorkpiece.rotation.x = 0;
-      toolSlide.position.x = machining ? .22 + Math.sin(time * .92) * .22 : .48;
-      toolSlide.position.z = machining ? .48 + Math.sin(time * 1.45) * .08 : .55;
-      turret.rotation.z = machining ? time * .65 : 0;
-      cutterGlow.intensity = machining ? .15 + cutCycle * .2 : 0;
-      cutter.material.emissive.setHex(0x5a625d);
-      cutter.material.emissiveIntensity = machining ? .08 : 0;
-      machineDoor.position.x = -1.62 + (machining ? 0 : 1.12);
-      loadingArm.rotation.z = Math.sin(time * 1.2) * .18;
-      conveyorRollers.forEach((roller) => {
-        roller.rotateY(-9.6 * delta);
-      });
-      conveyorFlights.forEach((flight) => {
-        const progress = (lineCycle + flight.mesh.userData.offset) % 1;
-        tempB.copy(flight.start).lerp(flight.end, progress);
-        flight.mesh.position.set(tempB.x, .02, tempB.z);
-      });
-      if (feederCell) {
-        feederCell.feederRollers.forEach((roller) => {
-          roller.rotateY(-10.8 * delta);
-        });
-        feederCell.pusher.position.x = -1.72 + ((time * .32) % 1) * 3.18;
-      }
-      if (robotCell) {
-        // 一个周期包含两次机器人交接：输送线 → 检测台，检测台 → 一个示意性出料箱。
-        const outputToRework = Math.floor(time / 12) % 2 === 1;
-        const binHover = outputToRework ? toolReworkHoverPosition : toolQualifiedHoverPosition;
-        const binDrop = outputToRework ? toolReworkDropPosition : toolQualifiedDropPosition;
-        const carrying = (robotCycle >= .25 && robotCycle < .56) || (robotCycle >= .83 && robotCycle < .96);
-        const gripping = (robotCycle >= .22 && robotCycle < .6) || (robotCycle >= .78 && robotCycle < .97);
-        let toolPosition = toolHomePosition;
-        if (robotCycle < .1) {
-          toolPosition = toolHomePosition;
-        } else if (robotCycle < .2) {
-          toolPosition = moveBetween(toolHomePosition, toolPickHoverPosition, easeInOut((robotCycle - .1) / .1));
-        } else if (robotCycle < .25) {
-          toolPosition = moveBetween(toolPickHoverPosition, toolPickPosition, easeInOut((robotCycle - .2) / .05));
-        } else if (robotCycle < .28) {
-          toolPosition = toolPickPosition;
-        } else if (robotCycle < .38) {
-          toolPosition = moveBetween(toolPickPosition, toolPickHoverPosition, easeInOut((robotCycle - .28) / .1));
-        } else if (robotCycle < .5) {
-          toolPosition = moveOverArc(toolPickHoverPosition, toolLiftPosition, toolInspectHoverPosition, easeInOut((robotCycle - .38) / .12));
-        } else if (robotCycle < .56) {
-          toolPosition = moveBetween(toolInspectHoverPosition, toolInspectDropPosition, easeInOut((robotCycle - .5) / .06));
-        } else if (robotCycle < .6) {
-          toolPosition = toolInspectDropPosition;
-        } else if (robotCycle < .66) {
-          toolPosition = moveBetween(toolInspectDropPosition, toolInspectHoverPosition, easeInOut((robotCycle - .6) / .06));
-        } else if (robotCycle < .72) {
-          toolPosition = toolInspectHoverPosition;
-        } else if (robotCycle < .78) {
-          toolPosition = moveBetween(toolInspectHoverPosition, toolInspectDropPosition, easeInOut((robotCycle - .72) / .06));
-        } else if (robotCycle < .83) {
-          toolPosition = toolInspectDropPosition;
-        } else if (robotCycle < .87) {
-          toolPosition = moveBetween(toolInspectDropPosition, toolInspectHoverPosition, easeInOut((robotCycle - .83) / .04));
-        } else if (robotCycle < .93) {
-          toolPosition = moveOverArc(toolInspectHoverPosition, toolHomePosition, binHover, easeInOut((robotCycle - .87) / .06));
-        } else if (robotCycle < .96) {
-          toolPosition = moveBetween(binHover, binDrop, easeInOut((robotCycle - .93) / .03));
-        } else if (robotCycle < .975) {
-          toolPosition = binDrop;
-        } else {
-          toolPosition = moveOverArc(binDrop, binHover, toolHomePosition, easeInOut((robotCycle - .975) / .025));
-        }
-
-        poseRobot(toolPosition);
-        robotCell.fingerA.position.z = gripping ? .07 : .14;
-        robotCell.fingerB.position.z = gripping ? -.07 : -.14;
-        carriedScrew.visible = carrying;
-      }
-      rawParts.forEach((part) => {
-        const progress = (time * .2 + part.userData.offset) % 1;
-        const stagedProgress = progress > .78 ? .78 + (progress - .78) * .18 : progress;
-        pointOnMotionPath(rawMotionPath, stagedProgress, tempB);
-        part.position.copy(tempB);
-        part.rotation.x = time * 2.5;
-      });
-
-      if (handoffScrew) {
-        if (robotCycle < .25) {
-          handoffScrew.visible = true;
-          handoffScrew.position.copy(handoffPickWorld);
-        } else {
-          handoffScrew.visible = false;
-        }
-      }
-      // 交替路径仅用于展示流程，不代表实际测量的合格/不合格结论。
-      inspection.workpiece.visible = robotCycle >= .56 && robotCycle < .83;
-
-      finishedParts.slice(1).forEach((part) => {
-        const progress = (time * .17 + part.userData.offset) % 1;
-        const stagedProgress = progress > .86 ? .86 + (progress - .86) * .18 : progress;
-        pointOnMotionPath(finishedMotionPath, stagedProgress, tempB);
-        part.position.copy(tempB);
-        part.rotation.x = time * 2.6;
-        part.rotation.y = Math.sin(time * 1.6 + part.userData.offset) * .08;
-      });
-
-      boxedScrews.forEach((screw, index) => { screw.visible = index < 3 + Math.floor(time / 12) % 7; });
-
-      chips.forEach((chip) => {
-        const progress = (time * 1.4 + chip.userData.offset) % 1;
-        chip.position.set(
-          -.18 + progress * .7,
-          1.35 - progress * .45 + Math.sin(progress * Math.PI * 4) * .035,
-          .8 + progress * .28,
-        );
-        chip.rotation.set(time * 4 + progress, time * 2.3, progress * 6);
-        chip.visible = machining;
-      });
-      alertEffects.forEach((effect) => {
-        const shouldAlert = isAlertStatus(currentStatusForMachine(effect.id));
-        const pulse = .35 + Math.abs(Math.sin(alertTime * 4.6)) * .65;
-        effect.glow.intensity = shouldAlert ? 2.2 + pulse * 2.4 : 0;
-      });
-      towerLamps.forEach(({ id, lamps }) => {
-        const current = currentStatusForMachine(id);
-        const active = ["idle", "stopped", "unknown"].includes(current) ? -1 : current === "fault" || current === "alarm" ? 0 : current === "warning" ? 1 : 2;
-        lamps.forEach((lamp, index) => { lamp.emissiveIntensity = index === active ? (active === 0 ? .8 + Math.abs(Math.sin(alertTime * 5)) * 1.3 : .9) : .04; });
-      });
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    updateSelection(selectedMachineIdRef.current);
-    animate();
-
-    const handleResize = () => {
-      if (!mount.clientWidth || !mount.clientHeight) return;
-      camera.aspect = mount.clientWidth / mount.clientHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(mount.clientWidth, mount.clientHeight);
-    };
-    const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(mount);
-
-    const clearHover = () => {
-      if (hoverTimerRef.current) {
-        window.clearTimeout(hoverTimerRef.current);
-        hoverTimerRef.current = null;
-      }
-      hoveredMachineRef.current = null;
-      setHoveredLabel(null);
-    };
-
-    const pickMachineAtPointer = (event) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(pointer, camera);
-      const hits = raycaster.intersectObjects(interactiveObjects, false);
-      return hits[0]?.object?.userData?.machineId || null;
-    };
-
-    const handlePointerMove = (event) => {
-      const machineId = pickMachineAtPointer(event);
-      if (!machineId) {
-        clearHover();
-        return;
-      }
-
-      const tooltipPosition = {
-        x: Math.min(Math.max(event.offsetX + 14, 14), Math.max(mount.clientWidth - 250, 14)),
-        y: Math.min(Math.max(event.offsetY + 14, 14), Math.max(mount.clientHeight - 112, 14)),
-      };
-
-      if (hoveredMachineRef.current === machineId) {
-        setHoveredLabel((current) => current ? { ...current, ...tooltipPosition } : current);
-        return;
-      }
-
-      if (hoverTimerRef.current) window.clearTimeout(hoverTimerRef.current);
-      hoveredMachineRef.current = machineId;
-      setHoveredLabel(null);
-      hoverTimerRef.current = window.setTimeout(() => {
-        const label = labelForMachine(machineId);
-        if (!label || hoveredMachineRef.current !== machineId) return;
-        setHoveredLabel({ ...label, ...tooltipPosition });
-      }, 2000);
-    };
-
-    const handlePointerLeave = () => clearHover();
-    const handleClick = (event) => {
-      const machineId = pickMachineAtPointer(event) || hoveredMachineRef.current;
-      if (machineId === "EQUATOR300-VISUAL") {
-        if (getCurrentMachine("RENISHAW-EQUATOR300-001")) onSelectRef.current("RENISHAW-EQUATOR300-001");
-      } else if (machineId) onSelectRef.current(machineId);
-    };
-    renderer.domElement.addEventListener("pointermove", handlePointerMove);
-    renderer.domElement.addEventListener("pointerleave", handlePointerLeave);
-    renderer.domElement.addEventListener("click", handleClick);
-
-    return () => {
-      updateSelectionRef.current = null;
-      applyViewRef.current = null;
-      window.cancelAnimationFrame(frameId);
-      resizeObserver.disconnect();
-      clearHover();
-      renderer.domElement.removeEventListener("pointermove", handlePointerMove);
-      renderer.domElement.removeEventListener("pointerleave", handlePointerLeave);
-      renderer.domElement.removeEventListener("click", handleClick);
-      if (renderer.domElement.parentNode === mount) {
-        mount.removeChild(renderer.domElement);
-      }
-      scene.traverse((object) => {
-        if (object.geometry) object.geometry.dispose();
-        if (object.material) {
-          if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
-          else {
-            if (object.material.map) object.material.map.dispose();
-            object.material.dispose();
-          }
-        }
-      });
-      controls.dispose();
-      renderer.dispose();
-      renderer.forceContextLoss();
-    };
-  }, [sceneMachineState]);
-
-  return (
-    <div ref={mountRef} className="machine-3d-canvas" aria-hidden="true">
-      {hoveredLabel ? (
-        <div
-          className={`scene-hover-label ${hoveredLabel.status}`}
-          style={{ left: hoveredLabel.x, top: hoveredLabel.y }}
-        >
-          <strong>{hoveredLabel.name}</strong>
-          <span>{hoveredLabel.type}</span>
-          <em>{hoveredLabel.statusLabel}</em>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function statusColor(status) {
-  if (status === "fault") return 0xb73732;
-  if (status === "alarm" || status === "warning") return 0xb66a00;
-  if (["idle", "stopped", "unknown"].includes(status)) return 0x7d8c93;
-  return 0x087f75;
-}
-
 
 function TrendPanel({ machine, history }) {
   const profileMetrics = (deviceProfiles[machine?.deviceType]?.metrics || []).slice(0, 3);
@@ -2503,21 +1260,69 @@ function preferredWorkorderId(items, sample, snapshot) {
   return sameDevice?.workorder_id || visibleItems[0]?.workorder_id || "";
 }
 
+const AgentInvocationCard = React.memo(function AgentInvocationCard({invocation}) {
+  return <article className={`agent-invocation-card agent-invocation-${invocation.status === "异常" ? "error" : invocation.status === "执行中" ? "running" : "done"}`} key={invocation.id}>
+            <div className="agent-invocation-head">
+              <div><span className="agent-invocation-kicker">第 {invocation.invocation_no} 次 Agent 调用</span><h4>{invocation.agent}</h4></div>
+              <span className="log-event-status">{invocation.status}</span>
+            </div>
+            <div className="agent-invocation-meta"><span>agent_run_id：{invocation.agent_run_id}</span><span>Trace：{invocation.trace_id || "--"}</span><span>Task：{invocation.task_id || "--"}</span><span>开始：{invocation.started_at ? formatTime(invocation.started_at) : "--"}</span><span>结束：{invocation.ended_at ? formatTime(invocation.ended_at) : "--"}</span><span>耗时：{invocation.duration}</span><span>事件：{invocation.event_count}</span></div>
+            {invocation.error && <div className="log-event-error agent-invocation-error-text">错误：{invocation.error}</div>}
+            <div className="agent-io-stack">
+              <section className="agent-io-block"><h5>输入（Input）</h5><pre className="log-json">{formatTraceValue(invocation.input)}</pre></section>
+              <section className="agent-io-block"><h5>上下文（Context）</h5><pre className="log-json">{formatTraceValue(invocation.context)}</pre></section>
+              <section className="agent-io-block"><h5>MD Skill 执行步骤 · {invocation.skill_steps.length} 步</h5>{invocation.skill_steps.map((step,index) => <details key={`${invocation.id}-skill-${index}`}><summary>#{index+1} {step.skill || "基础步骤（未绑定技能）"} → {step.step} · {step.status}</summary><h6>步骤输入</h6><pre className="log-json">{formatTraceValue(step.input)}</pre><h6>步骤输出</h6><pre className="log-json">{formatTraceValue(step.output)}</pre>{step.error && <p className="inline-error">{step.error}</p>}</details>)}</section>
+              {!!invocation.skill_reviews.length && <section className="agent-io-block" aria-label="技能执行核查"><h5>技能执行核查 · {invocation.skill_reviews.length} 项</h5>
+                <p>只读核查已有事实与缺项，不改变本次业务结果，也不代表审批、质检或维修验收通过。</p>
+                {invocation.skill_reviews.map((review,index)=><details key={`${invocation.id}-review-${index}`}><summary>{review.skill} · {review.status==='completed' ? '已核查' : '尚未验证'}</summary>
+                  <p>技能指纹：{review.skill_fingerprint || '未记录'}</p>{review.message && <p>{review.message}</p>}
+                  <pre className="log-json">{formatTraceValue(review.output)}</pre></details>)}</section>}
+              <section className="agent-io-block agent-tool-chain"><h5>工具调用链（Tool Calls） · {invocation.tool_calls.length} 次</h5>{invocation.tool_calls.length ? <div className="agent-tool-list">{invocation.tool_calls.map((tool) => <section className="agent-tool-call" key={`${invocation.id}-${tool.call_no}-${tool.tool_name}`}><div className="agent-tool-head"><strong>#{tool.call_no} {tool.tool_name}</strong><span>{tool.status}{tool.mcp_server ? ` · MCP ${tool.mcp_server}` : ""} · {tool.duration}</span></div><div className="agent-tool-meta"><span>技能：{tool.context?.skill || "未绑定"} → {tool.context?.step || "--"}</span><span>开始：{tool.started_at ? formatTime(tool.started_at) : "--"}</span><span>结束：{tool.ended_at ? formatTime(tool.ended_at) : "--"}</span><span>事件：{tool.event_count}</span></div><div className="agent-tool-io"><div><h6>工具输入</h6><pre className="log-json">{formatTraceValue(tool.input)}</pre></div><div><h6>工具输出</h6><pre className="log-json">{formatTraceValue(tool.output)}</pre></div></div>{tool.error && <div className="log-event-error">错误：{tool.error}</div>}</section>)}</div> : <div className="agent-io-empty">本次 Agent 没有记录工具调用。</div>}</section>
+              <section className="agent-io-block"><h5>输出（Output）</h5><pre className="log-json">{formatTraceValue(invocation.output)}</pre></section>
+            </div>
+          </article>;
+});
+
+function RawLogDetail({detail}) {
+  const [open,setOpen]=useState(detail.key==='operation');
+  const value=useMemo(()=>open?formatTraceValue(detail.value):'',[open,detail.value]);
+  return <details className="log-detail" open={open} onToggle={event=>setOpen(event.currentTarget.open)}><summary>{detail.title}</summary>{open&&<pre className="log-json">{value}</pre>}</details>;
+}
+
+const RawLogEvent = React.memo(function RawLogEvent({record,index,count}) {
+          const summary = traceEventSummary(record);
+          const identity = traceIdentity(record, index);
+          return <article className={`log-event log-event-${summary.status === "异常" ? "error" : summary.status === "执行中" ? "running" : "done"}`} key={record.trace_record_id || `${identity}-${record.timestamp || index}-${record.event || ""}-${record.name || ""}`}>
+            <div className="log-event-head">
+              <div className="log-event-title"><span className="log-event-index">{count - index}</span><div><strong>{summary.label}</strong><h3>{summary.operation}</h3></div></div>
+              <span className="log-event-status">{summary.status}</span>
+            </div>
+            <div className="log-event-meta"><span>{record.timestamp ? formatTime(record.timestamp) : "--"}</span><span>类型：{record.type || "--"}</span><span>事件：{record.event || "--"}</span><span>Trace：{record.trace_id || "--"}</span><span>Task：{record.task_id || "--"}</span>{summary.server && <span>MCP：{summary.server}</span>}{summary.duration !== "--" && <span>耗时：{summary.duration}</span>}</div>
+            {record.error && <div className="log-event-error">错误：{record.error}</div>}
+            <div className="log-event-details">{traceDetailSections(record,value=>value).map(detail=><RawLogDetail key={detail.key} detail={detail} />)}</div>
+          </article>;
+
+});
+
 function LogsWorkspace({ snapshot, active = true }) {
-  const [runRecords, setRunRecords] = useState([]);
-  const [details, setDetails] = useState({ runId: "", records: [] });
+  const initialRuns=peekWorkspaceRead('/api/runs?limit=5000');
+  const [runRecords, setRunRecords] = useState(()=>initialRuns?normalizeRunResponse(initialRuns):[]);
   const [filter, setFilter] = useState("all");
-  const [selectedRunId, setSelectedRunId] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [selectedRunId, setSelectedRunId] = useState(()=>runRecords[0]?.run_id||'');
+  const [details, setDetails] = useState(()=>{
+    const run=runRecords[0],version=workspaceRunVersion(run),ids=workspaceRunTraceIds(run);
+    const cached=ids.map(id=>peekWorkspaceRead(`/api/trace?trace_id=${encodeURIComponent(id)}&limit=5000`,{revision:version}));
+    return run&&cached.length&&cached.every(Boolean)?{runId:run.run_id,version,records:cached.flatMap(normalizeTraceResponse)}:{runId:'',records:[]};
+  });
+  const [loading, setLoading] = useState(!initialRuns);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [indexError, setIndexError] = useState("");
   const [detailError, setDetailError] = useState("");
   const indexRequest = useRef(null);
-  const indexLoaded = useRef(false);
+  const indexLoaded = useRef(Boolean(initialRuns));
   const lastIndexRead = useRef(0);
   const detailGeneration = useRef(0);
   const detailRequest = useRef(null);
-  const [detailRevision, setDetailRevision] = useState(0);
   const activeRef = useRef(active);
   activeRef.current = active;
   const selectedRunRef = useRef(selectedRunId);
@@ -2544,12 +1349,12 @@ function LogsWorkspace({ snapshot, active = true }) {
     if (indexRequest.current) return indexRequest.current.promise;
     const entry = { controller: new AbortController() };
     const isCurrent = () => indexRequest.current === entry && activeRef.current;
-    entry.promise = request("/api/runs?limit=5000", { signal: entry.controller.signal }).then(body => {
+    entry.promise = readWorkspace("/api/runs?limit=5000", { signal: entry.controller.signal,freshFor:5000,force:manual }).then(body => {
       if (!isCurrent()) return null;
       const nextRuns = normalizeRunResponse(body);
       indexLoaded.current = true;
       lastIndexRead.current = Date.now();
-      setRunRecords(nextRuns);
+      setRunRecords(previous=>JSON.stringify(previous)===JSON.stringify(nextRuns)?previous:nextRuns);
       setSelectedRunId((current) => current && nextRuns.some((run) => run.run_id === current)
         ? current
         : nextRuns[0]?.run_id || "");
@@ -2566,11 +1371,6 @@ function LogsWorkspace({ snapshot, active = true }) {
     });
     indexRequest.current = entry;
     return entry.promise;
-  }
-
-  async function refreshLogs() {
-    const nextRuns = await loadTraceIndex(true);
-    if (nextRuns && activeRef.current) setDetailRevision(current => current + 1);
   }
 
   useEffect(() => {
@@ -2595,8 +1395,7 @@ function LogsWorkspace({ snapshot, active = true }) {
   }, [active]);
 
   const selectedRun = runRecords.find((run) => run.run_id === selectedRunId) || null;
-  const detailVersion = JSON.stringify([selectedRunId, selectedRun?.trace_ids, selectedRun?.trace_id,
-    selectedRun?.event_count, selectedRun?.ended_at, selectedRun?.status, selectedRun?.error_count, detailRevision]);
+  const detailVersion = workspaceRunVersion(selectedRun);
 
   useEffect(() => {
     return () => {
@@ -2615,11 +1414,10 @@ function LogsWorkspace({ snapshot, active = true }) {
     detailRequest.current = entry;
     const runId = selectedRunId;
     const isCurrent = () => activeRef.current && generation === detailGeneration.current && selectedRunRef.current === runId;
-    const traceIds = (Array.isArray(selectedRun.trace_ids) && selectedRun.trace_ids.length ? selectedRun.trace_ids : [selectedRun.trace_id])
-      .filter(value => value && !String(value).startsWith("event-"));
+    const traceIds = workspaceRunTraceIds(selectedRun);
     setDetailError("");
     setLoadingDetails(true);
-    Promise.all(traceIds.map(value => request(`/api/trace?trace_id=${encodeURIComponent(value)}&limit=5000`, { signal: controller.signal })))
+    Promise.all(traceIds.map(value => readWorkspace(`/api/trace?trace_id=${encodeURIComponent(value)}&limit=5000`, { signal: controller.signal,revision:detailVersion,freshFor:5000 })))
       .then(bodies => {
         if (!isCurrent()) return;
         setDetails({ runId, version: detailVersion, records: bodies.flatMap(body => normalizeTraceResponse(body)) });
@@ -2637,11 +1435,11 @@ function LogsWorkspace({ snapshot, active = true }) {
 
   const records = useMemo(() => details.runId === selectedRunId ? details.records.filter(record => selectedRun && runEventMatches(selectedRun, record)) : [], [details, selectedRunId, selectedRun]);
   const initialDetailsLoading = loadingDetails && !(details.runId === selectedRunId && details.version);
-  const filteredRecords = records.filter((record) => {
+  const filteredRecords = useMemo(()=>records.filter((record) => {
     if (filter === "all") return true;
     if (filter === "error") return Boolean(record.error) || /error|failed|timeout/i.test(String(record.event || ""));
     return String(record.type || "").toLowerCase() === filter;
-  }).slice().reverse();
+  }).slice().reverse(),[records,filter]);
   const traceCount = runRecords.length;
   const qualityRunCount = runRecords.filter((run) => run.run_type === "quality").length;
   const productionRunCount = runRecords.filter((run) => run.run_type === "production_simulation").length;
@@ -2667,9 +1465,9 @@ function LogsWorkspace({ snapshot, active = true }) {
 
   return (
     <section className="workspace-view active module-board logs-workspace" aria-label="日志系统" hidden={!active} style={active ? undefined : { display: "none" }}>
-      <ModuleHero eyebrow="Runtime Logs" title="日志系统" text="一次完整故障闭环只形成一条运行记录：监控 → 诊断 → 维修方案 → 工单派发 → 报告中心 → 经验总结；质检始终独立成单。" action={<button className="button" type="button" onClick={refreshLogs} disabled={loading}>{loading ? "刷新中…" : "刷新运行记录"}</button>} />
+      <ModuleHero eyebrow="Runtime Logs" title="日志系统" text="运行记录自动更新：监控 → 诊断 → 维修方案 → 工单派发 → 报告中心 → 经验总结；质检始终独立成单。" />
       {error && <div className="workspace-notice logs-notice" role="status">日志读取提示：{error}</div>}
-      <TaskRecoveryPanel request={request} active={active} onRecovered={refreshLogs} />
+      <TaskRecoveryPanel request={request} active={active} />
       <div className="module-grid logs-stat-grid">
         <ModuleStat label="事件总数" value={records.length} text="Trace Recorder 保留记录" />
         <ModuleStat label="运行记录" value={traceCount} text="故障闭环、RAG 问答、质检与模拟生产" />
@@ -2687,7 +1485,7 @@ function LogsWorkspace({ snapshot, active = true }) {
           <div className="logs-run-phases">{(run.phases || []).map((phase) => <span key={phase.id} className={`logs-phase logs-phase-${phase.status}`}><i />{phase.label} · {statusText(phase.status)}</span>)}</div>
           {run.status_reason && <div className="logs-run-hint">{run.status_reason}</div>}
           <div className="logs-run-id">{run.run_id}</div>
-        </button>)}</div> : <div className="empty-state logs-empty">暂无运行记录；监控确认故障或执行质检后，这里会生成生命周期记录。</div>}
+        </button>)}</div> : <div className="empty-state logs-empty">{loading ? '正在加载运行记录…' : indexError ? '运行记录暂未加载，系统会自动重试。' : '暂无运行记录；监控确认故障或执行质检后，这里会生成生命周期记录。'}</div>}
       </section>
       {experienceSummaries.length > 0 && <section className="panel module-panel logs-panel" aria-label="故障经验总结">
         <div className="panel-heading"><div><span className="eyebrow">Repair Experience</span><h2>经验总结</h2></div></div>
@@ -2708,36 +1506,10 @@ function LogsWorkspace({ snapshot, active = true }) {
         </div>
         {!initialDetailsLoading && <section className="agent-invocations" aria-label="Agent调用明细">
           <div className="agent-invocations-heading"><div><span className="eyebrow">Agent Invocation I/O</span><h3>Agent 调用明细</h3></div><span className="logs-run-hint">每次调用独立编号，完整展示输入 → 上下文 → 工具 → 输出</span></div>
-          {agentInvocations.length ? <div className="agent-invocation-list">{agentInvocations.map((invocation) => <article className={`agent-invocation-card agent-invocation-${invocation.status === "异常" ? "error" : invocation.status === "执行中" ? "running" : "done"}`} key={invocation.id}>
-            <div className="agent-invocation-head">
-              <div><span className="agent-invocation-kicker">第 {invocation.invocation_no} 次 Agent 调用</span><h4>{invocation.agent}</h4></div>
-              <span className="log-event-status">{invocation.status}</span>
-            </div>
-            <div className="agent-invocation-meta"><span>agent_run_id：{invocation.agent_run_id}</span><span>Trace：{invocation.trace_id || "--"}</span><span>Task：{invocation.task_id || "--"}</span><span>开始：{invocation.started_at ? formatTime(invocation.started_at) : "--"}</span><span>结束：{invocation.ended_at ? formatTime(invocation.ended_at) : "--"}</span><span>耗时：{invocation.duration}</span><span>事件：{invocation.event_count}</span></div>
-            {invocation.error && <div className="log-event-error agent-invocation-error-text">错误：{invocation.error}</div>}
-            <div className="agent-io-stack">
-              <section className="agent-io-block"><h5>输入（Input）</h5><pre className="log-json">{formatTraceValue(invocation.input)}</pre></section>
-              <section className="agent-io-block"><h5>上下文（Context）</h5><pre className="log-json">{formatTraceValue(invocation.context)}</pre></section>
-              <section className="agent-io-block"><h5>MD Skill 执行步骤 · {invocation.skill_steps.length} 步</h5>{invocation.skill_steps.map((step,index) => <details key={`${invocation.id}-skill-${index}`}><summary>#{index+1} {step.skill || "基础步骤（未绑定技能）"} → {step.step} · {step.status}</summary><h6>步骤输入</h6><pre className="log-json">{formatTraceValue(step.input)}</pre><h6>步骤输出</h6><pre className="log-json">{formatTraceValue(step.output)}</pre>{step.error && <p className="inline-error">{step.error}</p>}</details>)}</section>
-              <section className="agent-io-block agent-tool-chain"><h5>工具调用链（Tool Calls） · {invocation.tool_calls.length} 次</h5>{invocation.tool_calls.length ? <div className="agent-tool-list">{invocation.tool_calls.map((tool) => <section className="agent-tool-call" key={`${invocation.id}-${tool.call_no}-${tool.tool_name}`}><div className="agent-tool-head"><strong>#{tool.call_no} {tool.tool_name}</strong><span>{tool.status}{tool.mcp_server ? ` · MCP ${tool.mcp_server}` : ""} · {tool.duration}</span></div><div className="agent-tool-meta"><span>技能：{tool.context?.skill || "未绑定"} → {tool.context?.step || "--"}</span><span>开始：{tool.started_at ? formatTime(tool.started_at) : "--"}</span><span>结束：{tool.ended_at ? formatTime(tool.ended_at) : "--"}</span><span>事件：{tool.event_count}</span></div><div className="agent-tool-io"><div><h6>工具输入</h6><pre className="log-json">{formatTraceValue(tool.input)}</pre></div><div><h6>工具输出</h6><pre className="log-json">{formatTraceValue(tool.output)}</pre></div></div>{tool.error && <div className="log-event-error">错误：{tool.error}</div>}</section>)}</div> : <div className="agent-io-empty">本次 Agent 没有记录工具调用。</div>}</section>
-              <section className="agent-io-block"><h5>输出（Output）</h5><pre className="log-json">{formatTraceValue(invocation.output)}</pre></section>
-            </div>
-          </article>)}</div> : <div className="empty-state logs-empty">当前运行记录没有 Agent 生命周期事件；请刷新或先执行一次监控→诊断→维修方案→工单闭环。</div>}
+          {agentInvocations.length ? <div className="agent-invocation-list">{agentInvocations.map(invocation => <AgentInvocationCard key={invocation.id} invocation={invocation} />)}</div> : <div className="empty-state logs-empty">当前运行记录没有 Agent 生命周期事件；请刷新或先执行一次监控→诊断→维修方案→工单闭环。</div>}
         </section>}
         <div className="logs-subsection-heading"><span className="eyebrow">Raw Events</span><h3>底层事件明细</h3><span>保留每条原始记录，便于核对调用顺序与返回体</span></div>
-        {initialDetailsLoading ? <div className="empty-state logs-empty">正在加载所选执行链路的完整返回体…</div> : filteredRecords.length ? <div className="logs-list">{filteredRecords.map((record, index) => {
-          const summary = traceEventSummary(record);
-          const identity = traceIdentity(record, index);
-          return <article className={`log-event log-event-${summary.status === "异常" ? "error" : summary.status === "执行中" ? "running" : "done"}`} key={record.trace_record_id || `${identity}-${record.timestamp || index}-${record.event || ""}-${record.name || ""}`}>
-            <div className="log-event-head">
-              <div className="log-event-title"><span className="log-event-index">{filteredRecords.length - index}</span><div><strong>{summary.label}</strong><h3>{summary.operation}</h3></div></div>
-              <span className="log-event-status">{summary.status}</span>
-            </div>
-            <div className="log-event-meta"><span>{record.timestamp ? formatTime(record.timestamp) : "--"}</span><span>类型：{record.type || "--"}</span><span>事件：{record.event || "--"}</span><span>Trace：{record.trace_id || "--"}</span><span>Task：{record.task_id || "--"}</span>{summary.server && <span>MCP：{summary.server}</span>}{summary.duration !== "--" && <span>耗时：{summary.duration}</span>}</div>
-            {record.error && <div className="log-event-error">错误：{record.error}</div>}
-            <div className="log-event-details">{traceDetailSections(record).map((detail) => <details key={detail.key} className="log-detail" open={detail.key === "operation"}><summary>{detail.title}</summary><pre className="log-json">{detail.value}</pre></details>)}</div>
-          </article>;
-        })}</div> : <div className="empty-state logs-empty">暂无执行日志；触发一次诊断、知识检索或工单操作后，这里会显示完整执行链路。</div>}
+        {initialDetailsLoading ? <div className="empty-state logs-empty">正在加载所选执行链路的完整返回体…</div> : filteredRecords.length ? <div className="logs-list">{filteredRecords.map((record,index) => <RawLogEvent key={record.trace_record_id || `${traceIdentity(record,index)}-${record.timestamp || index}-${record.event || ""}-${record.name || ""}`} record={record} index={index} count={filteredRecords.length} />)}</div> : <div className="empty-state logs-empty">暂无执行日志；触发一次诊断、知识检索或工单操作后，这里会显示完整执行链路。</div>}
       </section>
     </section>
   );
@@ -2747,19 +1519,25 @@ function ReportWorkspace({ snapshot, active = true }) {
   const [reports, setReports] = useState([]);
   const [selectedReportId, setSelectedReportId] = useState("");
   const [reportError, setReportError] = useState("");
-  const [loadingReports, setLoadingReports] = useState(false);
+  const [loadingReports, setLoadingReports] = useState(true);
   const [generatingPdf, setGeneratingPdf] = useState("");
   const [pdfReportIds, setPdfReportIds] = useState([]);
   const reportGeneration = useRef(0);
   const currentReportRef = useRef("");
   const reportsLoaded = useRef(false);
   const reportVersions = useRef({});
+  const reportIndexRequest = useRef(null);
+  const [reportDetails, setReportDetails] = useState({});
+  const [reportDetailError, setReportDetailError] = useState('');
 
   async function loadReports({ silent = false } = {}) {
+    if (reportIndexRequest.current) return reportIndexRequest.current.promise;
     const generation = ++reportGeneration.current;
+    const entry = {controller: new AbortController()};
+    reportIndexRequest.current = entry;
     if (!silent) setLoadingReports(true);
-    try {
-      const body = await request("/api/reports");
+    entry.promise = (async () => { try {
+      const body = await request("/api/reports?summary=true", {signal:entry.controller.signal});
       if (generation !== reportGeneration.current) return;
       const items = (body.items || []).map((item) => item?.report && typeof item.report === "object" ? item.report : item).filter(Boolean);
       setReports(items);
@@ -2770,10 +1548,12 @@ function ReportWorkspace({ snapshot, active = true }) {
       reportsLoaded.current = true;
       setReportError("");
     } catch (error) {
-      if (generation === reportGeneration.current) setReportError(error.message);
+      if (generation === reportGeneration.current && error.name !== 'AbortError') setReportError(error.message);
     } finally {
       if (generation === reportGeneration.current) setLoadingReports(false);
-    }
+      if (reportIndexRequest.current === entry) reportIndexRequest.current = null;
+    } })();
+    return entry.promise;
   }
 
   useEffect(() => {
@@ -2786,12 +1566,33 @@ function ReportWorkspace({ snapshot, active = true }) {
     }
     poll();
     const unsubscribe = subscribeMaintenanceChanges(() => loadReports({silent: true}));
-    return () => { cancelled = true; reportGeneration.current++; window.clearTimeout(timer); unsubscribe(); };
+    return () => { cancelled = true; reportGeneration.current++; reportIndexRequest.current?.controller.abort(); reportIndexRequest.current = null; window.clearTimeout(timer); unsubscribe(); };
   }, [active]);
   const reportItems = reports.map((item) => item?.report && typeof item.report === "object" ? item.report : item).filter(Boolean);
-  const persistedReport = reportItems.find((item) => item.report_id === selectedReportId) || reportItems[0];
+  const selectedReport = reportItems.find((item) => item.report_id === selectedReportId) || reportItems[0];
+  const detailVersion = selectedReport?.updated_at || selectedReport?.created_at || '';
+  const cachedDetail = reportDetails[selectedReport?.report_id];
+  const listedBody = selectedReport && ('sections' in selectedReport || 'article_text' in selectedReport);
+  const persistedReport = listedBody ? selectedReport : cachedDetail?.version === detailVersion ? cachedDetail.value : null;
+  useEffect(() => {
+    if (!active || !selectedReport?.report_id || persistedReport) return;
+    const controller = new AbortController(), id = selectedReport.report_id;
+    setReportDetailError('');
+    request(`/api/reports/${encodeURIComponent(id)}?display=true`, {signal:controller.signal}).then(body => {
+      if (controller.signal.aborted) return;
+      const value = body.report && typeof body.report === 'object' ? body.report : body;
+      if (value.report_id !== id && body.report_id !== id) throw new Error('报告正文身份不一致，请刷新重试');
+      setReportDetails(current => {
+        const next = {...current}; delete next[id];
+        next[id] = {version:detailVersion, value:{...value, report_id:id}};
+        for (const old of Object.keys(next).slice(0, -3)) delete next[old];
+        return next;
+      });
+    }).catch(error => { if (!controller.signal.aborted) setReportDetailError(error.message); });
+    return () => controller.abort();
+  }, [active, selectedReport?.report_id, detailVersion]);
   const report = persistedReport || {};
-  currentReportRef.current = report.report_id || "";
+  currentReportRef.current = selectedReport?.report_id || "";
   const pdfReady = pdfReportIds.includes(report.report_id);
   const completeness = reportCompleteness(report);
   const sections = report.sections || {};
@@ -2821,7 +1622,10 @@ function ReportWorkspace({ snapshot, active = true }) {
     try {
       await request(`/api/reports/${encodeURIComponent(reportId)}`, { method: "DELETE" });
       const remaining = reportItems.filter((item) => item.report_id !== reportId);
+      reportGeneration.current++;
+      reportIndexRequest.current?.controller.abort(); reportIndexRequest.current = null;
       setReports(remaining);
+      setReportDetails(current => {const next={...current};delete next[reportId];return next;});
       setSelectedReportId(remaining[0]?.report_id || "");
       setPdfReportIds((current) => current.filter((id) => id !== reportId));
       setReportError("");
@@ -2836,17 +1640,18 @@ function ReportWorkspace({ snapshot, active = true }) {
       {reportError && <div className="inline-error" role="status">报告服务暂不可用：{reportError}</div>}
       <section className="panel module-panel report-list-panel" aria-label="已持久化报告列表">
         <div className="panel-heading"><div><span className="eyebrow">持久化记录 · {reportItems.length} 份</span><h2>报告列表</h2></div></div>
-        {reportItems.length ? <div className="report-list">{reportItems.map((item) => <div className={`report-list-item ${item.report_id === report.report_id ? "is-selected" : ""}`} key={item.report_id}>
+        {reportItems.length ? <div className="report-list">{reportItems.map((item) => <div className={`report-list-item ${item.report_id === selectedReport?.report_id ? "is-selected" : ""}`} key={item.report_id}>
           <button type="button" className="report-list-select" onClick={() => setSelectedReportId(item.report_id)}><strong>{item.title || "运维报告"}</strong><span>{item.report_id} · {formatTime(item.created_at || item.updated_at)} · {reportCompleteness(item).label}</span></button>
           <button type="button" className="button danger-button" onClick={() => deleteReport(item.report_id)}>删除</button>
-        </div>)}</div> : <div className="empty-state">暂无持久化报告</div>}
+        </div>)}</div> : <div className="empty-state">{loadingReports ? '正在读取报告目录…' : '暂无持久化报告'}</div>}
       </section>
       {hasReport ? (
         <>
           {qualityReport && <div className="module-grid"><ModuleStat label="报告编号" value={report.report_id || "--"} text="产品质检报告" /><ModuleStat label="生成时间" value={report.created_at || report.updated_at ? formatTime(report.created_at || report.updated_at) : "--"} text={`${reports.length || 1} 份已持久化报告`} /><ModuleStat label="质检结果" value={reportQualityLabel(sections.quality)} text="产品的实际检测结果" /></div>}
           <section className="panel module-panel report-panel"><div className="panel-heading"><div><h2>{(!qualityReport && report.article_title) || report.title || "运维报告"}</h2><span className={`severity-pill ${completeness.tone}`}>{completeness.label}</span></div><div className="report-file-actions"><button className="button" type="button" onClick={generatePdf} disabled={!report.report_id || Boolean(generatingPdf)}>{generatingPdf === report.report_id ? "生成中…" : "生成 PDF"}</button>{pdfReady && <><a className="button" href={pdfUrl} target="_blank" rel="noreferrer">打开 PDF</a><a className="button" href={`${pdfUrl}?download=1`} download={`report-${report.report_id}.pdf`}>下载 PDF</a></>}</div></div>{completeness.findings.length > 0 && <div className="workspace-notice" role="status">报告资料尚不完整，请补充相关处理记录。</div>}{qualityReport ? <><FormattedText value={cleanDisplayText(report.summary) || "暂无摘要"} className="answer-summary" />{displaySections.length > 0 && <ReportDisplaySections sections={displaySections} />}</> : <>{report.article_subtitle && <p className="report-subtitle">{report.article_subtitle}</p>}<p className="report-byline">{formatTime(report.created_at || report.updated_at)} · {report.report_id} · {workorderCount} 张工单</p><article className="report-article" aria-label="故障处理报告正文">{articleChapters.map((chapter, index) => <section className="report-chapter" key={index}>{chapter.title && <h3>{chapter.title}</h3>}{chapter.paragraphs.map((paragraph, paragraphIndex) => <p key={paragraphIndex}>{paragraph}</p>)}</section>)}</article></>}</section>
         </>
-      ) : <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="工单检查通过并确认整线恢复运行后，报告会自动显示，无需选择来源或手动生成。" />}
+      ) : selectedReport ? <section className="panel module-panel" role="status">{reportDetailError ? `报告正文读取失败：${reportDetailError}` : '正在读取选中报告正文…'}</section>
+        : !loadingReports && <WorkspaceEmpty eyebrow="报告队列" title="暂无可查看的报告" text="工单检查通过并确认整线恢复运行后，报告会自动显示，无需选择来源或手动生成。" />}
     </section>
   );
 }
@@ -2868,8 +1673,9 @@ function IncidentTimeline({ record, compact = false }) {
 }
 
 function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
-  const [planItems, setPlanItems] = useState([]);
-  const [history, setHistory] = useState({ status: "loading" });
+  const initialPlans=peekWorkspaceRead('/api/maintenance/plans');
+  const [planItems, setPlanItems] = useState(()=>initialPlans?.items||[]);
+  const [history, setHistory] = useState(()=>initialPlans?.history||{ status: "loading" });
   const actorKey = JSON.stringify([actor?.user_id || "", actor?.role || ""]);
   const [orderState, setOrderState] = useState({ actorKey, items: [], error: "", status: "loading" });
   // 私有工单与读取它的身份绑定，身份变化的首帧也不能带出旧关联。
@@ -2879,11 +1685,11 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [deletedPlanIds, setDeletedPlanIds] = useState([]);
+  const [deletedPlanIds, setDeletedPlanIds] = useState(()=>initialPlans?.deleted_plan_ids||[]);
   const [checkedIds, setCheckedIds] = useState([]);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-  const [deletionsLoaded, setDeletionsLoaded] = useState(false);
+  const [deletionsLoaded, setDeletionsLoaded] = useState(Boolean(initialPlans));
   const [retrying, setRetrying] = useState(false);
   const [retryMessage, setRetryMessage] = useState('');
   const retryCommands = useRef({});
@@ -2935,7 +1741,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
       if (plansPending) return plansPending;
       if (manual) setLoading(true);
       const revision = workspaceRevision.current;
-      plansPending = loadMaintenancePlans(request, { signal: controller.signal }).then(result => {
+      plansPending = loadMaintenancePlans(readWorkspace, { signal: controller.signal,freshFor:5000,force:manual }).then(result => {
         if (cancelled || revision !== workspaceRevision.current) return;
         setPlanItems(result.items);
         setDeletedPlanIds(previous => [...new Set([...previous, ...result.deletedPlanIds])]);
@@ -2955,7 +1761,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
     function refreshOrders() {
       if (ordersPending) return ordersPending;
       const revision = workspaceRevision.current;
-      ordersPending = loadMaintenanceOrders(request, actor, { signal: controller.signal }).then(items => {
+      ordersPending = loadMaintenanceOrders(readWorkspace, actor, { signal: controller.signal,freshFor:1000 }).then(items => {
         if (!cancelled && revision === workspaceRevision.current) setOrderState({ actorKey, items: items.map(normalizeWorkorderResponse), error: "", status: "ready" });
       }).catch(err => {
         if (!cancelled && revision === workspaceRevision.current) setOrderState({ actorKey, items: [], error: err.message, status: "failed" });
@@ -3032,7 +1838,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
   if (!active) return null;
   return (
     <section className="workspace-view active maintenance-workspace" aria-label="维修方案">
-      <ModuleHero eyebrow="Maintenance Agent" title="维修方案" text="查看已有诊断生成的方案、维修依据与派发条件；工单负责执行反馈。" action={<><button className="button" type="button" disabled={loading} onClick={() => refreshRef.current?.(true)}>{loading ? "刷新中…" : "刷新方案"}</button><button className="button primary" type="button" onClick={() => openWorkorder(assignedOrders[0]?.workorder_id || "")}>进入工单执行</button></>} />
+      <ModuleHero eyebrow="Maintenance Agent" title="维修方案" text="已生成的方案自动更新；查看维修依据与派发条件，工单负责执行反馈。" action={<>{error&&<button className="button" type="button" disabled={loading} onClick={() => refreshRef.current?.(true)}>{loading ? "重试中…" : "重试读取方案"}</button>}<button className="button primary" type="button" onClick={() => openWorkorder(assignedOrders[0]?.workorder_id || "")}>进入工单执行</button></>} />
       {error && <div className="inline-error" role="status">方案列表刷新失败：{error}{records.length > 0 ? "；仍可查看已读取的方案。" : ""}</div>}
       {orderError && <div className="workspace-notice" role="status">关联工单读取失败：{orderError}；维修方案仍可独立查看。</div>}
       {maintenanceHistoryNotice(history) && <div className="workspace-notice" role="status">{maintenanceHistoryNotice(history)}</div>}
@@ -3066,7 +1872,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
               <strong>{getDeviceDisplayName(record.device_id, { snapshot, device_name:record.device_name })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong>
               <small>{maintenanceWorkType(record).label} · {record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · 方案生成 ${formatRecordTime(record.created_at)}` : record.diagnosis_created_at ? ` · 诊断完成 ${formatRecordTime(record.diagnosis_created_at)}` : ""}</small>
               {dispatch.displayReason && <small className="maintenance-plan-dispatch-reason">{dispatch.displayReason}</small>}
-            </span><em>{dispatch.label}</em></button>
+            </span>{dispatch.label !== '暂不能自动派发' && <em>{dispatch.label}</em>}</button>
             <button className="button danger" type="button" disabled={!actor?.user_id || deleting || !record.plan_id} onClick={() => removePlans([record.plan_id])}>删除此方案</button>
           </div>;
         })}</div> : <WorkspaceEmpty eyebrow="维修方案" title={history?.status === "loading" ? "正在读取已有维修方案" : history?.status === "failed" ? "历史方案暂未读出" : "暂无已生成的维修方案"} text={history?.status === "loading" ? "后台只读加载较大的历史记录，请稍候；这里不会将尚未读出的方案判断为不存在。" : "诊断生成方案后会自动显示；未满足派发条件的方案也可查看。"} />}
@@ -3081,15 +1887,34 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
 const workorderPlanCommands = new Map();
 
 function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
-  const [orders, setOrders] = useState([]);
-  const [selectedId, setSelectedId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("workorder_id") || "");
-  const explicitSelection = useRef(Boolean(selectedId));
+  const initialScope=JSON.stringify([actor?.user_id||'',actor?.role||'']);
+  const initialOrders=peekWorkspaceRead('/api/workorders?summary=true',{scope:initialScope});
+  const [orders, setOrders] = useState(()=>(initialOrders?.items||[]).map(normalizeWorkorderResponse).filter(item=>!item.deleted_at));
+  const requestedOrder=typeof window==='undefined'?'':new URLSearchParams(window.location.search).get('workorder_id')||'';
+  const [selectedId, setSelectedId] = useState(()=>requestedOrder||preferredWorkorderId(orders,sample,snapshot));
+  const explicitSelection = useRef(Boolean(requestedOrder));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loadState, setLoadState] = useState("loading");
+  const [loadState, setLoadState] = useState(initialOrders?'ready':'loading');
   const reloadRef = useRef(null);
   const orderRevisionRef = useRef(0);
   const mountedRef = useRef(false);
+  const [lineVersion,setLineVersion]=useState(()=>{
+    const line=peekWorkspaceRead('/api/team/line');
+    return line?JSON.stringify([line.state,line.generation,line.updated_at]):'';
+  });
+  const [taskDetails,setTaskDetails]=useState(()=>{
+    const queue=orders.find(item=>item.workorder_id===selectedId);
+    if(!queue)return {};
+    const version=JSON.stringify([queue.workorder_id,queue._revision,queue.updated_at,lineVersion]);
+    const cached=peekWorkspaceRead(`/api/workorders/${encodeURIComponent(queue.workorder_id)}`,{scope:initialScope,revision:version});
+    const value=cached&&normalizeWorkorderResponse(cached);
+    return value?.workorder_id===queue.workorder_id&&value.device_id===queue.device_id
+      &&value._revision===queue._revision&&value.updated_at===queue.updated_at
+      ? {[queue.workorder_id]:{version,value}}:{};
+  });
+  const [taskDetailError,setTaskDetailError]=useState('');
+  const [taskReadAttempt,setTaskReadAttempt]=useState(0);
   const [revalidationResults, setRevalidationResults] = useState({});
   const [actionErrors, setActionErrors] = useState({});
   const actorKey = JSON.stringify([actor?.user_id || '', actor?.role || '']);
@@ -3114,23 +1939,61 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
   const currentPlanRecord = buildMaintenanceWorkspaceRecords({ snapshot }).find(record => matchesIncident(record,incident));
   const hasVisibleIncidentOrder = orders.some(order => matchesIncident({...order,alarm_code:getWorkorderAlarmCode(order)},incident));
   const currentNoRepair = buildDiagnosisView(snapshot, sample).noRepairRequired;
-  const selectedOrder = orders.find((order) => order.workorder_id === selectedId)
+  const selectedQueueOrder = orders.find((order) => order.workorder_id === selectedId)
     || (!hasCurrentIncident ? orders[0] : undefined);
+  const taskVersion=JSON.stringify([selectedQueueOrder?.workorder_id,selectedQueueOrder?._revision,selectedQueueOrder?.updated_at,lineVersion]);
+  const cachedTask=taskDetails[selectedQueueOrder?.workorder_id];
+  const selectedOrder=selectedQueueOrder? selectedQueueOrder._summary_record
+    ? cachedTask?.version===taskVersion?cachedTask.value:null : selectedQueueOrder : null;
+  useEffect(()=>{
+    if(!active||!selectedQueueOrder?._summary_record||selectedOrder)return;
+    const controller=new AbortController(), id=selectedQueueOrder.workorder_id;
+    let retryTimer;
+    setTaskDetailError('');
+    readWorkspace(`/api/workorders/${encodeURIComponent(id)}`,{signal:controller.signal,revision:taskVersion,freshFor:5000,scope:actorKey}).then(body=>{
+      if(controller.signal.aborted)return;
+      const value=normalizeWorkorderResponse(body);
+      if(value.workorder_id!==id)throw new Error('任务详情身份不一致，请重新加载');
+      setTaskDetails(current=>{
+        const next={...current};delete next[id];next[id]={version:taskVersion,value};
+        for(const old of Object.keys(next).slice(0,-3))delete next[old];
+        return next;
+      });
+    }).catch(error=>{
+      if(controller.signal.aborted||error.name==='AbortError')return;
+      if([401,403].includes(error.status)){setOrders([]);setTaskDetails({});setLoadState('failed');}
+      else retryTimer=window.setTimeout(()=>setTaskReadAttempt(value=>value+1),3000);
+      setTaskDetailError(error.message);
+    });
+    return()=>{controller.abort();window.clearTimeout(retryTimer);};
+  },[active,selectedQueueOrder?.workorder_id,taskVersion,taskReadAttempt]);
 
   useEffect(() => {
     if (!active) return;
     // 报警触发的创建由运行时负责；查看队列不能创建或重新创建操作员明确删除的工单。
     let cancelled = false;
     let pending = null;
+    let linePending = null;
     const controller = new AbortController();
     setLoadState(previous => previous === 'ready' ? previous : 'loading');
     function loadOrders() {
       if (pending) return pending;
       const revision = orderRevisionRef.current;
-      pending = Promise.all([
-        request('/api/workorders', { signal: controller.signal }),
-        request('/api/team/line', { signal: controller.signal }).catch(() => null),
-      ]).then(([body, line]) => {
+      let line = null;
+      if (!linePending) {
+        linePending = request('/api/team/line', {signal:controller.signal})
+          .catch(() => null).finally(() => {linePending = null;});
+      }
+      linePending.then(value => {
+          line = value;
+          if(!cancelled && revision===orderRevisionRef.current && line)
+            setLineVersion(JSON.stringify([line.state,line.generation,line.updated_at]));
+          if (cancelled || revision !== orderRevisionRef.current || line?.state !== 'running') return;
+          setOrders(previous => previous.map(item => !item.machine_control
+            && item.repair_verification?.phase === 'poststart' && item.repair_verification?.passed === true
+            ? {...item, machine_control:{state:'running'}} : item));
+      });
+      pending = readWorkspace('/api/workorders?summary=true', { signal: controller.signal,freshFor:1000,scope:actorKey }).then(body => {
         if (cancelled || revision !== orderRevisionRef.current) return;
         if (!Array.isArray(body.items)) throw new Error("工单列表返回异常，请重试");
         rememberDeletedMaintenancePlans(body.deleted_plan_ids || []);
@@ -3145,6 +2008,7 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
         if (cancelled || revision !== orderRevisionRef.current) return;
         if ([401, 403].includes(err.status)) {
           setOrders([]);
+          setTaskDetails({});
           setSelectedId("");
         }
         setError(err.message);
@@ -3310,22 +2174,23 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
       <section className="workorder-queue" aria-label="工单队列">
         <div className="workorder-queue-heading">
           <div><span className="eyebrow">工单队列</span><h2>维修任务</h2></div>
-          <div className="maintenance-delete-actions"><span>{orders.length ? `${orders.length} 条记录` : loadState === "ready" ? "0 条记录" : loadState === "failed" ? "读取未完成" : "正在读取…"}</span><button className="button" type="button" disabled={busy || loadState === "loading"} onClick={() => reloadRef.current?.()}>刷新工单</button></div>
+          <div className="maintenance-delete-actions"><span>{orders.length ? `${orders.length} 条记录` : loadState === "ready" ? "0 条记录" : '自动更新'}</span>{loadState==='failed'&&<button className="button" type="button" disabled={busy} onClick={() => reloadRef.current?.()}>重试加载</button>}</div>
         </div>
         {orders.length ? (
           <div className="workorder-queue-list">
-            {orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => { explicitSelection.current = true; setSelectedId(order.workorder_id); }}>
+            {orders.map((order) => <button key={order.workorder_id} type="button" className={`workorder-queue-item ${selectedQueueOrder?.workorder_id === order.workorder_id ? "is-selected" : ""}`} onClick={() => { explicitSelection.current = true; setSelectedId(order.workorder_id); }}>
               <span className="workorder-queue-copy"><span className="workorder-queue-title"><strong>{getWorkorderDisplayTitle(order, order.repair_target, { snapshot })}</strong><small>{maintenanceWorkType(order).label}</small></span><span className="workorder-queue-identity"><span>工单编号 <b>{order.workorder_id}</b></span><span>设备 <b>{order.device_id}</b></span><span>负责人 <b>{order.assignee_name || order.assignee || '未分配'}</b></span></span></span>
               <em className={order.status === "closed" || order.status === "completed" ? "is-done" : ""}>{inspectionWorkorderView(order).statusLabel || labelFor(workorderStatusLabels, order.status)}</em>
             </button>)}
           </div>
-        ) : <div className="workorder-queue-empty" role="status">{loadState === "loading" ? "正在读取已派发工单及任务内容，请稍候…" : loadState === "failed" ? "工单暂未读出，请查看错误提示或点击刷新工单重试。" : "暂无可见工单；已有有效诊断和方案后，系统自动派发给负责该设备且已登录的维修人员，任务生成后自动显示。"}</div>}
+        ) : <div className="workorder-queue-empty" role="status">{loadState === "loading" ? "正在读取已派发工单及任务内容，请稍候…" : loadState === "failed" ? "工单暂未加载，系统会自动重试。" : "暂无可见工单；已有有效诊断和方案后，系统自动派发给负责该设备且已登录的维修人员，任务生成后自动显示。"}</div>}
         {!selectedOrder && error && <div className="inline-error" role="alert">工单读取失败：{error}</div>}
       </section>
       {loadState === "ready" && hasCurrentIncident && !hasVisibleIncidentOrder && <div className="workspace-notice" role="status">{currentNoRepair ? `当前报警 ${currentIncidentCode}：诊断判定无需维修，不生成维修方案和工单；请按智能诊断中的建议处理。` : <>当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统正在核对本次方案、当前报警和设备负责人，派发后自动显示。{currentPlanRecord ? '工程资料待核实项将保留在任务内。' : '需先有本次故障对应的已保存方案；已删除的方案不会自动恢复。'}</>}</div>}
       {loadState === 'ready' && !selectedOrder && !hasVisibleIncidentOrder && currentPlanRecord && !currentNoRepair &&
         <MaintenanceDispatchStatus record={currentPlanRecord} />}
-      {(selectedOrder || loadState === "ready") && <WorkorderDetail
+      {selectedQueueOrder&&!selectedOrder&&<section className="maintenance-plan-panel" role="status">{taskDetailError?`任务详情暂不可用：${taskDetailError}`:'正在加载任务详情…'}</section>}
+      {(selectedOrder || !selectedQueueOrder&&loadState === "ready") && <WorkorderDetail
         order={selectedOrder || null}
         sample={sample}
         snapshot={snapshot}

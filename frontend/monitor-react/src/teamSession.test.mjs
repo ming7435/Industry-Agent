@@ -17,6 +17,19 @@ test('会话保护范围排除公开方案与CAD服务状态', () => {
   for (const path of ['/api/maintenance/plans', '/api/reports', '/api/quality/checks', '/api/cad/resolve', '/api/cad/freecad/status', '/api/team/devices', '/api/team/line', '/api/team/login', '/api/team/register']) assert.equal(isTeamSessionPath(path), false, path);
 });
 
+test('异常记录和EXR报告私有响应在换账号后丢弃，401同步清理会话',async()=>{
+  for(const path of ['/api/runtime/service-exceptions','/api/runtime/service-exceptions/EXC-123/feedback','/api/reports/EXR-ABC123','/api/reports/EXR-ABC123/pdf']){
+    loginA();let release;
+    globalThis.fetch=()=>new Promise(done=>{release=done;});
+    const pending=request(path);
+    setTeamSessionActor(actorB,{force:true});release(response({private:'old-user'}));
+    await assert.rejects(pending,stale);
+    loginA();globalThis.fetch=async()=>response({detail:'会话过期'},401);
+    await assert.rejects(request(path),error=>error.status===401);
+    assert.equal(getTeamSession().actor,null);
+  }
+});
+
 test('公共整线状态在登录或退出期间仍能交付，两个请求入口一致', async () => {
   for (const invoke of [() => request('/api/team/line'), () => teamRequest('line')]) {
     loginA(); let release;

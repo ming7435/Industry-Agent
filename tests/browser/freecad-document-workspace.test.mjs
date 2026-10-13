@@ -19,7 +19,7 @@ async function setup({unknown=false,delayedRefresh=false}={}) {
   const context=await browser.newContext({viewport:{width:1000,height:1000}}),page=await context.newPage();page.setDefaultTimeout(7000);
   let head={document_id:'DOC-a',owner_user_id:'USER-a',part_name:'安装底板',part_number:'00123',revision:1,published_version:null,published_revision:null};
   let snapshot={document_id:'DOC-a',revision:1,objects:[object('OBJ-a','孔'),object('OBJ-b','孔'),object('OBJ-read','齿轮','PartDesign::Feature')],product_root_ids:['OBJ-a','OBJ-b','OBJ-read'],artifacts:[]};
-  const posts=[],commands=new Map(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const posts=[],commands=new Map(),errors=[],reads={snapshots:[]};page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/**',route=>{
     const req=route.request(),path=new URL(req.url()).pathname;let value={},status=200;
     if(req.method()==='POST') {
@@ -32,6 +32,7 @@ async function setup({unknown=false,delayedRefresh=false}={}) {
     } else if(path.endsWith('/documents')) value={items:[head],next_cursor:''};
     else if(path.includes('/commands/')) value=commands.get(path.split('/').at(-1))||{command_id:path.split('/').at(-1),state:'outcome_unknown'};
     else if(path.includes('/snapshots/')) {
+      reads.snapshots.push(Number(path.split('/').at(-1)));
       value=snapshot;
       if(delayedRefresh&&posts.some(p=>p.path.endsWith('/commands'))) {
         setTimeout(()=>page.evaluate(()=>window.dispatchEvent(new Event('focus'))).catch(()=>{}),10);
@@ -42,7 +43,10 @@ async function setup({unknown=false,delayedRefresh=false}={}) {
     else value=head;
     return route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)});
   });
-  await page.goto(base);return {context,page,posts,errors};
+  await page.goto(base);return {context,page,posts,errors,reads,advance:()=>{
+    head={...head,revision:head.revision+1};
+    snapshot={...snapshot,revision:head.revision,objects:snapshot.objects.map(o=>o.object_id==='OBJ-b'?{...o,label:'新版孔'}:o)};
+  }};
 }
 test('duplicate labels select UUID; native changes persist after reload; complex dimensions stay read-only',async()=>{
   const {context,page,posts,errors}=await setup();try {
@@ -78,5 +82,27 @@ test('focus refresh cannot repeatedly abort an in-flight native snapshot or leav
     await page.getByText('工作修订 2',{exact:false}).waitFor();
     assert.equal(await page.getByLabel('长度（mm）',{exact:true}).inputValue(),'62');
     assert.equal(await page.getByRole('button',{name:'保存发布版本',exact:true}).isDisabled(),false);
+  } finally {await context.close();}
+});
+
+test('unchanged revisions keep their loaded snapshot across repeated head refreshes',async()=>{
+  const {context,page,reads}=await setup();try {
+    await page.getByRole('treeitem',{name:/孔.*OBJ-b/}).waitFor();
+    const isHead=req=>req.method()==='GET'&&new URL(req.url()).pathname.endsWith('/documents/DOC-a');
+    for(let index=0;index<2;index++) {
+      const next=page.waitForRequest(isHead);
+      await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+      await next;
+    }
+    assert.deepEqual(reads.snapshots,[1],'Polling downloaded the unchanged document geometry again');
+  } finally {await context.close();}
+});
+
+test('a new server revision loads the matching snapshot and updates visible geometry metadata',async()=>{
+  const {context,page,reads,advance}=await setup();try {
+    await page.getByRole('treeitem',{name:/孔.*OBJ-b/}).waitFor();advance();
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.getByRole('treeitem',{name:/新版孔.*OBJ-b/}).waitFor();
+    assert.deepEqual(reads.snapshots,[1,2]);
   } finally {await context.close();}
 });

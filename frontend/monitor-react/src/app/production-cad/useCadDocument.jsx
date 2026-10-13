@@ -20,9 +20,12 @@ export default function useCadDocument({actorId,documentId,api}) {
       const controller=new AbortController();abort=controller;
       try {
         const head=await api.head(documentId,{signal:controller.signal});
-        const snapshot=await api.snapshot(documentId,head.revision,{signal:controller.signal});
         if(!valid()||controller.signal.aborted) return;
         if(head.revision<(state.current.snapshot?.revision??-1)) {timer=setTimeout(refresh,2000);return;}
+        const cached=state.current.snapshot;
+        const snapshot=cached?.document_id===documentId&&cached.revision===head.revision
+          ?cached:await api.snapshot(documentId,head.revision,{signal:controller.signal});
+        if(!valid()||controller.signal.aborted) return;
         update({...applyDocumentSnapshot(state.current,snapshot,token),head,error:''});
         const pending=state.current.pending||(head.active_command_id?{command_id:head.active_command_id,document_id:documentId,actorId,kind:'edit'}:null);
         if(pending) {

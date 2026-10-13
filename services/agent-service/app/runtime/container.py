@@ -149,6 +149,7 @@ class AgentContainer:
             trace=self.trace,
             factory_client=FactoryApiClient(settings.factory_api_base_url),
         )
+        self.operations.recovery = self.recovery
         self.tracing = NodeTrace(self.trace)
         self.virtual_production = None
         self.virtual_production_reconciler = None

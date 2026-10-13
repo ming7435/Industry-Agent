@@ -31,9 +31,38 @@ def clean_error(value):
     return re.sub(r'(?i)\bsk-[a-z0-9_-]+', '[REDACTED]', text)
 
 
+def snapshot_state(value, markers=None):
+    """Freeze JSON containers without copying immutable evidence into JSON text."""
+    if isinstance(value, (dict, list, tuple)):
+        markers = set() if markers is None else markers
+        identity = id(value)
+        if identity in markers:
+            raise ValueError('Circular reference detected')
+        markers.add(identity)
+        try:
+            if not isinstance(value, dict):
+                return [snapshot_state(item, markers) for item in value]
+            result = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    if key is not None and not isinstance(key, (int, float, bool)):
+                        raise TypeError('JSON object keys must be strings or numbers')
+                    key = json.dumps(key, ensure_ascii=False)
+                result[key] = snapshot_state(item, markers)
+            return result
+        finally:
+            markers.remove(identity)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 class RecoveryManager:
     def __init__(self, store):
         self.store = store
+        from .service_exceptions import ServiceExceptionCases
+        self.cases = ServiceExceptionCases(store)
+        self.case_storage_warning = ''
         self.instance_id = uuid4().hex
         self._lock = RLock()
         self._active = set()
@@ -52,13 +81,18 @@ class RecoveryManager:
             return
         self._stop.clear()
         def run():
+            next_case_sync = 0
             while not self._stop.wait(5):
                 try:
                     self._heartbeat()
+                    if time() >= next_case_sync:
+                        self.collect_exception_cases()
+                        next_case_sync = time() + 60
                 except Exception:
                     # Lost storage connectivity must not manufacture a live lease.
                     pass
         self._heartbeat()
+        self.collect_exception_cases()
         self._thread = Thread(target=run, name='recovery-heartbeat', daemon=True)
         self._thread.start()
 
@@ -111,15 +145,16 @@ class RecoveryManager:
             identity = {'recovery_id': recovery_id, 'fingerprint': self.event_fingerprint(event)}
             saved_identity = self.store.get_or_create(EVENTS, scoped_event_key(event), lambda: identity)
             if saved_identity != identity:
-                raise RecoveryConflict('该事件已有原任务断点，请从日志系统继续原任务')
-        old = self.get(recovery_id) or {}
+                raise RecoveryConflict('该事件已有原任务记录，请查看日志中的失败原因和异常核查待办；不能重复执行')
+        header_reader = getattr(self.store, 'recovery_header', None)
+        old = (header_reader(recovery_id) if callable(header_reader) else self.get(recovery_id)) or {}
         epoch = int(state.get('runtime_recovery_epoch') or 0)
         if epoch < int(old.get('epoch') or 0):
             raise RecoveryConflict('旧执行尝试不能覆盖新的恢复断点')
         if old and epoch == old.get('epoch') and old.get('instance_id') != self.instance_id \
                 and old['status'] in {'running', 'resuming'} and self._owner_active(old):
             raise RecoveryConflict('原执行者仍在执行，不能覆盖断点')
-        snapshot = json.loads(json.dumps(dict(state), ensure_ascii=False, default=str))
+        snapshot = snapshot_state(dict(state))
         record = {**old, 'recovery_id': recovery_id, 'kind': kind, 'task_id': task_id,
                   'trace_id': str(state.get('trace_id') or task_id), 'status': status,
                   'state': snapshot, 'error': clean_error(error), 'instance_id': self.instance_id,
@@ -127,7 +162,10 @@ class RecoveryManager:
                   'attempts': int(old.get('attempts') or 0)}
         record['epoch'] = epoch
         if old:
-            if self.store.compare_and_set(NAMESPACE, recovery_id, 'updated_at', old.get('updated_at'), record) is None:
+            replacer = getattr(self.store, 'replace_recovery_checkpoint', None)
+            saved = (replacer(recovery_id, old.get('updated_at'), record) if callable(replacer)
+                     else self.store.compare_and_set(NAMESPACE, recovery_id, 'updated_at', old.get('updated_at'), record))
+            if saved is None:
                 raise RecoveryConflict('恢复断点已更新，请读取最新状态')
         else:
             actual = self.store.get_or_create(NAMESPACE, recovery_id, lambda: record)
@@ -139,7 +177,36 @@ class RecoveryManager:
             else:
                 self._active.discard(recovery_id)
             self._heartbeat()
+        try:
+            self.cases.record(record)
+            self.case_storage_warning = ''
+        except Exception:
+            # 原失败断点已保存，不以附加记录写入失败替换原故障，更不能重跑原步骤。
+            self.case_storage_warning = '异常核查记录暂未保存，原失败记录保留'
         return record
+
+    def collect_exception_cases(self):
+        """有界回填历史失败元数据，不调用任何原业务、Agent 或设备。"""
+        try:
+            known = {item['recovery_id'] for item in self.cases.list()}
+            reader = getattr(self.store, 'recovery_records', None)
+            records = reader(5000) if callable(reader) else self.store.values(NAMESPACE, 5000)
+            owners = {item['instance_id']:item for item in self.store.values(OWNERS,5000)}
+            count = 0
+            for header in records:
+                if header.get('recovery_id') in known or count >= 100:
+                    continue
+                interrupted = header.get('status') in {'running','resuming'} and not self._owner_active(header,owners)
+                if not interrupted and header.get('status') not in {'failed','error','blocked','timeout','outcome_unknown','interrupted'}:
+                    continue
+                full = self.get(header['recovery_id'])
+                if full is not None:
+                    observed = {**full,'observed_status':'interrupted'} if interrupted else full
+                    if self.cases.record(observed) is not None:
+                        count += 1
+            self.case_storage_warning = ''
+        except Exception:
+            self.case_storage_warning = '历史异常核查记录暂未同步，原失败记录保留'
 
     def get(self, recovery_id):
         return self.store.get(NAMESPACE, recovery_id)
@@ -173,7 +240,10 @@ class RecoveryManager:
         reason = str(result.get('stop_reason') or state.get('stop_reason') or '')
         forbidden = reason in {'policy_denied', 'knowledge_read_only_scope', 'approval_required'} or status == 'waiting_approval'
         possible = interrupted or status in {'failed', 'blocked', 'timeout', 'outcome_unknown', 'waiting_for_personnel'}
-        has_checkpoint = record.get('kind') == 'production' or bool((state.get('runtime_plan') or {}).get('actions'))
+        if record.get('_recovery_projection_version') == 1:
+            has_checkpoint = bool(record.get('has_checkpoint'))
+        else:
+            has_checkpoint = record.get('kind') == 'production' or bool((state.get('runtime_plan') or {}).get('actions'))
         completed = [{key: item.get(key) for key in ('agent', 'step', 'action_id') if item.get(key)}
                      for item in state.get('completed_steps') or [] if isinstance(item, dict)]
         return {key: record.get(key) for key in ('recovery_id', 'kind', 'task_id', 'trace_id', 'created_at', 'updated_at', 'attempts')} | {
@@ -187,7 +257,8 @@ class RecoveryManager:
             'device_id': str((state.get('event') or {}).get('device_id') or '')}
 
     def list(self):
-        records = self.store.values(NAMESPACE, 5000)
+        reader = getattr(self.store, 'recovery_records', None)
+        records = reader(5000) if callable(reader) else self.store.values(NAMESPACE, 5000)
         owners = {item['instance_id']: item for item in self.store.values(OWNERS, 5000) if item.get('instance_id')}
         return sorted((self.summary(item, owners) for item in records), key=lambda item: item['updated_at'], reverse=True)
 

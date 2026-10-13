@@ -1,0 +1,15 @@
+.service-exception-panel{margin-top:20px}
+.service-exception-list{display:grid;gap:16px;margin-top:16px}
+.service-exception-item{padding:20px;border:1px solid var(--border-color,#cbdcdd);border-radius:12px;background:var(--surface,#fff)}
+.service-exception-item p{margin:10px 0;overflow-wrap:anywhere}
+.service-exception-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.service-exception-heading h3{margin:0;font-size:20px}
+.service-exception-cause{padding:12px;background:#fff6ec;border-left:3px solid #b57230;color:#8f4d17}
+.service-exception-identity{font-size:13px;color:var(--text-muted,#667f85)}
+.service-exception-feedback{display:grid;gap:12px;margin:18px 0}
+.service-exception-feedback textarea{width:100%;min-height:90px;padding:12px;border:1px solid var(--border-color,#cbdcdd);border-radius:8px;resize:vertical;font:inherit;box-sizing:border-box}
+.service-exception-feedback button{justify-self:start}
+.service-exception-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+.service-exception-report{border-top:1px solid var(--border-color,#cbdcdd);margin-top:16px;padding-top:8px}
+.service-exception-report p{white-space:pre-wrap;line-height:1.7}
+@media(max-width:760px){.service-exception-heading{flex-direction:column}.service-exception-item{padding:16px}}

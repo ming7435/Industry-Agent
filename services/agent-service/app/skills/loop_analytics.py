@@ -34,7 +34,7 @@ def _output(record):
 
 def _findings(output):
     validation = output.get('validation') or {}
-    findings = output.get('validation_errors') or output.get('validation_findings') or (
+    findings = output.get('validation_errors') or output.get('validation_findings') or output.get('findings') or output.get('failed_checks') or (
         validation.get('errors') or validation.get('findings') if isinstance(validation, Mapping) else []) or []
     return [str(x)[:400] for x in findings[:6]] if isinstance(findings, list) else [str(findings)[:400]]
 
@@ -52,15 +52,49 @@ def _verdict(terminal, group):
                 return 'infrastructure_error'
     if terminal.get('event') == 'agent_timeout' or _INFRA.search(str(terminal.get('error') or output.get('error') or '') + ' '.join(findings)):
         return 'infrastructure_error'
-    if output.get('error') or terminal.get('event') == 'agent_error':
+    agent = str(terminal.get('agent') or '')
+    status = output.get('status')
+    if status in {'waiting_approval', 'waiting_for_personnel', 'awaiting_verification', 'not_tested'}:
+        return 'unknown'  # 尚未执行/正常等候审批不能算实际失败，也不能触发绕过门禁的优化。
+    if agent == 'quality' and status in {'review', 'insufficient_data'}:
+        return 'degraded'
+    if terminal.get('event') == 'agent_error':
         return 'unknown'
     if findings:
         return 'fail'
-    if output.get('status') in {'fallback', 'insufficient_evidence'}:
+    if output.get('error'):
+        return 'unknown'
+    if output.get('status') in {'fallback', 'insufficient_evidence', 'needs_input'}:
         return 'degraded'
     validation = output.get('validation') or {}
     if isinstance(validation, Mapping) and any(validation.get(k) is False for k in ('pass', 'passed', 'valid')):
         return 'fail'
+    if agent == 'router' and output.get('intent') == 'unknown':
+        return 'degraded'
+    if agent == 'router' and output.get('target_agent') and output.get('intent') and isinstance(output.get('validation_findings'), list):
+        return 'pass'
+    if agent == 'maintenance' and output.get('plan_id') and output.get('workorder_ready') is True:
+        return 'pass'
+    if agent == 'workorder' and output.get('success') is True and output.get('stop_reason') == 'completed':
+        if output.get('workorder_id') and status in {'open', 'assigned', 'in_progress', 'completed', 'closed'}:
+            return 'pass'
+        if output.get('action') == 'query' and isinstance(output.get('items'), list):
+            return 'pass'
+    if agent == 'quality' and status == 'pass' and output.get('passed') is True and output.get('stop_reason') == 'validator_pass':
+        return 'pass'
+    if agent == 'quality' and status == 'fail' and output.get('passed') is False:
+        return 'fail'
+    if agent == 'memory' and output.get('success') is True and output.get('stop_reason') == 'completed':
+        if output.get('action') in {'search', 'recent'} and output.get('items'):
+            return 'pass'
+        if (output.get('experience') or {}).get('memory_saved') is True:
+            return 'pass'
+    if agent == 'report' and output.get('persisted') is not True:
+        return 'unknown'
+    if terminal.get('agent') == 'knowledge' and output.get('status') == 'completed' and output.get('stop_reason') == 'evidence_ready':
+        return 'pass'
+    if terminal.get('agent') == 'cad' and output.get('status') == 'ready' and output.get('validation_scope') == 'specification_only' and validation.get('valid') is True:
+        return 'pass'
     if output.get('status') == 'completed' and (output.get('stop_reason') == 'validator_pass' or
             isinstance(validation, Mapping) and any(validation.get(k) is True for k in ('pass', 'passed', 'valid'))):
         return 'pass'

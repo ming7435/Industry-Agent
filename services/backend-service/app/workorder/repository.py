@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
 from shared.task_deletion import creation_deletion_key, deletion_records, order_plan_ids
+from shared.mysql_connections import connect_mysql
 
 
 class BusinessStoreError(RuntimeError):
@@ -71,6 +72,12 @@ class SQLiteRepository:
         with self._record_session() as connection:
             rows = connection.execute("SELECT payload FROM workorders ORDER BY rowid").fetchall()
         return [dict(json.loads(row[0])) for row in rows]
+
+    def list_queue_index(self):
+        from .queue_index import queue_index_sql, read_queue_index
+        with self._record_session() as connection:
+            rows=connection.execute('SELECT '+queue_index_sql()+' FROM workorders ORDER BY rowid').fetchall()
+        return read_queue_index(rows)
 
     def list_run_facts(self, event_ids):
         from .run_facts import read_run_facts
@@ -133,6 +140,22 @@ class SQLiteRepository:
         with self._record_session() as connection:
             rows = connection.execute("SELECT payload FROM business_records WHERE record_type=? ORDER BY updated_at", (str(record_type),)).fetchall()
         return [dict(json.loads(row[0])) for row in rows]
+
+    def list_report_index(self, workorder_id=''):
+        from .report_index import read_report_index, report_index_sql
+        with self._record_session() as connection:
+            rows = connection.execute('SELECT record_id,' + report_index_sql()
+                + ' FROM business_records WHERE record_type=?', ('report',)).fetchall()
+        return read_report_index(rows, workorder_id)
+
+    def get_report_view(self, report_id):
+        from .report_index import report_view_sql, saved_report_view
+        with self._record_session() as connection:
+            row = connection.execute('SELECT ' + report_view_sql()
+                + ' FROM business_records WHERE record_type=? AND record_id=?', ('report', report_id)).fetchone()
+        if row is None:
+            return None
+        return saved_report_view(row[0], report_id) or self.get_record('report', report_id)
 
     def delete_record(self, record_type: str, record_id: str) -> bool:
         with self._record_session() as connection:
@@ -234,12 +257,12 @@ class MySQLRepository:
         if self._active_connection.get(None) is not None:
             yield
             return
-        # 每次业务读写独立连接，读取也结束事务；不保留跨线程的旧快照。
-        connection = self._connector.connect(
+        # 每次读写独占一条池中连接并结束事务，不保留跨线程的旧快照。
+        connection = connect_mysql(dict(
             host=os.getenv('MYSQL_HOST', 'mysql'), port=int(os.getenv('MYSQL_PORT', '3306')),
             user=os.getenv('MYSQL_USER', 'industry'), password=os.getenv('MYSQL_PASSWORD', os.getenv('MYSQL_APP_PASSWORD', 'industry')),
             database=os.getenv('MYSQL_DATABASE', 'industry_agent'), autocommit=False,
-        )
+        ), self._connector)
         token = self._active_connection.set(connection)
         try:
             yield
@@ -385,6 +408,16 @@ class MySQLRepository:
         return [dict(json.loads(row["payload"])) for row in rows]
 
     @_mysql_operation
+    def list_queue_index(self):
+        from .queue_index import queue_index_sql, read_queue_index
+        cursor=self.connection.cursor()
+        try:
+            cursor.execute('SELECT '+queue_index_sql(mysql=True)+' FROM workorders ORDER BY workorder_id')
+            return read_queue_index(cursor.fetchall())
+        finally:
+            cursor.close()
+
+    @_mysql_operation
     def delete(self, workorder_id: str) -> bool:
         cursor = self.connection.cursor()
         try:
@@ -476,6 +509,31 @@ class MySQLRepository:
             return records
         finally:
             cursor.close()
+
+    @_mysql_operation
+    def list_report_index(self, workorder_id=''):
+        from .report_index import read_report_index, report_index_sql
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute('SELECT record_id,' + report_index_sql()
+                           + ' FROM business_records WHERE record_type=%s', ('report',))
+            return read_report_index(cursor.fetchall(), workorder_id)
+        finally:
+            cursor.close()
+
+    @_mysql_operation
+    def get_report_view(self, report_id):
+        from .report_index import report_view_sql, saved_report_view
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute('SELECT ' + report_view_sql()
+                           + ' FROM business_records WHERE record_type=%s AND record_id=%s', ('report', report_id))
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+        if row is None:
+            return None
+        return saved_report_view(row[0], report_id) or self.get_record('report', report_id)
 
     @_mysql_operation
     def delete_record(self, record_type: str, record_id: str) -> bool:

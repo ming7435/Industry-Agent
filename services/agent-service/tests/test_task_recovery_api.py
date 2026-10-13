@@ -23,33 +23,35 @@ def client(tmp_path, actor):
     return TestClient(app), saved, calls
 
 
-def test_api_resumes_server_checkpoint_and_request_replay_is_idempotent(tmp_path):
+def test_retired_resume_cannot_execute_or_replay_server_checkpoint(tmp_path):
     api, saved, calls = client(tmp_path, {'user_id': 'owner', 'role': 'technician'})
     listing = api.get('/api/runtime/recovery').json()['items']
     assert len(listing) == 1 and 'state' not in listing[0]
     url = '/api/runtime/recovery/' + saved['recovery_id'] + '/resume'
     first = api.post(url, json={'request_id': 'one'})
     second = api.post(url, json={'request_id': 'one'})
-    assert first.status_code == 200 and first.json() == second.json()
-    assert calls == [1]
+    assert first.status_code == 404 and second.status_code == 404
+    assert calls == []
+    assert listing[0]['can_resume'] is False
 
 
 def test_api_denies_other_actor_and_client_plan_injection(tmp_path):
     api, saved, calls = client(tmp_path, {'user_id': 'other', 'role': 'technician'})
     assert api.get('/api/runtime/recovery').json()['items'] == []
     url = '/api/runtime/recovery/' + saved['recovery_id'] + '/resume'
-    assert api.post(url, json={'request_id': 'one'}).status_code == 403
-    assert api.post(url, json={'request_id': 'one', 'plan': {}, 'actor_id': 'owner'}).status_code == 422
+    assert api.post(url, json={'request_id': 'one'}).status_code == 404
+    assert api.post(url, json={'request_id': 'one', 'plan': {}, 'actor_id': 'owner'}).status_code == 404
     assert calls == []
 
 
-def test_supervisor_can_resume_unowned_system_runtime(tmp_path):
+def test_supervisor_can_read_but_cannot_resume_unowned_system_runtime(tmp_path):
     api, saved, calls = client(tmp_path, {'user_id': 'reviewer', 'role': 'supervisor'})
-    assert api.post('/api/runtime/recovery/' + saved['recovery_id'] + '/resume', json={'request_id': 'one'}).status_code == 200
-    assert calls == [1]
+    assert api.get('/api/runtime/recovery').json()['items']
+    assert api.post('/api/runtime/recovery/' + saved['recovery_id'] + '/resume', json={'request_id': 'one'}).status_code == 404
+    assert calls == []
 
 
 def test_cross_origin_recovery_is_rejected_before_execution(tmp_path):
     api, saved, calls = client(tmp_path, {'user_id':'owner','role':'technician'})
     response=api.post('/api/runtime/recovery/'+saved['recovery_id']+'/resume',json={'request_id':'one'},headers={'Origin':'https://evil.example'})
-    assert response.status_code==403 and calls==[]
+    assert response.status_code==404 and calls==[]

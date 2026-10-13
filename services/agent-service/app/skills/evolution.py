@@ -155,6 +155,9 @@ class SkillEvolution:
 
     def generate_source(self, source):
         """内部入口；来源仍来自服务器轨迹/周计划，不对客户端开放。"""
+        from app.skills.optimization import verification_mode
+        if not verification_mode(source['agent'], source['name']):
+            return None
         records = self.list()
         for source in [source]:
             current = self.manager.detail(source['agent'], source['name'])
@@ -169,7 +172,9 @@ class SkillEvolution:
                                               lambda: {'proposal_id': proposal_id})
             if binding['proposal_id'] != proposal_id:
                 continue
+            from app.skills.optimization import verification_mode
             initial = {'proposal_id': proposal_id, 'revision': 0, 'status': 'queued', 'history': ['queued'],
+                       'verification_mode': verification_mode(source['agent'], source['name']),
                        'agent': source['agent'], 'name': source['name'], 'source': source,
                        'base_revision': current['revision'], 'protected_tools': current['tools'],
                        'created_at': _now(), 'updated_at': _now(), 'message': '等待生成修改稿', 'draft': None}
@@ -218,6 +223,13 @@ class SkillEvolution:
 
     def _confirm(self, proposal_id, candidate_hash, machine, actor, resolve_actor):
         record = self.get(proposal_id)
+        from app.skills.optimization import verification_mode
+        mode = verification_mode(record['agent'], record['name'])
+        if mode in {'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
+            from app.skills.task_testing import validate_task
+            if set(machine) != {'task'}:
+                raise SkillEditError(422, '此技能需要任务样例，不使用模拟故障验证')
+            machine = {'task': validate_task(record['agent'], record['name'], machine['task'])}
         if actor.get('role') != 'technician' or not actor.get('user_id'):
             raise SkillEditError(403, '请由负责模拟设备的维修人员确认修改稿')
         if candidate_hash != record.get('candidate_hash'):
@@ -228,7 +240,7 @@ class SkillEvolution:
             raise SkillEditError(409, '该修改稿已由其它确认信息锁定')
         if record['status'] != 'awaiting_confirmation':
             raise SkillEditError(409, '当前修改稿不能确认')
-        if set(machine) != {'device_id', 'scenario_id', 'expected'} or any(not str(v).strip() for v in machine.values()):
+        if mode not in {'knowledge_flow', 'cad_spec_flow', 'review_flow'} and (set(machine) != {'device_id', 'scenario_id', 'expected'} or any(not str(v).strip() for v in machine.values())):
             raise SkillEditError(422, '请选择测试设备、故障场景和预期结果')
         self._baseline(record)
         # 会话解析闭包只在本进程内保存，不进入MySQL、日志或修改稿。
@@ -237,7 +249,8 @@ class SkillEvolution:
             confirmed = self._change(record, status='confirmed', confirmed_by=actor['user_id'],
                                      confirmed_at=_now(), confirmed_epoch=time(), confirmation_id=uuid4().hex,
                                      owner_instance=self.instance, owner_process=os.getpid(),
-                                     machine=dict(machine), message='人工已确认，等待启动模拟机器验证')
+                                     machine=dict(machine), verification_mode=mode,
+                                     message='人工已确认，等待启动任务验证' if mode != 'machine_flow' else '人工已确认，等待启动模拟机器验证')
         except BaseException:
             self._contexts.pop(proposal_id, None)
             raise
@@ -323,8 +336,12 @@ class SkillEvolution:
         if record['status'] == 'confirmed':
             record = self._change(record, status='verification_starting', message='正在启动已确认的模拟机器验证')
             try:
-                receipt = self.manager.trials.start_machine(record['agent'], record['name'],
-                                                           {**record['draft'], 'machine': record['machine']}, actor)
+                if record.get('verification_mode') in {'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
+                    receipt = self.manager.trials.start_task(record['agent'], record['name'],
+                        {**record['draft'], 'task': record['machine']['task']}, actor)
+                else:
+                    receipt = self.manager.trials.start_machine(record['agent'], record['name'],
+                        {**record['draft'], 'machine': record['machine']}, actor)
             except SkillEditError as error:
                 return self._change(record, status='verification_failed', message=str(error))
             except Exception:
@@ -341,7 +358,8 @@ class SkillEvolution:
             return self._change(record, status='verification_failed', message='模拟验证失败，旧版保留')
         if receipt.get('status') != 'completed':
             return record
-        if receipt.get('mode') != 'machine_flow':
+        from app.skills.optimization import verification_mode
+        if receipt.get('mode') != verification_mode(record['agent'], record['name']):
             return self._change(record, status='verification_failed', message='非完整模拟机器验证，禁止发布')
         # 测试完成只允许进入待发布；后台不能代替人工最终发布。
         return self._change(record, status='awaiting_publication', owner_instance='', lease_until=0,

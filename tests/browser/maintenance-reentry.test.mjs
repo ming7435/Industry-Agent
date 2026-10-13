@@ -230,7 +230,7 @@ test('慢工单不阻塞下一轮方案轮询，后台轮询不显示刷新中�
     assert.equal(planReads, baselinePlanReads + 1, '工单挂起时下一轮仍应请求方案');
     assert.equal(orderReads, 1, '工单请求挂起时不得并发重复请求');
     assert.equal(await page.getByRole('button', { name: '刷新中…', exact: true }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: '刷新方案', exact: true }).isEnabled(), true);
+    assert.equal(await page.getByRole('button', { name: '刷新方案', exact: true }).count(), 0);
     assert.equal(await page.locator('.maintenance-plan-list-row').count(), 2);
     await respond(pollRoute, { ...planBody, items: [...publicPlans, makePlan('PLAN-POLL-NEW')] });
     await page.getByRole('button', { name: /PLAN-POLL-NEW/ }).waitFor();

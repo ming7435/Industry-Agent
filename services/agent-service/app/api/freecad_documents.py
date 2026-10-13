@@ -54,7 +54,7 @@ def application_for_request(request):
     return CadDocumentApplication(artifacts=artifacts,source_reader=lambda run_id:get_freecad_run_record(request,run_id))
 
 
-def build_document_router(require_write_auth,application_factory=application_for_request):
+def build_document_router(require_write_auth,application_factory=application_for_request,trace=None):
     router=APIRouter(prefix='/api/cad/freecad')
 
     def app_actor(request):
@@ -138,13 +138,13 @@ def build_document_router(require_write_auth,application_factory=application_for
 
     @router.post('/documents/{document_id}/proposals',dependencies=[Depends(writing)])
     def propose(document_id:str,body:ProposeDocument,request:Request):
-        from app.cad_documents.proposal import propose_document_command
+        from app.cad_documents.proposal import propose_document_command, observed_cad_call
         from app.clients.model import ModelServiceClient
         application,actor=app_actor(request)
         head=call(application.head,actor,document_id)
         if head.revision!=body.expected_revision: raise HTTPException(409,'文档已更新，请重新读取修订')
         snapshot=call(application.snapshot,actor,document_id,head.revision)
-        return call(propose_document_command,head,snapshot,body.prompt,ModelServiceClient())
+        return call(observed_cad_call,propose_document_command,head,snapshot,body.prompt,ModelServiceClient(),trace=trace)
 
     @router.get('/documents/{document_id}/commands/{command_id}')
     def command(document_id:str,command_id:str,request:Request):

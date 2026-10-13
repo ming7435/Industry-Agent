@@ -1,7 +1,8 @@
 """长期调用轨迹存于 MySQL：索引查询、短事务，不扫描巨大事件上下文。"""
 import json
+import os
 from contextlib import contextmanager
-from threading import Lock
+from threading import Lock, Thread
 from time import monotonic
 from shared.persistence import StorageUnavailable, mysql_session, mysql_configuration
 from .runs import RUN_INDEX_SHAPE, run_index_record
@@ -56,6 +57,8 @@ class MySQLTraceStore:
         self._append_connection = None
         self._append_opened_at = self._append_last_used = 0.0
         self._coverage = CoverageTracker()
+        self._run_index_lock = Lock()
+        self._run_index_cache = {}
         with mysql_session(self._config) as db:
             cursor = db.cursor()
             try:
@@ -67,6 +70,11 @@ class MySQLTraceStore:
                 self._coverage.initialize(cursor)
             finally:
                 cursor.close()
+        if os.getenv('APP_ENV','development').lower()!='testing':
+            def warm_index():
+                try: self.list_run_index()
+                except Exception: pass  # The next read retries from the durable source.
+            Thread(target=warm_index,name='trace-index-warmup',daemon=True).start()
 
     def _discard_append_connection(self):
         import mysql.connector
@@ -177,9 +185,11 @@ class MySQLTraceStore:
                 cursor.close()
 
     def list_run_index(self, limit=5000):
-        return [run_index_record(record) for record in self._list(limit=limit, projection=_RUN_INDEX_PROJECTION)]
+        with self._run_index_lock:
+            return [run_index_record(record) for record in self._list(limit=limit, projection=_RUN_INDEX_PROJECTION,
+                                                                    cache=self._run_index_cache)]
 
-    def _list(self, trace_id=None, task_id=None, limit=5000, projection='payload'):
+    def _list(self, trace_id=None, task_id=None, limit=5000, projection='payload', cache=None):
         clauses, parameters = [], []
         for name, value in (('trace_id', trace_id), ('task_id', task_id)):
             if value is not None:
@@ -195,11 +205,21 @@ class MySQLTraceStore:
                 # 先取索引编号再读取 JSON，避免大型 payload 参与排序。
                 cursor.execute('SELECT sequence_id FROM agent_execution_trace' + where + ' ORDER BY sequence_id DESC LIMIT %s', (*parameters, limit))
                 ids = [row[0] for row in cursor.fetchall()]
-                records = {}
-                for offset in range(0, len(ids), 200):
-                    chunk = ids[offset:offset + 200]
+                records = {} if cache is None else cache
+                missing = [key for key in ids if key not in records]
+                for offset in range(0, len(missing), 200):
+                    chunk = missing[offset:offset + 200]
                     cursor.execute('SELECT sequence_id,' + projection + ' FROM agent_execution_trace WHERE sequence_id IN (' + ','.join(['%s'] * len(chunk)) + ')', tuple(chunk))
                     records.update({row[0]: json.loads(row[1]) for row in cursor.fetchall()})
+                if cache is not None:
+                    # Trace rows are immutable. Always reread authoritative IDs:
+                    # new rows are projected and removed rows cannot reappear.
+                    retained=set(ids)
+                    covers_all=len(ids)<limit
+                    oldest=ids[-1] if ids else 0
+                    for key in list(cache):
+                        if key not in retained and (covers_all or key>=oldest): del cache[key]
+                    for key in sorted(cache)[:-5000]: del cache[key]
                 return [records[key] for key in reversed(ids) if key in records]
             finally:
                 cursor.close()

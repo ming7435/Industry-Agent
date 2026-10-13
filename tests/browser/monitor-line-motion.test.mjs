@@ -66,10 +66,10 @@ before(async () => {
   const { chromium } = await import(process.env.PLAYWRIGHT_MODULE_PATH ? pathToFileURL(process.env.PLAYWRIGHT_MODULE_PATH).href : 'playwright-core');
   const compiled = await build({
     stdin: { resolveDir: resolve(root, 'frontend/monitor-react/src/app'), contents: `${observer}\nimport React from 'react';import{createRoot}from'react-dom/client';import{App}from'./App.jsx';createRoot(document.getElementById('root')).render(React.createElement(App));` },
-    plugins: [{ name: 'observe-real-workshop', setup(builder) { builder.onLoad({ filter: /[\\/]App\.jsx$/ }, async ({ path }) => {
+    plugins: [{ name: 'observe-real-workshop', setup(builder) { builder.onLoad({ filter: /[\\/](App|Machine3DScene)\.jsx$/ }, async ({ path }) => {
       const source = await readFile(path, 'utf8');
       const marker = 'mount.appendChild(renderer.domElement);';
-      assert.ok(source.includes(marker), 'Workshop renderer attachment must remain observable');
+      if (path.endsWith('Machine3DScene.jsx')) assert.ok(source.includes(marker), 'Workshop renderer attachment must remain observable');
       return { loader: 'jsx', contents: source.replace(marker, marker + '\nwindow.__observeWorkshop(renderer);')
         .replace('const [bigScreen, setBigScreen] = useState(false);', 'const [bigScreen, setBigScreen] = useState(new URLSearchParams(location.search).has("fixtureBigScreen"));') };
     }); } }],
@@ -129,7 +129,15 @@ async function open({ bigScreen = false, initialStatus = 'running', line = 'runn
     return respond(route, { items: [] });
   });
   await page.goto(`${fixture.base}/?view=monitor${bigScreen ? '&fixtureBigScreen=1' : ''}`);
-  await page.locator('.machine-3d-canvas canvas').waitFor();
+  // React retries the lazily loaded renderer after committing its fallback;
+  // advance the fixture's frozen scheduler before awaiting the real canvas.
+  await page.clock.runFor(400);
+  try { await page.locator('.machine-3d-canvas canvas').waitFor(); }
+  catch (cause) {
+    const diagnostics = {errors, text:(await page.locator('body').innerText()).slice(0,1200)};
+    await context.close();
+    throw new Error('Workshop canvas failed: ' + JSON.stringify(diagnostics), {cause});
+  }
   await page.clock.runFor(96);
   async function refresh() {
     const result = page.waitForResponse(response => new URL(response.url()).pathname === '/api/monitor/snapshot');

@@ -7,6 +7,8 @@ from time import monotonic, sleep
 import zlib
 from shared.dispatch_projection import compact_workorder_result, plan_execution_identity, reconcile_plan_workorders, ORDER_FIELDS
 from shared.task_deletion import deleted_entities, event_plan_id
+from shared.mysql_connections import connect_mysql
+from shared.recovery_projection import SUMMARY_NAMESPACE, recovery_projection
 
 
 class StorageUnavailable(RuntimeError):
@@ -38,7 +40,7 @@ def mysql_session(config=None):
     import mysql.connector
     connection = None
     try:
-        connection = mysql.connector.connect(**dict(config or mysql_configuration()), autocommit=False)
+        connection = connect_mysql({**dict(config or mysql_configuration()), 'autocommit': False})
         yield connection
         connection.commit()
     except mysql.connector.Error as error:
@@ -213,6 +215,8 @@ class MySQLJsonStore:
                     orders = (_decode(receipt['payload']).get('workorder_ids') or []) if receipt else []
                     value = deleted_entities(value, [plan_id], orders)
         cursor.execute("INSERT INTO runtime_records_mysql(namespace,key_hash,state_key,payload) VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE payload=VALUES(payload), updated_at=CURRENT_TIMESTAMP(6)", (ns, digest, original, _encode(value)))
+        if ns == 'runtime_recovery':
+            self._write(cursor, SUMMARY_NAMESPACE, original, recovery_projection(value))
         self._project(cursor, ns, digest, value)
         return value
 
@@ -244,6 +248,84 @@ class MySQLJsonStore:
         ns, digest, _ = self._identity(namespace, key)
         with self._session() as cursor:
             cursor.execute("DELETE FROM runtime_records_mysql WHERE namespace=%s AND key_hash=%s", (ns, digest))
+            if ns == 'runtime_recovery':
+                cursor.execute("DELETE FROM runtime_records_mysql WHERE namespace=%s AND key_hash=%s", (SUMMARY_NAMESPACE, digest))
+
+    def _backfill_recovery_summary(self, key):
+        # Lock the source while building the index: a legacy reader must not
+        # overwrite metadata from a newer checkpoint committed concurrently.
+        with self._session() as cursor:
+            cursor.execute('SELECT payload FROM runtime_records_mysql WHERE namespace=%s AND key_hash=%s FOR UPDATE',
+                           ('runtime_recovery', sha256(str(key).encode('utf-8')).hexdigest()))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            projection = recovery_projection(_decode(row['payload']))
+            self._write(cursor, SUMMARY_NAMESPACE, key, projection)
+            return projection
+
+    def _read_recovery_summary(self, row):
+        fresh = (row['summary_payload'] is not None and row['summary_updated_at'] >= row['body_updated_at'])
+        projection = None
+        if fresh:
+            try:
+                projection = _decode(row['summary_payload'])
+            except (ValueError, zlib.error):
+                pass
+        if not projection or projection.get('_recovery_projection_version') != 1:
+            projection = self._backfill_recovery_summary(row['state_key'])
+        return projection
+
+    def recovery_header(self, key):
+        with self._session() as cursor:
+            cursor.execute('SELECT r.state_key,s.payload AS summary_payload,r.updated_at AS body_updated_at,'
+                           's.updated_at AS summary_updated_at FROM runtime_records_mysql r '
+                           'LEFT JOIN runtime_records_mysql s ON s.namespace=%s AND s.key_hash=r.key_hash '
+                           'WHERE r.namespace=%s AND r.key_hash=%s',
+                           (SUMMARY_NAMESPACE, 'runtime_recovery', sha256(str(key).encode('utf-8')).hexdigest()))
+            row = cursor.fetchone()
+        projection = self._read_recovery_summary(row) if row is not None else None
+        return ({key: value for key, value in projection.items()
+                 if key not in {'state', '_recovery_projection_version', 'has_checkpoint'}}
+                if projection is not None else None)
+
+    def recovery_records(self, limit=5000):
+        with self._session() as cursor:
+            cursor.execute('SELECT r.state_key,s.payload AS summary_payload,r.updated_at AS body_updated_at,'
+                           's.updated_at AS summary_updated_at FROM runtime_records_mysql r '
+                           'LEFT JOIN runtime_records_mysql s ON s.namespace=%s AND s.key_hash=r.key_hash '
+                           'WHERE r.namespace=%s ORDER BY r.updated_at DESC,r.key_hash LIMIT %s',
+                           (SUMMARY_NAMESPACE, 'runtime_recovery', max(1, min(int(limit), 5000))))
+            rows = cursor.fetchall()
+        for row in rows:
+            projection = self._read_recovery_summary(row)
+            if projection is not None:
+                yield projection
+
+    def replace_recovery_checkpoint(self, key, expected, value):
+        ns, digest, original = self._identity('runtime_recovery', key)
+        with self._session() as cursor:
+            # Lock both the source row and its atomically-written metadata before
+            # comparing. A cache hit never weakens the checkpoint ownership CAS.
+            cursor.execute('SELECT r.updated_at AS body_updated_at,s.payload AS summary_payload,'
+                           's.updated_at AS summary_updated_at FROM runtime_records_mysql r '
+                           'LEFT JOIN runtime_records_mysql s ON s.namespace=%s AND s.key_hash=r.key_hash '
+                           'WHERE r.namespace=%s AND r.key_hash=%s FOR UPDATE', (SUMMARY_NAMESPACE, ns, digest))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            current = None
+            if row['summary_payload'] is not None and row['summary_updated_at'] >= row['body_updated_at']:
+                try:
+                    current = _decode(row['summary_payload'])
+                except (ValueError, zlib.error):
+                    pass
+            if not isinstance(current, dict) or current.get('_recovery_projection_version') != 1:
+                cursor.execute('SELECT payload FROM runtime_records_mysql WHERE namespace=%s AND key_hash=%s', (ns, digest))
+                current = _decode(cursor.fetchone()['payload'])
+            if current.get('updated_at') != expected:
+                return None
+            return self._write(cursor, ns, original, dict(value))
 
     def keys(self, namespace):
         with self._session() as cursor:

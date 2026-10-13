@@ -61,6 +61,7 @@ class QualityWorkflowState(AgentExecutionState, total=False):
     stop_reason: str
     inspection_type: str
     part: Dict[str, Any]
+    input_receipt: Dict[str, Any]
     inspection_plan: Dict[str, Any]
     dimension_check: Dict[str, Any]
     appearance_check: Dict[str, Any]

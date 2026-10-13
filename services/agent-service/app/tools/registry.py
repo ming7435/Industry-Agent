@@ -461,11 +461,14 @@ class ToolRegistry:
             return self.mcp.call("mes", "persist_report", arguments)
         return persist_report_tool(self.report_store, **arguments)
 
-    def list_reports(self, workorder_id: str = "", **_: Any) -> Dict[str, Any]:
+    def list_reports(self, workorder_id: str = "", summary: bool = False, **_: Any) -> Dict[str, Any]:
         """列出报告工作区中已持久化的报告。"""
 
         if self.backend_base_url:
-            return self.mcp.call("mes", "list_reports", {"workorder_id": workorder_id})
+            arguments = {'workorder_id': workorder_id}
+            if summary:
+                arguments['summary'] = True
+            return self.mcp.call("mes", "list_reports", arguments)
         items = list(self.report_store.values())
         if workorder_id:
             items = [item for item in items if str(item.get("workorder_id") or "") == str(workorder_id)]

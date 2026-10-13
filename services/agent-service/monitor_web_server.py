@@ -815,6 +815,8 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
 
         if path == '/api/production/virtual' or path.startswith('/api/production/virtual/'):
             return True
+        if path == '/api/runtime/service-exceptions' or path.startswith('/api/runtime/service-exceptions/'):
+            return True
 
         return path.startswith((
             "/api/agent/",
@@ -850,7 +852,13 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         )
         production_write = method != 'GET' and path_parts[:3] == ['api', 'production', 'virtual']
         expert_write = method != 'GET' and path_parts[:2] == ['api', 'expert']
-        if expert_write:
+        exception_write = method != 'GET' and (path_parts[:3] == ['api','runtime','service-exceptions'] or
+            path_parts[:2] == ['api','reports'] and len(path_parts)>2 and path_parts[2].startswith('EXR-'))
+        if exception_write:
+            body = self._read_local_body(label='异常核查',max_bytes=32 * 1024)
+            if body is None:
+                return
+        elif expert_write:
             body = self._read_local_body(label='专家中心', max_bytes=128 * 1024)
             if body is None:
                 return
@@ -869,8 +877,11 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         headers = agent_request_headers(self.headers.get("Content-Type", "application/json"))
         if self.headers.get('Cookie'):
             headers['Cookie'] = self.headers['Cookie']
-        if expert_write or cad_write:
+        if expert_write or cad_write or exception_write:
             headers['Origin'] = self.headers['Origin']
+        if exception_write:
+            # 原 Host 已通过严格本机校验；保持上游人工反馈的同源判断与页面一致。
+            headers['Host'] = self.headers['Host']
         request = Request(
             AGENT_SERVICE_BASE_URL.rstrip("/") + self.path,
             data=body,

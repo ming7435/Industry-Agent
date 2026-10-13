@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import secrets
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -221,12 +222,17 @@ def _start_optional_freecad(env: dict[str, str]) -> dict[str, object]:
     command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         str(required[-1]), 'start', '-WaitSeconds', '45']
     try:
-        response = subprocess.run(command, cwd=PROJECT_ROOT, env=env, capture_output=True,
-            text=True, encoding='utf-8', errors='replace', timeout=55,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        evidence = json.loads(response.stdout) if response.returncode == 0 else {}
+        # A newly launched GUI can keep inherited pipe handles open after
+        # PowerShell exits. On Windows run() also drains those pipes without a
+        # timeout after killing the launcher. A regular file avoids both waits.
+        with tempfile.TemporaryFile() as output:
+            response = subprocess.run(command, cwd=PROJECT_ROOT, env=env,
+                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.DEVNULL,
+                timeout=55, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            output.seek(0)
+            evidence = json.loads(output.read(65536).decode('utf-8', errors='replace')) if response.returncode == 0 else {}
         # 只读取启动器的受控确认，不打印继承的环境或第三方异常正文。
-        if evidence.get('running') is True and evidence.get('rpc_ready') is True:
+        if isinstance(evidence, dict) and evidence.get('running') is True and evidence.get('rpc_ready') is True:
             return {'ready': True}
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass

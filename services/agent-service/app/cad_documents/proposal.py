@@ -6,6 +6,30 @@ from shared.freecad_documents import parse_command,PRIMITIVE_MODELS,DIMENSIONS,D
 from .native_program import validate_object_command
 
 
+def observed_cad_call(operation, *args, trace=None):
+    """记录真实规格/提案的技能消费，不把设计解析当作实体或生产成功。"""
+    from app.skills.registry import skill_observation_scope
+    identity = 'CAD-PROPOSAL-' + uuid4().hex
+    def observed(snapshot):
+        if trace is not None:
+            trace.record(type='agent', event='skill_observed', trace_id=identity,
+                task_id=identity, agent_run_id=identity, run_type='cad_specification', **snapshot)
+    with skill_observation_scope(observed):
+        try:
+            result = operation(*args)
+        except Exception:
+            if trace is not None:
+                trace.record(type='agent', event='agent_error', agent='cad', trace_id=identity,
+                    task_id=identity, agent_run_id=identity, error='CAD 模型或规格解析错误，结果未确认')
+            raise
+    if trace is not None:
+        trace.record(type='agent', event='agent_completed', agent='cad', trace_id=identity,
+            task_id=identity, agent_run_id=identity, run_type='cad_specification',
+            output={**result, 'validation': {'valid': result.get('status') == 'ready'},
+                    'validation_scope': 'specification_only'})
+    return result
+
+
 def resolve_freecad_spec(prompt,model,explicit_spec=None):
     from app.tools.cad.freecad_mcp import validate_spec
     from app.agents.cad.graph import (_explicit_advanced_spec,_explicit_tetrahedron_spec,

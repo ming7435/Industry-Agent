@@ -112,7 +112,7 @@ def _freecad_public_record(record):
     return value
 
 
-def build_freecad_router(require_auth, trace=None):
+def build_freecad_router(require_auth, trace=None, *, recovery=None):
     """本地运行无需 OAuth，仍沿用服务认证、幂等认领及固定文件下载。"""
     from app.clients.freecad import FreeCADClient, FreeCADConnectionError
     from app.tools.cad.freecad_mcp import artifact_path, ARTIFACT_TYPES
@@ -165,12 +165,23 @@ def build_freecad_router(require_auth, trace=None):
                 "error_code": code, "error": str(error) if isinstance(error, FreeCADConnectionError) else "CAD 节点执行失败，请检查本地 FreeCAD 和模型服务。",
                 "updated_at": time.time()}
         finally:
+            failure_status=record.get('status')
+            failure_error=record.get('error') or record.get('answer') or 'CAD 建模未返回有效结果'
             try:
                 storage.set(record["run_id"], record)
             except Exception:
+                failure_status='outcome_unknown'
+                failure_error='CAD 结果写入 Redis 失败；禁止自动重放。'+str(record.get('error') or '')
                 if trace is not None:
                     trace.record(event="freecad_storage_failed", agent="cad", task_id=record["run_id"], error="FreeCAD 结果写入 Redis 失败；禁止自动重放。")
             finally:
+                if failure_status in {'failed','error','outcome_unknown','timeout'}:
+                    from app.runtime.service_exceptions import record_service_failure
+                    record_service_failure(recovery,'cad',{
+                        'task_id':record['run_id'],'trace_id':record['run_id'],
+                        'recovery_actor_id':record.get('_owner_id',''),'part_id':record.get('part_number',''),
+                        'subject_summary':(record.get('part_name') or '零件')+' 建模服务异常'},failure_error,
+                        status='outcome_unknown' if failure_status=='outcome_unknown' else 'failed')
                 close(client)
                 slots.release()
 
@@ -222,6 +233,8 @@ def build_freecad_router(require_auth, trace=None):
             record = {"run_id": run_id, "input_digest": digest, "prompt": body.prompt, "spec": body.spec,
                 "part_name": body.part_name, "part_number": body.part_number,
                 "status": "running", "answer": "", "calls": [], "artifacts": [], "created_at": now, "updated_at": now}
+            from app.api.service_exceptions import optional_actor_id
+            record['_owner_id']=optional_actor_id(request)
             try:
                 created = storage.create(run_id, record)
             except Exception:

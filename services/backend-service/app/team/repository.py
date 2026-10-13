@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import time
 from shared.temporary_cache import RedisJsonCache
+from shared.mysql_connections import connect_mysql
 
 
 class TeamRepository:
@@ -41,8 +42,7 @@ class TeamRepository:
             connection.execute('BEGIN IMMEDIATE')
             db = connection
         else:
-            import mysql.connector
-            connection = mysql.connector.connect(host=os.getenv('MYSQL_HOST', 'mysql'), port=int(os.getenv('MYSQL_PORT', '3306')), user=os.getenv('MYSQL_USER', 'industry'), password=os.getenv('MYSQL_PASSWORD', os.getenv('MYSQL_APP_PASSWORD', 'industry')), database=os.getenv('MYSQL_DATABASE', 'industry_agent'), autocommit=False)
+            connection = connect_mysql(dict(host=os.getenv('MYSQL_HOST', 'mysql'), port=int(os.getenv('MYSQL_PORT', '3306')), user=os.getenv('MYSQL_USER', 'industry'), password=os.getenv('MYSQL_PASSWORD', os.getenv('MYSQL_APP_PASSWORD', 'industry')), database=os.getenv('MYSQL_DATABASE', 'industry_agent'), autocommit=False))
             db = _MySQLSession(connection)
         context_token = self._transaction_db.set(db)
         try:

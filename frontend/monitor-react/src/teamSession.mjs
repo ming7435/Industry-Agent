@@ -40,6 +40,8 @@ export function isTeamSessionPath(path) {
   const pathname = new URL(path, 'http://session.local').pathname;
   if (/^\/api\/workorders(?:\/|$)/.test(pathname)) return true;
   if (/^\/api\/runtime\/recovery(?:\/|$)/.test(pathname)) return true;
+  if (/^\/api\/runtime\/service-exceptions(?:\/|$)/.test(pathname)) return true;
+  if (/^\/api\/reports\/EXR-[A-F0-9]+(?:\/|$)/.test(pathname)) return true;
   if (pathname.startsWith('/api/expert/')) return true;
   if (/^\/api\/quality\/simulation(?:\/|$)/.test(pathname)) return true;
   if (/^\/api\/cad\/freecad\/(?:documents|designs)(?:\/|$)/.test(pathname)) return true;

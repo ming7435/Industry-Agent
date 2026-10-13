@@ -1,11 +1,13 @@
 """自动修改稿审核入口：身份、版本、验证和发布回执均来自服务端。"""
 from fastapi import HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.api.team_auth import team_actor
 from app.clients.backend import BackendServiceClient
 from app.skills.evolution import SkillEvolution
 from app.skills.evolution_worker import EvolutionWorker
+from app.skills.task_testing import TaskSample
+from app.skills.review_testing import ReviewSample
 from shared.persistence import StorageUnavailable, PendingResultError
 
 
@@ -18,7 +20,14 @@ def include_evolution_routes(router, manager, write_actor, run, machine_model):
         candidate_hash: str = Field(pattern=r'^[a-f0-9]{64}$')
 
     class ConfirmRequest(HashRequest):
-        machine: machine_model
+        machine: machine_model | None = None
+        task: TaskSample | ReviewSample | None = None
+
+        @model_validator(mode='after')
+        def one_verification(self):
+            if (self.machine is None) == (self.task is None):
+                raise ValueError('机器与任务样例必须且只能选择一种')
+            return self
 
     def action(function, *args):
         try:
@@ -64,7 +73,7 @@ def include_evolution_routes(router, manager, write_actor, run, machine_model):
         token = request.cookies.get('maintenance_session', '')
         resolve_actor = lambda: BackendServiceClient().resolve_session(token)
         result = action(manager.evolution.confirm, proposal_id, values.candidate_hash,
-                        values.machine.model_dump(), actor, resolve_actor)
+                        values.machine.model_dump() if values.machine else {'task': values.task.model_dump()}, actor, resolve_actor)
         manager.evolution_worker.wake()
         return {key: result.get(key) for key in ('proposal_id', 'revision', 'status', 'message', 'confirmed_by', 'confirmation_id')}
 

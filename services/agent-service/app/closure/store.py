@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from app.config.settings import allow_degraded_storage
 from typing import Any, Mapping
+from shared.mysql_connections import connect_mysql
 
 
 class ClosureBackendError(RuntimeError):
@@ -50,14 +51,14 @@ class MySQLClosureStore:
         active = self._active_connection.get()
         if active is not None:
             return _TransactionConnection(active)
-        return self._connector.connect(**self.config)
+        return connect_mysql(self.config, self._connector)
 
     @contextmanager
     def quality_transaction(self):
         if self._active_connection.get() is not None:
             yield
             return
-        connection = self._connector.connect(**{**self.config, "autocommit": False})
+        connection = connect_mysql({**self.config, "autocommit": False}, self._connector)
         token = self._active_connection.set(connection)
         cursor = connection.cursor()
         try:

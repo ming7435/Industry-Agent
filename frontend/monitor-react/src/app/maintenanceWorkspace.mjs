@@ -1,9 +1,17 @@
 import { incidentIdentity, recordTimes, localizeIncidentText, linkedPlanOrder } from './incidentIdentity.mjs';
-import { deletedMaintenancePlanIds, rememberDeletedMaintenancePlans } from './maintenanceChanges.mjs';
+import { deletedMaintenancePlanIds, rememberDeletedMaintenancePlans,subscribeMaintenanceChanges } from './maintenanceChanges.mjs';
+import {getTeamSession,subscribeTeamSession} from '../teamSession.mjs';
 import { businessText } from './businessText.mjs';
 
 const object = value => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 const text = value => String(value ?? "").trim();
+let orderCache={key:'',items:new Map()};
+const orderVersion=order=>JSON.stringify([order._revision,order.updated_at,order.plan_id,order.status,order.assignee]);
+subscribeTeamSession(()=>{orderCache={key:'',items:new Map()};});
+subscribeMaintenanceChanges(change=>{
+  const ids=[...(change.deleted_workorder_ids||[]),change.workorder?.workorder_id];
+  for(const id of ids)orderCache.items.delete(id);
+});
 
 export async function loadMaintenancePlans(request, options = {}) {
   const plans = await request("/api/maintenance/plans", options);
@@ -17,9 +25,31 @@ export async function loadMaintenancePlans(request, options = {}) {
 
 export async function loadMaintenanceOrders(request, actor = null, options = {}) {
   if (!actor?.user_id) return [];
-  const orders = await request("/api/workorders", options);
+  const key=JSON.stringify([getTeamSession().version,actor.user_id,actor.role]);
+  if(orderCache.key!==key)orderCache={key,items:new Map()};
+  const cache=orderCache;
+  const scopedOptions={...options,scope:JSON.stringify([actor.user_id,actor.role||''])};
+  const orders = await request("/api/workorders?summary=true", scopedOptions);
+  if(orderCache!==cache||options.signal?.aborted)throw new DOMException('工单身份已变化','AbortError');
   rememberDeletedMaintenancePlans(orders?.deleted_plan_ids || []);
-  return Array.isArray(orders?.items) ? orders.items : [];
+  const items=Array.isArray(orders?.items)?orders.items:[];
+  if(!items.some(item=>item._summary_record))return items;
+  const missing=items.filter(item=>cache.items.get(item.workorder_id)?.version!==orderVersion(item)
+    || Date.now()-cache.items.get(item.workorder_id)?.loadedAt>=30000);
+  if(missing.length){
+    const replies=cache.items.size===0||missing.length>3
+      ? (await request('/api/workorders',options)).items||[]
+      : await Promise.all(missing.map(item=>request(`/api/workorders/${encodeURIComponent(item.workorder_id)}`,options)));
+    if(orderCache!==cache||options.signal?.aborted)throw new DOMException('工单身份已变化','AbortError');
+    for(const reply of replies){
+      const value=object(reply.workorder||reply);
+      if(value.workorder_id)cache.items.set(value.workorder_id,{version:orderVersion(value),value,loadedAt:Date.now()});
+    }
+  }
+  const retained=new Set(items.map(item=>item.workorder_id));
+  for(const id of cache.items.keys())if(!retained.has(id))cache.items.delete(id);
+  for(const id of [...cache.items.keys()].slice(0,-100))cache.items.delete(id);
+  return items.map(item=>cache.items.get(item.workorder_id)?.value||item);
 }
 
 export async function loadMaintenanceWorkspace(request, actor = null) {

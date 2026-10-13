@@ -1,6 +1,7 @@
 """运行索引和真实生命周期回归，不连接业务数据库。"""
 import json
 from contextlib import contextmanager
+from threading import Lock
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -311,6 +312,8 @@ def test_mysql_run_index_projects_json_in_query_and_preserves_sequence(monkeypat
     monkeypatch.setattr(module, 'mysql_session', session)
     store = object.__new__(MySQLTraceStore)
     store._config = {'database': 'isolated'}
+    store._run_index_lock = Lock()
+    store._run_index_cache = {}
     rows = store.list_run_index(limit=10)
     assert [row['event'] for row in rows] == ['goal_parsed', 'loop_stop']
     assert build_run_records(rows)[0]['status'] == 'blocked'

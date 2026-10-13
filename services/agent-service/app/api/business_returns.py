@@ -201,6 +201,9 @@ def build_business_return_router(runtime, event_results, require_write_auth):
             raise HTTPException(422, '每次请选择一个维修方案、工单或质检记录')
         container = runtime.container
         state = {'entry':'user','task_id':'TASK-REPORT-' + uuid4().hex[:12],'trace_id':'TRACE-REPORT-' + uuid4().hex[:12], 'persist':True}
+        from app.api.service_exceptions import optional_actor_id
+        from app.runtime.service_exceptions import record_service_failure
+        state['recovery_actor_id']=optional_actor_id(request)
         if body.quality_check_id:
             quality = container.closure_service.get_quality_check(body.quality_check_id)
             if not quality:
@@ -230,9 +233,17 @@ def build_business_return_router(runtime, event_results, require_write_auth):
                          trace_id=order.get('trace_id') or state['trace_id'])
         harness = getattr(container,'harnesses',{}).get('report')
         if harness is None:
+            record_service_failure(getattr(container,'recovery',None),'report',state,'Report Agent 未启用')
             raise HTTPException(503,'Report Agent 未启用')
-        report = _serialize_agent_result(harness.execute_agent(state))
+        try:
+            report = _serialize_agent_result(harness.execute_agent(state))
+        except Exception as error:
+            record_service_failure(getattr(container,'recovery',None),'report',state,error)
+            raise
         if not report.get('persisted'):
+            record_service_failure(getattr(container,'recovery',None),'report',state,
+                report.get('error') or '；'.join(str(item) for item in report.get('validation_findings') or []) or report.get('stop_reason') or '报告未保存成功',
+                status='outcome_unknown' if report.get('stop_reason')=='report_persistence_failed' else 'failed')
             raise HTTPException(502, {'message':'报告未保存成功','report':report})
         return {'report':report,'report_id':report['report_id'],'task_id':state['task_id'],'trace_id':state['trace_id']}
 

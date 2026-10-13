@@ -100,14 +100,14 @@ test('维修结果提交后，缓存的维修方案立即显示工单完成状�
   }finally{await view.context.close();}
 });
 
-test('真正删除后刷新工单仍为空，不提供已删除记录入口',async()=>{
+test('真正删除后自动同步仍为空，不提供已删除记录入口',async()=>{
   const view=await open();
   try{
     await nav(view.page,'工单系统').click();await view.page.locator('.workorder-titlebar').waitFor();
     await view.page.getByRole('button',{name:'删除工单',exact:true}).click();
     await view.page.locator('.workorder-titlebar').waitFor({state:'detached'});
     assert.equal(await view.page.getByLabel('查看旧版隐藏记录',{exact:true}).count(),0);
-    await view.page.getByRole('button',{name:'刷新工单',exact:true}).click();
+    assert.equal(await view.page.getByRole('button',{name:'刷新工单',exact:true}).count(),0);
     await frame(view.page);await view.page.clock.runFor(5100);await frame(view.page);
     assert.equal(await view.page.locator('.workorder-titlebar').count(),0);
     await nav(view.page,'维修方案').click();await frame(view.page);
@@ -124,7 +124,10 @@ test('旧网址参数不能恢复隐藏记录，维修方案和工单都只请�
     await view.page.clock.runFor(5100);await frame(view.page);
     assert.equal(await view.page.locator('.workorder-titlebar').count(),0);
     assert.ok(view.reads.some(path=>path.startsWith('/api/workorders')));
-    assert.ok(view.reads.filter(path=>path.startsWith('/api/workorders')).every(path=>path==='/api/workorders'));
+    assert.ok(view.reads.filter(path=>path.startsWith('/api/workorders')).every(path=>{
+      const url=new URL(path,'http://fixture');
+      return url.pathname==='/api/workorders'&&!url.searchParams.has('include_deleted');
+    }));
     assert.deepEqual(view.writes,[]);assert.deepEqual(view.errors,[]);
   }finally{await view.context.close();}
 });

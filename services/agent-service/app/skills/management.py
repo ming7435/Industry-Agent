@@ -96,7 +96,9 @@ class SkillManager:
     def _summary(skill):
         label, loop, explanation = AGENTS[skill.agent]
         title = next((line.lstrip("# ").strip() for line in skill.document.splitlines() if line.startswith("# ")), skill.goal or skill.name)
+        from app.skills.optimization import capability
         return {"agent": skill.agent, "agent_label": label, "name": skill.name, "title": title,
+                "optimization": capability(skill.agent, skill.name),
                 "version": skill.version, "goal": skill.goal, "internal_loop": loop, "loop_description": explanation,
                 "last_modified_at": datetime.fromtimestamp(Path(skill.path).stat().st_mtime, timezone.utc).isoformat()}
 

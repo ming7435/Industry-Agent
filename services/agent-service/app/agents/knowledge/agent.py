@@ -21,8 +21,9 @@ class KnowledgeAgent(BaseAgent):
     name = "knowledge"
     capabilities = ("document_search", "historical_case_search", "evidence_retrieval")
 
-    def __init__(self, tools: ToolRegistry | None = None) -> None:
+    def __init__(self, tools: ToolRegistry | None = None, *, client=None) -> None:
         self.tools = tools or ToolRegistry()
+        self.client = client
         self.graph = build_knowledge_graph()
 
     def search_knowledge(

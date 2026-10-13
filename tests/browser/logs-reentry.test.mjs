@@ -234,7 +234,7 @@ test('不同运行切换后旧运行明细晚回包不串入新选择', async ()
   } finally { await context.close(); }
 });
 
-test('手动刷新能强制更新当前明细，即使运行事件数量未变化', async () => {
+test('正常日志页自动同步，不显示手动刷新入口且不重复下载未变化的明细', async () => {
   let traceReads = 0;
   const { context, page, reads, writes, errors } = await pageFor((route, url) => {
     if (url.pathname === '/api/runs') return respond(route, { runs: [run('A')] });
@@ -242,11 +242,10 @@ test('手动刷新能强制更新当前明细，即使运行事件数量未变�
   });
   try {
     await page.goto(`${fixture.base}/?view=logs`); await resultVisible(page, 'A');
-    await page.getByRole('button', { name: '刷新运行记录', exact: true }).click();
-    const updated = await resultVisible(page, 'A', 'v2').then(() => true, () => false);
-    observations.push({ case: 'manual_refresh_same_count', event_count: 3, detail_reads: traceReads,
-      updated_detail_visible: updated, reads, writes, errors });
-    assert.equal(updated, true); assert.equal(traceReads, 2);
+    assert.equal(await page.getByRole('button', { name: '刷新运行记录', exact: true }).count(),0);
+    await page.clock.runFor(5100); await frame(page);
+    assert.equal(traceReads,1);
+    assert.ok(reads.filter(value=>value.startsWith('/api/runs')).length>=2);
     assert.deepEqual(writes, []); assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

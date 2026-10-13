@@ -11,6 +11,9 @@ from uuid import uuid4
 import hashlib
 import json
 import os
+import logging
+from threading import Lock, Thread
+from time import monotonic
 
 from .repository import build_repository
 from ..quality import PartInspectionService
@@ -51,6 +54,8 @@ class BackendBusinessService:
         self._audit: list[dict[str, Any]] = self._list_records("audit")
         self._experiences: dict[str, dict[str, Any]] = {str(item.get("experience_id")): item for item in self._list_records("experience") if item.get("experience_id")}
         self._inventory: dict[str, dict[str, Any]] = {}
+        self._report_sync_lock = Lock()
+        self._report_sync_after = 0.0
 
     def _save_record(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         saver = getattr(self.repository, "save_record", None)
@@ -148,9 +153,10 @@ class BackendBusinessService:
     def query_workorder(self, workorder_id: str = "", **kwargs: Any) -> dict[str, Any]:
         return self.get_workorder(workorder_id=workorder_id, **kwargs)
 
-    def list_workorders(self, device_id: str = "", status: str = "", **_: Any) -> dict[str, Any]:
-        values = [item for item in self.repository.list() if (not device_id or item.get("device_id") == device_id) and (not status or item.get("status") == status)]
-        return {"success": True, "items": values, "total": len(values), "backend": "backend-service"}
+    def list_workorders(self, device_id: str = "", status: str = "", summary: bool = False, **_: Any) -> dict[str, Any]:
+        source=self.repository.list_queue_index() if summary is True else self.repository.list()
+        values = [item for item in source if (not device_id or item.get("device_id") == device_id) and (not status or item.get("status") == status)]
+        return {"success": True, "items": values, "total": len(values), "backend": "backend-service", 'summary':summary is True}
 
     def delete_workorder(self, workorder_id: str = "", actor_id: str = "", **_: Any) -> dict[str, Any]:
         workorder_id = str(workorder_id or "").strip()
@@ -749,8 +755,8 @@ class BackendBusinessService:
         report = self._save_record("report", report_id, report)
         return {"success": True, "persisted": True, "report_id": report_id, "report": report, "backend": "backend-service"}
 
-    def get_report(self, report_id: str = "", **_: Any) -> dict[str, Any]:
-        report = self._get_record("report", report_id)
+    def get_report(self, report_id: str = "", display: bool = False, **_: Any) -> dict[str, Any]:
+        report = self.repository.get_report_view(report_id) if display is True else self._get_record("report", report_id)
         return {"success": bool(report), "found": bool(report), "report_id": report_id, "report": self._normalize_report(report) if report else {}, "backend": "backend-service"}
 
     @staticmethod
@@ -761,12 +767,38 @@ class BackendBusinessService:
                     'original_report_id': nested.get('report_id'), 'updated_at': value.get('updated_at') or nested.get('updated_at')}
         return dict(value)
 
-    def list_reports(self, workorder_id: str = "", **_: Any) -> dict[str, Any]:
+    def list_reports(self, workorder_id: str = "", summary: bool = False, **_: Any) -> dict[str, Any]:
+        if summary is True:
+            self.request_lifecycle_report_sync()
+            items = self.repository.list_report_index(workorder_id)
+            return {'success': True, 'items': items, 'count': len(items), 'summary': True, 'backend': 'backend-service'}
         self.sync_lifecycle_reports()
         records = [self._normalize_report(item) for item in self._list_records("report")]
         items = [item for item in records if not workorder_id or workorder_id in item.get('workorder_ids', []) or str(item.get("workorder_id") or (item.get('sections') or {}).get('workorder', {}).get('workorder_id') or "") == workorder_id]
         items.sort(key=lambda item: str(item.get('created_at') or item.get('updated_at') or ''), reverse=True)
         return {"success": True, "items": items, "count": len(items), "backend": "backend-service"}
+
+    def request_lifecycle_report_sync(self):
+        # Pending intents remain durable; browsing does not wait for composition.
+        # Coalesce polls and permit retry after failure without concurrent writers.
+        if not self._report_sync_lock.acquire(blocking=False):
+            return
+        if monotonic() < self._report_sync_after:
+            self._report_sync_lock.release()
+            return
+        def run():
+            try:
+                self.sync_lifecycle_reports()
+            except Exception as error:
+                logging.getLogger(__name__).warning('报告后台同步待重试: %s', type(error).__name__)
+            finally:
+                self._report_sync_after = monotonic() + 5
+                self._report_sync_lock.release()
+        try:
+            Thread(target=run, name='lifecycle-report-sync', daemon=True).start()
+        except BaseException:
+            self._report_sync_lock.release()
+            raise
 
     def sync_lifecycle_reports(self):
         if not getattr(self.team, 'repository', None):

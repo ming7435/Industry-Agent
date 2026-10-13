@@ -69,6 +69,14 @@ class SkillTrial(SkillDraft):
     sample: FaultSample
 
 
+from app.skills.task_testing import TaskSample
+from app.skills.review_testing import ReviewSample
+
+
+class TaskTrial(SkillDraft):
+    task: TaskSample | ReviewSample
+
+
 class MachineSample(BaseModel):
     model_config = ConfigDict(extra='forbid')
     device_id: str = Field(min_length=1, max_length=120)
@@ -144,6 +152,10 @@ def build_expert_router(runtime, require_auth):
     @router.get('/tests/{test_id}')
     def test_result(test_id: str, request: Request):
         return run(manager.trials.get, test_id, team_actor(request))
+
+    @router.post('/skills/{agent}/{name}/task-test')
+    def task_test(agent: str, name: str, values: TaskTrial, request: Request):
+        return run(manager.trials.start_task, agent, name, values.model_dump(), write_actor(request))
 
     @router.get('/machines')
     def machines(request: Request):

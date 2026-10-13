@@ -3,6 +3,7 @@ import json
 import os
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.parse import urlparse
+from hashlib import sha256
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,7 +31,7 @@ def read_factory_snapshot():
 
 
 def build_simulation_router(require_write_auth, *, backend_factory=BackendServiceClient,
-                            cad_reader=get_freecad_run_record, factory_reader=read_factory_snapshot):
+                            cad_reader=get_freecad_run_record, factory_reader=read_factory_snapshot,recovery=None):
     router = APIRouter(prefix='/api/quality/simulation')
 
     def context(request):
@@ -44,7 +45,10 @@ def build_simulation_router(require_write_auth, *, backend_factory=BackendServic
         except BackendServiceError as error:
             code = error.status_code if error.status_code in {401, 403, 409, 422} else 503
             message = str(error) if code == 409 else '模拟检测后端暂不可用；提交结果需按原请求编号核对'
-            raise HTTPException(code, message) from None
+            from app.runtime.service_exceptions import _text
+            failure=HTTPException(code,message)
+            failure.service_error=_text(error)
+            raise failure from None
 
     def standard(request, run_id, saved):
         try:
@@ -96,21 +100,44 @@ def build_simulation_router(require_write_auth, *, backend_factory=BackendServic
         if origin and urlparse(origin).netloc != request.headers.get('host'):
             raise HTTPException(403, '仅允许同源模拟检测请求')
         backend, actor = context(request)
-        existing = stored(backend, actor, 'request', request_id=body.request_id)
-        if existing is not None:
-            if existing.get('design_run_id') != body.design_run_id: raise HTTPException(409, '同一请求不能更换设计版本')
-            return existing
-        try:
-            sim.require_enabled()
-            saved = stored(backend, actor, 'design', design_run_id=body.design_run_id)
-            basis = standard(request, body.design_run_id, saved)
+        identity=sha256(json.dumps([actor,body.request_id,body.design_run_id]).encode()).hexdigest()[:24]
+        state={'task_id':'TASK-SIM-'+identity,'trace_id':'TRACE-SIM-'+identity,
+               'recovery_actor_id':actor,'subject_summary':'图纸参数检测服务异常'}
+        case_recovery=recovery or getattr(request.app.state,'service_exception_recovery',None)
+        failure_status='failed'
+        failure_error=''
+        from app.runtime.service_exceptions import record_service_failure
+        def execute():
+            nonlocal failure_status,failure_error
+            existing = stored(backend, actor, 'request', request_id=body.request_id)
+            if existing is not None:
+                if existing.get('design_run_id') != body.design_run_id: raise HTTPException(409, '同一请求不能更换设计版本')
+                return existing
             try:
-                snapshot = factory_reader()
-            except Exception:
-                raise HTTPException(503, {'message': '模拟工厂或比对仪连接不可用，未生成检测样本', 'execution_started': False}) from None
-            sim.validate_station(snapshot)
-        except ValueError as error:
-            raise HTTPException(409, str(error)) from None
-        return stored(backend, actor, 'detect', request_id=body.request_id, run=basis, snapshot=snapshot)
+                sim.require_enabled()
+                saved = stored(backend, actor, 'design', design_run_id=body.design_run_id)
+                basis = standard(request, body.design_run_id, saved)
+                state.update(part_id=basis.get('part_number') or '',subject_summary=(basis.get('part_name') or '零件')+' 图纸参数检测服务异常')
+                try:
+                    snapshot = factory_reader()
+                except Exception as error:
+                    failure_error=str(error)
+                    raise HTTPException(503, {'message': '模拟工厂或比对仪连接不可用，未生成检测样本', 'execution_started': False}) from None
+                sim.validate_station(snapshot)
+            except ValueError as error:
+                raise HTTPException(409, str(error)) from None
+            try:
+                return stored(backend, actor, 'detect', request_id=body.request_id, run=basis, snapshot=snapshot)
+            except HTTPException as error:
+                if error.status_code>=500:
+                    failure_status='outcome_unknown'
+                raise
+        try:
+            return execute()
+        except HTTPException as error:
+            if error.status_code>=500:
+                record_service_failure(case_recovery,'quality',state,
+                    failure_error or getattr(error,'service_error','') or error.detail,status=failure_status)
+            raise
 
     return router

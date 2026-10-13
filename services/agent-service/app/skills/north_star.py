@@ -190,7 +190,8 @@ class NorthStarMetrics:
                         continue
                     else:
                         legacy_record = int(not payload)
-                elif record.get('mode') == 'machine_flow':
+                elif record.get('mode') in {'machine_flow', 'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
+                    from app.skills.optimization import assessment_keys, verification_mode
                     payload = record.get('assessment')
                     if payload:
                         criteria = payload.get('criteria') if isinstance(payload, dict) else None
@@ -200,9 +201,9 @@ class NorthStarMetrics:
                                 payload.get('trial_fingerprint') != record.get('fingerprint') or
                                 not _hash(payload.get('trial_fingerprint')) or
                                 not _time(payload.get('completed_at')) or type(payload.get('accepted')) is not bool or
-                                payload.get('basis') != 'machine_flow_receipt' or not isinstance(criteria, dict) or
-                                any(type(criteria.get(k)) is not bool for k in ('diagnosis', 'maintenance',
-                                    'workorder', 'report', 'skill_used', 'baseline_unchanged', 'dependencies_unchanged')) or
+                                payload.get('basis') != record['mode'] + '_receipt' or not isinstance(criteria, dict) or
+                                (record['mode'] != 'machine_flow' and record['mode'] != verification_mode(record['agent'], record['name'])) or
+                                any(type(criteria.get(k)) is not bool for k in assessment_keys(record['mode'])) or
                                 (payload['accepted'] and not all(criteria.values()))):
                             complete = False
                             continue

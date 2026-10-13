@@ -46,8 +46,12 @@ def registry():
 def test_each_document_loads_without_changing_runtime_contract(registry, entry):
     skill = registry.get(entry['agent'], entry['name'])
     assert skill is not None
-    expected = {key: value for key, value in entry['metadata'].items() if key != 'goal'}
-    actual = {key: value for key, value in skill.metadata.items() if key not in ('description', 'goal')}
+    # YAML 写回可将数字版本保存为字符串；核对真实运行版本，不能把序列化类型当成契约变化。
+    version = entry['metadata']['version']
+    expected_version = str(float(version)) if isinstance(version, (int, float)) else str(version)
+    assert skill.version == expected_version
+    expected = {key: value for key, value in entry['metadata'].items() if key not in ('goal', 'version')}
+    actual = {key: value for key, value in skill.metadata.items() if key not in ('description', 'goal', 'version')}
     assert actual == expected
     assert skill.metadata.get('description', '').strip(), '缺少发现用 description'
     assert all(any(line.startswith('## ' + title) for line in skill.document.splitlines()) for title in HEADINGS)

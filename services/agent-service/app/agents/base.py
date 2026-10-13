@@ -184,6 +184,18 @@ def trace_skill_node(
         output["current_step"] = step_id
         output["step_history"] = [*list(current.get("step_history") or []), record]
         output["completed_steps"] = [*list(current.get("completed_steps") or []), record]
+        if 'result' in output:
+            from app.skills.review import schedule_review
+            try:
+                schedule_review(definitions, dict(request), output['result'],
+                    client=getattr(agent, 'skill_review_client', None), trace=trace,
+                    context={**node_context, 'task_id': task_id, 'trace_id': trace_id})
+            except Exception:
+                # 附加核查不能改变已执行的业务结果，尤其不能重试副作用。
+                if trace is not None:
+                    trace.record(type='skill_review', event='skill_review_unverified', agent=agent_name,
+                        context=node_context, task_id=task_id, trace_id=trace_id, status='not_verified',
+                        message='核查输入未冻结，原业务结果保持不变')
         if trace is not None:
             trace.record(
                 type="agent_step", name=node_name, node=node_name, agent=agent_name,

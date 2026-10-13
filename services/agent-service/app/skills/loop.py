@@ -53,8 +53,8 @@ class SkillLoop:
         for row in previous['items']:
             if not previous['complete'] or not row['sources'] or row['version'] == 'unknown':
                 continue
-            # 首版只有诊断正文真正进入模型且有完整机器验证；固定算法不冒充可优化路径。
-            if row['agent'] != 'diagnosis':
+            from app.skills.optimization import verification_mode
+            if not verification_mode(row['agent'], row['name']):
                 continue
             definition = self.evolution.manager.registry.get(row['agent'], row['name'])
             if not definition or definition.observation()['skill_fingerprint'] != row['fingerprint']:
@@ -87,7 +87,7 @@ class SkillLoop:
         windows = week_windows(now)
         week_id = windows['week_id']
         # 旧分页快照没有持续覆盖证明，保留旧数据但不能把旧complete直接沿用。
-        previous_key = windows['previous']['start'] + ':coverage-v1:north-star-v1'
+        previous_key = windows['previous']['start'] + ':coverage-v1:north-star-v1:all-skills-v1'
         previous = self.store.get('skill_loop_snapshot', previous_key)
         if previous is None or not previous.get('complete'):
             previous = self._window(windows['previous'])
@@ -96,11 +96,19 @@ class SkillLoop:
         current = self._window(windows['current'])
         self.evolution.metrics.collect(now)
         self.evolution.metrics.observe({'previous': previous, 'current': current}, now)
-        initial_plan = {'loop_id': week_id, 'revision': 0, 'recording_policy': 1, 'limit': 3, 'selected': self._selection(previous),
+        initial_plan = {'loop_id': week_id, 'revision': 0, 'recording_policy': 1, 'selection_policy': 3, 'limit': 3, 'selected': self._selection(previous),
                         'source_window': windows['previous'], 'reservations': {}, 'created_at': now.isoformat()}
         # 完整窗口才冻结计划；冷启动/存储失败不能永久保存一份伪完整的空计划。
         if previous['complete']:
-            self.store.get_or_create('skill_loop_plan', week_id, lambda: initial_plan)
+            plan = self.store.get_or_create('skill_loop_plan', week_id, lambda: initial_plan)
+            # 本周老计划只补尚未占用的空位，不清除任何预约、候选或失败额度。
+            if plan.get('recording_policy') == 1 and plan.get('selection_policy') != 3:
+                retained = list(plan['selected'])
+                keys = {item['agent'] + ':' + item['name'] for item in retained} | set(plan['reservations'])
+                capacity = max(0, plan['limit'] - len(keys))
+                extra = [item for item in initial_plan['selected'] if item['agent'] + ':' + item['name'] not in keys][:capacity]
+                self.store.compare_and_set('skill_loop_plan', week_id, 'revision', plan['revision'],
+                    {'revision': plan['revision'] + 1, 'selection_policy': 3, 'selected': retained + extra})
         state = self.store.get_or_create('skill_loop_state', 'latest', lambda: {'revision': 0})
         self.store.compare_and_set('skill_loop_state', 'latest', 'revision', state['revision'],
             {'revision': state['revision'] + 1, 'loop_id': week_id, 'observed_at': now.isoformat(),

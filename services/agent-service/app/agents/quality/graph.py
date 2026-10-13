@@ -63,7 +63,7 @@ def load_part(state: QualityWorkflowState) -> Dict[str, Any]:
         and part.get("synthetic") is not True and part.get("degraded") is not True
     )
     if not part or not trusted or not identity_matches:
-        return {"part": {}, "validation_findings": ["生产零件身份或数据来源未核实，不能判定质量合格"], "route": "fallback"}
+        return {"part": {}, "input_receipt":loaded,"validation_findings": ["生产零件身份或数据来源未核实，不能判定质量合格"], "route": "fallback"}
     if (request.get('production_context') or {}).get('comparison_scope') == SCOPE and part.get('comparison_scope') != SCOPE:
         return {'part': {}, 'validation_findings': ['请先选择生产建模的图纸版本，保存生产后实测值再检测'], 'route': 'fallback'}
     context = request.get('production_context') or {}
@@ -151,6 +151,9 @@ def final(state: QualityWorkflowState) -> Dict[str, Any]:
 def fallback(state: QualityWorkflowState) -> Dict[str, Any]:
     findings = list(state.get("validation_findings") or ["生产零件质检流程未完成"])
     result = state["agent"]._fallback_result(state.get("request") or {}, findings)
+    receipt=state.get('input_receipt') or {}
+    if receipt.get('error'):
+        result.quality_validation={'input':receipt}
     return {"result": result, "stop_reason": "fallback"}
 
 

@@ -45,6 +45,9 @@ def read_api(monkeypatch):
 
         def call(self, tool, arguments):
             backend_calls.append((tool, deepcopy(arguments)))
+            if tool in {'get_workorder','query_workorder'}:
+                item=next((deepcopy(order) for order in orders if order['workorder_id']==arguments.get('workorder_id')),None)
+                return {'found':bool(item),'success':bool(item),'workorder':item or {},**(item or {})}
             if isinstance(self.outcome, Exception):
                 raise self.outcome
             return self.outcome
@@ -66,7 +69,8 @@ def read_api(monkeypatch):
         return {'success': True, 'items': orders}
 
     operations = SimpleNamespace(execute_workorder=execute_workorder)
-    client = TestClient(create_app(SimpleNamespace(container=SimpleNamespace(operations=operations))))
+    client = TestClient(create_app(SimpleNamespace(container=SimpleNamespace(operations=operations,
+        registry=SimpleNamespace(backend_base_url='http://isolated-backend')))))
     return SimpleNamespace(client=client, backend=backend, backend_calls=backend_calls,
                            agent_calls=agent_calls, trace_events=trace_events, orders=orders)
 
@@ -84,6 +88,27 @@ def test_personal_list_reads_backend_once_without_agent_execution(read_api):
     assert read_api.trace_events == []
     assert read_api.backend_calls == [('list_workorders', {})]
     assert read_api.orders == before
+
+
+@pytest.mark.parametrize('identifier,status',[('WO-LMY',200),('WO-OTHER',403),('MISSING',404)])
+def test_selected_task_detail_is_a_scoped_read_without_agent_execution(read_api, identifier, status):
+    response=read_api.client.get('/api/workorders/'+identifier,headers={'Cookie':'maintenance_session=session-lmy'})
+    assert response.status_code==status
+    assert read_api.agent_calls==[], 'Opening task details scheduled a new Agent execution'
+    if status==200:
+        assert response.json()['workorder']['diagnosis_snapshot']['raw']['alarm_code']=='700006'
+
+
+def test_summary_list_still_filters_by_the_authenticated_assignee(read_api):
+    read_api.backend.outcome={'success':True,'summary':True,'items':[
+        {'workorder_id':item['workorder_id'],'assignee':item.get('assignee'),'device_id':item['device_id'],'_summary_record':True}
+        for item in read_api.orders]}
+    response=read_api.client.get('/api/workorders?summary=true',headers={'Cookie':'maintenance_session=session-lmy'})
+    assert response.status_code==200
+    assert [item['workorder_id'] for item in response.json()['items']]==['WO-LMY']
+    assert response.json()['summary'] is True
+    assert read_api.backend_calls==[('list_workorders',{'summary':True})]
+    assert read_api.agent_calls==[]
 
 
 def test_supervisor_can_read_all_authoritative_records(read_api):

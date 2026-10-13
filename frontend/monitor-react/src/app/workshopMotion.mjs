@@ -81,3 +81,24 @@ export function createMotionClock() {
     },
   };
 }
+
+export function machineStatus(machine, result) {
+  if (!machine?.live) return "idle";
+  if (result?.status === "fault") return "fault";
+  if (result?.status === "alarm") return "alarm";
+  if (result?.status === "warning") return "warning";
+  const motionState = getMachineMotionState(machine);
+  if (motionState === "stopped") return "stopped";
+  if (motionState !== "running") return "unknown";
+  return "normal";
+}
+
+export function machineStatusLabel(status) {
+  if (status === "fault") return "故障";
+  if (status === "alarm") return "报警";
+  if (status === "warning") return "预警";
+  if (status === "idle") return "未接入";
+  if (status === "stopped") return "已停止";
+  if (status === "unknown") return "待确认";
+  return "正常";
+}
