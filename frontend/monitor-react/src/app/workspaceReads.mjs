@@ -55,6 +55,16 @@ export function readWorkspace(path,{signal,freshFor=0,force=false,scope=actorSco
   entries.set(path,entry);
   entry.promise=request(path,{...options,signal:entry.controller.signal}).then(value=>{
     if(entries.get(path)!==entry||version!==getTeamSession().version)throw aborted();
+    if(detailPath(path)&&revision!==undefined){
+      const [id,number,updated]=JSON.parse(revision);
+      const workorder=value?.workorder||value;
+      if(workorder?.workorder_id&&workorder.workorder_id!==id
+        || number!==null&&number!==undefined&&workorder?._revision!==undefined&&String(workorder._revision)!==String(number)
+        || updated!==null&&updated!==undefined&&workorder?.updated_at!==undefined&&workorder.updated_at!==updated){
+        entries.delete(path);
+        throw new Error('工单版本已变化，正在重新读取任务详情');
+      }
+    }
     rememberDeletedMaintenancePlans(value?.deleted_plan_ids||[]);
     entry.value=value;entry.loadedAt=Date.now();return value;
   }).finally(()=>{if(entries.get(path)===entry)entry.promise=null;});

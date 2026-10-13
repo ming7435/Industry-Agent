@@ -40,3 +40,17 @@ test('换账号清除预读内容，旧账号的晚返回不能进入新缓存',
     assert.equal(peekWorkspaceRead('/api/runs?limit=5000'),null);
   } finally {globalThis.fetch=original;invalidateWorkspaceReads();}
 });
+
+test('工单目录与预读正文版本不一致时不缓存旧正文，下一次读取得到最新任务',async()=>{
+  invalidateWorkspaceReads();
+  const original=globalThis.fetch;
+  let reads=0;
+  globalThis.fetch=async()=>new Response(JSON.stringify({workorder:{workorder_id:'WO-VERSION',_revision:++reads,updated_at:`v${reads}`}}));
+  const revision=JSON.stringify(['WO-VERSION',2,'v2','line1']);
+  try {
+    await assert.rejects(readWorkspace('/api/workorders/WO-VERSION',{revision}),/工单版本已变化/);
+    assert.equal(peekWorkspaceRead('/api/workorders/WO-VERSION'),null);
+    const current=await readWorkspace('/api/workorders/WO-VERSION',{revision});
+    assert.equal(current.workorder._revision,2);
+  } finally {globalThis.fetch=original;invalidateWorkspaceReads();}
+});

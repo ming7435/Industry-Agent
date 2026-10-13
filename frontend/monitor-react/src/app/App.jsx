@@ -790,13 +790,15 @@ function App() {
         {!bigScreen && activeView === "diagnosis" && <DiagnosisWorkspace snapshot={snapshot} sample={sample} />}
         {(maintenanceVisited || activeView === "maintenance") && <MaintenancePlanWorkspace active={!bigScreen && activeView === "maintenance"} snapshot={snapshot} sample={sample} actor={teamActor} />}
         {!bigScreen && activeView === "workorder" && (teamActor ? <SupervisorQueue actor={teamActor} /> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单。</p></section>)}
-        {teamActor && (workorderVisited || activeView === "workorder") && <WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} active={!bigScreen && activeView === "workorder"} actor={teamActor} snapshot={snapshot} sample={sample} onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
+        {teamActor && (workorderVisited || activeView === "workorder") && <WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} active={!bigScreen && activeView === "workorder"} actor={teamActor} snapshot={snapshot} sample={sample}
+          exceptionPanel={<ServiceExceptionPanel key={`${teamActor.user_id}:${teamActor.role}:workorder`} request={request} actor={teamActor} view="workorder" />}
+          onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
         {(expertVisited || activeView === "expert") && <div hidden={bigScreen || activeView !== "expert"}><ExpertWorkspace key={`${teamActor?.user_id || 'guest'}:${teamActor?.role || ''}`} actor={teamActor} /></div>}
         {(logsVisited || activeView === "logs") && <LogsWorkspace active={!bigScreen && activeView === "logs"} snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace />}
         {(reportVisited || activeView === "report") && <ReportWorkspace active={!bigScreen && activeView === "report"} snapshot={snapshot} />}
-        {!bigScreen && teamActor && ['diagnosis','maintenance','workorder','rag','logs','quality','cad','report'].includes(activeView) &&
+        {!bigScreen && teamActor && ['diagnosis','maintenance','rag','logs','quality','cad','report'].includes(activeView) &&
           <ServiceExceptionPanel key={`${teamActor.user_id}:${teamActor.role}:${activeView}`} request={request} actor={teamActor} view={activeView} />}
         {toast && <div className="toast-message" role="status">{toast}</div>}
         {(bigScreen || activeView !== "quality") && (error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
@@ -1886,7 +1888,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
 // Keep an unconfirmed command across workspace navigation, scoped to its actor and order.
 const workorderPlanCommands = new Map();
 
-function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
+function WorkorderView({ snapshot, sample, onClosed, actor, active = true, exceptionPanel = null }) {
   const initialScope=JSON.stringify([actor?.user_id||'',actor?.role||'']);
   const initialOrders=peekWorkspaceRead('/api/workorders?summary=true',{scope:initialScope});
   const [orders, setOrders] = useState(()=>(initialOrders?.items||[]).map(normalizeWorkorderResponse).filter(item=>!item.deleted_at));
@@ -2171,6 +2173,7 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
   return (
     <section className="workspace-view active workorder-page" aria-label="工单系统">
       {!currentFaultActive && <div className="module-hero"><span className="eyebrow">维修执行</span><h1>工单系统</h1><p>跟进维修任务、执行反馈与验收。</p></div>}
+      {exceptionPanel}
       <section className="workorder-queue" aria-label="工单队列">
         <div className="workorder-queue-heading">
           <div><span className="eyebrow">工单队列</span><h2>维修任务</h2></div>

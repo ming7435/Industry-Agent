@@ -45,6 +45,9 @@ test('维修方案失败仍在工单中心关联故障，双击反馈只保存�
     assert.match(await panel.innerText(),/maintenance-service HTTP 503/);
     assert.match(await panel.innerText(),/TASK-FAIL-1/);
     assert.match(await panel.innerText(),/不是正常维修工单/);
+    const headingBox=await page.getByRole('heading',{name:'工单系统',exact:true}).boundingBox();
+    const panelBox=await panel.boundingBox(),emptyBox=await page.getByText('当前没有待处理工单',{exact:true}).boundingBox();
+    assert.ok(panelBox.y>headingBox.y&&panelBox.y<emptyBox.y,'异常待办应在工单标题之后、空工单提示之前');
     await panel.getByLabel('实际处理反馈').fill('已交接负责人员，设备故障等待现场核查');
     const button=panel.getByRole('button',{name:'保存人工处理反馈',exact:true});
     await button.evaluate(el=>{el.click();el.click();});await state.feedbackEntered.promise;
