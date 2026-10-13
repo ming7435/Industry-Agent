@@ -10,7 +10,7 @@ const labels = {queued:'等待生成',generating:'正在生成修改稿',awaitin
   published:'已发布',generation_failed:'修改稿未生成',verification_failed:'验证未通过',
   stale:'版本已变化',outcome_unknown:'结果待核对',rejected:'已拒绝'};
 
-export default function SkillEvolutionPanel({ actor, skill, onCandidate, onAdopt, loadedRecord, canAdopt }) {
+export default function SkillEvolutionPanel({ actor, skill, onCandidate, onAdopt, loadedRecord, canAdopt, onMetrics }) {
   const [items,setItems]=useState([]), [snapshot,setDetail]=useState(null), [worker,setWorker]=useState(null);
   const [error,setError]=useState(''), [busy,setBusy]=useState(false);
   const detail = loadedRecord?.proposal_id === snapshot?.proposal_id && Number(loadedRecord?.revision) > Number(snapshot?.revision)
@@ -69,7 +69,7 @@ export default function SkillEvolutionPanel({ actor, skill, onCandidate, onAdopt
   };
 
   return <section className="expert-card skill-evolution" aria-label="自动优化修改稿">
-    <SkillLoopSummary actor={actor} skill={skill} />
+    <SkillLoopSummary actor={actor} skill={skill} onMetrics={onMetrics} />
     <div className="expert-section-title"><h2>自动优化修改稿</h2>
       <span>{worker?.enabled ? '自动收集已开启' : '后台状态待确认'}</span></div>
     <p>独立技能优化循环每分钟更新运行观察，按上一个完整周形成计划，每周最多三份修改稿。纯连接错误、余额问题和专家测试不触发优化。</p>

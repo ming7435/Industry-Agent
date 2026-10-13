@@ -2,6 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDiagnosisView, getLatestDiagnosis } from "./diagnosisView.mjs";
 
+test('诊断页面保留现场事实但不展示内部回执，原始依据仍保留给日志', () => {
+  const evidence = ['现场复测：液压压力 0.42 MPa', '历史趋势：barfeed_ready_signal falling，最新值=0.0',
+    'Monitor 已提供实时快照', '停止原因：validator_pass', 'EXP-B39D8CB379',
+    'three_equipment_fault_code_catalog.pdf', 'CAD/BOM 工程证据校验未通过：insufficient_engineering_data'];
+  const snapshot = {diagnosis:{latest:{status:'completed',summary:'液压压力异常',evidence}}};
+  const view = buildDiagnosisView(snapshot, {});
+  assert.deepEqual(view.evidence, ['现场复测：液压压力 0.42 MPa']);
+  assert.equal(snapshot.diagnosis.latest.evidence, evidence);
+  assert.equal(evidence.length, 7);
+});
+
 test('无需维修的诊断说明不显示派工失败', () => {
   const sample = {device_id:'D-NO-REPAIR', alarm_code:'700044'};
   const diagnosis = {...sample, status:'completed', confidence:.826, evidence_status:'ready',

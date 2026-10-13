@@ -1,5 +1,6 @@
 import { incidentIdentity, recordTimes, localizeIncidentText, linkedPlanOrder } from './incidentIdentity.mjs';
 import { deletedMaintenancePlanIds, rememberDeletedMaintenancePlans } from './maintenanceChanges.mjs';
+import { businessText } from './businessText.mjs';
 
 const object = value => value && typeof value === "object" && !Array.isArray(value) ? value : {};
 const text = value => String(value ?? "").trim();
@@ -147,12 +148,19 @@ export function maintenanceDispatchView(record = {}, { hasOrder = false } = {}) 
   const dispatched = dispatch.status === "dispatched" && Boolean(text(dispatch.assignee))
     && ((allowed === true && !businessBlocked) || (review.required && Boolean(text(dispatch.workorder_id))));
   const reason = text(dispatch.reason) || (record.workorder_ready === false ? "维修方案尚未达到工单就绪条件" : "");
+  const inspection = maintenanceWorkType(record).inspection;
+  const displayReason = review.required ? '' : inspection
+    ? businessBlocked ? '检查方案尚未核实，暂不能派发。'
+      : waitingPersonnel ? `现场检查任务正在等待设备 ${text(record.device_id) || '待确认'} 的负责维修人员登录。`
+      : waitingApproval ? '现场检查任务需审批，通过后再派发。' : ''
+    : businessText(reason);
   return {
     label: hasOrder ? "已关联工单" : processing ? '方案已生成，后续处理中' : waitingApproval ? "等待审批后派发"
       : waitingPersonnel ? "等待负责人员登录" : dispatched ? "已自动派单" : blocked ? "暂不能自动派发"
       : allowed === true ? "方案就绪，等待系统派发"
       : record.workorder_ready === true ? "方案已就绪，派发条件以系统校验为准" : "派发条件待校验",
     reason: [...new Set([reason, ...findings, ...review.findings].filter(Boolean))].join("；"),
+    displayReason,
     findings,
     reviewRequired: review.required,
     reviewLabel: review.label,

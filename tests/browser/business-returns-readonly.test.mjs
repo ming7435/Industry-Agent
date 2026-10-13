@@ -19,7 +19,7 @@ try {
     if (response.url().includes('/api/') && response.status() >= 400 && response.status() !== 401) failedApis.push(`${response.status()} ${new URL(response.url()).pathname}`);
   });
   for (const [view, heading, label] of [
-    ['maintenance', '选择维修方案', '维修方案'], ['report', '报告中心', '从已有业务记录生成报告'],
+    ['maintenance', '选择维修方案', '维修方案'], ['report', '报告中心', '设备故障处理完成后，自动汇总诊断、维修方案、工单执行和复机记录'],
     ['quality', null, null], ['logs', '日志系统', '运行记录'],
   ]) {
     await page.goto(`http://127.0.0.1:8001/?view=${view}`, { waitUntil: 'domcontentloaded' });
@@ -27,7 +27,10 @@ try {
       const workspace = page.getByRole('region', { name: '质检系统', exact: true });
       await page.getByRole('heading', { name: '质量检测', exact: true }).waitFor();
       await page.getByRole('heading', { name: '检测零件', exact: true }).waitFor();
-      assert.equal(await workspace.locator('input, form, table').count(), 0);
+      // 当前质检界面新增只读版本跟随开关；仍禁止手工填写测量值和提交检测表单。
+      assert.equal(await workspace.locator('input:not([type="checkbox"]), form, table').count(), 0);
+      assert.equal(await workspace.locator('input[type="checkbox"]').count(), 1);
+      assert.equal(await workspace.getByRole('checkbox', { name: '跟随最新发布版本', exact: true }).count(), 1);
       assert.equal(await page.getByRole('navigation', { name: '质检来源', exact: true }).count(), 0);
       assert.equal(await page.getByRole('button', { name: '比对仪数值演示', exact: true }).count(), 0);
       assert.equal(await workspace.getByRole('combobox', { name: '零件名称', exact: true }).count(), 1);

@@ -85,7 +85,11 @@ test('工单列表不能自动选上一次同报警工单，可主动选择历�
     const title=page.locator('.workorder-titlebar');await title.waitFor();
     assert.ok((await title.innerText()).includes('上次液压故障'));
     assert.ok(!(await title.innerText()).includes('当前液压故障'));
-    assert.ok((await page.getByRole('region',{name:'故障与处理时间'}).innerText()).includes('工单创建：2026/10/07 20:03:00'));
+    // 专业时间表使用 dt/dd；仍严格校验所选历史工单的真实创建时刻和时区。
+    const timeline=page.getByRole('region',{name:'故障与处理时间'});
+    const created=timeline.locator('dl > div').filter({has:page.locator('dt').getByText('工单创建',{exact:true})});
+    assert.equal(await created.count(),1);
+    assert.equal(await created.locator('dd').innerText(),'2026/10/07 20:03:00');
     assert.deepEqual(writes,[]);
   }finally{await context.close();}
 });

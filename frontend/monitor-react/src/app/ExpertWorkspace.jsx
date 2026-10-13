@@ -3,6 +3,7 @@ import { request } from './apiRequest.mjs';
 import ExpertDocument from './ExpertDocument.jsx';
 import ExpertTrialDetails from './ExpertTrialDetails.jsx';
 import SkillEvolutionPanel from './SkillEvolutionPanel.jsx';
+import SkillNorthStarPanel from './SkillNorthStarPanel.jsx';
 import './expert.css';
 
 const endpoint = skill => `/api/expert/skills/${encodeURIComponent(skill.agent)}/${encodeURIComponent(skill.name)}`;
@@ -52,6 +53,8 @@ export default function ExpertWorkspace({ actor }) {
   const [proposal, setProposal] = useState(null);
   const [approvedDraft, setApprovedDraft] = useState(false);
   const [receiptRefresh,setReceiptRefresh] = useState(0);
+  const [northStar,setNorthStar] = useState(null);
+  const metricsOwner=[actor?.user_id,actor?.role,current?.agent,current?.name,current?.revision].join(':');
   const manualMode = useRef(false);
   const sequence = useRef(0);
   const action = useRef(null);
@@ -130,6 +133,7 @@ export default function ExpertWorkspace({ actor }) {
     setCurrent(null); setDraft(null); setRemote(null); setError(''); setMessage(''); setBusy(false);
     setTrial(null); setReviewed(false); setTesting(false); setSample(null);
     setProposal(null); setApprovedDraft(false); manualMode.current=false;
+    setNorthStar(null);
     if (!selected || !actor?.user_id) return undefined;
     const controller = new AbortController(); action.current = controller;
     setLoading(true);
@@ -325,7 +329,7 @@ export default function ExpertWorkspace({ actor }) {
       {loading && <p role="status">正在读取当前技能…</p>}
       {error && <p className="expert-alert" role="alert">{error}</p>}
       {message && <p className="expert-message" role="status">{message}</p>}
-      {current && <SkillEvolutionPanel key={actor.user_id + '/' + identity(current)} actor={actor} skill={current}
+      {current && <SkillEvolutionPanel key={actor.user_id + '/' + identity(current)} actor={actor} skill={current} onMetrics={setNorthStar}
         onCandidate={adoptAutomatic} onAdopt={value=>adoptAutomatic(value,true)} loadedRecord={proposal} canAdopt={!locked} />}
       {current && draft && <section className="expert-card" aria-label="技能编辑">
         <div className="expert-section-title"><h2>{current.title}</h2><button type="button" onClick={refresh} disabled={locked}>刷新技能</button></div>
@@ -409,6 +413,7 @@ export default function ExpertWorkspace({ actor }) {
               (Boolean(proposal) && proposal.status !== 'awaiting_publication')}>
               {busy && !testing ? '正在发布…' : '发布到系统'}</button></>}
         </form>
+        <SkillNorthStarPanel snapshot={northStar?.owner === metricsOwner ? northStar : null} />
         <details><summary>查看受保护的执行规则（只读）</summary>
           <p>工具白名单：{current.tools.join('、') || '未声明工具'}</p>
           <p>执行步骤：{current.steps.join(' → ') || '由智能体既有流程控制'}</p>

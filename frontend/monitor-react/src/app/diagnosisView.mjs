@@ -1,5 +1,6 @@
 import { cleanDisplayText, cleanEvidenceText, parseEmbeddedJson, normalizeResultText } from "./textFormatting.mjs";
 import { currentIncident, matchesIncident } from './incidentIdentity.mjs';
+import { businessText } from './businessText.mjs';
 
 function resolveCurrentSample(snapshot, sample) {
   return sample
@@ -51,7 +52,7 @@ export function buildDiagnosisView(snapshot, sample) {
   const currentAlarm = String(current?.alarm_code || "").trim();
   const isCurrent = diagnosisMatchesCurrent(snapshot, sample, candidate);
   const latest = isCurrent ? candidate : {};
-  const evidence = Array.isArray(latest.evidence) ? latest.evidence.map(cleanEvidenceText).filter(Boolean) : [];
+  const evidence = Array.isArray(latest.evidence) ? latest.evidence.map(cleanEvidenceText).map(businessText).filter(Boolean) : [];
   const embedded = [latest.summary, latest.diagnosis, latest.fault]
     .map(parseEmbeddedJson)
     .find(Boolean) || {};

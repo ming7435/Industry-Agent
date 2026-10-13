@@ -28,6 +28,13 @@
 .expert-workspace textarea.expert-change-reason { min-height: 110px; margin-top: 8px; }
 .expert-change-note p { margin: 8px 0 0; font-size: 14px; font-weight: 400; }
 .expert-workspace .expert-save { align-self: flex-start; color: white; background: #087f72; border-color: #087f72; font-weight: 700; }
+.skill-north-star { border-top: 1px solid #d6e3e6; margin-top: 28px; padding-top: 24px; display: flex; flex-direction: column; gap: 14px; }
+.skill-north-star h2, .skill-north-star h3 { margin: 0; }
+.skill-north-star > p, .skill-north-star article p { margin: 8px 0; }
+.skill-north-star article { border: 1px solid #d6e3e6; background: #f8fbfb; border-radius: 10px; padding: 18px; min-width: 0; }
+.skill-north-star article strong { display: block; margin: 10px 0; font-size: 26px; color: #19343e; }
+.skill-north-star small { color: #647e88; line-height: 1.65; }
+.skill-north-star-acceptance { padding: 18px; border: 1px solid #d6e3e6; border-radius: 10px; }
 .expert-workspace details { border-top: 1px solid #e1e9ea; margin-top: 26px; padding-top: 18px; }
 .expert-workspace summary { cursor: pointer; color: #467c80; }
 .expert-comparison { padding: 18px; border: 1px solid #e7d7af; border-radius: 8px; background: #fffaf0; }

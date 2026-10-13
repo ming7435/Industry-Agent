@@ -154,6 +154,8 @@ class SkillManager:
                      "timestamp": datetime.now(timezone.utc).isoformat(), "state": "prepared"}
             if require_trial:
                 audit.update(test_id=values["test_id"], human_confirmed=True)
+            from app.skills.north_star import publication_snapshot
+            audit['north_star'] = publication_snapshot(audit, original, content)
             audit_path = directory / (edit_id + ".json")
             audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
             temporary = None
@@ -171,6 +173,15 @@ class SkillManager:
                 # 此回调不接受客户端参数，且不把远程请求放入文件/数据库事务。
                 with publication_fence(audit) if publication_fence else nullcontext():
                     os.replace(temporary, path)
+            except Exception:
+                # 只有文件仍为原文时才确认未发布；落盘结果不确定时保留 prepared 待对账。
+                try:
+                    if path.read_bytes() == original:
+                        audit['state'] = 'aborted'
+                        audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding='utf-8')
+                except OSError:
+                    pass
+                raise
             finally:
                 if temporary is not None:
                     temporary.unlink(missing_ok=True)

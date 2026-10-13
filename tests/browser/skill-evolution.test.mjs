@@ -12,7 +12,17 @@ const proposal = {proposal_id:'c'.repeat(32),candidate_hash:'b'.repeat(64),agent
     trigger_summary:'现场证据不足',expected_result:'证据不足时列出待核查项，不能断言根因已经确认。',
     rules:['现场证据不足时保留不确定性。'],goal:skill.goal,version:'1.1'}};
 
-async function setup({role='technician', delayed=null, staleAfterConfirm=false,publishFailsOnce=false,loopStats=false,controlDelay=null}={}) {
+const northStar = {kind:'skill_north_star',schema:1,agent:'diagnosis',name:skill.name,
+  period:{start:'2026-10-11T16:00:00+00:00',end:'2026-10-12T06:00:00+00:00',timezone:'Asia/Shanghai'},
+  weekly_gain:{value:20,old_version:'1.0',new_version:'1.1',method:'observational',
+    old:{value:80,successes:4,samples:5},new:{value:100,successes:4,samples:4},message:'实际版本成功率差值'},
+  drift_recall:{value:50,numerator:1,denominator:2,message:''},
+  gate_pass_rate:{value:75,numerator:3,denominator:4,message:''},
+  rollback_rate:{value:0,numerator:0,denominator:2,message:''},active_alerts:[],
+  latest_assessment:{accepted:true,criteria:{diagnosis:true,maintenance:true,workorder:true,report:true}},
+  coverage_note:'只统计可验证的新格式回执',method_note:'指标辅助审核，不替代人工发布'};
+
+async function setup({role='technician', delayed=null, staleAfterConfirm=false,publishFailsOnce=false,loopStats=false,controlDelay=null,northStats=null}={}) {
   const fixture=await centerFixture({fullApp:true}), page=await fixture.browser.newPage();
   page.setDefaultTimeout(8000);
   const writes=[], errors=[], staleRead=deferred();
@@ -27,14 +37,14 @@ async function setup({role='technician', delayed=null, staleAfterConfirm=false,p
       scenarios:[{scenario_id:'turret',name:'刀塔超时'}]}]});
     if(path===`/api/expert/skills/diagnosis/${skill.name}`) return respond(route,skill);
     if(path==='/api/expert/evolution') return respond(route,{items:[{...proposal,status}],worker:{enabled:true}});
-    if(path==='/api/expert/skill-loop') return respond(route,loopStats ? {
+    if(path==='/api/expert/skill-loop') return respond(route,{north_star:northStats,...(loopStats ? {
       kind:'skill_loop',loop_id:'2026-10-12',control:{paused:false,revision:controlPending ? 3 : 1},
       health:{previous:{complete:true,items:[{agent:'diagnosis',name:skill.name,version:'1.0',calls:4,
         verdicts:{pass:1,fail:1,degraded:1,unknown:0,infrastructure_error:1},coverage:{executed:2,declared:4},last_gain:'not_evaluated'}]},
         current:{complete:false,items:[],message:'窗口尚未收集完整'}},
       plan:{limit:3,used:1,remaining:2,selected:[{agent:'diagnosis',name:skill.name,reason:'真实窗口显示证据不足',phase:'awaiting_confirmation'}]},
       evaluation:{status:'not_evaluated',message:'没有同基线对照，收益未评估'}
-    } : {kind:'skill_loop',health:null,plan:null,control:{paused:false},evaluation:{status:'not_evaluated'}});
+    } : {kind:'skill_loop',health:null,plan:null,control:{paused:false},evaluation:{status:'not_evaluated'}})});
     if(path==='/api/expert/skill-loop/control') {
       if(controlDelay) {controlPending=true;controlDelay.started.resolve();
         return controlDelay.release.promise.then(()=>respond(route,{paused:true,revision:2})).catch(()=>{});}
@@ -63,6 +73,45 @@ async function setup({role='technician', delayed=null, staleAfterConfirm=false,p
   });
   return {fixture,page,writes,errors,staleRead,finish:()=>{status='awaiting_publication';}};
 }
+
+test('发布下方展示四项北极星指标，保留样本数且真实零值不显示为待统计',{timeout:20000},async()=>{
+  const {fixture,page,writes,errors}=await setup({northStats:northStar});
+  try {
+    await page.goto(fixture.base+'/?view=expert');
+    const panel=page.getByRole('region',{name:'北极星指标',exact:true});
+    await panel.getByText('+20 个百分点',{exact:true}).waitFor();
+    const gain=panel.getByRole('article',{name:'周进化收益',exact:true});
+    assert.match(await gain.innerText(),/旧版.*80%.*4\/5/);
+    assert.match(await gain.innerText(),/新版.*100%.*4\/4/);
+    for(const [name,value,samples] of [['漂移召回率','50%','1/2'],['门禁通过率','75%','3/4'],['回滚率','0%','0/2']]) {
+      const card=panel.getByRole('article',{name,exact:true});
+      assert.equal(await card.getByText(value,{exact:true}).count(),1);
+      assert.ok((await card.innerText()).includes(samples));
+    }
+    assert.match(await panel.innerText(),/智能诊断.*维修方案.*工单系统.*报告中心/s);
+    assert.equal(await page.evaluate(()=>Boolean(document.querySelector('.expert-save').compareDocumentPosition(
+      document.querySelector('[aria-label="北极星指标"]')) & Node.DOCUMENT_POSITION_FOLLOWING)),true);
+    assert.deepEqual(writes,[],'读取评分不能审批、控制设备或发布技能');
+    assert.deepEqual(errors,[]);
+  } finally {await fixture.close();}
+});
+
+test('北极星没有有效样本时显示缺项原因，不编造四项评分',{timeout:20000},async()=>{
+  const empty={...northStar,weekly_gain:{value:null,message:'尚无新旧版本对照'},
+    drift_recall:{value:null,numerator:0,denominator:0,message:'没有实际业务失败'},
+    gate_pass_rate:{value:null,numerator:0,denominator:0,message:'尚无已完成验收'},
+    rollback_rate:{value:null,numerator:0,denominator:0,message:'尚无成功发布'},latest_assessment:null};
+  const {fixture,page,writes}=await setup({northStats:empty});
+  try {
+    await page.goto(fixture.base+'/?view=expert');
+    const panel=page.getByRole('region',{name:'北极星指标',exact:true});
+    await panel.getByText('尚无新旧版本对照',{exact:true}).waitFor();
+    assert.equal(await panel.getByText('待统计',{exact:true}).count(),4);
+    assert.equal(await panel.getByText('0%',{exact:true}).count(),0);
+    assert.equal(await panel.getByText('100%',{exact:true}).count(),0);
+    assert.deepEqual(writes,[]);
+  } finally {await fixture.close();}
+});
 
 test('技能优化循环展示真实分类和周预算，暂停不操作机器',{timeout:20000},async()=>{
   const {fixture,page,writes,errors}=await setup({loopStats:true});

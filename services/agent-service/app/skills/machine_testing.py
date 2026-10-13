@@ -115,7 +115,7 @@ class MachineTrials(SkillTrials):
     @staticmethod
     def _public(record):
         public = SkillTrials._public(record)
-        public.update({key: record.get(key) for key in ('machine', 'event_id', 'workorders', 'report_id', 'progress', 'details', 'cancelled_at')})
+        public.update({key: record.get(key) for key in ('machine', 'event_id', 'workorders', 'report_id', 'progress', 'details', 'cancelled_at', 'assessment')})
         return public
 
     def start_machine(self, agent, name, values, actor):
@@ -160,6 +160,7 @@ class MachineTrials(SkillTrials):
                 raise SkillEditError(409, '线上技能正在变化，请重新测试')
             record = {'test_id': uuid4().hex, 'actor_id': actor['user_id'], 'agent': agent, 'name': name,
                       'fingerprint': fingerprint(values), 'dependencies': dependencies, 'instance': self.instance,
+                      'baseline_revision': current['revision'],
                       'created_epoch': time(), 'created_at': datetime.now(timezone.utc).isoformat(),
                       'status': 'awaiting_fault', 'mode': 'machine_flow', 'scope': '监控中心现有模拟机器全流程测试',
                       'machine': {**values['machine'], 'alarm_code': scenario['alarm_code'], 'name': machine['name']},
@@ -377,7 +378,19 @@ class MachineTrials(SkillTrials):
         progress = [{'label': label, 'completed': completed} for label, completed in zip(
             ('智能诊断', '维修方案', '工单派发', '维修确认', '整线复机', '汇总报告'),
             (diagnosis_done, plan_done, bool(orders), finished, bool(cycle), bool(report)))]
+        assessment = record.get('assessment')
+        if assessment is None and eligible and record.get('baseline_revision') and event_id and status in {'completed', 'failed'}:
+            criteria = {'diagnosis': diagnosis_done, 'maintenance': plan_done,
+                        'workorder': bool(orders) and finished and running,
+                        'report': bool(report), 'skill_used': used,
+                        'baseline_unchanged': self.manager.detail(record['agent'], record['name'])['revision'] == record['baseline_revision'],
+                        'dependencies_unchanged': self._dependencies() == record['dependencies']}
+            assessment = {'schema': 1, 'assessment_id': record['test_id'], 'agent': record['agent'], 'name': record['name'],
+                          'completed_at': datetime.now(timezone.utc).isoformat(),
+                          'trial_fingerprint': record['fingerprint'], 'criteria': criteria,
+                          'accepted': status == 'completed' and all(criteria.values()), 'basis': 'machine_flow_receipt'}
         return self._save_changes(record['test_id'], status=status, message=message, details=details, progress=progress,
+                                 assessment=assessment,
                                  workorder_deleted=missing,
                                  workorders=[{key: o.get(key) for key in ('workorder_id', 'status', 'assignee')} for o in orders],
                                  report_id=(report or {}).get('report_id', ''))

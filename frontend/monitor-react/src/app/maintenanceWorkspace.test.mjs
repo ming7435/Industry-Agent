@@ -3,6 +3,34 @@ import assert from "node:assert/strict";
 
 const workspace = await import("./maintenanceWorkspace.mjs").catch(error => error.code === "ERR_MODULE_NOT_FOUND" ? {} : Promise.reject(error));
 
+test('派发显示保留明确业务原因，内部校验只留在原始状态中', () => {
+  for (const [status,reason] of [['waiting_for_personnel','等待 M-1 对应维修人员登录'],
+    ['waiting_approval','显式要求人工审批'],['dispatched','按有效登录与负责设备匹配']]) {
+    const record = {workorder_ready:true,dispatch:{status,reason,allowed:status==='dispatched',
+      assignee:status==='dispatched'?'U-ASSIGNED':''}};
+    assert.equal(workspace.maintenanceDispatchView(record).displayReason,reason);
+  }
+  const raw = '等待设备负责人登录；停止原因：validator_pass；CAD/BOM 工程证据校验未通过：insufficient_engineering_data';
+  const record = {workorder_ready:false,dispatch:{allowed:false,reason:raw},validation_findings:['EXP-B39D8CB379']};
+  const view = workspace.maintenanceDispatchView(record);
+  assert.equal(view.displayReason,'等待设备负责人登录');
+  assert.match(view.reason,/validator_pass/);
+  assert.equal(record.dispatch.reason,raw);
+});
+
+test('检查任务用当前设备说明派发等待，待复核方案不展示旧模板评语', () => {
+  const raw='等待 M-1 对应负责人员登录';
+  const view=workspace.maintenanceDispatchView({device_id:'M-1',plan_kind:'inspection',workorder_ready:true,
+    dispatch:{allowed:false,status:'waiting_for_personnel',reason:raw}});
+  assert.match(view.displayReason,/M-1/);
+  assert.ok(!view.displayReason.includes(raw));
+  const record={workorder_ready:true,execution_review:{required:true,findings:['原模板错配']},
+    dispatch:{status:'dispatched',allowed:false,assignee:'U',workorder_id:'W',reason:'旧方案不可直接执行，需重新校验'}};
+  const reviewing=workspace.maintenanceDispatchView(record);
+  assert.equal(reviewing.displayReason,'');
+  assert.match(reviewing.reason,/旧方案不可直接执行/);
+});
+
 test('关联工单的现行步骤与状态优先于同编号的旧方案快照', () => {
   const plan = {plan_id:'P1',device_id:'M1',event_id:'E1',repair_steps:['旧步骤'],workorder_ready:true,
     dispatch:{status:'dispatched',assignee:'U1',workorder_id:'W1'}};

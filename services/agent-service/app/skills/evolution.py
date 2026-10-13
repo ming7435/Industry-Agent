@@ -113,6 +113,7 @@ class SkillEvolution:
         self._contexts = {}
         self._confirmation_lock = Lock()
         self._advance_lock = Lock()
+        self._metric_cache = {}
 
     def get(self, proposal_id):
         if not re.fullmatch(r'[a-f0-9]{32}', str(proposal_id)):
@@ -198,6 +199,11 @@ class SkillEvolution:
     def loop(self):
         from app.skills.loop import SkillLoop
         return SkillLoop(self)
+
+    @property
+    def metrics(self):
+        from app.skills.north_star import NorthStarMetrics
+        return NorthStarMetrics(self)
 
     def _baseline(self, record):
         current = self.manager.detail(record['agent'], record['name'])

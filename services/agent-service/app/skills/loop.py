@@ -87,13 +87,15 @@ class SkillLoop:
         windows = week_windows(now)
         week_id = windows['week_id']
         # 旧分页快照没有持续覆盖证明，保留旧数据但不能把旧complete直接沿用。
-        previous_key = windows['previous']['start'] + ':coverage-v1'
+        previous_key = windows['previous']['start'] + ':coverage-v1:north-star-v1'
         previous = self.store.get('skill_loop_snapshot', previous_key)
         if previous is None or not previous.get('complete'):
             previous = self._window(windows['previous'])
             if previous['complete']:
                 previous = self.store.get_or_create('skill_loop_snapshot', previous_key, lambda: previous)
         current = self._window(windows['current'])
+        self.evolution.metrics.collect(now)
+        self.evolution.metrics.observe({'previous': previous, 'current': current}, now)
         initial_plan = {'loop_id': week_id, 'revision': 0, 'recording_policy': 1, 'limit': 3, 'selected': self._selection(previous),
                         'source_window': windows['previous'], 'reservations': {}, 'created_at': now.isoformat()}
         # 完整窗口才冻结计划；冷启动/存储失败不能永久保存一份伪完整的空计划。
@@ -206,9 +208,11 @@ class SkillLoop:
         def matches(row):
             return (not agent or row['agent'] == agent) and (not name or row['name'] == name)
         health = state.get('health')
+        north_star = self.evolution.metrics.status(health, agent, name,
+            datetime.fromisoformat(state['observed_at']) if state.get('observed_at') else datetime.now(timezone.utc)) if agent and name else None
         if health:
             for window in health.values():
-                window['items'] = [{k: v for k, v in row.items() if k != 'sources'} for row in window['items'] if matches(row)]
+                window['items'] = [{k: v for k, v in row.items() if k not in {'sources', 'outcome_events'}} for row in window['items'] if matches(row)]
         if plan:
             blocked_reason = '' if plan.get('recording_policy') == 1 else '旧计划缺少持续观测覆盖证明，本周停止生成新稿，保留已占额度与原候选'
             selected = []
@@ -226,5 +230,5 @@ class SkillLoop:
                 'blocked_reason': blocked_reason,
                 'remaining': max(0, plan['limit'] - len(plan['reservations']))}
         return {'kind': 'skill_loop', 'loop_id': week_id, 'observed_at': state.get('observed_at'),
-                'health': health, 'plan': plan, 'control': {k: control[k] for k in ('paused', 'revision')},
+                'health': health, 'plan': plan, 'north_star': north_star, 'control': {k: control[k] for k in ('paused', 'revision')},
                 'evaluation': state.get('evaluation', {'status': 'not_evaluated', 'message': '尚未评估'})}

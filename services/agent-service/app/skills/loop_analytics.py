@@ -114,6 +114,7 @@ def aggregate(records, registry, complete):
                 'fingerprint': fingerprint, 'calls': 0, 'verdicts': dict.fromkeys(VERDICTS, 0),
                 'complete': bool(complete), 'mixed_version_calls': 0, 'last_seen': '',
                 'failure_ewma': None, 'last_gain': 'not_evaluated', 'sources': [],
+                'outcome_events': [], 'outcomes_complete': True,
                 '_executed': set(), '_declared': set()})
             mixed = sum(n == name for n, _, _ in definitions) > 1
             verdict = _verdict(terminal, group)
@@ -121,6 +122,12 @@ def aggregate(records, registry, complete):
                 verdict = 'unknown'
             row['calls'] += 1
             row['verdicts'][verdict] += 1
+            if terminal:
+                if len(row['outcome_events']) < 2000:
+                    row['outcome_events'].append({'id': terminal['trace_record_id'],
+                        'timestamp': terminal.get('timestamp'), 'verdict': verdict})
+                else:
+                    row['outcomes_complete'] = False
             row['mixed_version_calls'] += int(mixed)
             timestamps = [str(r.get('timestamp') or '') for r in group]
             row['last_seen'] = max(row['last_seen'], *timestamps)

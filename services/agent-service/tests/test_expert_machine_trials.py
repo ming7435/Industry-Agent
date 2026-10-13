@@ -159,6 +159,27 @@ def test_full_process_without_selected_skill_is_not_publishable(machine_trial):
     assert value['status'] == 'failed' and '未调用' in value['message']
 
 
+def test_metrics_require_real_four_stage_acceptance_and_deduplicate_reads(machine_trial):
+    from test_skill_evolution import IsolatedJsonStore
+    test = machine_trial
+    manager = test.api.client.app.state.expert_skills
+    manager.evolution.store = IsolatedJsonStore()
+    receipt = start(test)
+    diagnose(test, receipt)
+    assert test.trials.get(receipt['test_id'], ACTOR).get('assessment') is None
+    complete_business(test)
+    completed = test.trials.get(receipt['test_id'], ACTOR)
+    assert completed['assessment']['accepted'] is True
+    assert all(completed['assessment']['criteria'][stage] for stage in
+               ('diagnosis', 'maintenance', 'workorder', 'report'))
+    manager.evolution.metrics.collect(datetime.now(timezone.utc))
+    manager.evolution.metrics.collect(datetime.now(timezone.utc))
+    measured = manager.evolution.metrics.status(None, 'diagnosis', 'alarm_diagnosis_skill', datetime.now(timezone.utc))
+    assert measured['gate_pass_rate']['numerator'] == 1
+    assert measured['gate_pass_rate']['denominator'] == 1
+    assert measured['gate_pass_rate']['value'] == 100
+
+
 def test_running_trial_reads_stage_and_completed_business_without_waiting_for_callback(machine_trial):
     test = machine_trial
     receipt = start(test)

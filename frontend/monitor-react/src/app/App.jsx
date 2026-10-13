@@ -3065,6 +3065,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
             <button type="button" className="workorder-queue-item" onClick={() => setSelectedId(record.recordId)}><span>
               <strong>{getDeviceDisplayName(record.device_id, { snapshot, device_name:record.device_name })} · {cleanDisplayText(record.diagnosis?.fault || record.diagnosis?.summary) || `报警 ${record.alarm_code || "待确认"}`}</strong>
               <small>{maintenanceWorkType(record).label} · {record.plan_id || "未编号方案"} · {record.device_id}{record.created_at ? ` · 方案生成 ${formatRecordTime(record.created_at)}` : record.diagnosis_created_at ? ` · 诊断完成 ${formatRecordTime(record.diagnosis_created_at)}` : ""}</small>
+              {dispatch.displayReason && <small className="maintenance-plan-dispatch-reason">{dispatch.displayReason}</small>}
             </span><em>{dispatch.label}</em></button>
             <button className="button danger" type="button" disabled={!actor?.user_id || deleting || !record.plan_id} onClick={() => removePlans([record.plan_id])}>删除此方案</button>
           </div>;
@@ -3322,6 +3323,8 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
         {!selectedOrder && error && <div className="inline-error" role="alert">工单读取失败：{error}</div>}
       </section>
       {loadState === "ready" && hasCurrentIncident && !hasVisibleIncidentOrder && <div className="workspace-notice" role="status">{currentNoRepair ? `当前报警 ${currentIncidentCode}：诊断判定无需维修，不生成维修方案和工单；请按智能诊断中的建议处理。` : <>当前账号尚无报警 {currentIncidentCode} 对应的可见工单；系统正在核对本次方案、当前报警和设备负责人，派发后自动显示。{currentPlanRecord ? '工程资料待核实项将保留在任务内。' : '需先有本次故障对应的已保存方案；已删除的方案不会自动恢复。'}</>}</div>}
+      {loadState === 'ready' && !selectedOrder && !hasVisibleIncidentOrder && currentPlanRecord && !currentNoRepair &&
+        <MaintenanceDispatchStatus record={currentPlanRecord} />}
       {(selectedOrder || loadState === "ready") && <WorkorderDetail
         order={selectedOrder || null}
         sample={sample}
@@ -3414,6 +3417,7 @@ function MaintenanceDispatchStatus({ record, hasOrder = false }) {
     <div className="maintenance-plan-heading"><h2>{status.label}</h2><span>工单就绪：{status.ready}</span></div>
     {status.reviewRequired && <div role="status"><strong>{status.reviewLabel}</strong><p>请维修人员确认方案与现场情况，实际处理结果在关联工单中提交。</p></div>}
     {status.assigneeName && <p>维修负责人：{status.assigneeName} · 对应设备：{status.assignmentDeviceId || "未提供"}</p>}
+    {status.displayReason && <p>{status.displayReason}</p>}
     {!hasOrder && !status.assigneeName && <p>工单派发后会自动显示在工单系统；尚未派发时，请确认设备已有负责的维修人员并已登录。</p>}
   </section>;
 }
