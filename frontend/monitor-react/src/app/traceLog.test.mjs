@@ -96,6 +96,31 @@ test('工具异常终态保留异常，不能因所属 Agent 完成而显示成�
   assert.equal(traceEventSummary(start,records).status,'异常');
 });
 
+for (const [kind,terminal,expected] of [
+  ['a2a',{type:'a2a',event:'a2a_completed',name:'router->knowledge',request_id:'REQ-1',success:false,status:'failed'},'异常'],
+  ['step',{type:'agent_step',event:'step_completed',name:'retrieve',step_run_id:'STEP-1',success:false},'异常'],
+  ['execution',{type:'execution',event:'execution_end',name:'execution',state_change:{execution_id:'EXEC-1',status:'CANCELLED'}},'已停止'],
+]) test(`${kind} 顶层失败或取消回执不能显示成功`,()=>{
+  const end={...terminal,trace_id:'TRACE-FAIL',timestamp:'2026-10-14T00:00:01Z'};
+  const start={...end,event:kind==='execution'?'execution_start':kind==='step'?'step_started':'a2a_started',
+    timestamp:'2026-10-14T00:00:00Z'};
+  delete start.success;delete start.status;
+  if(kind==='execution')start.state_change={execution_id:'EXEC-1',status:'RUNNING'};
+  assert.equal(traceEventSummary(start,[start,end]).status,expected);
+  assert.equal(traceEventSummary(end,[start,end]).status,expected);
+});
+
+for (const kind of ['a2a','execution']) test(`${kind} 按实际回执中的稳定编号匹配交错调用`,()=>{
+  const base={type:kind,name:kind==='a2a'?'router->knowledge':'execution',agent:'runtime',trace_id:'TRACE-PARALLEL'};
+  const identity=id=>kind==='a2a'?{request_id:id,message_id:'MSG-'+id}:{state_change:{execution_id:id}};
+  const startA={...base,...identity('CALL-A'),event:kind==='a2a'?'a2a_started':'execution_start',timestamp:'2026-10-14T00:00:00Z'};
+  const startB={...base,...identity('CALL-B'),event:kind==='a2a'?'a2a_started':'execution_start',timestamp:'2026-10-14T00:00:01Z'};
+  const endA={...startA,event:kind==='a2a'?'a2a_completed':'execution_end',timestamp:'2026-10-14T00:00:02Z',success:true};
+  const records=[startA,startB,endA];
+  assert.equal(traceEventSummary(startA,records).status,'已完成');
+  assert.equal(traceEventSummary(startB,records).status,'执行中');
+});
+
 test('所属 Agent 已结束但步骤结束回执缺失时显示待核对，不伪造完成',()=>{
   const start={type:'agent_step',event:'step_started',name:'retrieve',trace_id:'TRACE-A',
     agent:'knowledge',agent_run_id:'AGENT-1',step_run_id:'STEP-1',timestamp:'2026-10-14T00:00:00Z'};

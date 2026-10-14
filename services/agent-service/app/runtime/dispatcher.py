@@ -311,7 +311,10 @@ class RuntimeDispatcher:
                 alarm_label = str(context.get("alarm_label") or event.get("alarm_label") or "").strip()
                 if alarm_label:
                     scoped["alarm_label"] = alarm_label
-            return {"query": query, "purpose": purpose, "diagnosis": diagnosis, "context": context, "alarm_active": alarm_active, **scoped, "filters": dict(scoped)}
+            generate_answer = not (state.get('entry') == 'trigger' or diagnosis or purpose == 'maintenance'
+                                   or capability == 'evidence_retrieval')
+            return {"query": query, "purpose": purpose, "generate_answer": generate_answer,
+                    "diagnosis": diagnosis, "context": context, "alarm_active": alarm_active, **scoped, "filters": dict(scoped)}
         if capability in {"drawing_search", "bom_query", "component_relation"}:
             context = dict(state.get("context") or {})
             event = state.get("event")

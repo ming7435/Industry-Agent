@@ -36,8 +36,8 @@ def run_search(tmp_path, monkeypatch, payload=None, capability="document_search"
         rag_results=[],
     )
 
-    def search(query, *, limit, filters):
-        runtime.test_rag.calls.append({"query": query, "limit": limit, "filters": dict(filters)})
+    def search(query, *, limit, filters, generate_answer=True):
+        runtime.test_rag.calls.append({"query": query, "limit": limit, "filters": dict(filters), 'generate_answer': generate_answer})
         return rag_result(filters.get("knowledge_type") or "manual")
 
     monkeypatch.setattr(runtime.test_rag, "search", search)

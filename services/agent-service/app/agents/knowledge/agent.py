@@ -409,7 +409,8 @@ class KnowledgeAgent(BaseAgent):
             (dict(item.get("model_metadata") or {}) for item in raw_results if isinstance(item.get("model_metadata"), Mapping)),
             {},
         )
-        answer = self._format_grounded_answer(answer, query=query, documents=[item.model_dump(mode="json") for item in normalized], retrieval_scope=retrieval_scope)
+        answer = self._format_grounded_answer(answer, query=query, documents=[item.model_dump(mode="json") for item in normalized], retrieval_scope=retrieval_scope) \
+            if request.get('generate_answer', True) and request.get('purpose') != 'maintenance' else ''
         return KnowledgeResult(
             query=query,
             status=status,

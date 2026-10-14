@@ -12,6 +12,7 @@ def search_manual(
     query: str,
     limit: int = 5,
     filters: Mapping[str, Any] | None = None,
+    generate_answer: bool = True,
     **_: Any,
 ) -> Dict[str, Any]:
-    return search_filtered_knowledge(rag, query, knowledge_type="manual", limit=limit, filters=filters, remove_alarm_code=True)
+    return search_filtered_knowledge(rag, query, knowledge_type="manual", limit=limit, filters=filters, remove_alarm_code=True, generate_answer=generate_answer)

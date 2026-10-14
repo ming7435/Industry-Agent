@@ -88,3 +88,30 @@ test('后台持续更新小目录，版本未变化不重复下载正文，版�
     assert.equal(reads.get('/api/trace?trace_id=T-IDLE&limit=5000'),2);
   } finally {stop?.();Object.assign(globalThis,original);Date.now=originalNow;invalidateWorkspaceReads();}
 });
+
+test('产线观察时间持续变化不会让预读重复下载未变工单正文',async()=>{
+  setTeamSessionActor({user_id:'U-STABLE',role:'technician'},{force:true});
+  const original={fetch:globalThis.fetch,setTimeout:globalThis.setTimeout,clearTimeout:globalThis.clearTimeout,setInterval:globalThis.setInterval,clearInterval:globalThis.clearInterval};
+  const originalNow=Date.now;let clock=Date.now();Date.now=()=>clock;
+  let scheduled,heartbeat,stop,detailReads=0;
+  globalThis.setTimeout=callback=>{scheduled=callback;return 1;};globalThis.clearTimeout=()=>{};
+  globalThis.setInterval=callback=>{heartbeat=callback;return 2;};globalThis.clearInterval=()=>{};
+  globalThis.fetch=async path=>{
+    const order={workorder_id:'WO-STABLE',_revision:1,updated_at:'order-v1'};
+    if(path==='/api/workorders/WO-STABLE')detailReads++;
+    const body=path==='/api/workorders?summary=true'?{items:[{...order,_summary_record:true}]}:
+      path==='/api/workorders/WO-STABLE'?{workorder:order}:
+      path==='/api/team/line'?{state:'stopped',generation:1,updated_at:clock}:{items:[],runs:[]};
+    return new Response(JSON.stringify(body));
+  };
+  const settle=async()=>{for(let i=0;i<3;i++)await new Promise(resolve=>setImmediate(resolve));};
+  try {
+    stop=startWorkspacePrefetch();scheduled();await settle();
+    clock+=30000;heartbeat();scheduled();await settle();
+    assert.equal(detailReads,1,'仅产线观察时间改变，不应失效工单正文');
+    const current=await readWorkspace('/api/workorders/WO-STABLE',{
+      revision:JSON.stringify(['WO-STABLE',1,'order-v1']),freshFor:5000});
+    assert.equal(current.workorder.workorder_id,'WO-STABLE');
+    assert.equal(detailReads,1,'预读和页面必须使用相同的工单版本');
+  } finally {stop?.();Object.assign(globalThis,original);Date.now=originalNow;invalidateWorkspaceReads();}
+});

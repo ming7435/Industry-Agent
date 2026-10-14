@@ -77,7 +77,7 @@ function eventLabel(record) {
 
 function eventStatus(record) {
   const event = String(record?.event || "").toLowerCase();
-  if (record?.error || event.includes("error") || event.includes("failed") || event.includes("timeout") || record?.allowed === false) return "异常";
+  if (eventIsError(record)) return "异常";
   if (event.includes("started") || event.endsWith("_start")) return "执行中";
   if (event.includes("completed") || event.endsWith("_end") || event === "tool_called" || event === "step_completed") return "已完成";
   return "已记录";
@@ -117,7 +117,9 @@ function executionScope(record) {
 function executionKey(record, kind) {
   const context = recordContext(record);
   const field = {agent:'agent_run_id',tool:'tool_call_id',step:'step_run_id',node:'node_run_id',a2a:'a2a_call_id',loop:'loop_id',planner:'plan_id',execution:'execution_id',recovery:'recovery_id'}[kind];
-  const id = record[field] || context[field] || (['tool','a2a'].includes(kind) ? record.call_id || context.call_id : '');
+  const fields = [field,...(['tool','a2a'].includes(kind)?['call_id']:[]),...(kind==='a2a'?['request_id','message_id']:[])];
+  const containers = [record,context,record.state_change||{}];
+  const id = fields.flatMap(key=>containers.map(container=>container[key])).find(value=>typeof value==='string'&&value);
   return {explicit: Boolean(id), key: JSON.stringify([kind, executionScope(record), id || [
     recordAgentRunId(record), recordAgentName(record), record.node || record.step || context.step || '',
     record.tool_name || record.tool || record.name || '',
@@ -126,9 +128,9 @@ function executionKey(record, kind) {
 
 function terminalDisplayStatus(record) {
   const output = record.output || {};
-  const status = String(output.status || record.state_change?.status || '').toLowerCase();
-  if (eventIsError(record) || output.success === false || ['error','failed','timeout'].includes(status)) return '异常';
-  if (['blocked','pending_approval','insufficient_data','not_tested','incomplete'].includes(status)) return '已停止';
+  const statuses = [record.status,output.status,record.state_change?.status].map(status=>String(status||'').toLowerCase());
+  if (eventIsError(record) || record.success === false || output.success === false || statuses.some(status=>['error','failed','timeout'].includes(status))) return '异常';
+  if (statuses.some(status=>['blocked','pending_approval','insufficient_data','not_tested','incomplete','cancelled','canceled','stopped','aborted'].includes(status))) return '已停止';
   return '已完成';
 }
 
@@ -154,6 +156,7 @@ export function buildTraceEventSummaries(records = []) {
     if (started) group.started=true;
     else {
       group.terminal=record;
+      summaries.set(record,{...summaries.get(record),status:terminalDisplayStatus(record)});
       if (kind==='agent') rememberEnd(agentEnds,ownerKey(record),{record,index});
       if (kind==='loop' && record.event==='loop_stop' && record.agent==='runtime'
           && (record.node || record.name)==='runtime') rememberEnd(runtimeEnds,JSON.stringify(executionScope(record)),{record,index});
@@ -253,7 +256,9 @@ function mergeContexts(records) {
 
 function eventIsError(record) {
   const event = String(record?.event || "").toLowerCase();
-  return Boolean(record?.error) || event.includes("error") || event.includes("failed") || event.includes("timeout") || record?.allowed === false;
+  return Boolean(record?.error) || record?.success === false || record?.output?.success === false
+    || [record?.status,record?.output?.status].some(status=>['error','failed','timeout'].includes(String(status||'').toLowerCase()))
+    || event.includes("error") || event.includes("failed") || event.includes("timeout") || record?.allowed === false;
 }
 
 function eventIsComplete(record) {

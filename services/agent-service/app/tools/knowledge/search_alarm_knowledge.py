@@ -13,6 +13,7 @@ def search_alarm_knowledge(
     limit: int = 5,
     filters: Mapping[str, Any] | None = None,
     alarm_code: str = "",
+    generate_answer: bool = True,
     **_: Any,
 ) -> Dict[str, Any]:
-    return search_filtered_knowledge(rag, query, knowledge_type="alarm", limit=limit, filters=filters, alarm_code=alarm_code)
+    return search_filtered_knowledge(rag, query, knowledge_type="alarm", limit=limit, filters=filters, alarm_code=alarm_code, generate_answer=generate_answer)

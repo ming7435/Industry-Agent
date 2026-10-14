@@ -11,8 +11,8 @@ class IsolatedRag:
         self.calls = []
         self.empty = empty
 
-    def search(self, query, *, limit, filters):
-        self.calls.append({'query': query, 'limit': limit, 'filters': dict(filters)})
+    def search(self, query, *, limit, filters, generate_answer=True):
+        self.calls.append({'query': query, 'limit': limit, 'filters': dict(filters), 'generate_answer': generate_answer})
         kind = filters.get('knowledge_type') or 'alarm'
         if self.empty or kind == 'sop':
             return {'documents': [], 'source': 'isolated-rag'}
@@ -47,6 +47,7 @@ def test_maintenance_alarm_retrieves_case_evidence_even_when_sop_is_empty():
     assert 'CASE-HYDRAULIC' in [document.document_id for document in result.documents]
     assert sorted(call['filters'].get('knowledge_type', '') for call in rag.calls) == ['', 'alarm', 'case', 'sop']
     assert all(call['filters']['device_id'] == 'TRAK-TC820LTYSI-001' for call in rag.calls)
+    assert all(call['generate_answer'] is False for call in rag.calls)
     assert result.status == 'completed'
     assert not result.validation_findings
 

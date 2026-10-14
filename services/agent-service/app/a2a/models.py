@@ -113,6 +113,7 @@ class DiagnosisResponse(A2AResponse):
 
 class KnowledgeRequest(A2ARequest):
     query: str
+    generate_answer: bool = Field(default=True, strict=True)
     limit: int = Field(default=5, ge=1, le=50)
     filters: Dict[str, Any] = Field(default_factory=dict)
     source_agent: str = ""

@@ -4,7 +4,7 @@ import json
 
 
 def skill_plan(agent, skills, request, planned):
-    if request.get('document_id') or request.get('chunk_id'):
+    if len(planned) < 2 or request.get('document_id') or request.get('chunk_id'):
         return list(planned), False
     client = getattr(agent, 'client', None)
     if client is None:

@@ -435,7 +435,12 @@ class SearchPipeline:
         if not self._build_evidence(request, progress):
             return
 
-        await self._generate(request, progress)
+        if request.generate_answer:
+            await self._generate(request, progress)
+        else:
+            # 主动省略回答生成不是降级，也不能冒充已有模型回答或引用验收通过。
+            progress.citation_status = "not_applicable"
+            logger.info("request_id={} stage=llm skipped reason=evidence_only", progress.request_id)
 
     @staticmethod
     def _hit_relevance(hit: Hit) -> float:
@@ -888,6 +893,7 @@ class SearchPipeline:
 
         return SearchResponse(
             request_id=progress.request_id,
+            generation_requested=request.generate_answer,
             hits=[_to_hit_model(hit) for hit in hits],
             evidence_text=progress.evidence_text,
             answer=progress.answer,

@@ -336,28 +336,28 @@ class ToolRegistry:
         return intent_classifier_tool_fn(user_text=user_text)
 
     @validated_query('search_knowledge')
-    def search_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        return search_knowledge_tool(self.rag, query, limit=limit, filters=filters)
+    def search_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, generate_answer: bool = True, **_: Any) -> Dict[str, Any]:
+        return search_knowledge_tool(self.rag, query, limit=limit, filters=filters, generate_answer=generate_answer)
 
     @validated_query('search_alarm_knowledge')
-    def search_alarm_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, alarm_code: str = "", **_: Any) -> Dict[str, Any]:
-        return search_alarm_knowledge_tool(self.rag, query, limit=limit, filters=filters, alarm_code=alarm_code)
+    def search_alarm_knowledge(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, alarm_code: str = "", generate_answer: bool = True, **_: Any) -> Dict[str, Any]:
+        return search_alarm_knowledge_tool(self.rag, query, limit=limit, filters=filters, alarm_code=alarm_code, generate_answer=generate_answer)
 
     @validated_query('search_sop')
-    def search_sop(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        return search_sop_tool(self.rag, query, limit=limit, filters=filters)
+    def search_sop(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, generate_answer: bool = True, **_: Any) -> Dict[str, Any]:
+        return search_sop_tool(self.rag, query, limit=limit, filters=filters, generate_answer=generate_answer)
 
     @validated_query('search_manual')
-    def search_manual(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        return search_manual_tool(self.rag, query, limit=limit, filters=filters)
+    def search_manual(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, generate_answer: bool = True, **_: Any) -> Dict[str, Any]:
+        return search_manual_tool(self.rag, query, limit=limit, filters=filters, generate_answer=generate_answer)
 
     @validated_query('search_fault_cases')
-    def search_fault_cases(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        return search_fault_cases_tool(self.rag, query, limit=limit, filters=filters)
+    def search_fault_cases(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, generate_answer: bool = True, **_: Any) -> Dict[str, Any]:
+        return search_fault_cases_tool(self.rag, query, limit=limit, filters=filters, generate_answer=generate_answer)
 
     @validated_query('search_semantic_memory')
-    def search_semantic_memory(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, **_: Any) -> Dict[str, Any]:
-        return search_semantic_memory_tool(self.rag, query, limit=limit, filters=filters)
+    def search_semantic_memory(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None, generate_answer: bool = True, **_: Any) -> Dict[str, Any]:
+        return search_semantic_memory_tool(self.rag, query, limit=limit, filters=filters, generate_answer=generate_answer)
 
     @validated_query('fetch_document')
     def fetch_document(self, document_id: str = "", **_: Any) -> Dict[str, Any]:
@@ -598,6 +598,10 @@ class ToolRegistry:
             task_id = str(execution_context["task_id"])
         if execution_context.get("trace_id"):
             trace_id = str(execution_context["trace_id"])
+        if name in {"search_knowledge", "search_alarm_knowledge", "search_sop", "search_manual",
+                    "search_fault_cases", "search_semantic_memory"} and execution_context.get('agent') in {'diagnosis', 'maintenance'}:
+            # 内部取证用途由服务端 Agent 身份决定，不允许模型参数开启多余的回答生成。
+            input_payload['generate_answer'] = False
         # 将生效的 Runtime 上下文写入每条工具事件，使日志页面不仅能展示
         # 调用了什么，还能展示调用原因以及设备、Agent、步骤范围。
         trace_context = dict(execution_context)

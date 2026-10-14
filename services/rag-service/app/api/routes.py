@@ -220,6 +220,7 @@ async def search(
     except TimeoutError:
         return SearchResponse(
             request_id=request_id,
+            generation_requested=request.generate_answer,
             degraded=True,
             degrade_reason="request_timeout",
             latency_ms=LatencyBreakdown(total=round((perf_counter() - started) * 1000)),

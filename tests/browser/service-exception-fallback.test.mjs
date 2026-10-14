@@ -47,17 +47,12 @@ for(const [view,label] of [['diagnosis','智能诊断'],['maintenance','维修�
   });
 }
 
-test('删除重复卡片后日志仍保留原任务失败原因和已完成步骤，刷新不执行业务',async()=>{
+test('移除失败任务面板后日志页不读取失败列表或异常待办接口',async()=>{
   const {fixture,page,state}=await setup('logs');
   try{
-    const panel=page.getByRole('region',{name:'失败任务记录'});
-    await panel.locator('.task-recovery-item').waitFor();
-    assert.match(await panel.innerText(),/TASK-FAIL-1/);
-    assert.match(await panel.innerText(),/维修方案服务 HTTP 503/);
-    assert.match(await panel.innerText(),/已完成：诊断、知识检索/);
-    assert.equal(await panel.getByRole('button',{name:/继续|执行/}).count(),0);
-    const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/runtime/recovery');
-    await panel.getByRole('button',{name:'刷新失败记录',exact:true}).click();await refreshed;
+    assert.equal(await page.getByRole('region',{name:'失败任务记录'}).count(),0);
+    assert.equal(await page.getByRole('button',{name:'刷新失败记录',exact:true}).count(),0);
+    assert.deepEqual(state.requests.filter(path=>path==='/api/runtime/recovery'),[]);
     assert.deepEqual(state.writes,[]);assert.deepEqual(state.errors,[]);
     assert.equal(await page.getByRole('region',{name:'异常核查待办'}).count(),0);
   }finally{await fixture.close();}

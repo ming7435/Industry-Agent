@@ -23,7 +23,7 @@ test('未登录日志页不请求私人失败任务接口，不因401循环打�
   } finally {await context.close();await fixture.close();}
 });
 
-test('会话过期后停止读取私人失败记录，公开日志继续自动更新',async()=>{
+test('登录日志页不再读取私人失败列表，公开日志继续自动更新',async()=>{
   const fixture=await centerFixture({fullApp:true});
   const context=await fixture.browser.newContext(),page=await context.newPage();
   let privateReads=0,publicReads=0;
@@ -46,9 +46,9 @@ test('会话过期后停止读取私人失败记录，公开日志继续自动�
     });
     await page.goto(`${fixture.base}/?view=logs`);
     await page.getByRole('button',{name:/公开故障运行/}).waitFor({timeout:3000});
-    await page.waitForFunction(()=>!document.querySelector('.task-recovery-panel'));
+    assert.equal(await page.getByRole('region',{name:'失败任务记录'}).count(),0);
     await page.clock.runFor(11000);
-    assert.equal(privateReads,1);
+    assert.equal(privateReads,0);
     assert.ok(publicReads>=2,'公开日志应继续轮询');
     assert.deepEqual(errors,[]);
   } finally {await context.close();await fixture.close();}

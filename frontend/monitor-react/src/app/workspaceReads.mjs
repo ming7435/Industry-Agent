@@ -12,6 +12,8 @@ let epoch=getTeamSession().version;
 const aborted=()=>new DOMException('读取已取消','AbortError');
 export const workspaceRunVersion=run=>JSON.stringify([run?.run_id||'',run?.trace_ids,run?.trace_id,run?.event_count,run?.ended_at,run?.status,run?.error_count]);
 export const workspaceRunTraceIds=run=>(Array.isArray(run?.trace_ids)&&run.trace_ids.length?run.trace_ids:[run?.trace_id]).filter(value=>value&&!String(value).startsWith('event-'));
+// 正文只跟随工单修订；产线观察时间不是工单业务版本。
+export const workorderDetailVersion=order=>JSON.stringify([order?.workorder_id,order?._revision,order?.updated_at]);
 
 export function invalidateWorkspaceReads() {
   for(const entry of entries.values())entry.controller?.abort();
@@ -106,11 +108,8 @@ export function startWorkspacePrefetch({chooseOrder}={}) {
         const id=chooseOrder?.(items)||items.find(item=>!['closed','completed'].includes(item.status))?.workorder_id||items[0]?.workorder_id;
         const item=items.find(item=>item.workorder_id===id);
         if(!item)return;
-        const line=await readWorkspace('/api/team/line',{freshFor:1000});
         if(stopped||owner!==getTeamSession().version)return;
-        const stamp=JSON.stringify([line.state,line.generation,line.updated_at]);
-        const revision=JSON.stringify([id,item._revision,item.updated_at,stamp]);
-        await readVerifiedBody(`/api/workorders/${encodeURIComponent(id)}`,revision);
+        await readVerifiedBody(`/api/workorders/${encodeURIComponent(id)}`,workorderDetailVersion(item));
       }).catch(()=>{});
     },350);
   };

@@ -40,6 +40,7 @@ class A2AEndpoints:
     def _knowledge_endpoint(self, request: KnowledgeRequest) -> KnowledgeResponse:
         result = self.harnesses["knowledge"].execute_agent({
             "query": request.query,
+            "generate_answer": request.generate_answer,
             "limit": request.limit,
             "filters": request.filters,
             "task_id": request.task_id,

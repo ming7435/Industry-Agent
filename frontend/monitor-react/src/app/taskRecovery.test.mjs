@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recoveryLabel } from './taskRecovery.mjs';
+import { traceEventSummary, traceDetailSections } from './traceLog.mjs';
 
-test('failed records stay read only even when an old response permits resume', () => {
-  assert.equal(recoveryLabel({can_resume:true,status:'failed'}), '等待人工处理');
-  assert.equal(recoveryLabel({can_resume:false,status:'failed'}), '等待人工处理');
+test('移除失败面板后原始失败事件仍保留错误状态和原因', () => {
+  const record={type:'agent',event:'agent_error',agent:'maintenance',task_id:'TASK-FAIL',
+    error:'维修方案服务 HTTP 503',can_resume:true};
+  assert.equal(traceEventSummary(record).status,'异常');
+  assert.match(JSON.stringify(traceDetailSections(record)),/维修方案服务 HTTP 503/);
+  assert.equal(record.error,'维修方案服务 HTTP 503');
 });
 
-test('uncertain operations and historical completed tasks keep distinct labels', () => {
-  assert.equal(recoveryLabel({requires_reconcile:true,status:'outcome_unknown'}), '原操作结果待核对');
-  assert.equal(recoveryLabel({status:'completed'}), '历史任务已完成');
+test('历史成功事件和失败事件在执行明细中保持不同状态', () => {
+  assert.equal(traceEventSummary({type:'agent',event:'agent_completed',name:'maintenance'}).status,'已完成');
+  assert.equal(traceEventSummary({type:'agent',event:'agent_error',name:'maintenance',error:'依据不足'}).status,'异常');
 });

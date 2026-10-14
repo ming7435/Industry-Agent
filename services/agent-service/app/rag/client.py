@@ -53,7 +53,10 @@ class RAGServiceClient:
             self.allow_fallback = explicit_fallback.lower() in {"1", "true", "yes"}
         self.fallback = fallback or build_default_index()
 
-    def search(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None) -> Dict[str, Any]:
+    def search(self, query: str, limit: int = 5, filters: Mapping[str, Any] | None = None,
+               *, generate_answer: bool = True) -> Dict[str, Any]:
+        if not isinstance(generate_answer, bool):
+            raise ValueError("generate_answer 必须为布尔值")
         selected_filters = dict(filters or {})
         remote_query = self._build_remote_query(query, selected_filters)
         # 远程 API 契约将自然语言查询限制为 2000 个字符。模型生成的诊断
@@ -64,6 +67,7 @@ class RAGServiceClient:
             "query": remote_query,
             "top_n": limit,
             "filters": self._normalize_remote_filters(selected_filters),
+            "generate_answer": generate_answer,
         }
         if self.base_url:
             try:
@@ -83,6 +87,7 @@ class RAGServiceClient:
                         "query": fallback_query,
                         "top_n": limit,
                         "filters": self._normalize_remote_filters(fallback_filters),
+                        "generate_answer": generate_answer,
                     }
                     fallback = self._normalize_remote_search(
                         self._post("/search", fallback_payload), query, fallback_filters

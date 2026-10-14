@@ -16,6 +16,7 @@ class KnowledgeQuery(BaseModel):
     query: str = ""
     query_type: str = "hybrid"
     purpose: str = ""
+    generate_answer: bool = Field(default=True, strict=True)
     alarm_code: str = ""
     component: str = ""
     document_id: str = ""

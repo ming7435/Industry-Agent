@@ -17,6 +17,7 @@ class SearchArguments(ReadArguments):
     query: str = Field(min_length=1, description='知识检索问题')
     limit: int = Field(default=5, ge=1, le=50, description='最大返回数')
     filters: dict[str, Any] | None = Field(default=None, description='设备、机型、报警及知识类型过滤条件')
+    generate_answer: bool = Field(default=True, description='是否生成面向用户的回答；内部取证不生成回答')
 
     @field_validator('query')
     @classmethod

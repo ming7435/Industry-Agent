@@ -9,7 +9,7 @@ import { buildKnowledgeContext } from "./knowledgeScope.mjs";
 import { buildAgentInvocations, buildTraceEventSummaries, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { request } from "./apiRequest.mjs";
-import {peekWorkspaceRead,readWorkspace,startWorkspacePrefetch,workspaceRunVersion,workspaceRunTraceIds} from './workspaceReads.mjs';
+import {peekWorkspaceRead,readWorkspace,startWorkspacePrefetch,workspaceRunVersion,workspaceRunTraceIds,workorderDetailVersion} from './workspaceReads.mjs';
 import { getTeamSession, subscribeTeamSession } from '../teamSession.mjs';
 import { buildMaintenanceWorkspaceRecords, deleteMaintenancePlans, executionReviewView, inspectionWorkorderView, loadMaintenancePlans, loadMaintenanceOrders, maintenanceDispatchView, maintenanceHistoryNotice, maintenanceReferenceDrawings, maintenanceWorkType, retryMaintenancePlan } from "./maintenanceWorkspace.mjs";
 import { publishMaintenanceChange, subscribeMaintenanceChanges, rememberDeletedMaintenancePlans } from './maintenanceChanges.mjs';
@@ -20,7 +20,6 @@ import { getMachineMotionState, getWorkshopMotionState, machineStatus, machineSt
 import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ExpertWorkspace from './ExpertWorkspace.jsx';
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
-import TaskRecoveryPanel from './TaskRecoveryPanel.jsx';
 import { freeCadRequest } from "./production-cad/freecad.mjs";
 import PartQualityWorkspace from "./QualityWorkspace.jsx";
 import RepairCadPanel from './WorkorderDrawingPanel.jsx';
@@ -1470,7 +1469,6 @@ function LogsWorkspace({ snapshot, active = true }) {
     <section className="workspace-view active module-board logs-workspace" aria-label="日志系统" hidden={!active} style={active ? undefined : { display: "none" }}>
       <ModuleHero eyebrow="Runtime Logs" title="日志系统" text="运行记录自动更新：监控 → 诊断 → 维修方案 → 工单派发 → 报告中心 → 经验总结；质检始终独立成单。" />
       {error && <div className="workspace-notice logs-notice" role="status">日志读取提示：{error}</div>}
-      <TaskRecoveryPanel request={request} active={active} />
       <div className="module-grid logs-stat-grid">
         <ModuleStat label="事件总数" value={records.length} text="Trace Recorder 保留记录" />
         <ModuleStat label="运行记录" value={traceCount} text="故障闭环、RAG 问答、质检与模拟生产" />
@@ -1902,19 +1900,19 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
   const reloadRef = useRef(null);
   const orderRevisionRef = useRef(0);
   const mountedRef = useRef(false);
-  const [lineVersion,setLineVersion]=useState(()=>{
-    const line=peekWorkspaceRead('/api/team/line');
-    return line?JSON.stringify([line.state,line.generation,line.updated_at]):'';
-  });
+  const lineObservation=useRef({key:'',epoch:0});
+  const [lineEpoch,setLineEpoch]=useState(null);
+  const [controlReadAttempt,setControlReadAttempt]=useState(0);
+  const [controlReadError,setControlReadError]=useState('');
   const [taskDetails,setTaskDetails]=useState(()=>{
     const queue=orders.find(item=>item.workorder_id===selectedId);
     if(!queue)return {};
-    const version=JSON.stringify([queue.workorder_id,queue._revision,queue.updated_at,lineVersion]);
+    const version=workorderDetailVersion(queue);
     const cached=peekWorkspaceRead(`/api/workorders/${encodeURIComponent(queue.workorder_id)}`,{scope:initialScope,revision:version});
     const value=cached&&normalizeWorkorderResponse(cached);
     return value?.workorder_id===queue.workorder_id&&value.device_id===queue.device_id
       &&value._revision===queue._revision&&value.updated_at===queue.updated_at
-      ? {[queue.workorder_id]:{version,value}}:{};
+      ? {[queue.workorder_id]:{version,value,controlEpoch:-1}}:{};
   });
   const [taskDetailError,setTaskDetailError]=useState('');
   const [taskReadAttempt,setTaskReadAttempt]=useState(0);
@@ -1944,32 +1942,76 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
   const currentNoRepair = buildDiagnosisView(snapshot, sample).noRepairRequired;
   const selectedQueueOrder = orders.find((order) => order.workorder_id === selectedId)
     || (!hasCurrentIncident ? orders[0] : undefined);
-  const taskVersion=JSON.stringify([selectedQueueOrder?.workorder_id,selectedQueueOrder?._revision,selectedQueueOrder?.updated_at,lineVersion]);
+  const taskVersion=workorderDetailVersion(selectedQueueOrder);
   const cachedTask=taskDetails[selectedQueueOrder?.workorder_id];
-  const selectedOrder=selectedQueueOrder? selectedQueueOrder._summary_record
-    ? cachedTask?.version===taskVersion?cachedTask.value:null : selectedQueueOrder : null;
+  const detailOrder=selectedQueueOrder? selectedQueueOrder._summary_record
+    ? cachedTask?.version===taskVersion?{...cachedTask.value,
+        machine_control:selectedQueueOrder.machine_control||cachedTask.value.machine_control}:null : selectedQueueOrder : null;
+  const controlNeedsRefresh=Boolean(selectedQueueOrder?._summary_record&&detailOrder&&lineEpoch!==null
+    && (['completed','closed'].includes(detailOrder.status)||detailOrder.machine_control)
+    && cachedTask?.controlEpoch!==lineEpoch);
+  const selectedOrder=controlNeedsRefresh?{...detailOrder,machine_control:{state:'checking',
+    reason:controlReadError||'正在核对最新复机结果；维修记录保持不变。'}}:detailOrder;
   useEffect(()=>{
     if(!active||!selectedQueueOrder?._summary_record||selectedOrder)return;
     const controller=new AbortController(), id=selectedQueueOrder.workorder_id;
+    const controlEpoch=lineObservation.current.epoch;
     let retryTimer;
     setTaskDetailError('');
     readWorkspace(`/api/workorders/${encodeURIComponent(id)}`,{signal:controller.signal,revision:taskVersion,freshFor:5000,scope:actorKey}).then(body=>{
       if(controller.signal.aborted)return;
       const value=normalizeWorkorderResponse(body);
-      if(value.workorder_id!==id)throw new Error('任务详情身份不一致，请重新加载');
+      if(value.workorder_id!==id||value.device_id!==selectedQueueOrder.device_id)
+        throw new Error('任务详情身份或设备归属不一致，请重新加载');
       setTaskDetails(current=>{
-        const next={...current};delete next[id];next[id]={version:taskVersion,value};
+        const next={...current};delete next[id];next[id]={version:taskVersion,value,controlEpoch};
         for(const old of Object.keys(next).slice(0,-3))delete next[old];
         return next;
       });
     }).catch(error=>{
-      if(controller.signal.aborted||error.name==='AbortError')return;
+      if(controller.signal.aborted)return;
+      if(error.name==='AbortError'){
+        retryTimer=window.setTimeout(()=>setTaskReadAttempt(value=>value+1),3000);return;
+      }
       if([401,403].includes(error.status)){setOrders([]);setTaskDetails({});setLoadState('failed');}
       else retryTimer=window.setTimeout(()=>setTaskReadAttempt(value=>value+1),3000);
       setTaskDetailError(error.message);
     });
     return()=>{controller.abort();window.clearTimeout(retryTimer);};
-  },[active,selectedQueueOrder?.workorder_id,taskVersion,taskReadAttempt]);
+  },[active,selectedQueueOrder?.workorder_id,taskVersion,taskReadAttempt,actorKey]);
+
+  // 控制投影会变化，但不能使已读取的维修正文反复消失或中断在途请求。
+  useEffect(()=>{
+    if(!active||!controlNeedsRefresh)return;
+    const controller=new AbortController(),id=selectedQueueOrder.workorder_id;
+    const controlEpoch=lineObservation.current.epoch,revision=orderRevisionRef.current;
+    let retryTimer;
+    setControlReadError('');
+    readWorkspace(`/api/workorders/${encodeURIComponent(id)}`,{
+      signal:controller.signal,scope:actorKey,revision:taskVersion,force:true,
+    }).then(body=>{
+      if(controller.signal.aborted)return;
+      if(revision!==orderRevisionRef.current){
+        retryTimer=window.setTimeout(()=>setControlReadAttempt(value=>value+1),3000);return;
+      }
+      const value=normalizeWorkorderResponse(body);
+      if(value.workorder_id!==id||value.device_id!==selectedQueueOrder.device_id)
+        throw new Error('复机结果身份或设备归属不一致，请重新核对');
+      // 新的产线变化到达时忽略旧投影，结束本次读取后再核对最新状态。
+      if(controlEpoch===lineObservation.current.epoch)setTaskDetails(current=>current[id]?.version===taskVersion
+        ? {...current,[id]:{version:taskVersion,value,controlEpoch}}:current);
+      setControlReadAttempt(value=>value+1);
+    }).catch(error=>{
+      if(controller.signal.aborted)return;
+      if(error.name==='AbortError'){
+        retryTimer=window.setTimeout(()=>setControlReadAttempt(value=>value+1),3000);return;
+      }
+      if([401,403].includes(error.status)){setOrders([]);setTaskDetails({});setLoadState('failed');}
+      else retryTimer=window.setTimeout(()=>setControlReadAttempt(value=>value+1),3000);
+      setControlReadError(`复机结果暂未更新：${error.message}`);
+    });
+    return()=>{controller.abort();window.clearTimeout(retryTimer);};
+  },[active,selectedQueueOrder?.workorder_id,taskVersion,actorKey,controlNeedsRefresh,controlReadAttempt]);
 
   useEffect(() => {
     if (!active) return;
@@ -1989,19 +2031,25 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
       }
       linePending.then(value => {
           line = value;
-          if(!cancelled && revision===orderRevisionRef.current && line)
-            setLineVersion(JSON.stringify([line.state,line.generation,line.updated_at]));
-          if (cancelled || revision !== orderRevisionRef.current || line?.state !== 'running') return;
+          if (cancelled || revision !== orderRevisionRef.current) return;
+          if(typeof line?.state==='string'){
+            const key=JSON.stringify([line.state,line.generation]);
+            if(lineObservation.current.key!==key){
+              const epoch=lineObservation.current.epoch+(lineObservation.current.key?1:0);
+              lineObservation.current={key,epoch};setLineEpoch(epoch);
+            }
+          }
+          if(line?.state!=='running')return;
           setOrders(previous => previous.map(item => !item.machine_control
             && item.repair_verification?.phase === 'poststart' && item.repair_verification?.passed === true
             ? {...item, machine_control:{state:'running'}} : item));
       });
-      pending = readWorkspace('/api/workorders?summary=true', { signal: controller.signal,freshFor:1000,scope:actorKey }).then(body => {
+      pending = readWorkspace('/api/workorders?summary=true', { signal: controller.signal,freshFor:1000,scope:actorKey,revision:incidentKey }).then(body => {
         if (cancelled || revision !== orderRevisionRef.current) return;
         if (!Array.isArray(body.items)) throw new Error("工单列表返回异常，请重试");
         rememberDeletedMaintenancePlans(body.deleted_plan_ids || []);
         const items = body.items.map(normalizeWorkorderResponse).filter(item => !item.deleted_at);
-        setOrders(previous => items.map(item => ({...item, machine_control: item.machine_control
+        setOrders(previous => items.map(item => item._summary_record?item:({...item, machine_control: item.machine_control
           || (line?.state === 'running' && item.repair_verification?.phase === 'poststart' && item.repair_verification?.passed === true
             ? {state:'running'} : previous.find(old => old.workorder_id === item.workorder_id)?.machine_control)})));
         setSelectedId(previous => explicitSelection.current && items.some(item => item.workorder_id === previous) ? previous : preferredWorkorderId(items, sample, snapshot));
@@ -2407,8 +2455,8 @@ function WorkorderSheet({ sheet, executionPlan = {}, planId = '', localization, 
           {!workType.inspection && review.required && feedbackSavedId === sheet.workorderId && <p role="status">处理记录已保存。完成实际维修后可直接确认并申请复机。</p>}
           {workType.inspection && inspectionResult.findings.length > 0 && <PlanList title="检查未满足的条件" items={inspectionResult.findings} />}
           {sheet.machineControl && (
-            <div className={`machine-control-result ${sheet.machineControl.state === 'running' ? "is-ok" : "is-error"}`} role="status">
-              <span>{sheet.machineControl.state === 'running'
+            <div className={`machine-control-result ${sheet.machineControl.state === 'running' ? "is-ok" : sheet.machineControl.state==='checking'?"is-pending":"is-error"}`} role="status">
+              <span>{sheet.machineControl.state==='checking'?sheet.machineControl.reason:sheet.machineControl.state === 'running'
                 ? sheet.machineControl.restart_method === 'manual_confirmation'
                   ? "维修已人工确认，整线设备已启动；如再次异常，系统会重新报警。"
                   : "整线设备启动后已逐台读回，运行复核通过。"

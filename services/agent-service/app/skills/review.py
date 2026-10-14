@@ -1,10 +1,13 @@
 """只读技能核查：模型只选择已枚举的事实或缺项，不能返回值、权限或动作。"""
 from concurrent.futures import ThreadPoolExecutor
+from collections import OrderedDict
 from copy import copy
+from hashlib import sha256
 import json
 from math import isfinite
 import re
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Lock
+from weakref import WeakKeyDictionary
 
 MARKER = '自动优化候选规则（来源运行：'
 _PRIVATE_KEY = re.compile(r'password|passwd|secret|token|api.?key|credential|authorization|cookie|'
@@ -13,6 +16,43 @@ _PROTECTED = re.compile(_PRIVATE_KEY.pattern + r'|approval|approved|^(?:passed|v
 _SECRET_TEXT = re.compile(r'\bsk-[A-Za-z0-9_-]{12,}|bearer\s+[^\s"\']+|\bapi-[a-f0-9-]{20,}', re.I)
 _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix='skill-review')
 _SLOTS = BoundedSemaphore(2)
+_REVIEW_LOCK = Lock()
+_REVIEWS = WeakKeyDictionary()
+_REVIEW_LIMIT = 512
+
+
+def _review_identity(definitions, payload, context):
+    """只合并同一次实际执行、同一技能正文和同一输入输出的核查。"""
+    scope = [str(context.get(key) or '') for key in ('task_id', 'trace_id', 'agent_run_id')]
+    if not all(scope):
+        return None
+    documents = sorted((d.agent, d.name, d.version, d.document) for d in definitions)
+    return sha256(json.dumps([scope, documents, payload], sort_keys=True,
+                             ensure_ascii=False, allow_nan=False).encode('utf-8')).hexdigest()
+
+
+def _claim_review(trace, key):
+    """防重检查与占用槽位原子完成；只在内存保存摘要，不缓存业务结果。"""
+    with _REVIEW_LOCK:
+        entries = _REVIEWS.setdefault(trace, OrderedDict()) if key is not None else None
+        if entries is not None and key in entries:
+            return 'reused'
+        if not _SLOTS.acquire(blocking=False):
+            return 'busy'
+        if entries is not None:
+            while len(entries) >= _REVIEW_LIMIT:
+                oldest = next((item for item, status in entries.items() if status != 'running'), None)
+                if oldest is None:
+                    break
+                entries.pop(oldest)
+            entries[key] = 'running'
+        return 'claimed'
+
+
+def _finish_review(trace, key):
+    if key is not None:
+        with _REVIEW_LOCK:
+            _REVIEWS[trace][key] = 'finished'
 
 
 def review_payload(source_input, source_output):
@@ -120,13 +160,18 @@ def schedule_review(definitions, source_input, source_output, *, client=None, tr
     context = {**(context or {})}
     # 先冻结真实结果，工作线程不再读取可能被业务或其它发布更新的对象。
     payload = review_payload(source_input, source_output)
+    identity = _review_identity(selected, payload, context)
     def record(event, **values):
         for definition in selected:
             trace.record(type='skill_review', event=event, name='技能执行核查',
                 context=context, task_id=context.get('task_id', ''), trace_id=context.get('trace_id', ''),
                 agent_run_id=context.get('agent_run_id', ''), **definition.observation(),
                 **values.get(definition.name, values))
-    if not _SLOTS.acquire(blocking=False):
+    claim = _claim_review(trace, identity)
+    if claim == 'reused':
+        record('skill_review_reused', status='deduplicated', message='本次执行的相同技能与数据已提交核查，不新增模型调用；结果以原核查回执为准')
+        return
+    if claim == 'busy':
         record('skill_review_unverified', status='not_verified', message='核查队列已满，原业务结果保持不变')
         return
     def execute():
@@ -138,9 +183,11 @@ def schedule_review(definitions, source_input, source_output, *, client=None, tr
         except Exception:
             record('skill_review_unverified', status='not_verified', message='核查模型或输出约束未验证，原业务结果保持不变')
         finally:
+            _finish_review(trace, identity)
             _SLOTS.release()
     try:
         _POOL.submit(execute)
     except Exception:
+        _finish_review(trace, identity)
         _SLOTS.release()
         record('skill_review_unverified', status='not_verified', message='核查未启动，原业务结果保持不变')

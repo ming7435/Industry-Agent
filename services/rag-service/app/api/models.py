@@ -43,6 +43,8 @@ class SearchRequest(BaseModel):
         le=50,
         description="Number of evidences kept after fusion and reranking.",
     )
+    generate_answer: bool = Field(default=True, strict=True,
+        description="是否生成回答；内部取证设为 false，仍执行检索、重排及证据校验。")
 
     @field_validator("query")
     @classmethod
@@ -123,6 +125,7 @@ class SearchResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", protected_namespaces=())
 
     request_id: str = Field(..., description="UUID4 of the request, echoed in every log line.")
+    generation_requested: bool = Field(default=True, description="本次是否请求模型生成回答。")
     hits: list[HitModel] = Field(
         default_factory=list,
         description="Final evidences, best first. Empty when all retrievers failed.",

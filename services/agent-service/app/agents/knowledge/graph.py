@@ -142,6 +142,7 @@ def retrieve(state: KnowledgeGraphState) -> Dict[str, Any]:
         "device_id": request.get("device_id", ""),
         "document_id": request.get("document_id", ""),
         "chunk_id": request.get("chunk_id", ""),
+        "generate_answer": request.get("generate_answer", True) and request.get("purpose") != "maintenance",
     }
     batch_size = 1
     exact_lookup = any(request.get(key) or arguments["filters"].get(key) for key in ("document_id", "chunk_id"))
