@@ -6,7 +6,7 @@ import { buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLat
 import { currentIncident, incidentIdentity, matchesIncident, linkedPlanOrder, recordTimes, formatRecordTime } from './incidentIdentity.mjs';
 import { buildReportArticleChapters, buildReportDisplaySections, reportCompleteness, reportQualityLabel } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
-import { buildAgentInvocations, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
+import { buildAgentInvocations, buildTraceEventSummaries, formatTraceValue, normalizeRunResponse, normalizeTraceResponse, runEventMatches, traceDetailSections, traceEventSummary, traceIdentity } from "./traceLog.mjs";
 import { getRagStorage, needsRagAnswerRefresh, persistRagMessages, restoreRagMessages } from "./ragSession.mjs";
 import { request } from "./apiRequest.mjs";
 import {peekWorkspaceRead,readWorkspace,startWorkspacePrefetch,workspaceRunVersion,workspaceRunTraceIds} from './workspaceReads.mjs';
@@ -21,7 +21,6 @@ import { WorkbenchSidebar } from "./WorkbenchShell.jsx";
 import ExpertWorkspace from './ExpertWorkspace.jsx';
 import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx";
 import TaskRecoveryPanel from './TaskRecoveryPanel.jsx';
-import ServiceExceptionPanel from './ServiceExceptionPanel.jsx';
 import { freeCadRequest } from "./production-cad/freecad.mjs";
 import PartQualityWorkspace from "./QualityWorkspace.jsx";
 import RepairCadPanel from './WorkorderDrawingPanel.jsx';
@@ -713,7 +712,11 @@ function App() {
   const sample = result?.current_sample || selectedMachine?.sample || null;
   const prefetchContext=useRef(null);
   prefetchContext.current={snapshot,sample};
-  useEffect(()=>startWorkspacePrefetch({chooseOrder:items=>preferredWorkorderId(items,prefetchContext.current.sample,prefetchContext.current.snapshot)}),[]);
+  const workflowReadKey=JSON.stringify([...Object.values(snapshot?.diagnosis?.pipeline_by_device||{}),snapshot?.diagnosis?.pipeline].filter(Boolean)
+    .map(pipeline=>[pipeline.event?.event_id||pipeline.event_id,pipeline.status,pipeline.diagnosis?.status,pipeline.knowledge?.status,
+      pipeline.maintenance_plan?.plan_id,pipeline.workorder?.workorder?.workorder_id||pipeline.workorder?.workorder_id,
+      pipeline.workorder?.workorder?.updated_at||pipeline.workorder?.updated_at,pipeline.report?.report_id,pipeline.memory?.experience?.experience_id]));
+  useEffect(()=>startWorkspacePrefetch({chooseOrder:items=>preferredWorkorderId(items,prefetchContext.current.sample,prefetchContext.current.snapshot)}),[workflowReadKey]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -791,15 +794,12 @@ function App() {
         {(maintenanceVisited || activeView === "maintenance") && <MaintenancePlanWorkspace active={!bigScreen && activeView === "maintenance"} snapshot={snapshot} sample={sample} actor={teamActor} />}
         {!bigScreen && activeView === "workorder" && (teamActor ? <SupervisorQueue actor={teamActor} /> : <section className="workorder-queue"><h2>请先登录维修小组账号</h2><p>展开上方“注册 / 登录”。维修人员查看本人工单。</p></section>)}
         {teamActor && (workorderVisited || activeView === "workorder") && <WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} active={!bigScreen && activeView === "workorder"} actor={teamActor} snapshot={snapshot} sample={sample}
-          exceptionPanel={<ServiceExceptionPanel key={`${teamActor.user_id}:${teamActor.role}:workorder`} request={request} actor={teamActor} view="workorder" />}
           onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
         {(expertVisited || activeView === "expert") && <div hidden={bigScreen || activeView !== "expert"}><ExpertWorkspace key={`${teamActor?.user_id || 'guest'}:${teamActor?.role || ''}`} actor={teamActor} /></div>}
         {(logsVisited || activeView === "logs") && <LogsWorkspace active={!bigScreen && activeView === "logs"} snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace />}
         {(reportVisited || activeView === "report") && <ReportWorkspace active={!bigScreen && activeView === "report"} snapshot={snapshot} />}
-        {!bigScreen && teamActor && ['diagnosis','maintenance','rag','logs','quality','cad','report'].includes(activeView) &&
-          <ServiceExceptionPanel key={`${teamActor.user_id}:${teamActor.role}:${activeView}`} request={request} actor={teamActor} view={activeView} />}
         {toast && <div className="toast-message" role="status">{toast}</div>}
         {(bigScreen || activeView !== "quality") && (error || runner.last_error) && <footer className="error-bar">{error || runner.last_error}</footer>}
       </main>
@@ -1291,8 +1291,8 @@ function RawLogDetail({detail}) {
   return <details className="log-detail" open={open} onToggle={event=>setOpen(event.currentTarget.open)}><summary>{detail.title}</summary>{open&&<pre className="log-json">{value}</pre>}</details>;
 }
 
-const RawLogEvent = React.memo(function RawLogEvent({record,index,count}) {
-          const summary = traceEventSummary(record);
+const RawLogEvent = React.memo(function RawLogEvent({record,index,count,resolvedSummary}) {
+          const summary = resolvedSummary || traceEventSummary(record);
           const identity = traceIdentity(record, index);
           return <article className={`log-event log-event-${summary.status === "异常" ? "error" : summary.status === "执行中" ? "running" : "done"}`} key={record.trace_record_id || `${identity}-${record.timestamp || index}-${record.event || ""}-${record.name || ""}`}>
             <div className="log-event-head">
@@ -1301,7 +1301,7 @@ const RawLogEvent = React.memo(function RawLogEvent({record,index,count}) {
             </div>
             <div className="log-event-meta"><span>{record.timestamp ? formatTime(record.timestamp) : "--"}</span><span>类型：{record.type || "--"}</span><span>事件：{record.event || "--"}</span><span>Trace：{record.trace_id || "--"}</span><span>Task：{record.task_id || "--"}</span>{summary.server && <span>MCP：{summary.server}</span>}{summary.duration !== "--" && <span>耗时：{summary.duration}</span>}</div>
             {record.error && <div className="log-event-error">错误：{record.error}</div>}
-            <div className="log-event-details">{traceDetailSections(record,value=>value).map(detail=><RawLogDetail key={detail.key} detail={detail} />)}</div>
+            <div className="log-event-details">{traceDetailSections(record,value=>value,summary).map(detail=><RawLogDetail key={detail.key} detail={detail} />)}</div>
           </article>;
 
 });
@@ -1436,6 +1436,7 @@ function LogsWorkspace({ snapshot, active = true }) {
   }, [active, selectedRunId, detailVersion, details.version]);
 
   const records = useMemo(() => details.runId === selectedRunId ? details.records.filter(record => selectedRun && runEventMatches(selectedRun, record)) : [], [details, selectedRunId, selectedRun]);
+  const eventSummaries = useMemo(() => buildTraceEventSummaries(records), [records]);
   const initialDetailsLoading = loadingDetails && !(details.runId === selectedRunId && details.version);
   const filteredRecords = useMemo(()=>records.filter((record) => {
     if (filter === "all") return true;
@@ -1511,7 +1512,7 @@ function LogsWorkspace({ snapshot, active = true }) {
           {agentInvocations.length ? <div className="agent-invocation-list">{agentInvocations.map(invocation => <AgentInvocationCard key={invocation.id} invocation={invocation} />)}</div> : <div className="empty-state logs-empty">当前运行记录没有 Agent 生命周期事件；请刷新或先执行一次监控→诊断→维修方案→工单闭环。</div>}
         </section>}
         <div className="logs-subsection-heading"><span className="eyebrow">Raw Events</span><h3>底层事件明细</h3><span>保留每条原始记录，便于核对调用顺序与返回体</span></div>
-        {initialDetailsLoading ? <div className="empty-state logs-empty">正在加载所选执行链路的完整返回体…</div> : filteredRecords.length ? <div className="logs-list">{filteredRecords.map((record,index) => <RawLogEvent key={record.trace_record_id || `${traceIdentity(record,index)}-${record.timestamp || index}-${record.event || ""}-${record.name || ""}`} record={record} index={index} count={filteredRecords.length} />)}</div> : <div className="empty-state logs-empty">暂无执行日志；触发一次诊断、知识检索或工单操作后，这里会显示完整执行链路。</div>}
+        {initialDetailsLoading ? <div className="empty-state logs-empty">正在加载所选执行链路的完整返回体…</div> : filteredRecords.length ? <div className="logs-list">{filteredRecords.map((record,index) => <RawLogEvent key={record.trace_record_id || `${traceIdentity(record,index)}-${record.timestamp || index}-${record.event || ""}-${record.name || ""}`} record={record} index={index} count={filteredRecords.length} resolvedSummary={eventSummaries.get(record)} />)}</div> : <div className="empty-state logs-empty">暂无执行日志；触发一次诊断、知识检索或工单操作后，这里会显示完整执行链路。</div>}
       </section>
     </section>
   );
@@ -1888,7 +1889,7 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
 // Keep an unconfirmed command across workspace navigation, scoped to its actor and order.
 const workorderPlanCommands = new Map();
 
-function WorkorderView({ snapshot, sample, onClosed, actor, active = true, exceptionPanel = null }) {
+function WorkorderView({ snapshot, sample, onClosed, actor, active = true }) {
   const initialScope=JSON.stringify([actor?.user_id||'',actor?.role||'']);
   const initialOrders=peekWorkspaceRead('/api/workorders?summary=true',{scope:initialScope});
   const [orders, setOrders] = useState(()=>(initialOrders?.items||[]).map(normalizeWorkorderResponse).filter(item=>!item.deleted_at));
@@ -2173,7 +2174,6 @@ function WorkorderView({ snapshot, sample, onClosed, actor, active = true, excep
   return (
     <section className="workspace-view active workorder-page" aria-label="工单系统">
       {!currentFaultActive && <div className="module-hero"><span className="eyebrow">维修执行</span><h1>工单系统</h1><p>跟进维修任务、执行反馈与验收。</p></div>}
-      {exceptionPanel}
       <section className="workorder-queue" aria-label="工单队列">
         <div className="workorder-queue-heading">
           <div><span className="eyebrow">工单队列</span><h2>维修任务</h2></div>

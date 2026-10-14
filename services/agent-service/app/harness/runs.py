@@ -324,7 +324,9 @@ def build_run_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
     从而确保每张卡片对应一次有意义的用户操作。
     """
 
-    source_records = [dict(item) for item in records if isinstance(item, Mapping)]
+    source_records = [dict(item) for item in records if isinstance(item, Mapping)
+                      and item.get('type') != 'skill_evolution'
+                      and not str(item.get('trace_id') or '').startswith('SKILL-EVOLUTION-')]
     production_runs = build_production_runs(item for item in source_records if is_production_record(item))
     source_records = [item for item in source_records if not is_production_record(item)]
     # 监控事件 ID 通常只出现在第一条目标/上下文事件中。将它传递给

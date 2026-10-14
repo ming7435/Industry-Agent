@@ -55,7 +55,7 @@ export default function TaskRecoveryPanel({request, active}) {
   return <section className="panel module-panel logs-panel task-recovery-panel" aria-label="失败任务记录">
     <div className="panel-heading"><div><span className="eyebrow">Failed Tasks</span><h2>失败任务记录</h2></div>
       <button className="button" type="button" onClick={load} disabled={loading}>刷新失败记录</button></div>
-    <p>仅保留失败原因和已完成步骤，不从断点继续执行。相关故障通过异常核查待办记录人工处理；原操作结果未知时仍需核对。</p>
+    <p>仅保留失败原因和已完成步骤，不继续执行原任务；原操作结果未知时仍需核对。</p>
     {error&&<div className="workspace-notice" role="alert">{error}</div>}
     {visible.length?<div className="task-recovery-list">{visible.map(item=><article className="task-recovery-item" key={item.recovery_id}>
       <div><strong>{agents[item.failed_agent]||item.failed_agent||'任务'} · {states[item.status]||item.status}</strong>

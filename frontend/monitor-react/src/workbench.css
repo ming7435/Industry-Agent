@@ -220,6 +220,12 @@
 .logs-filter-button.is-active { border-color: #168a75; background: #e7f5f0; color: #08796c; }
 .logs-list { display: grid; gap: 12px; }
 .log-event { padding: 16px; border: 1px solid #dce8e5; border-left: 3px solid #79bdae; border-radius: 9px; background: #fbfdfc; }
+.logs-workspace .log-event,
+.logs-workspace .agent-invocation-card { content-visibility: auto; contain-intrinsic-block-size: auto 500px; }
+@media print {
+  .logs-workspace .log-event,
+  .logs-workspace .agent-invocation-card { content-visibility: visible; contain-intrinsic-block-size: none; }
+}
 .log-event-running { border-left-color: #c28a2a; background: #fffdf7; }
 .log-event-error { border-left-color: #c34c48; background: #fffafa; }
 .log-event-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }

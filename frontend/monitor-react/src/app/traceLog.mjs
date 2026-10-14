@@ -92,7 +92,8 @@ function durationText(record) {
   return "--";
 }
 
-export function traceEventSummary(record) {
+export function traceEventSummary(record, records = []) {
+  if (records.length) return buildTraceEventSummaries(records).get(record) || traceEventSummary(record);
   return {
     label: eventLabel(record),
     operation: String(record?.tool_name || record?.tool || record?.name || record?.event || "运行步骤"),
@@ -102,6 +103,77 @@ export function traceEventSummary(record) {
   };
 }
 
+function executionKind(record) {
+  const event = String(record.event || '');
+  return /^(agent|tool|step|node|a2a|loop|planner|execution|recovery)_(started|start|completed|end|error|failed|timeout|stop|called)$/.exec(event)?.[1] || '';
+}
+
+function executionScope(record) {
+  const context = recordContext(record);
+  const trace = record.trace_id || context.trace_id;
+  return trace ? ['trace', trace] : ['task', record.task_id || context.task_id || ''];
+}
+
+function executionKey(record, kind) {
+  const context = recordContext(record);
+  const field = {agent:'agent_run_id',tool:'tool_call_id',step:'step_run_id',node:'node_run_id',a2a:'a2a_call_id',loop:'loop_id',planner:'plan_id',execution:'execution_id',recovery:'recovery_id'}[kind];
+  const id = record[field] || context[field] || (['tool','a2a'].includes(kind) ? record.call_id || context.call_id : '');
+  return {explicit: Boolean(id), key: JSON.stringify([kind, executionScope(record), id || [
+    recordAgentRunId(record), recordAgentName(record), record.node || record.step || context.step || '',
+    record.tool_name || record.tool || record.name || '',
+  ]])};
+}
+
+function terminalDisplayStatus(record) {
+  const output = record.output || {};
+  const status = String(output.status || record.state_change?.status || '').toLowerCase();
+  if (eventIsError(record) || output.success === false || ['error','failed','timeout'].includes(status)) return '异常';
+  if (['blocked','pending_approval','insufficient_data','not_tested','incomplete'].includes(status)) return '已停止';
+  return '已完成';
+}
+
+/** 根据同次调用的结束回执更新展示状态；不修改开始事件或原始返回体。 */
+export function buildTraceEventSummaries(records = []) {
+  const source = records.filter(record => record && typeof record === 'object');
+  const summaries = new Map(source.map(record => [record, traceEventSummary(record)]));
+  const ordered = source.map((record,index) => ({record,index})).sort((left,right) =>
+    (recordTime(left.record) ?? left.index) - (recordTime(right.record) ?? right.index));
+  const groups = [], active = new Map(), agentEnds = new Map(), runtimeEnds = new Map();
+  const ownerKey = record => JSON.stringify([executionScope(record),recordAgentName(record),recordAgentRunId(record)]);
+  const rememberEnd = (map,key,item) => { const entries=map.get(key)||[];entries.push(item);map.set(key,entries); };
+  ordered.forEach(({record},index) => {
+    const kind = executionKind(record);
+    if (!kind) return;
+    const started = /_(started|start)$/.test(String(record.event));
+    const identity = executionKey(record,kind);
+    let group = active.get(identity.key);
+    if (!group || (!identity.explicit && started && (group.started || group.terminal))) {
+      group = {records:[],started:false,terminal:null};groups.push(group);active.set(identity.key,group);
+    }
+    group.records.push({record,index});
+    if (started) group.started=true;
+    else {
+      group.terminal=record;
+      if (kind==='agent') rememberEnd(agentEnds,ownerKey(record),{record,index});
+      if (kind==='loop' && record.event==='loop_stop' && record.agent==='runtime'
+          && (record.node || record.name)==='runtime') rememberEnd(runtimeEnds,JSON.stringify(executionScope(record)),{record,index});
+    }
+  });
+  for (const group of groups) for (const {record,index} of group.records) {
+    if (!/_(started|start)$/.test(String(record.event))) continue;
+    let status;
+    if (group.terminal) status=terminalDisplayStatus(group.terminal);
+    else {
+      // 上层结束只能证明该调用不再活跃，不能替代缺失的工具或步骤结束回执。
+      const ownerEnded = recordAgentRunId(record) && (agentEnds.get(ownerKey(record))||[]).some(end=>end.index>=index);
+      const runtimeEnded = (runtimeEnds.get(JSON.stringify(executionScope(record)))||[]).some(end=>end.index>=index);
+      if (ownerEnded || runtimeEnded) status='状态待核对';
+    }
+    if (status) summaries.set(record,{...summaries.get(record),status});
+  }
+  return summaries;
+}
+
 function firstPresent(record, keys) {
   for (const key of keys) {
     if (record?.[key] !== undefined && record?.[key] !== null && record[key] !== "") return record[key];
@@ -109,8 +181,7 @@ function firstPresent(record, keys) {
   return null;
 }
 
-export function traceDetailSections(record, formatValue = formatTraceValue) {
-  const summary = traceEventSummary(record);
+export function traceDetailSections(record, formatValue = formatTraceValue, summary = traceEventSummary(record)) {
   const operation = {
     类型: record?.type || "未知",
     事件: record?.event || "未知",
@@ -118,6 +189,7 @@ export function traceDetailSections(record, formatValue = formatTraceValue) {
     Agent: record?.agent || "",
     节点: record?.node || record?.step || "",
     状态: summary.status,
+    事件发生时状态: eventStatus(record),
     时间: record?.timestamp || "",
     耗时: summary.duration,
     错误: record?.error || "",
@@ -222,7 +294,7 @@ function buildToolCalls(records) {
     const input = firstPresent(record, ["arguments", "input", "tool_input", "tool_arguments", "request"]);
     let inputKey;
     try { inputKey = JSON.stringify(input ?? ""); } catch { inputKey = String(input ?? ""); }
-    const key = String(record?.tool_call_id || record?.call_id || `${record?.tool_name || record?.tool || record?.name || "tool"}|${inputKey}`);
+    const key = String(record?.tool_call_id || recordContext(record)?.tool_call_id || record?.call_id || recordContext(record)?.call_id || `${record?.tool_name || record?.tool || record?.name || "tool"}|${inputKey}`);
     const group = toolGroups.get(key) || { records: [], first_index: index };
     group.records.push(record);
     toolGroups.set(key, group);

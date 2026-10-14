@@ -75,6 +75,15 @@ export function readWorkspace(path,{signal,freshFor=0,force=false,scope=actorSco
   return consume(entry.promise,signal);
 }
 
+function readVerifiedBody(path,revision) {
+  const entry=entries.get(path);
+  // Only a fresh, authorized directory/version read can renew an immutable body.
+  if(entry?.value&&entry.revision===revision&&entry.scope===actorScope()){
+    entry.loadedAt=Date.now();return Promise.resolve(entry.value);
+  }
+  return readWorkspace(path,{freshFor:5000,revision});
+}
+
 export function startWorkspacePrefetch({chooseOrder}={}) {
   let timer,stopped=false,version=-1;
   const schedule=()=>{
@@ -89,7 +98,7 @@ export function startWorkspacePrefetch({chooseOrder}={}) {
         if(stopped||owner!==getTeamSession().version)return;
         const run=normalizeRunResponse(body)[0],ids=workspaceRunTraceIds(run);
         if(!run||ids.length>3)return;
-        return Promise.allSettled(ids.map(id=>readWorkspace(`/api/trace?trace_id=${encodeURIComponent(id)}&limit=5000`,{freshFor:5000,revision:workspaceRunVersion(run)})));
+        return Promise.allSettled(ids.map(id=>readVerifiedBody(`/api/trace?trace_id=${encodeURIComponent(id)}&limit=5000`,workspaceRunVersion(run))));
       }).catch(()=>{});
       if(reads[2])reads[2].then(async body=>{
         if(stopped||owner!==getTeamSession().version)return;
@@ -101,7 +110,7 @@ export function startWorkspacePrefetch({chooseOrder}={}) {
         if(stopped||owner!==getTeamSession().version)return;
         const stamp=JSON.stringify([line.state,line.generation,line.updated_at]);
         const revision=JSON.stringify([id,item._revision,item.updated_at,stamp]);
-        await readWorkspace(`/api/workorders/${encodeURIComponent(id)}`,{freshFor:5000,revision});
+        await readVerifiedBody(`/api/workorders/${encodeURIComponent(id)}`,revision);
       }).catch(()=>{});
     },350);
   };
@@ -110,5 +119,6 @@ export function startWorkspacePrefetch({chooseOrder}={}) {
     version=session.version;schedule();
   });
   const changesSubscription=subscribeMaintenanceChanges(schedule);
-  return()=>{stopped=true;clearTimeout(timer);sessionSubscription();changesSubscription();};
+  const heartbeat=setInterval(schedule,30000);
+  return()=>{stopped=true;clearTimeout(timer);clearInterval(heartbeat);sessionSubscription();changesSubscription();};
 }

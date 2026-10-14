@@ -60,6 +60,89 @@ test("summarizes tool and agent events with a readable operation label", () => {
   });
 });
 
+for (const [type, startEvent, endEvent, idKey, name] of [
+  ['agent', 'agent_started', 'agent_completed', 'agent_run_id', 'diagnosis'],
+  ['tool', 'tool_started', 'tool_completed', 'tool_call_id', 'search_knowledge'],
+  ['agent_step', 'step_started', 'step_completed', 'step_run_id', 'retrieve'],
+  ['node', 'node_started', 'node_completed', 'node_run_id', 'diagnosis'],
+  ['a2a', 'a2a_started', 'a2a_completed', 'call_id', 'router->diagnosis'],
+  ['loop', 'loop_start', 'loop_stop', 'loop_id', 'runtime'],
+  ['planner', 'planner_start', 'planner_end', 'plan_id', 'runtime_planner'],
+  ['execution', 'execution_start', 'execution_end', 'execution_id', 'execution'],
+]) test(`已结束的 ${type} 开始事件显示该次调用终态，原始事件保持不变`, () => {
+  const start={type,event:startEvent,name,agent:type==='loop'?'runtime':'diagnosis',node:name,
+    trace_id:'TRACE-DONE',task_id:'TASK-DONE',timestamp:'2026-10-14T00:00:00Z',
+    context:{[idKey]:'CALL-DONE'}};
+  const end={...start,event:endEvent,timestamp:'2026-10-14T00:00:02Z',output:{success:true},state_change:{status:'completed'}};
+  const original=JSON.stringify(start);
+  assert.equal(traceEventSummary(start,[end,start]).status,'已完成');
+  assert.equal(JSON.stringify(start),original);
+});
+
+test('不能用同一任务中另一调用或另一 Trace 的结束事件关闭当前调用',()=>{
+  const start={type:'tool',event:'tool_started',tool_name:'query_cad',trace_id:'TRACE-A',
+    task_id:'TASK-SHARED',context:{tool_call_id:'CALL-2'},timestamp:'2026-10-14T00:00:02Z'};
+  const records=[start,
+    {...start,event:'tool_completed',context:{tool_call_id:'CALL-1'},timestamp:'2026-10-14T00:00:03Z'},
+    {...start,event:'tool_completed',trace_id:'TRACE-B',timestamp:'2026-10-14T00:00:04Z'}];
+  assert.equal(traceEventSummary(start,records).status,'执行中');
+});
+
+test('工具异常终态保留异常，不能因所属 Agent 完成而显示成功',()=>{
+  const start={type:'tool',event:'tool_started',tool_name:'query_cad',trace_id:'TRACE-A',
+    agent:'cad',agent_run_id:'AGENT-1',tool_call_id:'CALL-1',timestamp:'2026-10-14T00:00:00Z'};
+  const records=[start,{...start,event:'tool_error',error:'HTTP 503',timestamp:'2026-10-14T00:00:01Z'},
+    {...start,type:'agent',event:'agent_completed',timestamp:'2026-10-14T00:00:02Z'}];
+  assert.equal(traceEventSummary(start,records).status,'异常');
+});
+
+test('所属 Agent 已结束但步骤结束回执缺失时显示待核对，不伪造完成',()=>{
+  const start={type:'agent_step',event:'step_started',name:'retrieve',trace_id:'TRACE-A',
+    agent:'knowledge',agent_run_id:'AGENT-1',step_run_id:'STEP-1',timestamp:'2026-10-14T00:00:00Z'};
+  assert.equal(traceEventSummary(start,[start,{...start,type:'agent',event:'agent_completed',
+    timestamp:'2026-10-14T00:00:02Z'}]).status,'状态待核对');
+});
+
+test('历史 Runtime 的停止不能关闭之后新开始的调用',()=>{
+  const start={type:'tool',event:'tool_started',name:'query_cad',trace_id:'TRACE-A',
+    tool_call_id:'CALL-NEW',timestamp:'2026-10-14T00:00:03Z'};
+  const stop={type:'loop',event:'loop_stop',agent:'runtime',node:'runtime',trace_id:'TRACE-A',
+    state_change:{status:'completed'},timestamp:'2026-10-14T00:00:02Z'};
+  assert.equal(traceEventSummary(start,[stop,start]).status,'执行中');
+});
+
+test('历史恢复开始记录没有结束回执但后续 Runtime 已停止时不再显示执行中',()=>{
+  const start={type:'runtime',event:'recovery_started',name:'task_recovery',agent:'runtime',
+    trace_id:'TRACE-RECOVERY',task_id:'TASK-RECOVERY',timestamp:'2026-10-14T00:00:00Z'};
+  const stop={...start,type:'loop',event:'loop_stop',name:'runtime',node:'runtime',
+    state_change:{status:'blocked'},timestamp:'2026-10-14T00:00:02Z'};
+  assert.equal(traceEventSummary(start,[start,stop]).status,'状态待核对');
+});
+
+test('同名无调用编号的顺序重试不能继承上一调用的完成状态',()=>{
+  const start={type:'tool',event:'tool_started',name:'query_cad',trace_id:'TRACE-A',
+    timestamp:'2026-10-14T00:00:00Z'};
+  const end={...start,event:'tool_completed',timestamp:'2026-10-14T00:00:01Z'};
+  const retry={...start,timestamp:'2026-10-14T00:00:02Z'};
+  assert.equal(traceEventSummary(retry,[retry,end,start]).status,'执行中');
+  assert.equal(traceEventSummary(start,[retry,end,start]).status,'已完成');
+});
+
+test('工具调用编号只在上下文中时输入和结束回执仍合并为同一次调用',()=>{
+  const owner={agent:'knowledge',agent_run_id:'AGENT-K',trace_id:'TRACE-K',task_id:'TASK-K'};
+  const records=[{...owner,type:'agent',event:'agent_started',timestamp:'2026-10-14T00:00:00Z'},
+    {...owner,type:'tool',event:'tool_started',tool_name:'search_manual',arguments:{query:'主轴'},
+      context:{tool_call_id:'CALL-K'},timestamp:'2026-10-14T00:00:01Z'},
+    {...owner,type:'tool',event:'tool_completed',tool_name:'search_manual',output:{total:2},
+      context:{tool_call_id:'CALL-K'},timestamp:'2026-10-14T00:00:02Z'},
+    {...owner,type:'agent',event:'agent_completed',timestamp:'2026-10-14T00:00:03Z'}];
+  const invocation=buildAgentInvocations(records)[0];
+  assert.equal(invocation.tool_calls.length,1);
+  assert.equal(invocation.tool_calls[0].status,'已完成');
+  assert.deepEqual(invocation.tool_calls[0].input,{query:'主轴'});
+  assert.deepEqual(invocation.tool_calls[0].output,{total:2});
+});
+
 test("extracts operation, tool input, context, return body, and full event sections", () => {
   const sections = traceDetailSections({
     type: "tool",

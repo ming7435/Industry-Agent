@@ -428,6 +428,14 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         from app.production_simulation.run_facts import reconcile_production_runs
         items = reconcile_production_runs(items, production_facts)
         warning = '；'.join(filter(None, (getattr(recorder, 'storage_error', ''), production_warning)))
+        archive_store = getattr(getattr(runtime.container, 'pending_tasks', None), '_store', None)
+        if archive_store is not None:
+            try:
+                archived = {row['run_id'] for row in archive_store.values('log_run_archived', limit=5000)
+                            if row.get('archived') is True and row.get('run_id')}
+                items = [item for item in items if item['run_id'] not in archived]
+            except Exception:
+                warning = '；'.join(filter(None, (warning, '日志归档状态暂不可读取，历史记录可能重新显示')))
         registry = getattr(runtime.container, 'registry', None)
         event_ids = list(dict.fromkeys(item['event_id'] for item in items if item['run_type'] == 'fault' and item.get('event_id')))
         if event_ids and getattr(registry, 'backend_base_url', ''):

@@ -8,11 +8,13 @@
 
 ## 数据与接口
 
-复用已有 MySQL JSON 持久化适配器；显式隔离测试可使用临时存储。以原恢复记录编号生成稳定 EXC 编号，按任务幂等，存服务器验证的标量事实，不保存原 context、密钥或请求身份。记录和异常报告同一数据源，不需要其它失败服务可用才能读取。
+复用已有 MySQL JSON 持久化适配器；显式隔离测试可使用临时存储。以原恢复记录编号生成稳定 EXC 编号，按任务幂等，存服务器验证的标量事实，不保存原 context、密钥或客户端声明的身份；归属使用服务端已验证的维修人员编号。记录和异常报告同一数据源，不需要其它失败服务可用才能读取。
 
 新增 ServiceExceptionCases.record(checkpoint)、list/get、handle(case_id,feedback,actor)、report(case_id)。处理状态 awaiting_manual → handled；这是异常已人工接管，不代表原业务阶段成功。结果未知的原操作仍未知，不重放动作。原 failed/blocked/timeout 断点不改为 completed。
 
 新记录由 RecoveryManager.checkpoint 的终态边界收集；服务启动时对旧失败记录做有界回填，只生成新记录，不重跑 Agent、工具或故障。正常运行、已完成、正常等待审批/人员、无需维修和只读权限拒绝不能制造服务异常。
+
+独立质检、报告生成、经验检索、FreeCAD 运行和模拟检测接口补相同的最终失败记录。质检读取错误保留真实工具回执，不把正常尺寸不合格当成服务异常。QMS/模拟检测写入响应丢失保留 outcome_unknown 与副作用待核对；后续人工接管不改原结果。建模缺少尺寸的 needs_input 不是服务失败。图纸编辑插件、鉴权失败和未经过这些业务入口的其它适配器不宣称已具备完整自动兜底。
 
 GET /api/runtime/recovery 仅返回授权的只读失败摘要；POST resume 移除。GET /api/runtime/service-exceptions、POST /{case_id}/feedback、GET /{case_id}/report 复用服务端 Team 会话与同源限制。监督人只查看，维修人员仅处理本人/负责设备的记录。反馈只接受 request_id、feedback，不接受执行状态、passed、actor_id 或方案。请求参数不一致不能复用幂等回执。
 
