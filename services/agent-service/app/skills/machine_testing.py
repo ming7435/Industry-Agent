@@ -79,7 +79,7 @@ class MachineTrials(SkillTrials):
             scenarios = factory.scenarios(did).get('scenarios') or []
             items.append({'device_id': did, 'name': device.get('name') or did, 'status': device.get('status'),
                           'scenarios': [{k: s.get(k) for k in ('scenario_id', 'name', 'alarm_code', 'summary')}
-                                        for s in scenarios if s.get('alarm_code') and s.get('default_device_id') == did]})
+                                        for s in scenarios if s.get('scenario_id') and s.get('default_device_id') == did]})
         return {'items': items, 'scope': '使用现有模拟机器；测试会暂停整线，并保存工单及报告。'}
 
     def _dependencies(self, agent=None):
@@ -100,10 +100,12 @@ class MachineTrials(SkillTrials):
             # 损坏的测试指针不能使正常监控事件停止执行。
             return None
 
-    def _save_changes(self, test_id, **changes):
+    def _save_changes(self, test_id, *, expected_record=None, **changes):
         with self.manager._transaction():
             path = self._path(test_id)
             record = json.loads(path.read_text(encoding='utf-8'))
+            if expected_record is not None and record != expected_record:
+                return record  # 远程查询期间回执已推进，丢弃旧状态及旧验收。
             record.update(changes)
             registry = self.registries.get(test_id)
             if registry:
@@ -131,6 +133,10 @@ class MachineTrials(SkillTrials):
                          if s['scenario_id'] == values['machine']['scenario_id']), None)
         if not machine or not scenario:
             raise SkillEditError(409, '请选择本人负责的模拟设备及其现有故障场景')
+        if name == 'no_alarm_diagnosis_skill' and scenario.get('alarm_code'):
+            raise SkillEditError(422, '无报警诊断需要选择不含报警码的异常场景')
+        if name == 'alarm_diagnosis_skill' and not scenario.get('alarm_code'):
+            raise SkillEditError(422, '报警诊断需要选择包含报警码的故障场景')
         devices = factory.devices()
         if not devices or any(d.get('status') != 'running' for d in devices):
             raise SkillEditError(409, '请先处理当前停机任务，使整线恢复运行后再测试')
@@ -157,7 +163,8 @@ class MachineTrials(SkillTrials):
                     skill = SkillDefinition.from_payload(folder, payload, path, document)
                     if folder == agent and skill.name == name:
                         skill = replace(skill, document=values['document'].strip(), goal=values['goal'].strip(),
-                                        version=values['version'].strip())
+                                        version=values['version'].strip(), metadata={**skill.metadata,
+                                            'goal': values['goal'].strip(), 'version': values['version'].strip()})
                     definitions[folder].append(skill)
             if dependencies != self._dependencies():
                 raise SkillEditError(409, '线上技能正在变化，请重新测试')
@@ -166,7 +173,7 @@ class MachineTrials(SkillTrials):
                       'baseline_revision': current['revision'],
                       'created_epoch': time(), 'created_at': datetime.now(timezone.utc).isoformat(),
                       'status': 'awaiting_fault', 'mode': 'machine_flow', 'scope': '监控中心现有模拟机器全流程测试',
-                      'machine': {**values['machine'], 'alarm_code': scenario['alarm_code'], 'name': machine['name']},
+                      'machine': {**values['machine'], 'alarm_code': scenario.get('alarm_code') or '', 'name': machine['name']},
                       'device_ids': [d['device_id'] for d in devices], 'event_id': '', 'workorders': [],
                       'report_id': '', 'used_skills': [], 'result': None, 'progress': [
                           {'label': label, 'completed': False} for label in ('智能诊断', '维修方案', '工单派发', '维修确认', '整线复机', '汇总报告')],
@@ -184,6 +191,24 @@ class MachineTrials(SkillTrials):
         return self.get(record['test_id'], actor)
 
     def handle_event(self, event, producer):
+        # 无报警不能仅凭空编号认领事件。先在文件锁外核对工厂的实际场景，
+        # 再在提交认领时确认同一试验仍然有效，避免网络请求占用发布锁。
+        with self.manager._transaction():
+            pending = self._active()
+        no_alarm_test = None
+        if (pending and pending['status'] in ACTIVE and pending['instance'] == self.instance
+                and not pending.get('event_id') and not pending['machine'].get('alarm_code')
+                and not event.get('alarm_code') and pending['machine']['device_id'] == event.get('device_id')):
+            from app.agents.diagnosis.tool_policy import select_skill
+            if pending['name'] in select_skill(event)['skills']:
+                try:
+                    factory, _ = self._clients()
+                    active = factory.scenarios(pending['machine']['device_id']).get('active_scenarios') or []
+                    if any(s.get('scenario_id') == pending['machine']['scenario_id'] and
+                           s.get('device_id') == pending['machine']['device_id'] for s in active):
+                        no_alarm_test = pending['test_id']
+                except Exception:
+                    pass  # 无法确认场景时交正常业务处理，不把事件记成草稿测试。
         with self.manager._transaction():
             record = self._active()
             if not record or record['status'] not in ACTIVE or record['instance'] != self.instance:
@@ -197,7 +222,8 @@ class MachineTrials(SkillTrials):
                 except (ValueError, TypeError):
                     occurred = 0
                 if (record['machine']['device_id'] != event.get('device_id')
-                        or str(record['machine']['alarm_code']) != str(event.get('alarm_code'))
+                        or str(record['machine'].get('alarm_code') or '') != str(event.get('alarm_code') or '')
+                        or (not record['machine'].get('alarm_code') and no_alarm_test != record['test_id'])
                         or occurred < record['created_epoch']):
                     record = None
                 else:
@@ -297,6 +323,8 @@ class MachineTrials(SkillTrials):
         return flow or record.get('flow_snapshot') or {'diagnosis': record.get('result') or {}}
 
     def _reconcile(self, record):
+        # 查询业务状态前固定本地快照，提交时在文件锁内比较，避免慢刷新覆盖恢复结果。
+        record = self._save_changes(record['test_id'])
         factory, backend = self._clients()
         flow = self._event_flow(record)
         did, event_id = record['machine']['device_id'], record['event_id']
@@ -337,9 +365,13 @@ class MachineTrials(SkillTrials):
                 pass
         devices = {d['device_id']: d for d in factory.devices()}
         running = bool(cycle) and all(devices.get(device, {}).get('status') == 'running' for device in record['device_ids'])
-        # Refresh the actual harness receipt before deciding whether the draft was exercised.
-        record = self._save_changes(record['test_id'])
-        used = [record['agent'], record['name']] in record.get('used_skills', [])
+        # Read the actual harness usage without replacing the pre-query receipt snapshot.
+        used_skills = record.get('used_skills', [])
+        registry = self.registries.get(record['test_id'])
+        if registry:
+            with registry.lock:
+                used_skills = [list(item) for item in registry.used]
+        used = [record['agent'], record['name']] in used_skills
         pending = []
         for done, reason in ((diagnosis_done, '本轮诊断结果尚未保存。'), (plan_done, '本轮尚未生成可读取的维修方案。'),
                              (bool(orders), '本轮尚未生成关联工单。'), (finished, '本轮关联工单尚未全部确认完成。'),
@@ -382,17 +414,22 @@ class MachineTrials(SkillTrials):
             ('智能诊断', '维修方案', '工单派发', '维修确认', '整线复机', '汇总报告'),
             (diagnosis_done, plan_done, bool(orders), finished, bool(cycle), bool(report)))]
         assessment = record.get('assessment')
-        if assessment is None and eligible and record.get('baseline_revision') and event_id and status in {'completed', 'failed'}:
+        if (eligible and record.get('baseline_revision') and event_id and status in {'completed', 'failed'}
+                and (assessment is None or (status == 'completed' and assessment.get('accepted') is not True))):
             criteria = {'diagnosis': diagnosis_done, 'maintenance': plan_done,
                         'workorder': bool(orders) and finished and running,
                         'report': bool(report), 'skill_used': used,
                         'baseline_unchanged': self.manager.detail(record['agent'], record['name'])['revision'] == record['baseline_revision'],
                         'dependencies_unchanged': self._dependencies() == record['dependencies']}
-            assessment = {'schema': 1, 'assessment_id': record['test_id'], 'agent': record['agent'], 'name': record['name'],
-                          'completed_at': datetime.now(timezone.utc).isoformat(),
-                          'trial_fingerprint': record['fingerprint'], 'criteria': criteria,
-                          'accepted': status == 'completed' and all(criteria.values()), 'basis': 'machine_flow_receipt'}
-        return self._save_changes(record['test_id'], status=status, message=message, details=details, progress=progress,
+            accepted = status == 'completed' and all(criteria.values())
+            if assessment is None or assessment.get('criteria') != criteria or assessment.get('accepted') != accepted:
+                assessment = {'schema': 1, 'revision': (assessment or {}).get('revision', 0) + 1,
+                              'assessment_id': record['test_id'], 'agent': record['agent'], 'name': record['name'],
+                              'completed_at': datetime.now(timezone.utc).isoformat(),
+                              'trial_fingerprint': record['fingerprint'], 'criteria': criteria,
+                              'accepted': accepted, 'basis': 'machine_flow_receipt'}
+        return self._save_changes(record['test_id'], expected_record=record,
+                                 status=status, message=message, details=details, progress=progress,
                                  assessment=assessment,
                                  workorder_deleted=missing,
                                  workorders=[{key: o.get(key) for key in ('workorder_id', 'status', 'assignee')} for o in orders],
@@ -400,17 +437,16 @@ class MachineTrials(SkillTrials):
 
     def validate_publish(self, agent, name, values, actor):
         record = self._read(values.get('test_id', ''), actor) if values.get('test_id') else {}
-        from app.skills.optimization import verification_mode, assessment_keys
+        from app.skills.optimization import verification_mode, assessment_passed
         if record.get('mode') == 'machine_flow' and verification_mode(agent, name) != 'machine_flow':
             raise SkillEditError(409, '机器流程回执不能代替此技能的领域验证')
-        if record.get('mode') in {'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
+        if record.get('mode') in {'machine_flow', 'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
             mode = verification_mode(agent, name)
-            assessment = record.get('assessment') or {}
-            if (record.get('mode') != mode or assessment.get('accepted') is not True or
-                    assessment.get('basis') != mode + '_receipt' or
-                    any(assessment.get('criteria', {}).get(k) is not True for k in assessment_keys(mode))):
-                raise SkillEditError(409, '领域验证未通过，不能发布')
-            return super().validate_publish(agent, name, values, actor)
+            if record.get('mode') != mode or not assessment_passed(record.get('assessment'),
+                    agent=agent, name=name, test_id=record.get('test_id'), trial_fingerprint=record.get('fingerprint')):
+                raise SkillEditError(409, '验收回执缺失、不匹配或未通过，请重新验证后发布')
+            if mode != 'machine_flow':
+                return super().validate_publish(agent, name, values, actor)
         if self.require_machine_publish and record.get('mode') != 'machine_flow':
             raise SkillEditError(409, '请先完成模拟机器全流程测试，并人工核对结果后发布')
         if record.get('mode') == 'machine_flow':

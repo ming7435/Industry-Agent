@@ -350,46 +350,70 @@ POST http://127.0.0.1:8010/api/rag/ingest
 
 RAG 不可用时，RAG_ALLOW_LOCAL_FALLBACK=true 才会使用 Agent Service 的本地演示索引；生产联调建议配置独立 RAG 地址并将其设为 false，这样可以明确暴露 RAG 服务不可用问题。
 
-### RAG 效果评测（本地人工复核）
+### RAGAS 专业效果评测（独立离线环境）
 
-评测工具位于 `services/rag-service/evaluation`，题集来自仓库语料，
-`dataset.jsonl` 中的 `expected_evidence_ids`、`expected_sources` 和
-`relevant_terms` 需要人工复核后再作为金标准。评测不会修改线上 `/search` 接口，
-也不会接入 CI；它通过真实 RAG 服务运行，报告只保存指标、错误、证据 ID 和来源，
-不复制文档正文。
+评测工具仍位于 `services/rag-service/evaluation`，已改用官方 RAGAS 0.4.3，不再用关键词覆盖冒充答案正确性。
+Skill 的北极星指标继续在专家中心使用，与此评测及报告账本分离。在线 `/search`、五服务启动及供应商选择不改变。
+
+RAGAS 评测使用独立 Python 环境，不能将其固定的 LangChain 0.3 依赖装进 Agent 的 LangGraph 环境。Windows 需启用UTF-8读取中文依赖文件：
+
+~~~powershell
+$env:PYTHONUTF8='1'
+L:/anaconda/python.exe -m venv .runtime/ragas-eval-clean
+.runtime/ragas-eval-clean/Scripts/python.exe -m pip install `
+  -r services/rag-service/requirements.txt `
+  -r services/rag-service/requirements-evaluation.txt
+~~~
+
+题集支持人工标准答案 `reference` 和复核标记 `reference_reviewed`。没有明确复核的答案不参与标准答案指标；不能从 `relevant_terms` 或本轮模型答案自动制造标准答案。
+仓库原题集保留，尚未补造证据ID或标准答案。需由专家核对实际语料后补充：
+
+~~~json
+{"id":"人工题目编号","question":"实际维修问题","expected_evidence_ids":["核对过的chunk_id"],"reference":"专家核对的标准答案","reference_reviewed":true}
+~~~
+
+正式指标包括：证据ID精确率/召回率、回答忠实度、回答相关性、无标准答案上下文精确率、标准答案上下文召回率、事实正确性。
+后两项需要已复核标准答案；前两项需要人工相关证据ID。要求拒答的题不以回答相关性惩罚正确拒答。
+引用编号范围和耗时只列为诊断信息，不替代语义评测。
 
 先确保 RAG 服务运行在 `http://127.0.0.1:8020`，再执行检索/证据评测：
 
 ~~~powershell
-L:/anaconda/python.exe services/rag-service/evaluation/run.py `
+.runtime/ragas-eval-clean/Scripts/python.exe services/rag-service/evaluation/run.py `
   --base-url http://127.0.0.1:8020 `
   --no-llm `
   --top-k 5 `
   --output-dir evaluation-results
 ~~~
 
-完整模式会同时检查回答中的引用、必要概念和无证据拒答：
+`--no-llm` 会向RAG明确发送 `generate_answer=false`，不使用聊天生成或评测裁判。
+它不等于整个检索免费：线上向量/重排仍可能调用当前提供方。缺少相关证据ID时指标为null，不假装已完成有效评分。
+
+完整模式需显式允许模型调用，裁判仍经现有 Model 服务，不新增提供方密钥或默认 OpenAI 路由。建议先运行一题：
 
 ~~~powershell
-L:/anaconda/python.exe services/rag-service/evaluation/run.py `
+.runtime/ragas-eval-clean/Scripts/python.exe services/rag-service/evaluation/run.py `
   --base-url http://127.0.0.1:8020 `
+  --model-service-base-url http://127.0.0.1:8040 `
+  --allow-model-calls `
   --case alarm_explanation-spindle-overheat `
   --limit 1 `
   --top-k 5 `
+  --max-model-calls 20 `
   --output-dir evaluation-results
 ~~~
 
-`--case` 可以重复传入多个题目 ID；`--limit` 限制运行数量。结果写入
-`evaluation-results/latest.json` 和 UTC 时间戳文件。缺少人工标注或答案的指标为
-`null`，不会被当作 0；建议人工关注 `recall_at_k >= 0.80`、来源覆盖率 >= 0.80、
-引用有效性 >= 0.95、拒答准确率 >= 0.90。单题网络、HTTP 或 JSON 错误会记录在该题，
-不会阻断其他题目。
+`--case` 可重复传入不同题目；`--limit` 限制数量，一次最多100题；`--top-k`为1至50，与现有检索接口一致。默认单题RAGAS预算120秒、单次模型HTTP最多30秒、评测裁判总HTTP次数最多60；`--max-model-calls`只限制裁判聊天/向量，不含RAG服务自身的检索和生成调用。
+没有自动重试收费调用，也不会后台定时运行。模型失败、超时、未返回有效分数均记录原因并留null，不切换回旧算法。
+
+结果仍写入 `evaluation-results/latest.json` 和UTC时间戳文件，新报告schema版本2，标明 `framework=ragas`、SDK版本、每个指标有效样本数和缺项原因。仅保存指标、错误、证据ID/来源和耗时，不复制问题、文档正文或回答。
+`passed_cases`表示取得有效指标的完成题数，**不是答案质量通过数**；未制定人工验收阈值时 `quality_verdict=not_assessed`，不保证所有答案正确。旧时间戳报告不删除，不直接将旧关键词分数与新语义分数比较。
 
 评测测试使用独立的 RAG 配置：
 
 ~~~powershell
-L:/anaconda/python.exe -m pytest services/rag-service/tests -q `
-  --override-ini pythonpath=services/rag-service
+.runtime/ragas-eval-clean/Scripts/python.exe -m pip install pytest==8.4.2
+.runtime/ragas-eval-clean/Scripts/python.exe -m pytest -c pytest-rag.ini -q
 ~~~
 
 ## Agent 和业务接口

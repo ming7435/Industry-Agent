@@ -201,7 +201,11 @@ class SkillTrials:
                     definition = SkillDefinition.from_payload(agent, payload, path, document)
                     if definition.name == name:
                         definition = replace(definition, document=values['document'].strip(),
-                                             goal=values['goal'].strip(), version=values['version'].strip())
+                                             goal=values['goal'].strip(), version=values['version'].strip(),
+                                             metadata={**definition.metadata, 'goal': values['goal'].strip(),
+                                                       'version': values['version'].strip()})
+                        if values.get('task_mode') == 'review_flow':
+                            definition = replace(definition, metadata={**definition.metadata, 'review_enabled': True})
                     definitions.append(definition)
                 if self._dependencies(agent) != dependencies:
                     raise SkillEditError(409, '线上技能正在变化，请刷新后重新测试')

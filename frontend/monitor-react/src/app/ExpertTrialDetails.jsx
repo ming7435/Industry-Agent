@@ -18,7 +18,7 @@ export default function ExpertTrialDetails({ trial, actor, formatTime }) {
     <h3>本轮测试详情</h3>
     <dl className="expert-trial-overview">
       <div><dt>故障设备</dt><dd>{trial.machine?.name || trial.machine?.device_id || '尚未读取'}</dd></div>
-      <div><dt>报警编号</dt><dd>{trial.machine?.alarm_code || '尚未读取'}</dd></div>
+      <div><dt>报警编号</dt><dd>{trial.machine ? trial.machine.alarm_code || '无报警码' : '尚未读取'}</dd></div>
       <div><dt>测试开始</dt><dd>{formatTime(trial.created_at)}</dd></div>
     </dl>
     {trial.baseline_changed && <p className="expert-alert">技能说明已更新，本轮结果仅供查看；请用当前内容重新测试后发布。</p>}

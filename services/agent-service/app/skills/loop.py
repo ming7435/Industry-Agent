@@ -1,4 +1,4 @@
-"""独立 Skill Loop：只读观测、周计划和持久预算；人工测试/发布仍由原服务控制。"""
+"""独立 Skill Loop：只读观测、周计划和持久认领；人工测试/发布仍由原服务控制。"""
 from copy import deepcopy
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -19,6 +19,7 @@ class SkillLoop:
     def _window(self, bounds):
         start, end = (datetime.fromisoformat(bounds[key]) for key in ('start', 'end'))
         records, after, upper, complete, done = [], 0, None, True, False
+        read_complete = True
         message = ''
         if start == end:
             done = True
@@ -28,6 +29,7 @@ class SkillLoop:
             trace = self.evolution.manager.trace
             if trace is None:
                 complete, message = False, '没有可信执行轨迹'
+                read_complete = False
                 break
             page = trace.skill_window_page(start, end, after=after, upper=upper, limit=200)
             complete = complete and bool(page['complete'])
@@ -37,13 +39,21 @@ class SkillLoop:
             done = bool(page['done'])
             if not done and next_cursor <= after:
                 complete, message = False, '轨迹游标未推进，窗口不完整'
+                read_complete = False
                 break
             after = next_cursor
             message = page.get('message') or message
-            if not complete:
+            # 观测有缺口不影响读取后续页；存储不可用或内存截取则不能声称读完。
+            if page.get('storage') in {'unavailable', 'memory'}:
+                read_complete = False
                 break
-        complete = complete and done
+        else:
+            if not done:
+                message = '窗口记录达到读取上限，仅展示已读取的部分记录'
+        read_complete = read_complete and done
+        complete = complete and read_complete
         return {**bounds, 'upper': upper, 'after': after, 'complete': complete,
+                'read_complete': read_complete,
                 'record_count': len(records), 'message': message or ('' if complete else '窗口未读取完整，不能生成周计划'),
                 'items': aggregate(records, self.evolution.manager.registry, complete)}
 
@@ -80,7 +90,7 @@ class SkillLoop:
                 (s['problems'] > r['problems'] or s['problem_ratio'] > r['problem_ratio']) for s in remaining)]
             ranked.extend(sorted(front, key=lambda r: (-r['problems'], -r['problem_ratio'], r['agent'], r['name'])))
             remaining = [r for r in remaining if r not in front]
-        return ranked[:3]
+        return ranked
 
     def refresh(self, now=None):
         now = now or datetime.now(timezone.utc)
@@ -96,19 +106,24 @@ class SkillLoop:
         current = self._window(windows['current'])
         self.evolution.metrics.collect(now)
         self.evolution.metrics.observe({'previous': previous, 'current': current}, now)
-        initial_plan = {'loop_id': week_id, 'revision': 0, 'recording_policy': 1, 'selection_policy': 3, 'limit': 3, 'selected': self._selection(previous),
+        initial_plan = {'loop_id': week_id, 'revision': 0, 'recording_policy': 1, 'selection_policy': 4, 'limit': None, 'selected': self._selection(previous),
                         'source_window': windows['previous'], 'reservations': {}, 'created_at': now.isoformat()}
-        # 完整窗口才冻结计划；冷启动/存储失败不能永久保存一份伪完整的空计划。
+        # 完整窗口才建立计划；冷启动/存储失败不能保存一份伪完整的空计划。
         if previous['complete']:
             plan = self.store.get_or_create('skill_loop_plan', week_id, lambda: initial_plan)
-            # 本周老计划只补尚未占用的空位，不清除任何预约、候选或失败额度。
-            if plan.get('recording_policy') == 1 and plan.get('selection_policy') != 3:
+            # 取消旧计划的数量上限，并补入后来合格的技能；保留全部认领和候选，不能重放失败调用。
+            for _ in range(8):
+                if plan.get('recording_policy') != 1:
+                    break
                 retained = list(plan['selected'])
                 keys = {item['agent'] + ':' + item['name'] for item in retained} | set(plan['reservations'])
-                capacity = max(0, plan['limit'] - len(keys))
-                extra = [item for item in initial_plan['selected'] if item['agent'] + ':' + item['name'] not in keys][:capacity]
-                self.store.compare_and_set('skill_loop_plan', week_id, 'revision', plan['revision'],
-                    {'revision': plan['revision'] + 1, 'selection_policy': 3, 'selected': retained + extra})
+                extra = [item for item in initial_plan['selected'] if item['agent'] + ':' + item['name'] not in keys]
+                if not extra and plan.get('selection_policy') == 4 and plan.get('limit') is None:
+                    break
+                if self.store.compare_and_set('skill_loop_plan', week_id, 'revision', plan['revision'],
+                    {'revision': plan['revision'] + 1, 'selection_policy': 4, 'limit': None, 'selected': retained + extra}):
+                    break
+                plan = self.store.get('skill_loop_plan', week_id)
         state = self.store.get_or_create('skill_loop_state', 'latest', lambda: {'revision': 0})
         self.store.compare_and_set('skill_loop_state', 'latest', 'revision', state['revision'],
             {'revision': state['revision'] + 1, 'loop_id': week_id, 'observed_at': now.isoformat(),
@@ -123,7 +138,7 @@ class SkillLoop:
             if control.get('paused'):
                 return None
             plan = self.store.get('skill_loop_plan', week_id)
-            if not plan or plan.get('recording_policy') != 1 or len(plan['reservations']) >= plan['limit']:
+            if not plan or plan.get('recording_policy') != 1:
                 return None
             for item in plan['selected']:
                 key = item['agent'] + ':' + item['name']
@@ -222,7 +237,9 @@ class SkillLoop:
             for window in health.values():
                 window['items'] = [{k: v for k, v in row.items() if k not in {'sources', 'outcome_events'}} for row in window['items'] if matches(row)]
         if plan:
-            blocked_reason = '' if plan.get('recording_policy') == 1 else '旧计划缺少持续观测覆盖证明，本周停止生成新稿，保留已占额度与原候选'
+            blocked_reason = '' if plan.get('recording_policy') == 1 else '旧计划缺少持续观测覆盖证明，本周停止生成新稿，保留已有处理记录与原候选'
+            selected_keys = {item['agent'] + ':' + item['name'] for item in plan['selected']}
+            reserved_keys = set(plan['reservations'])
             selected = []
             for item in plan['selected']:
                 if not matches(item):
@@ -234,9 +251,10 @@ class SkillLoop:
                     'phase': ('observing' if proposal and proposal['status'] == 'published' else
                               proposal['status'] if proposal else reservation.get('outcome', 'planned'))})
             plan = {k: v for k, v in plan.items() if k not in {'reservations', 'selected'}} | {
-                'selected': selected, 'used': len(plan['reservations']),
+                'selected': selected, 'used': len(reserved_keys),
+                'total': len(selected_keys | reserved_keys), 'pending': len(selected_keys - reserved_keys),
                 'blocked_reason': blocked_reason,
-                'remaining': max(0, plan['limit'] - len(plan['reservations']))}
+                'limit': None, 'remaining': None}
         return {'kind': 'skill_loop', 'loop_id': week_id, 'observed_at': state.get('observed_at'),
                 'health': health, 'plan': plan, 'north_star': north_star, 'control': {k: control[k] for k in ('paused', 'revision')},
                 'evaluation': state.get('evaluation', {'status': 'not_evaluated', 'message': '尚未评估'})}

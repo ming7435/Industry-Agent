@@ -1,4 +1,4 @@
-"""Data contracts for the local RAG evaluation dataset and report."""
+"""RAGAS 评测题集与报告契约；标准答案必须有明确人工复核标记。"""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ class EvaluationCase:
     expected_sources: list[str] = field(default_factory=list)
     relevant_terms: list[str] = field(default_factory=list)
     should_answer: bool = True
+    reference: str | None = None
+    reference_reviewed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -31,6 +33,10 @@ class CaseEvaluation:
     degraded: bool = False
     degrade_reason: str | None = None
     error: str | None = None
+    status: str = 'pending'
+    metric_errors: dict[str, str] = field(default_factory=dict)
+    skipped_metrics: dict[str, str] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -48,6 +54,11 @@ class EvaluationReport:
     aggregate_metrics: dict[str, float | None]
     suggested_thresholds: dict[str, float]
     cases: list[CaseEvaluation]
+    framework: str = 'ragas'
+    framework_version: str = ''
+    metric_coverage: dict[str, int] = field(default_factory=dict)
+    model_info: dict[str, Any] = field(default_factory=dict)
+    quality_verdict: str = 'not_assessed'
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -85,6 +96,11 @@ def load_dataset(path: str | Path) -> list[EvaluationCase]:
             should_answer = row.get("should_answer", True)
             if not isinstance(should_answer, bool):
                 raise ValueError("should_answer 必须是布尔值")
+            reference, reviewed = row.get('reference'), row.get('reference_reviewed', False)
+            if reference is not None and (not isinstance(reference, str) or not reference.strip()):
+                raise ValueError('reference 标准答案必须是非空文本或 null')
+            if type(reviewed) is not bool or reviewed and not reference:
+                raise ValueError('reference_reviewed 必须是布尔值，且已复核标记需要标准答案')
             case = EvaluationCase(
                 id=case_id,
                 question=question.strip(),
@@ -93,6 +109,8 @@ def load_dataset(path: str | Path) -> list[EvaluationCase]:
                 expected_sources=_string_list(row.get("expected_sources", []), "expected_sources"),
                 relevant_terms=_string_list(row.get("relevant_terms", []), "relevant_terms"),
                 should_answer=should_answer,
+                reference=reference.strip() if reference else None,
+                reference_reviewed=reviewed,
             )
         except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"数据集第 {line_number} 行无效: {exc}") from exc

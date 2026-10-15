@@ -361,6 +361,11 @@ class SkillEvolution:
         from app.skills.optimization import verification_mode
         if receipt.get('mode') != verification_mode(record['agent'], record['name']):
             return self._change(record, status='verification_failed', message='非完整模拟机器验证，禁止发布')
+        from app.skills.optimization import assessment_passed
+        from app.skills.testing import fingerprint
+        if not assessment_passed(receipt.get('assessment'), agent=record['agent'], name=record['name'],
+                test_id=record['test_id'], trial_fingerprint=fingerprint(record['draft'])):
+            return self._change(record, status='verification_failed', message='验收回执缺失、不匹配或未通过，旧版保留')
         # 测试完成只允许进入待发布；后台不能代替人工最终发布。
         return self._change(record, status='awaiting_publication', owner_instance='', lease_until=0,
                             message='测试通过，旧版仍在使用；请人工核对结果并点击发布到系统')

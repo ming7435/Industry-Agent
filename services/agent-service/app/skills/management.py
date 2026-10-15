@@ -137,6 +137,11 @@ class SkillManager:
             # 仅这两个元数据字段可编辑；正文即使含 YAML，也不会成为运行权限。
             payload = dict(payload)
             payload.update(goal=values["goal"].strip(), version=values["version"].strip())
+            if require_trial:
+                from app.skills.optimization import verification_mode
+                if verification_mode(agent, name) == 'review_flow':
+                    # 由已验证的发布边界启用；正文与客户端不能提供此状态。
+                    payload['review_enabled'] = True
             document = values["document"].strip()
             content = ("---\n" + yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
                        + "---\n\n" + document + "\n").encode("utf-8")

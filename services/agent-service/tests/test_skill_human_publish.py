@@ -56,6 +56,17 @@ def test_human_publish_does_not_need_old_process_cookie(evolution):
     assert result['status'] == 'published'
 
 
+def test_completed_trial_with_rejected_assessment_never_becomes_ready_to_publish(evolution):
+    e = evolution()
+    confirm(e)
+    e.service.advance(e.candidate['proposal_id'])
+    finish_trial(e)
+    record = e.trials._read('f' * 32, ACTOR)
+    record['assessment']['accepted'] = False
+    e.trials._write(record)
+    assert e.service.advance(e.candidate['proposal_id'])['status'] == 'verification_failed'
+
+
 @pytest.mark.parametrize('invalid', ['hash', 'actor', 'session', 'baseline', 'test'])
 def test_publish_rechecks_draft_authority_and_real_test(evolution, invalid):
     e = evolution()

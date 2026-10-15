@@ -1,7 +1,7 @@
 ---
 name: alarm_diagnosis_skill
 description: 当设备事件包含报警码，需要结合当前运行事实解释报警时使用。
-version: '1.0'
+version: '1.1'
 goal: 结合报警定义与运行证据诊断带报警码的设备事件。
 trigger: exists(alarm_code)
 steps:

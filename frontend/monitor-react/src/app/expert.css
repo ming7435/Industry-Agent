@@ -97,3 +97,111 @@
 .expert-machine-progress a { color: #087f72; text-decoration: underline; overflow-wrap: anywhere; }
 @media (max-width: 680px) { .expert-card { padding: 18px; } }
 @media (max-width: 680px) { .expert-document-editor { padding: 18px; } }
+
+/* 专家工作区：目录、操作和指标分别占据稳定的位置。 */
+.expert-workspace [hidden] { display: none !important; }
+.expert-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-bottom: 16px; }
+.expert-heading h1 { font-size: 30px; margin: 4px 0; }
+.expert-heading p { margin: 4px 0 0; }
+.expert-eyebrow { font-size: 12px; font-weight: 700; color: #087f72; letter-spacing: .04em; }
+.expert-heading-count { padding: 8px 12px; border: 1px solid #cfe1df; border-radius: 8px; white-space: nowrap; font-size: 13px; }
+.expert-layout { display: grid; grid-template-columns: 258px minmax(0, 1fr); align-items: start; gap: 20px; }
+.expert-main { min-width: 0; display: grid; gap: 12px; }
+.expert-main > .expert-card { padding: 24px; }
+.expert-sidebar { position: sticky; top: 20px; padding: 18px; }
+.expert-sidebar .expert-section-title h2 { font-size: 17px; }
+.expert-sidebar .expert-section-title > span { font-size: 12px; color: #647e88; }
+.expert-search, .expert-agent-filter { display: grid; gap: 6px; font-size: 12px; font-weight: 600; margin-top: 16px; }
+.expert-sidebar input[type="search"], .expert-sidebar select { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid #c9dde1; border-radius: 7px; background: #fff; font: inherit; color: #19343e; }
+.expert-catalog-scope { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 14px 0; color: #647e88; }
+.expert-catalog { max-height: calc(100vh - 380px); min-height: 120px; gap: 8px; }
+.expert-catalog button { padding: 12px; gap: 4px; border-color: transparent; background: #f6f9f9; }
+.expert-catalog button strong { font-size: 14px; }
+.expert-catalog button span, .expert-catalog button .expert-skill-purpose { font-size: 11px; line-height: 1.5; }
+.expert-skill-purpose { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.expert-catalog .expert-skill-identity { word-break: break-all; }
+.expert-current-summary { font-size: 13px; margin: 8px 0 18px; }
+.expert-tabs { display: flex; gap: 24px; border-bottom: 1px solid #dbe7e7; }
+.expert-tabs [role="tab"] { border: 0; border-radius: 0; border-bottom: 3px solid transparent; padding: 12px 0; color: #637b82; font-weight: 600; font-size: 14px; }
+.expert-tabs [aria-selected="true"] { border-bottom-color: #087f72; color: #087f72; }
+.expert-workspace [role="tabpanel"] { min-width: 0; }
+.expert-workspace [role="tabpanel"] > .expert-document-field, .expert-workspace [role="tabpanel"] > label { margin-top: 18px; }
+.expert-workspace #expert-panel-content > .expert-primary { margin-top: 20px; }
+.expert-skill-info { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); margin-top: 0; }
+.expert-workspace .expert-primary { color: #fff; background: #087f72; border-color: #087f72; font-weight: 600; }
+.expert-workspace button:hover:not(:disabled) { border-color: #087f72; }
+.expert-workspace select:focus-visible, .expert-workspace summary:focus-visible { outline: 2px solid #168f82; outline-offset: 3px; }
+.expert-draft-notice { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin: 18px 0; padding: 12px 16px; background: #f5f8f8; border-radius: 8px; font-size: 13px; }
+.expert-draft-notice button { padding: 7px 10px; font-size: 12px; flex-shrink: 0; }
+.expert-sample-fields { display: grid; gap: 14px; padding-top: 18px; }
+.expert-sample-fields > h3 { font-size: 16px; }
+.expert-trial { padding: 18px; background: #fafcfc; gap: 14px; }
+.expert-workspace details.expert-sample-config { margin: 0; padding: 0; border: 0; }
+.expert-sample-config > summary { font-weight: 600; color: #19343e; }
+.expert-trial p { margin: 0; font-size: 13px; }
+.expert-workspace .expert-trial textarea { min-height: 80px; font-size: 14px; }
+.expert-workspace .expert-sample-fields small { font-size: 12px; font-weight: 400; color: #69808a; line-height: 1.6; }
+.expert-publish-bar { display: flex; align-items: center; justify-content: space-between; gap: 18px; border-top: 1px solid #dbe7e7; margin-top: 20px; padding-top: 16px; }
+.expert-publish-bar p { margin: 0; font-size: 12px; }
+.expert-publish-bar .expert-save { flex-shrink: 0; align-self: center; }
+.expert-test-metrics { padding: 20px 0 0; }
+.expert-test-metrics .expert-section-title h2 { font-size: 20px; margin-top: 4px; }
+.expert-test-metrics > p { font-size: 13px; margin: 10px 0 16px; }
+.expert-badge { display: inline-flex; align-items: center; justify-content: center; padding: 5px 9px; border-radius: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.expert-badge.success { color: #17705a; background: #e7f5ed; }
+.expert-badge.failure { color: #a5442e; background: #fff0eb; }
+.expert-badge.pending { color: #657d85; background: #edf2f3; }
+.expert-metric-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.expert-metric { padding: 16px; border: 1px solid #dce7e8; border-radius: 10px; background: #fff; min-width: 0; }
+.expert-metric > span { display: block; font-size: 12px; color: #647e88; }
+.expert-metric strong { display: block; font-size: 23px; margin: 10px 0 6px; color: #19343e; overflow-wrap: anywhere; }
+.expert-metric small { display: block; line-height: 1.5; color: #7b8d94; font-size: 11px; }
+.expert-workspace details.expert-checks { margin-top: 18px; padding-top: 16px; }
+.expert-checks > summary { font-weight: 600; font-size: 14px; color: #19343e; }
+.expert-checks summary span { font-weight: 400; margin-left: 8px; color: #647e88; font-size: 12px; }
+.expert-checks ul { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); list-style: none; padding: 0; gap: 0 20px; margin: 12px 0 0; }
+.expert-checks li { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #ecf1f2; }
+.expert-checks li strong { font-size: 13px; font-weight: 500; }
+.expert-checks li small { display: block; color: #7b8d94; line-height: 1.5; font-size: 11px; margin-top: 4px; }
+.expert-evidence { margin-top: 20px; padding: 16px; background: #f7faf9; border-radius: 10px; }
+.expert-evidence h3 { margin: 0 0 12px; font-size: 15px; }
+.expert-evidence ul { margin: 0; padding-left: 20px; }
+.expert-evidence li { padding: 6px 0; overflow-wrap: anywhere; font-size: 13px; }
+.expert-evidence li > span { display: block; margin-top: 4px; color: #69808a; font-size: 11px; }
+.expert-evidence p { font-size: 13px; margin: 6px 0; white-space: pre-wrap; }
+.expert-spec-fields { display: grid; gap: 8px; }
+.expert-spec-fields div { display: flex; gap: 18px; justify-content: space-between; font-size: 13px; }
+.expert-spec-fields dd { margin: 0; overflow-wrap: anywhere; }
+.expert-technical pre { max-height: 320px; overflow: auto; padding: 14px; font-size: 12px; border-radius: 8px; background: #f5f8f8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.expert-skill-metric-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; background: #f4f9f7; border: 1px solid #dceae5; border-radius: 10px; padding: 14px 16px; }
+.expert-skill-metric-summary > div { display: grid; gap: 4px; flex: 1; }
+.expert-skill-metric-summary span, .expert-skill-metric-summary small { font-size: 11px; color: #69808a; }
+.expert-skill-metric-summary strong { font-size: 19px; }
+.expert-skill-metric-summary button { font-size: 12px; padding: 8px 10px; }
+.expert-main .skill-north-star { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); border-top: 0; margin-top: 0; padding-top: 4px; }
+.skill-north-star > :not(article) { grid-column: 1 / -1; }
+.skill-north-star article { background: #fff; padding: 18px; }
+.skill-north-star article h3 { font-size: 15px; }
+.skill-north-star article p, .skill-north-star > p { font-size: 13px; }
+.skill-north-star article small { font-size: 11px; }
+.expert-main .skill-evolution { padding: 18px; background: #fafcfc; }
+@media (max-width: 1180px) {
+  .expert-layout { grid-template-columns: 220px minmax(0,1fr); gap: 14px; }
+  .expert-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .expert-main > .expert-card { padding: 18px; }
+}
+@media (max-width: 850px) {
+  .expert-layout { grid-template-columns: minmax(0,1fr); }
+  .expert-sidebar { position: static; }
+  .expert-catalog { flex-direction: row; max-height: 200px; min-height: 0; overflow-x: auto; }
+  .expert-catalog button { flex: 0 0 200px; }
+  .expert-heading-count { display: none; }
+}
+@media (max-width: 560px) {
+  .expert-checks ul, .expert-main .skill-north-star, .expert-skill-info { grid-template-columns: minmax(0,1fr); }
+  .expert-publish-bar, .expert-draft-notice { align-items: stretch; flex-direction: column; }
+  .expert-tabs { gap: 18px; }
+  .expert-metric { padding: 12px; }
+  .expert-metric strong { font-size: 20px; }
+  .expert-skill-metric-summary { gap: 12px; }
+}

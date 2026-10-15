@@ -31,21 +31,22 @@ def observed(manager, agent, name, number=1):
         'status': 'insufficient_evidence', 'validation_findings': ['缺少完整依据']})
 
 
-def test_week_plan_selects_diagnosis_knowledge_and_cad_with_one_shared_budget(multiple):
+def test_week_plan_selects_all_eligible_domains_without_shared_budget(multiple):
     for agent, name in [('diagnosis', 'alarm_diagnosis_skill'), ('knowledge', 'hybrid_search_skill'),
                         ('cad', 'production_modeling_skill'), ('maintenance', 'repair_plan_skill')]:
         observed(multiple, agent, name)
     service = SkillEvolution(multiple, store=IsolatedJsonStore(), client_factory=lambda: model_reply({
         'reason': '补充证据规则', 'rules': ['依据不足时明确询问，不补造参数。']}))
     plan = service.loop.refresh(NOW)['plan']
-    assert {r['agent'] for r in plan['selected']} == {'diagnosis', 'knowledge', 'cad'}
-    assert plan['limit'] == 3
+    assert {r['agent'] for r in plan['selected']} == {'diagnosis', 'knowledge', 'cad', 'maintenance'}
+    assert plan['limit'] is None
     generated = [service.loop.scan_once(NOW) for _ in range(4)]
-    assert sum(r is not None for r in generated) == 3
+    assert sum(r is not None for r in generated) == 4
     assert all(r['status'] == 'awaiting_confirmation' for r in generated if r)
-    assert service.loop.status()['plan']['used'] == 3
+    assert service.loop.status()['plan']['used'] == 4
     modes = {r['agent']: r['verification_mode'] for r in generated if r}
-    assert modes == {'diagnosis': 'machine_flow', 'knowledge': 'knowledge_flow', 'cad': 'cad_spec_flow'}
+    assert modes == {'diagnosis': 'machine_flow', 'knowledge': 'knowledge_flow', 'cad': 'cad_spec_flow',
+                     'maintenance': 'review_flow'}
 
 
 class Documents:
@@ -95,7 +96,7 @@ def test_catalog_explains_supported_test_modes_and_fixed_algorithm_limit(multipl
     assert fixed['optimization']['mode'] == 'review_flow'
 
 
-def test_old_diagnosis_only_week_plan_can_add_domains_without_losing_budget(multiple):
+def test_old_diagnosis_only_week_plan_can_add_domains_without_losing_reservations(multiple):
     for agent, name in [('diagnosis', 'alarm_diagnosis_skill'), ('knowledge', 'hybrid_search_skill'), ('cad', 'production_modeling_skill')]:
         observed(multiple, agent, name)
     service = SkillEvolution(multiple, store=IsolatedJsonStore())
@@ -103,7 +104,8 @@ def test_old_diagnosis_only_week_plan_can_add_domains_without_losing_budget(mult
         'loop_id': '2026-10-12', 'revision': 0, 'recording_policy': 1, 'limit': 3,
         'selected': [], 'source_window': {}, 'reservations': {'diagnosis:alarm_diagnosis_skill': {'outcome': 'generation_failed'}}})
     plan = service.loop.refresh(NOW)['plan']
-    assert plan['used'] == 1 and plan['remaining'] == 2
+    assert plan['used'] == 1 and plan['pending'] == 2 and plan['total'] == 3
+    assert plan['limit'] is None and plan['remaining'] is None
     assert {item['agent'] for item in plan['selected']} == {'knowledge', 'cad'}
 
 

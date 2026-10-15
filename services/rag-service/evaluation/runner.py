@@ -1,278 +1,165 @@
-"""用于 RAG 评测的确定性指标和本地编排基础设施。"""
-
+"""采集 RAG 响应并运行 RAGAS；报告与 Skill 北极星账本完全分离。"""
 from __future__ import annotations
 
-import re
-import json
-import os
-import urllib.error
-import urllib.request
 from collections.abc import Iterable
 from datetime import datetime, timezone
+import json
+import math
+import os
+import re
 from pathlib import Path
 from statistics import mean
 from typing import Any
+import urllib.request
 
 from .models import CaseEvaluation, EvaluationCase, EvaluationReport
-
-_CITATION_RE = re.compile(r"\[(\d+)\]")
-_REFUSAL_SIGNALS = (
-    "证据不足",
-    "无法确认",
-    "无法确定",
-    "没有足够证据",
-    "未找到相关证据",
-    "insufficient evidence",
-    "cannot determine",
-    "unable to confirm",
-    "not enough evidence",
-)
-_THRESHOLDS = {
-    "recall_at_k": 0.80,
-    "source_coverage": 0.80,
-    "citation_validity": 0.95,
-    "abstention_accuracy": 0.90,
-}
+from .ragas_engine import METRICS, RagasEvaluator, safe_error
 
 
-def _metadata(hit: dict[str, Any]) -> dict[str, Any]:
-    value = hit.get("metadata")
-    return value if isinstance(value, dict) else {}
+def _metadata(hit):
+    return hit.get('metadata') if isinstance(hit.get('metadata'), dict) else {}
 
 
-def _evidence_id(hit: dict[str, Any]) -> str:
-    metadata = _metadata(hit)
-    return str(hit.get("chunk_id") or hit.get("document_id") or metadata.get("chunk_id") or metadata.get("document_id") or "").strip()
+def _evidence_id(hit):
+    meta = _metadata(hit)
+    return str(hit.get('chunk_id') or hit.get('document_id') or meta.get('chunk_id') or meta.get('document_id') or '').strip()
 
 
-def _source(hit: dict[str, Any]) -> str:
-    metadata = _metadata(hit)
-    value = metadata.get("corpus") or metadata.get("source") or hit.get("corpus") or hit.get("source")
-    return str(value).strip().lower() if value else ""
+def _source(hit):
+    meta = _metadata(hit)
+    value = meta.get('corpus') or meta.get('source') or hit.get('corpus') or hit.get('source')
+    return str(value).strip().lower() if value else ''
 
 
-def _text(hit: dict[str, Any]) -> str:
-    return str(hit.get("text") or hit.get("content") or "")
-
-
-def _normalise_hits(response: dict[str, Any], top_k: int) -> list[dict[str, Any]]:
-    hits = response.get("hits")
-    if not isinstance(hits, list):
-        return []
-    return [hit for hit in hits[:top_k] if isinstance(hit, dict)]
-
-
-def _fraction(numerator: int, denominator: int) -> float | None:
-    return numerator / denominator if denominator else None
-
-
-def _citation_validity(answer: str | None, evidence_count: int) -> float | None:
-    if answer is None:
-        return None
-    citations = [int(value) for value in _CITATION_RE.findall(answer)]
-    if not citations:
-        return 0.0
-    return _fraction(sum(1 for citation in citations if 1 <= citation <= evidence_count), len(citations))
-
-
-def _abstention_accuracy(answer: str | None, should_answer: bool) -> float | None:
-    if answer is None:
-        return None
-    if should_answer:
-        return 1.0
-    lowered = answer.casefold()
-    return 1.0 if any(signal.casefold() in lowered for signal in _REFUSAL_SIGNALS) else 0.0
-
-
-def evaluate_case(case: EvaluationCase, response: dict[str, Any], top_k: int = 5) -> CaseEvaluation:
-    """计算单个题目，不假设命中结果的元数据结构。"""
-    hits = _normalise_hits(response, top_k)
-    evidence_ids = [_evidence_id(hit) for hit in hits]
-    evidence_sources = [_source(hit) for hit in hits]
-    expected_ids = {item.casefold() for item in case.expected_evidence_ids}
-    expected_sources = {item.casefold() for item in case.expected_sources}
-    actual_ids = {item.casefold() for item in evidence_ids if item}
-    actual_sources = {item.casefold() for item in evidence_sources if item}
-
-    if expected_ids:
-        recall = _fraction(len(expected_ids & actual_ids), len(expected_ids))
-    elif expected_sources:
-        recall = _fraction(len(expected_sources & actual_sources), len(expected_sources))
+def evaluate_case(case: EvaluationCase, response: dict[str, Any], top_k=5, *, evaluator=None, no_llm=True):
+    """正文只在内存交给 RAGAS，不将题目、证据或回答复制进评测报告。"""
+    if type(top_k) is not int or not 1 <= top_k <= 50:
+        raise ValueError('top_k 必须为1至50的整数，与RAG接口一致')
+    if not isinstance(response, dict):
+        raise ValueError('RAG响应必须是JSON对象')
+    hits = response.get('hits') or []
+    if not isinstance(hits, list) or any(not isinstance(hit, dict) for hit in hits):
+        raise ValueError('RAG hits 必须为证据对象列表')
+    hits = hits[:top_k]
+    contexts = [hit.get('text', hit.get('content', '')) for hit in hits]
+    if any(not isinstance(text, str) for text in contexts):
+        raise ValueError('RAG证据正文必须是文本')
+    answer = response.get('answer')
+    if answer is not None and not isinstance(answer, str):
+        raise ValueError('RAG答案必须是文本或null')
+    if sum(map(len, contexts)) + len(answer or '') + len(case.reference or '') > 100000:
+        raise ValueError('单题评测资料超过长度上限，不能截断证据后冒充完整评测')
+    result = CaseEvaluation(id=case.id, metrics=dict.fromkeys(METRICS),
+        evidence_ids=[_evidence_id(hit) for hit in hits], evidence_sources=[_source(hit) for hit in hits],
+        degraded=bool(response.get('degraded')), degrade_reason='RAG服务返回降级状态' if response.get('degraded') else None,
+        diagnostics={'latency_ms': _latency(response.get('latency_ms')), 'should_answer': case.should_answer,
+                     'latency_breakdown': {key: _latency(value) for key, value in (response.get('latency_ms') or {}).items()}
+                         if isinstance(response.get('latency_ms'), dict) else {},
+                     'citation_range_valid': _citation_range(answer, len(hits))})
+    if response.get('error') or result.degraded:
+        result.error = 'RAG响应失败或降级，未计算内容质量指标'
+        result.status = 'error'
+        return result
+    evaluator = evaluator or RagasEvaluator(no_llm=no_llm)
+    data = {'user_input': case.question, 'response': answer,
+            'retrieved_contexts': [text for text in contexts if text.strip()],
+            'retrieved_context_ids': [value for value in result.evidence_ids if value],
+            'reference_context_ids': case.expected_evidence_ids,
+            'should_answer': case.should_answer,
+            'reference': case.reference if case.reference_reviewed else None}
+    result.metrics, result.skipped_metrics, result.metric_errors = evaluator.score(data)
+    if result.metric_errors:
+        result.status, result.error = 'error', '部分RAGAS指标执行失败；失败指标留空，不采用旧算法兜底'
+    elif not any(value is not None for value in result.metrics.values()):
+        result.status = 'insufficient_data'
     else:
-        recall = None
-    source_coverage = _fraction(len(expected_sources & actual_sources), len(expected_sources)) if expected_sources else None
-
-    terms = [term.casefold() for term in case.relevant_terms if term.strip()]
-    non_empty_hits = [_text(hit) for hit in hits if _text(hit).strip()]
-    evidence_precision = None
-    if terms:
-        evidence_precision = _fraction(
-            sum(1 for text in non_empty_hits if any(term in text.casefold() for term in terms)),
-            len(non_empty_hits),
-        )
-
-    answer = response.get("answer")
-    answer = str(answer) if answer is not None else None
-    answer_completeness = _fraction(sum(1 for term in terms if term in answer.casefold()), len(terms)) if answer is not None and terms else None
-    latency = response.get("latency_ms")
-    llm_latency = None
-    if isinstance(latency, dict):
-        llm_latency = latency.get("llm")
-        latency = latency.get("total")
-    try:
-        retrieval_latency = float(latency) if latency is not None else None
-    except (TypeError, ValueError):
-        retrieval_latency = None
-    try:
-        answer_latency = float(llm_latency) if llm_latency is not None else retrieval_latency
-    except (TypeError, ValueError):
-        answer_latency = None
-
-    return CaseEvaluation(
-        id=case.id,
-        metrics={
-            "recall_at_k": recall,
-            "source_coverage": source_coverage,
-            "evidence_precision": evidence_precision,
-            "retrieval_latency_ms": retrieval_latency,
-            "citation_validity": _citation_validity(answer, len(hits)),
-            "answer_completeness": answer_completeness,
-            "abstention_accuracy": _abstention_accuracy(answer, case.should_answer),
-            "answer_latency_ms": answer_latency,
-        },
-        evidence_ids=evidence_ids,
-        evidence_sources=evidence_sources,
-        degraded=bool(response.get("degraded", False)),
-        degrade_reason=str(response.get("degrade_reason")) if response.get("degrade_reason") else None,
-        error=str(response.get("error")) if response.get("error") else None,
-    )
+        result.status = 'partial' if result.skipped_metrics else 'completed'
+    return result
 
 
-def _aggregate_metric(cases: Iterable[CaseEvaluation], key: str) -> float | None:
+def _latency(value):
+    raw = value.get('total') if isinstance(value, dict) else value
+    return float(raw) if type(raw) in (int, float) and math.isfinite(raw) and raw >= 0 else None
+
+
+def _citation_range(answer, evidence_count):
+    numbers = re.findall(r'\[(\d+)\]', answer or '')
+    return all(1 <= int(number) <= evidence_count for number in numbers) if numbers else None
+
+
+def _aggregate_metric(cases: Iterable[CaseEvaluation], key):
     values = [item.metrics.get(key) for item in cases]
-    values = [float(value) for value in values if value is not None]
-    return mean(values) if values else None
+    valid = [float(value) for value in values if type(value) in (int, float) and math.isfinite(value)]
+    return mean(valid) if valid else None
 
 
-def aggregate_evaluations(
-    cases: list[CaseEvaluation],
-    *,
-    base_url: str,
-    mode: str,
-    run_at_utc: str | None = None,
-) -> EvaluationReport:
-    """生成报告，并在平均值中排除空指标。"""
-    failed = sum(1 for item in cases if item.error or item.degraded)
-    metric_names = (
-        "recall_at_k",
-        "source_coverage",
-        "evidence_precision",
-        "retrieval_latency_ms",
-        "citation_validity",
-        "answer_completeness",
-        "abstention_accuracy",
-        "answer_latency_ms",
-    )
-    return EvaluationReport(
-        version="1",
-        run_at_utc=run_at_utc or datetime.now(timezone.utc).isoformat(),
-        base_url=base_url,
-        mode=mode,
-        total_cases=len(cases),
-        passed_cases=len(cases) - failed,
-        failed_cases=failed,
-        aggregate_metrics={name: _aggregate_metric(cases, name) for name in metric_names},
-        suggested_thresholds=dict(_THRESHOLDS),
-        cases=cases,
-    )
+def aggregate_evaluations(cases, *, base_url, mode, run_at_utc=None, evaluator=None):
+    """完成数不代表答案合格；没有设定人工验收阈值时不输出质量通过结论。"""
+    return EvaluationReport(version='2', framework_version=evaluator.version if evaluator else '',
+        run_at_utc=run_at_utc or datetime.now(timezone.utc).isoformat(), base_url=base_url, mode=mode,
+        total_cases=len(cases), passed_cases=sum(item.status in {'completed', 'partial'} and not item.error and not item.degraded for item in cases),
+        failed_cases=sum(1 for item in cases if item.status == 'error' or item.error or item.degraded),
+        aggregate_metrics={name: _aggregate_metric(cases, name) for name in METRICS},
+        metric_coverage={name: sum(item.metrics.get(name) is not None for item in cases) for name in METRICS},
+        model_info=evaluator.info() if evaluator else {}, suggested_thresholds={}, cases=cases)
 
 
-def _request_search(base_url: str, payload: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+def _request_search(base_url, payload, timeout_s):
     headers = {'Content-Type': 'application/json'}
     token = os.getenv('RAG_INTERNAL_TOKEN', '').strip()
     if token:
         headers['Authorization'] = 'Bearer ' + token
-    request = urllib.request.Request(
-        base_url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout_s) as response:
-        body = json.loads(response.read().decode("utf-8"))
+    request = urllib.request.Request(base_url, data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+                                     headers=headers, method='POST')
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            body = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as error:
+        error.close()
+        raise
     if not isinstance(body, dict):
-        raise ValueError("RAG 响应必须是 JSON 对象")
+        raise ValueError('RAG响应必须是JSON对象')
     return body
 
 
-def _null_answer_metrics(result: CaseEvaluation) -> None:
-    for name in ("citation_validity", "answer_completeness", "abstention_accuracy", "answer_latency_ms"):
-        result.metrics[name] = None
-
-
-def _null_all_metrics(result: CaseEvaluation) -> None:
-    for name in result.metrics:
-        result.metrics[name] = None
-
-
-def run_evaluation(
-    base_url: str,
-    dataset_path: str | Path,
-    output_dir: str | Path,
-    limit: int | None = None,
-    no_llm: bool = False,
-    *,
-    case_ids: list[str] | None = None,
-    top_k: int = 5,
-    request_fn: Any = None,
-) -> EvaluationReport:
-    """运行本地评测，并持久化 ``latest.json`` 与带时间戳的报告。"""
+def run_evaluation(base_url, dataset_path, output_dir, limit=None, no_llm=False, *, case_ids=None,
+                   top_k=5, request_fn=None, allow_model_calls=False, model_service_base_url=None,
+                   max_model_calls=60, case_timeout=120):
+    """手动评测入口；生成和裁判调用需明确选择，有限次数，不启动后台收费任务。"""
     from .models import load_dataset
-
+    if not no_llm and allow_model_calls is not True:
+        raise ValueError('完整评测需要显式 allow_model_calls=True，CLI使用 --allow-model-calls 确认模型调用')
+    if type(top_k) is not int or not 1 <= top_k <= 50:
+        raise ValueError('top_k 必须为1至50的整数，与RAG接口一致')
     cases = load_dataset(dataset_path)
-    if case_ids:
-        known = {case.id for case in cases}
-        unknown = [case_id for case_id in case_ids if case_id not in known]
-        if unknown:
-            raise ValueError(f"未知题目 ID: {', '.join(unknown)}")
-        by_id = {case.id: case for case in cases}
-        selected = [by_id[case_id] for case_id in case_ids]
-    else:
-        selected = cases
+    known = {case.id: case for case in cases}
+    if case_ids and any(identity not in known for identity in case_ids):
+        raise ValueError('未知题目 ID')
+    selected = [known[identity] for identity in dict.fromkeys(case_ids)] if case_ids else cases
     if limit is not None:
-        if limit < 1:
-            raise ValueError("limit 必须大于 0")
+        if type(limit) is not int or limit < 1:
+            raise ValueError('limit 必须大于0')
         selected = selected[:limit]
-    if not selected:
-        raise ValueError("没有可运行的评测题目")
+    if not selected or len(selected) > 100:
+        raise ValueError('每次评测需1至100题，请通过limit分批运行')
+    evaluator = RagasEvaluator(no_llm=no_llm, model_service_base_url=model_service_base_url,
+                              max_model_calls=max_model_calls, case_timeout=case_timeout)
     request_fn = request_fn or _request_search
-    evaluated: list[CaseEvaluation] = []
+    evaluated = []
     for case in selected:
-        payload = {"query": case.question, "filters": case.filters, "top_n": top_k}
+        payload = {'query': case.question, 'filters': case.filters, 'top_n': top_k, 'generate_answer': not no_llm}
         try:
             response = request_fn(f"{base_url.rstrip('/')}/search", payload, 90.0)
-            if not isinstance(response, dict):
-                raise ValueError("RAG 响应必须是 JSON 对象")
-            result = evaluate_case(case, response, top_k=top_k)
-        except (Exception) as exc:  # each case is isolated by design
-            result = evaluate_case(case, {"error": str(exc)}, top_k=top_k)
-            result.error = str(exc)
-            _null_all_metrics(result)
-        if no_llm:
-            _null_answer_metrics(result)
+            result = evaluate_case(case, response, top_k, evaluator=evaluator)
+        except Exception as error:
+            result = CaseEvaluation(id=case.id, metrics=dict.fromkeys(METRICS), status='error', error=safe_error(error))
         evaluated.append(result)
-
-    run_at = datetime.now(timezone.utc)
-    report = aggregate_evaluations(
-        evaluated,
-        base_url=base_url,
-        mode="no_llm" if no_llm else "full",
-        run_at_utc=run_at.isoformat(),
-    )
+    now = datetime.now(timezone.utc)
+    report = aggregate_evaluations(evaluated, base_url=base_url, mode='no_llm' if no_llm else 'full',
+                                  run_at_utc=now.isoformat(), evaluator=evaluator)
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
-    serialized = json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n"
-    (destination / "latest.json").write_text(serialized, encoding="utf-8")
-    timestamp = run_at.strftime("%Y%m%dT%H%M%S.%fZ")
-    (destination / f"{timestamp}.json").write_text(serialized, encoding="utf-8")
+    encoded = json.dumps(report.to_dict(), ensure_ascii=False, indent=2, allow_nan=False) + '\n'
+    (destination / 'latest.json').write_text(encoded, encoding='utf-8')
+    (destination / f"{now.strftime('%Y%m%dT%H%M%S.%fZ')}.json").write_text(encoded, encoding='utf-8')
     return report

@@ -28,7 +28,22 @@ def assessment_keys(mode):
     common = ('skill_used', 'baseline_unchanged', 'dependencies_unchanged')
     return {
         'machine_flow': ('diagnosis', 'maintenance', 'workorder', 'report', *common),
-        'knowledge_flow': ('retrieval', 'evidence', 'expected_result', *common),
+        'knowledge_flow': ('retrieval', 'evidence', 'query_relevance', 'expected_result', *common),
         'cad_spec_flow': ('specification', 'missing_dimensions', 'expected_result', *common),
         'review_flow': ('evidence_scope', 'expected_result', 'readonly', *common),
     }.get(mode, ())
+
+
+def assessment_passed(assessment, *, agent, name, test_id, trial_fingerprint):
+    """待发布展示与最终发布使用同一份、同一技能草稿的完整验收。"""
+    mode = verification_mode(agent, name)
+    if not isinstance(assessment, dict) or not mode:
+        return False
+    criteria = assessment.get('criteria')
+    return (assessment.get('schema') == 1 and assessment.get('accepted') is True
+            and assessment.get('assessment_id') == test_id
+            and assessment.get('agent') == agent and assessment.get('name') == name
+            and assessment.get('trial_fingerprint') == trial_fingerprint
+            and assessment.get('basis') == mode + '_receipt'
+            and isinstance(criteria, dict)
+            and all(criteria.get(key) is True for key in assessment_keys(mode)))

@@ -40,8 +40,17 @@ for(const [agent,name,mode,field,input] of [
       await page.goto(fixture.base+'/?view=expert');
       await page.getByText('这是系统自动生成的待审核稿，并未替换线上技能。修改说明包含触发原因，预期结果用于核对实际测试。',{exact:true}).waitFor();
       await page.getByLabel(field,{exact:true}).fill(input);
+      if(agent==='knowledge') {
+        await page.getByLabel('测试参考资料',{exact:true}).fill(JSON.stringify([
+          {document_id:'DOC-1',title:'主轴手册',content:'检查主轴冷却。',source_type:'manual'},
+          {document_id:'DOC-2',title:'食堂菜单',content:'米饭鸡蛋。',source_type:'manual'},
+        ]));
+        await page.getByLabel(/预期状态/).selectOption('completed');
+        await page.getByLabel('预期资料编号',{exact:true}).fill('["DOC-1"]');
+      }
       await page.getByLabel('我已审核自动修改稿及预期结果，允许开始测试',{exact:true}).check();
       await page.getByRole('button',{name:'测试修改',exact:true}).click();
+      await page.getByRole('tab',{name:'技能内容',exact:true}).click();
       await page.getByText('已确认，等待验证',{exact:true}).waitFor();
       assert.equal(writes.length,1);
       assert.ok(writes[0].path.endsWith('/confirm'));
@@ -50,6 +59,7 @@ for(const [agent,name,mode,field,input] of [
         assert.equal(writes[0].body.task.expected_status,'reviewed');
         assert.ok(reads.some(url=>url==='/api/expert/skills'));
       } else assert.equal(writes[0].body.task[agent==='cad'?'prompt':'query'],input);
+      if(agent==='knowledge') assert.deepEqual(writes[0].body.task.expected_document_ids,['DOC-1']);
       assert.equal('machine' in writes[0].body,false);
       assert.equal(await page.getByLabel('测试设备',{exact:true}).count(),0);
       assert.equal(reads.includes('/api/expert/machines'),false);

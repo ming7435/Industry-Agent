@@ -1,4 +1,4 @@
-"""Skill Loop 只选择受信不足，周预算跨进程共享，不能自动发布或重试收费生成。"""
+"""Skill Loop 按真实问题选择全部合格技能，并发去重，不能自动发布或重试收费生成。"""
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -61,7 +61,9 @@ def test_week_plan_does_not_fill_healthy_or_unobserved_skills(system):
     actual = loop(system)
     status = actual.refresh(NOW)
     assert status['kind'] == 'skill_loop'
-    assert status['plan']['limit'] == 3 and len(status['plan']['selected']) == 1
+    assert status['plan']['limit'] is None and len(status['plan']['selected']) == 1
+    assert status['plan']['remaining'] is None
+    assert status['plan']['total'] == 1 and status['plan']['pending'] == 1
     assert status['plan']['selected'][0]['name'] == 'alarm_diagnosis_skill'
     assert '证据' in status['plan']['selected'][0]['reason']
     assert status['health']['previous']['complete'] is True
@@ -132,22 +134,65 @@ def test_failed_generation_consumes_reservation_across_restart(system):
     assert len(system.list()) == 1
 
 
-def test_concurrent_workers_share_three_item_weekly_limit(system):
+def add_four_skills(system):
     template = Path(system.manager.registry.get('diagnosis', 'alarm_diagnosis_skill').path).read_text(encoding='utf-8')
     for i in range(1, 5):
         name = 'alarm_' + str(i)
         (system.manager.registry.root / 'diagnosis' / (name + '.md')).write_text(
             template.replace('name: alarm_diagnosis_skill', 'name: ' + name), encoding='utf-8')
         add_run(system.manager, name)
+
+
+def test_concurrent_workers_generate_all_eligible_skills_without_weekly_quota(system):
+    add_four_skills(system)
     services = [SkillEvolution(system.manager, store=system.store, client_factory=system.client_factory) for _ in range(4)]
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda s: loop(s).scan_once(NOW), services))
     actual = loop(system)
-    assert len(actual.status()['plan']['selected']) == 3
-    assert actual.status()['plan']['used'] <= 3
+    assert len(actual.status()['plan']['selected']) == 5
     for _ in range(5):
         actual.scan_once(NOW)
-    assert len(system.list()) == 3 and actual.status()['plan']['used'] == 3
+    assert len(system.list()) == 5 and actual.status()['plan']['used'] == 5
+    assert len({(r['agent'], r['name']) for r in system.list()}) == 5
+    assert all(r['status'] == 'awaiting_confirmation' for r in system.list())
+    assert actual.status()['plan']['pending'] == 0
+    scoped = actual.status('diagnosis', 'alarm_diagnosis_skill')['plan']
+    assert len(scoped['selected']) == 1
+    assert scoped['total'] == scoped['used'] == 5, '总数仍是全系统计划，不随当前技能筛选改变'
+
+
+def test_exhausted_legacy_quota_is_removed_without_losing_existing_candidates(system):
+    add_four_skills(system)
+    actual = loop(system)
+    actual.refresh(NOW)
+    week_id = '2026-10-12'
+    plan = system.store.get('skill_loop_plan', week_id)
+    system.store.compare_and_set('skill_loop_plan', week_id, 'revision', plan['revision'],
+        {'revision': plan['revision'] + 1, 'selection_policy': 3, 'limit': 3, 'selected': plan['selected'][:3]})
+    first = [actual.scan_once(NOW, refresh=False) for _ in range(3)]
+    old_reservations = system.store.get('skill_loop_plan', week_id)['reservations']
+    restarted = SkillEvolution(system.manager, store=system.store, client_factory=system.client_factory)
+    status = restarted.loop.refresh(NOW)
+    assert status['plan']['used'] == 3 and status['plan']['pending'] == 2
+    assert status['plan']['limit'] is None
+    assert system.store.get('skill_loop_plan', week_id)['reservations'] == old_reservations
+    for _ in range(3):
+        restarted.loop.scan_once(NOW)
+    assert len(restarted.list()) == 5
+    assert {r['proposal_id'] for r in first} <= {r['proposal_id'] for r in restarted.list()}
+    assert len({r['name'] for r in restarted.list()}) == 5
+
+
+def test_refresh_adds_newly_eligible_skill_after_existing_draft_is_rejected(system):
+    existing = system.generate_source({'source_id': 'EARLIER-DRAFT', 'trace_id': 'EARLIER-RUN',
+        'agent': 'diagnosis', 'name': 'alarm_diagnosis_skill', 'facts': '{"validation_findings":["缺少证据"]}'})
+    # 本周计划创建时仍有在途稿，先不入选；审核拒绝后可纳入该周计划。
+    actual = loop(system)
+    assert actual.refresh(NOW)['plan']['selected'] == []
+    system.reject(existing['proposal_id'], existing['candidate_hash'], ACTOR)
+    assert len(actual.refresh(NOW)['plan']['selected']) == 1
+    next_candidate = actual.scan_once(NOW)
+    assert next_candidate and next_candidate['proposal_id'] != existing['proposal_id']
 
 
 def test_pause_is_persistent_and_does_not_mutate_business_or_candidates(system):

@@ -60,6 +60,58 @@ def test_gain_uses_actual_fingerprints_and_excludes_unknown_and_transport_errors
     assert gain['value'] == 20 and gain['method'] == 'observational'
 
 
+@pytest.mark.parametrize('head_revision', ['2' * 64, '3' * 64])
+def test_unchanged_republication_keeps_last_content_change_as_gain_baseline(head_revision):
+    original = publication()
+    unchanged = publication(edit_id='P-SAME', published_at='2026-10-12T05:00:00+00:00',
+        old_fingerprint='b' * 64, new_fingerprint='b' * 64,
+        old_behavior='d' * 64, new_behavior='d' * 64,
+        old_revision='2' * 64, new_revision=head_revision, old_version='1.1', new_version='1.1')
+    gain = metrics(publications=[unchanged, original])['weekly_gain']
+    assert gain['value'] == 20
+    assert gain['publication_id'] == original['edit_id']
+    assert gain['publication_revision'] == head_revision, '当前文件校验仍应绑定最新发布修订'
+    assert gain['old']['samples'] == 5 and gain['new']['samples'] == 4
+
+
+def test_multiple_unchanged_publications_preserve_the_original_comparison_boundary():
+    unchanged = publication(edit_id='P-SAME-1', published_at='2026-10-12T04:30:00+00:00',
+        old_fingerprint='b' * 64, new_fingerprint='b' * 64,
+        old_revision='2' * 64, new_revision='3' * 64)
+    later = {**unchanged, 'edit_id': 'P-SAME-2', 'published_at': '2026-10-12T05:00:00+00:00',
+             'old_revision': '3' * 64, 'new_revision': '4' * 64}
+    gain = metrics(publications=[later, publication(), unchanged])['weekly_gain']
+    assert gain['value'] == 20 and gain['publication_id'] == 'P-1'
+    assert gain['publication_revision'] == '4' * 64
+
+
+def test_missing_publication_link_cannot_reuse_an_unrelated_old_comparison():
+    unchanged = publication(edit_id='P-UNLINKED', published_at='2026-10-12T05:00:00+00:00',
+        old_fingerprint='b' * 64, new_fingerprint='b' * 64,
+        old_revision='9' * 64, new_revision='3' * 64)
+    gain = metrics(publications=[publication(), unchanged])['weekly_gain']
+    assert gain['value'] is None and gain['publication_id'] == 'P-UNLINKED'
+
+
+def test_real_new_content_never_falls_back_to_an_older_successful_gain():
+    changed = publication(edit_id='P-NEW', published_at='2026-10-12T05:00:00+00:00',
+        old_fingerprint='b' * 64, new_fingerprint='e' * 64,
+        old_revision='2' * 64, new_revision='3' * 64)
+    gain = metrics(publications=[publication(), changed])['weekly_gain']
+    assert gain['value'] is None and gain['publication_id'] == 'P-NEW'
+    assert gain['old']['samples'] == 4 and gain['new']['samples'] == 0
+    assert '缺少新版有效运行样本' in gain['message']
+
+
+def test_gain_explains_missing_version_samples_even_when_coverage_is_incomplete():
+    samples = {'previous': {'complete': False, 'items': []}, 'current': {'complete': False, 'items': []}}
+    gain = metrics(samples=samples)['weekly_gain']
+    assert gain['value'] is None
+    assert '缺少旧版有效运行样本' in gain['message']
+    assert '缺少新版有效运行样本' in gain['message']
+    assert '窗口不完整' in gain['message']
+
+
 def test_no_same_content_improvement_and_no_empty_denominator_score():
     unchanged = metrics(publications=[publication(new_fingerprint='a' * 64)])
     assert unchanged['weekly_gain']['value'] is None
@@ -113,6 +165,45 @@ def test_rollback_requires_successful_file_lineage_and_restored_older_behavior()
 
 def test_events_and_publications_after_observation_cutoff_cannot_improve_score():
     assert metrics(publications=[publication(published_at='2026-10-12T07:00:00+00:00')])['rollback_rate']['value'] is None
+
+
+@pytest.mark.parametrize('new_revision', ['1' * 64, '2' * 64])
+def test_rollback_excludes_saves_without_a_behavior_change(new_revision):
+    saved = publication(new_behavior='c' * 64, new_revision=new_revision)
+    rate = metrics(publications=[saved])['rollback_rate']
+    assert rate['denominator'] == 0, '格式变化、版本标记变化和重复保存不能增加新版发布数'
+    assert rate['numerator'] == 0 and rate['value'] is None
+    assert rate['status'] == 'not_applicable'
+    assert rate['observed_publications'] == rate['excluded_unchanged'] == 1
+    assert rate['records'][0]['counted'] is False
+
+
+@pytest.mark.parametrize('first_time,denominator,numerator', [
+    ('2026-10-12T02:00:00+00:00', 2, 1), ('2026-10-07T02:00:00+00:00', 1, 0)])
+def test_rollback_after_unchanged_save_is_attributed_to_actual_changed_release(first_time, denominator, numerator):
+    first = publication(published_at=first_time)
+    unchanged = publication(edit_id='P-SAVE', published_at='2026-10-12T03:00:00+00:00',
+        old_revision='2' * 64, new_revision='3' * 64, old_behavior='d' * 64, new_behavior='d' * 64,
+        old_fingerprint='b' * 64, new_fingerprint='e' * 64)
+    restored = publication(edit_id='P-RESTORE', published_at='2026-10-12T05:00:00+00:00',
+        old_revision='3' * 64, new_revision='4' * 64, old_behavior='d' * 64, new_behavior='c' * 64,
+        old_fingerprint='e' * 64, new_fingerprint='f' * 64)
+    rate = metrics(publications=[restored, first, unchanged])['rollback_rate']
+    assert rate['denominator'] == denominator and rate['numerator'] == numerator
+    assert rate['excluded_unchanged'] == 1
+    assert {r['edit_id'] for r in rate['records'] if r['counted'] and r['rolled_back']} == ({'P-1'} if numerator else set())
+
+
+def test_gate_evidence_identifies_final_test_and_its_individual_checks():
+    gate = {'schema': 1, 'assessment_id': 'G-RECOVERED', 'agent': AGENT, 'name': NAME,
+            'completed_at': '2026-10-12T03:00:00+00:00', 'accepted': True, 'revision': 2,
+            'criteria': {'diagnosis': True, 'maintenance': True, 'workorder': True, 'report': True,
+                         'skill_used': True, 'baseline_unchanged': True, 'dependencies_unchanged': True}}
+    rate = metrics(gates=[gate, deepcopy(gate)])['gate_pass_rate']
+    assert rate['numerator'] == rate['denominator'] == 1
+    assert len(rate['records']) == 1
+    assert rate['records'][0]['checks_passed'] == rate['records'][0]['checks_total'] == 7
+    assert rate['records'][0]['assessment_id'] == 'G-RECOVERED' and rate['records'][0]['revision'] == 2
 
 
 def test_real_aggregate_retains_terminal_time_without_exposing_raw_device_inputs():

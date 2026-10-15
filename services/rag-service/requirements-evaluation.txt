@@ -1,0 +1,9 @@
+# 独立离线评测依赖；不加入在线 RAG 服务的默认启动环境。
+# 本地验证使用此版本的真实指标实现，不从 GitHub 安装或复制示例项目。
+ragas==0.4.3
+# RAGAS 0.4.3 仍导入旧 VertexAI 适配器；0.4.x Community 已移除该模块。
+# 固定已验证的兼容组合，评测环境与 Agent 的 LangGraph 环境保持独立。
+langchain==0.3.27
+langchain-core==0.3.83
+langchain-community==0.3.31
+langchain-openai==0.3.35

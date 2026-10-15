@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { request } from './apiRequest.mjs';
 
-const phases = {planned:'列入周计划',reserved:'额度已预留，结果待回查',not_generated:'未生成稿件',
+const phases = {planned:'列入周计划',reserved:'已领取生成任务，结果待回查',not_generated:'未生成稿件',
   queued:'等待生成',generating:'生成修改稿中',awaiting_confirmation:'等待人工审核',confirmed:'已审核，等待测试',
   verification_starting:'启动已确认测试',verifying:'测试中',awaiting_publication:'等待人工发布',publishing:'人工发布中',
   observing:'观察发布后运行',generation_failed:'生成未完成',verification_failed:'测试未通过',
@@ -54,16 +54,22 @@ export default function SkillLoopSummary({ actor, skill, onMetrics }) {
   };
 
   return <section className="skill-loop-summary" aria-label="技能优化循环">
-    <h2>技能优化循环</h2>
-    <p>根据历史运行优化技能，不是业务任务的执行循环。修改稿必须经人工审核、测试和最终发布才能生效。</p>
+    <h2>技能运行记录</h2>
+    <p>按技能版本展示已记录的实际运行结果。观测有缺口时仍显示已有样本；隔离测试不计入运行效果。</p>
     {error && <p role="alert" className="expert-alert">{error}</p>}
-    {!value?.health && <p>尚未形成可信窗口统计；旧日志缺少技能执行归属，不能用于自动优化。</p>}
-    {value?.health && ['previous','current'].map(key=>{
+    {!value?.health && <p>尚无技能运行统计，等待后台读取运行记录。</p>}
+    {value?.health && ['current','previous'].map(key=>{
       const window=value.health[key];
+      if (!window) return null;
       return <div key={key} className="skill-loop-window">
-        <h3>{key==='previous' ? '上周完整窗口' : '本周运行观察'}</h3>
-        <p>{window.complete ? '窗口数据已读取完整' : '数据不完整，不能作为优化依据'}{window.message ? `：${window.message}` : ''}</p>
-        {!window.items?.length && <p>此窗口没有可归属的技能执行记录。</p>}
+        <h3>{key==='previous' ? '上周运行记录' : '本周运行观察'}</h3>
+        {window.start && window.end && <p>统计范围：{new Date(window.start).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})}
+          {' 至 '}{new Date(window.end).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})}（北京时间）</p>}
+        <p>{window.complete ? '持续观测完整，窗口数据已读取完整' :
+          window.read_complete ? '当前可用记录已读取完整，持续观测不完整' : '仅展示已读取的部分记录'}
+          {window.message ? `：${window.message}` : ''}</p>
+        {!window.complete && <p>以下仅统计已记录样本，不能用于自动优化或版本收益。</p>}
+        {!window.items?.length && <p>已读取记录中没有可归属的技能执行；新增运行后自动更新。</p>}
         {window.items?.map(row=><div key={`${row.version}:${row.fingerprint}`}>
           <p>版本 {row.version==='unknown' ? '未知' : row.version} · 记录 {row.calls} 次</p>
           <p>校验通过 {row.verdicts.pass} · 业务失败 {row.verdicts.fail} · 证据不足/降级 {row.verdicts.degraded} · 未知 {row.verdicts.unknown} · 基础设施异常 {row.verdicts.infrastructure_error}</p>
@@ -71,9 +77,11 @@ export default function SkillLoopSummary({ actor, skill, onMetrics }) {
         </div>)}
       </div>;
     })}
+    <details><summary>运行窗口与优化计划</summary>
+    <p>完整周记录用于准备优化修改稿，不设每周份数上限。同一技能同时只保留一份待处理稿，修改稿必须经人工审核、测试和最终发布才能生效。</p>
     <h3>本周优化计划</h3>
     {value?.plan ? <>
-      <p>全系统额度：已占用 {value.plan.used} 份，每周最多 {value.plan.limit} 份。生成失败或超时不返还已占额度。</p>
+      <p>全系统本周计划：共 {value.plan.total ?? '待统计'} 项，已处理 {value.plan.used} 项，待处理 {value.plan.pending ?? '待统计'} 项。已处理包含生成中和生成未完成的任务，具体结果见各技能状态。</p>
       {value.plan.blocked_reason && <p>{value.plan.blocked_reason}</p>}
       {!value.plan.selected?.length && <p>当前技能未列入本周计划。没有合格证据时不会凑满候选。</p>}
       {value.plan.selected?.map(item=><div key={`${item.agent}:${item.name}`}>
@@ -84,5 +92,6 @@ export default function SkillLoopSummary({ actor, skill, onMetrics }) {
     <p>{value?.control?.paused ? '新建议收集已暂停' : '新建议按后台计划收集'}。暂停只影响技能优化，不控制机器，也不取消已经人工启动的测试。</p>
     {actor?.role==='technician' && value && <button type="button" disabled={busy} onClick={control}>
       {value.control?.paused ? '恢复技能优化' : '暂停技能优化'}</button>}
+    </details>
   </section>;
 }

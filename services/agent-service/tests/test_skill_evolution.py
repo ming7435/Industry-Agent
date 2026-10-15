@@ -187,8 +187,16 @@ def confirm(evolution, *, actor=ACTOR, resolver=None, digest=None):
 
 
 def finish_trial(evolution, status='completed'):
+    from datetime import datetime, timezone
     record = evolution.trials._read('f' * 32, ACTOR)
     record.update(status=status)
+    # 此夹具替代机器传输，返回完整的外部验收契约；发布门禁仍执行真实代码。
+    record['assessment'] = {'schema': 1, 'revision': 1, 'assessment_id': record['test_id'],
+        'agent': record['agent'], 'name': record['name'], 'trial_fingerprint': record['fingerprint'],
+        'completed_at': datetime.now(timezone.utc).isoformat(), 'basis': 'machine_flow_receipt',
+        'accepted': status == 'completed', 'criteria': {
+            'diagnosis': True, 'maintenance': True, 'workorder': status == 'completed', 'report': status == 'completed',
+            'skill_used': True, 'baseline_unchanged': True, 'dependencies_unchanged': True}}
     evolution.trials._write(record)
 
 

@@ -154,7 +154,8 @@ def review_skills(definitions, source_input, source_output, client):
 def schedule_review(definitions, source_input, source_output, *, client=None, trace=None, context=None):
     """发布后的核查异步执行；饱和时记录未验证，不能拖住或重放原业务。"""
     from app.skills.optimization import verification_mode
-    selected = [d for d in definitions if verification_mode(d.agent, d.name) == 'review_flow' and MARKER in d.document]
+    selected = [d for d in definitions if verification_mode(d.agent, d.name) == 'review_flow'
+                and (d.metadata.get('review_enabled') is True or MARKER in d.document)]
     if not selected or trace is None:
         return
     context = {**(context or {})}
