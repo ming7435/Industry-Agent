@@ -118,6 +118,8 @@ class MachineTrials(SkillTrials):
     def _public(record):
         public = SkillTrials._public(record)
         public.update({key: record.get(key) for key in ('machine', 'event_id', 'workorders', 'report_id', 'progress', 'details', 'cancelled_at', 'assessment')})
+        if record.get('status') in ACTIVE:
+            public['assessment'] = None
         return public
 
     def start_machine(self, agent, name, values, actor):
@@ -414,15 +416,16 @@ class MachineTrials(SkillTrials):
             ('智能诊断', '维修方案', '工单派发', '维修确认', '整线复机', '汇总报告'),
             (diagnosis_done, plan_done, bool(orders), finished, bool(cycle), bool(report)))]
         assessment = record.get('assessment')
+        terminal_transition = record.get('status') in ACTIVE and status in {'completed', 'failed'}
         if (eligible and record.get('baseline_revision') and event_id and status in {'completed', 'failed'}
-                and (assessment is None or (status == 'completed' and assessment.get('accepted') is not True))):
+                and (assessment is None or terminal_transition or (status == 'completed' and assessment.get('accepted') is not True))):
             criteria = {'diagnosis': diagnosis_done, 'maintenance': plan_done,
                         'workorder': bool(orders) and finished and running,
                         'report': bool(report), 'skill_used': used,
                         'baseline_unchanged': self.manager.detail(record['agent'], record['name'])['revision'] == record['baseline_revision'],
                         'dependencies_unchanged': self._dependencies() == record['dependencies']}
             accepted = status == 'completed' and all(criteria.values())
-            if assessment is None or assessment.get('criteria') != criteria or assessment.get('accepted') != accepted:
+            if terminal_transition or assessment is None or assessment.get('criteria') != criteria or assessment.get('accepted') != accepted:
                 assessment = {'schema': 1, 'revision': (assessment or {}).get('revision', 0) + 1,
                               'assessment_id': record['test_id'], 'agent': record['agent'], 'name': record['name'],
                               'completed_at': datetime.now(timezone.utc).isoformat(),

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {centerFixture, respond} from './helpers/center-fixture.mjs';
+import {centerFixture, respond, openLogSections} from './helpers/center-fixture.mjs';
 
 const failed={recovery_id:'REC-original',task_id:'TASK-original',trace_id:'TRACE-original',kind:'runtime',
   status:'failed',failed_agent:'maintenance',failed_step:'assess_diagnosis',error:'domain_validation_failed',attempts:1,can_resume:true,
@@ -28,6 +28,7 @@ for(const [name,item] of [
   });
   try{
     await page.goto(fixture.base+'/?view=logs');
+    await openLogSections(page);
     await page.locator('.logs-list .log-event').waitFor();
     await page.waitForFunction(()=>document.querySelector('.team-access > summary')?.textContent.includes('失败记录验证'));
     assert.equal(await page.getByRole('region',{name:'失败任务记录'}).count(),0);

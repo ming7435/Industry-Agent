@@ -115,8 +115,13 @@ class SkillManager:
         current = SkillDefinition.from_payload(agent, payload, path, document)
         return {**self._summary(current), "document": document, "revision": sha256(source).hexdigest(),
                 "content_fingerprint": current.observation()['skill_fingerprint'],
+                "update_quota": self._update_quota(agent, name),
                 "tools": list(current.tools), "steps": [step.id for step in current.normalized_steps()],
                 "stop_conditions": list(current.stop_conditions)}
+
+    def _update_quota(self, agent, name, now=None):
+        from app.skills.update_quota import read_update_quota
+        return read_update_quota(self.backup_root, agent, name, now or datetime.now(timezone.utc))
 
     def detail(self, agent, name):
         with self._transaction():
@@ -146,6 +151,17 @@ class SkillManager:
             content = ("---\n" + yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
                        + "---\n\n" + document + "\n").encode("utf-8")
             revision = sha256(content).hexdigest()
+            from app.skills.north_star import publication_snapshot
+            from app.skills.update_quota import is_update
+            moment = datetime.now(timezone.utc)
+            preview = publication_snapshot({'edit_id': '', 'agent': agent, 'skill': name,
+                'timestamp': moment.isoformat(), 'old_revision': old_revision, 'new_revision': revision}, original, content)
+            if is_update(preview):
+                quota = self._update_quota(agent, name, moment)
+                if not quota['complete']:
+                    raise SkillEditError(409, quota['message'])
+                if quota['remaining'] == 0:
+                    raise SkillEditError(409, '该技能已达到每周最多 3 次正式更新的上限，请在下周一北京时间 00:00 后再发布')
             edit_id = uuid4().hex
             directory = self.backup_root / agent / name
             directory.mkdir(parents=True, exist_ok=True)
@@ -158,11 +174,10 @@ class SkillManager:
             audit = {"event": "skill_updated", "agent": agent, "skill": name, "edit_id": edit_id,
                      "actor_id": actor["user_id"], "old_revision": old_revision, "new_revision": revision,
                      "old_version": skill.version, "new_version": payload["version"], "reason": values["reason"].strip(),
-                     "timestamp": datetime.now(timezone.utc).isoformat(), "state": "prepared"}
+                     "timestamp": moment.isoformat(), "state": "prepared"}
             if require_trial:
                 audit.update(test_id=values["test_id"], human_confirmed=True)
-            from app.skills.north_star import publication_snapshot
-            audit['north_star'] = publication_snapshot(audit, original, content)
+            audit['north_star'] = {**preview, 'edit_id': edit_id}
             audit_path = directory / (edit_id + ".json")
             audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2), encoding="utf-8")
             temporary = None

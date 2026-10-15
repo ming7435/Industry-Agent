@@ -152,6 +152,130 @@ def test_gate_rate_counts_terminal_server_assessments_once_not_draft_rejections(
     assert rate['numerator'] == 3 and rate['denominator'] == 4 and rate['value'] == 75
 
 
+def test_gate_rate_excludes_assessments_from_trials_that_are_still_pending():
+    passed = {'schema': 1, 'assessment_id': 'G-DONE', 'agent': AGENT, 'name': NAME,
+              'completed_at': '2026-10-12T03:00:00+00:00', 'accepted': True,
+              'trial_status': 'completed'}
+    pending = {**passed, 'assessment_id': 'G-PENDING', 'accepted': False,
+               'trial_status': 'awaiting_repair'}
+    gate = metrics(gates=[passed, pending])['gate_pass_rate']
+    assert gate['numerator'] == gate['denominator'] == 1
+    assert gate['value'] == 100
+    assert [row['assessment_id'] for row in gate['records']] == ['G-DONE']
+
+
+@pytest.mark.parametrize('keep_assessment', [True, False])
+def test_collect_retracts_pending_gate_without_rewriting_source_assessment(manager, keep_assessment):
+    import json
+    from app.skills.evolution import SkillEvolution
+    from app.skills.optimization import assessment_keys
+    from test_skill_evolution import IsolatedJsonStore
+    service = SkillEvolution(manager, store=IsolatedJsonStore())
+    path = manager.backup_root / 'tests' / 'recovered.json'
+    path.parent.mkdir(parents=True)
+    payload = {'schema': 1, 'revision': 1, 'assessment_id': 'G-RECOVERED',
+        'agent': AGENT, 'name': NAME, 'trial_fingerprint': 'b' * 64,
+        'completed_at': NOW.isoformat(), 'accepted': False,
+        'basis': 'machine_flow_receipt',
+        'criteria': {key: key not in {'workorder', 'report'} for key in assessment_keys('machine_flow')}}
+    source = {'mode': 'machine_flow', 'status': 'failed', 'test_id': payload['assessment_id'],
+              'agent': AGENT, 'name': NAME, 'fingerprint': 'b' * 64, 'assessment': payload}
+    path.write_text(json.dumps(source), encoding='utf-8')
+    service.metrics.collect(NOW)
+    assert service.metrics.status(None, AGENT, NAME, NOW)['gate_pass_rate']['denominator'] == 1
+    source['status'] = 'awaiting_repair'
+    if not keep_assessment:
+        source['assessment'] = None
+    path.write_text(json.dumps(source), encoding='utf-8')
+    service.metrics.collect(NOW)
+    pending = service.metrics.status(None, AGENT, NAME, NOW)
+    assert pending['gate_pass_rate']['denominator'] == 0
+    assert pending['latest_assessment'] is None
+    assert json.loads(path.read_text(encoding='utf-8'))['assessment'] == source['assessment']
+    source['status'] = 'completed'
+    source['assessment'] = {**payload, 'revision': 2, 'accepted': True,
+                           'criteria': dict.fromkeys(payload['criteria'], True)}
+    path.write_text(json.dumps(source), encoding='utf-8')
+    service.metrics.collect(NOW)
+    finished = service.metrics.status(None, AGENT, NAME, NOW)
+    assert finished['gate_pass_rate']['value'] == 100
+    assert finished['gate_pass_rate']['denominator'] == 1
+    assert finished['latest_assessment']['revision'] == 2
+
+
+def test_old_collector_cannot_restore_failure_after_newer_pending_snapshot(manager):
+    import json
+    import os
+    from app.skills.evolution import SkillEvolution
+    from app.skills.optimization import assessment_keys
+    from test_skill_evolution import IsolatedJsonStore
+    path = manager.backup_root / 'tests' / 'race.json'
+    path.parent.mkdir(parents=True)
+    payload = {'schema': 1, 'revision': 1, 'assessment_id': 'G-RACE', 'agent': AGENT, 'name': NAME,
+        'trial_fingerprint': 'b' * 64, 'completed_at': NOW.isoformat(), 'accepted': False,
+        'basis': 'machine_flow_receipt',
+        'criteria': {key: key not in {'workorder', 'report'} for key in assessment_keys('machine_flow')}}
+    source = {'mode': 'machine_flow', 'status': 'failed', 'test_id': payload['assessment_id'],
+              'agent': AGENT, 'name': NAME, 'fingerprint': 'b' * 64, 'assessment': payload}
+    path.write_text(json.dumps(source), encoding='utf-8')
+    modified = path.stat().st_mtime_ns
+    class RaceStore(IsolatedJsonStore):
+        racing = True
+        def get_or_create(self, namespace, key, producer):
+            if namespace == 'skill_north_star_gates' and self.racing:
+                self.racing = False
+                source['status'] = 'awaiting_repair'
+                path.write_text(json.dumps(source), encoding='utf-8')
+                os.utime(path, ns=(modified + 1000000, modified + 1000000))
+                newer.metrics.collect(NOW)
+            return super().get_or_create(namespace, key, producer)
+    store = RaceStore()
+    older = SkillEvolution(manager, store=store)
+    newer = SkillEvolution(manager, store=store)
+    older.metrics.collect(NOW)
+    saved = store.get('skill_north_star_gates', payload['assessment_id'])
+    assert saved['trial_status'] == 'awaiting_repair'
+    assert older.metrics.status(None, AGENT, NAME, NOW)['gate_pass_rate']['denominator'] == 0
+
+
+def test_collect_does_not_attach_old_signature_to_a_replaced_source(manager, monkeypatch):
+    import json
+    import os
+    from pathlib import Path
+    from app.skills.evolution import SkillEvolution
+    from app.skills.optimization import assessment_keys
+    from test_skill_evolution import IsolatedJsonStore
+    service = SkillEvolution(manager, store=IsolatedJsonStore())
+    path = manager.backup_root / 'tests' / 'replaced.json'
+    path.parent.mkdir(parents=True)
+    payload = {'schema': 1, 'revision': 1, 'assessment_id': 'G-REPLACED', 'agent': AGENT, 'name': NAME,
+        'trial_fingerprint': 'b' * 64, 'completed_at': NOW.isoformat(), 'accepted': False,
+        'basis': 'machine_flow_receipt',
+        'criteria': {key: key not in {'workorder', 'report'} for key in assessment_keys('machine_flow')}}
+    source = {'mode': 'machine_flow', 'status': 'failed', 'test_id': payload['assessment_id'],
+              'agent': AGENT, 'name': NAME, 'fingerprint': 'b' * 64, 'assessment': payload}
+    path.write_text(json.dumps(source), encoding='utf-8')
+    modified = path.stat().st_mtime_ns
+    original_read = Path.read_text
+    replaced = False
+    def read_replaced(current, *args, **kwargs):
+        nonlocal replaced
+        if current == path and not replaced:
+            replaced = True
+            source['status'] = 'awaiting_repair'
+            path.write_text(json.dumps(source), encoding='utf-8')
+            os.utime(path, ns=(modified + 1000000, modified + 1000000))
+        return original_read(current, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', read_replaced)
+    service.metrics.collect(NOW)
+    assert service.store.get('skill_north_star_gates', payload['assessment_id']) is None
+    assert service.store.get('skill_north_star_sync', 'latest')['complete'] is False
+    service.metrics.collect(NOW)
+    saved = service.store.get('skill_north_star_gates', payload['assessment_id'])
+    assert saved['trial_status'] == 'awaiting_repair'
+    assert saved['source_signature'].startswith(str(path.stat().st_mtime_ns))
+
+
 def test_rollback_requires_successful_file_lineage_and_restored_older_behavior():
     first = publication()
     restored = publication(edit_id='P-2', published_at='2026-10-12T05:00:00+00:00',
@@ -168,14 +292,45 @@ def test_events_and_publications_after_observation_cutoff_cannot_improve_score()
 
 
 @pytest.mark.parametrize('new_revision', ['1' * 64, '2' * 64])
-def test_rollback_excludes_saves_without_a_behavior_change(new_revision):
-    saved = publication(new_behavior='c' * 64, new_revision=new_revision)
+def test_rollback_excludes_saves_without_a_version_or_behavior_change(new_revision):
+    saved = publication(new_behavior='c' * 64, new_revision=new_revision, new_version='1.0')
     rate = metrics(publications=[saved])['rollback_rate']
-    assert rate['denominator'] == 0, '格式变化、版本标记变化和重复保存不能增加新版发布数'
+    assert rate['denominator'] == 0, '格式变化和重复保存不能增加正式版本发布数'
     assert rate['numerator'] == 0 and rate['value'] is None
     assert rate['status'] == 'not_applicable'
     assert rate['observed_publications'] == rate['excluded_unchanged'] == 1
     assert rate['records'][0]['counted'] is False
+
+
+def test_version_only_release_is_a_formal_publication_with_zero_rollbacks():
+    saved = publication(new_behavior='c' * 64)
+    rate = metrics(publications=[saved, saved])['rollback_rate']
+    assert rate['denominator'] == 1 and rate['numerator'] == 0
+    assert rate['value'] == 0 and rate['status'] == 'available'
+    assert rate['observed_publications'] == 1 and rate['excluded_unchanged'] == 0
+    assert rate['records'][0]['counted'] is True
+
+
+def test_rollback_is_attributed_to_the_latest_formal_version_even_with_same_behavior():
+    first = publication()
+    version_only = publication(edit_id='P-VERSION', published_at='2026-10-12T03:00:00+00:00',
+        old_revision='2' * 64, new_revision='3' * 64, old_behavior='d' * 64, new_behavior='d' * 64,
+        old_fingerprint='b' * 64, new_fingerprint='e' * 64, old_version='1.1', new_version='1.2')
+    restored = publication(edit_id='P-RESTORE', published_at='2026-10-12T05:00:00+00:00',
+        old_revision='3' * 64, new_revision='4' * 64, old_behavior='d' * 64, new_behavior='c' * 64,
+        old_fingerprint='e' * 64, new_fingerprint='f' * 64, old_version='1.2', new_version='1.3')
+    rate = metrics(publications=[first, version_only, restored])['rollback_rate']
+    assert rate['denominator'] == 3 and rate['numerator'] == 1
+    assert {r['edit_id'] for r in rate['records'] if r['rolled_back']} == {'P-VERSION'}
+
+
+def test_restoring_a_previous_version_label_is_a_real_version_rollback():
+    version_only = publication(new_behavior='c' * 64)
+    restored = publication(edit_id='P-RESTORE', published_at='2026-10-12T05:00:00+00:00',
+        old_revision='2' * 64, new_revision='3' * 64, old_behavior='c' * 64, new_behavior='c' * 64,
+        old_fingerprint='b' * 64, new_fingerprint='a' * 64, old_version='1.1', new_version='1.0')
+    rate = metrics(publications=[version_only, restored])['rollback_rate']
+    assert rate['denominator'] == 2 and rate['numerator'] == 1
 
 
 @pytest.mark.parametrize('first_time,denominator,numerator', [
@@ -184,7 +339,7 @@ def test_rollback_after_unchanged_save_is_attributed_to_actual_changed_release(f
     first = publication(published_at=first_time)
     unchanged = publication(edit_id='P-SAVE', published_at='2026-10-12T03:00:00+00:00',
         old_revision='2' * 64, new_revision='3' * 64, old_behavior='d' * 64, new_behavior='d' * 64,
-        old_fingerprint='b' * 64, new_fingerprint='e' * 64)
+        old_fingerprint='b' * 64, new_fingerprint='e' * 64, old_version='1.1', new_version='1.1')
     restored = publication(edit_id='P-RESTORE', published_at='2026-10-12T05:00:00+00:00',
         old_revision='3' * 64, new_revision='4' * 64, old_behavior='d' * 64, new_behavior='c' * 64,
         old_fingerprint='e' * 64, new_fingerprint='f' * 64)

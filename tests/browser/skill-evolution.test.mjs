@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { centerFixture, respond, deferred } from './helpers/center-fixture.mjs';
 
 const skill = {agent:'diagnosis',name:'alarm_diagnosis_skill',title:'报警诊断',goal:'核对当前事实',version:'1.0',
+  update_quota:{scope:'skill',agent:'diagnosis',name:'alarm_diagnosis_skill',limit:3,used:0,remaining:3,complete:true,enforced:true},
   revision:'a'.repeat(64),document:'# 报警诊断\n\n原有安全规则。',tools:[],steps:[],stop_conditions:[],can_edit:true};
 const proposal = {proposal_id:'c'.repeat(32),candidate_hash:'b'.repeat(64),agent:'diagnosis',name:skill.name,
   base_revision:'a'.repeat(64),
@@ -191,13 +192,66 @@ test('门禁展示独立测试依据，未变更保存不产生回滚率分母',
     const rollback=panel.getByRole('article',{name:'回滚率',exact:true});
     await rollback.getByText('不适用',{exact:true}).waitFor({timeout:3000});
     assert.equal(await rollback.getByText('0%',{exact:true}).count(),0);
-    assert.match(await rollback.innerText(),/排除.*2.*内容未变/);
+    assert.match(await rollback.innerText(),/排除.*2.*版本号和内容均未变/);
     await rollback.getByText('查看发布计数依据',{exact:true}).click();
     assert.match(await rollback.innerText(),/P-FORMAT.*未计入.*P-SAVE.*未计入/s);
     const gate=panel.getByRole('article',{name:'门禁通过率',exact:true});
     assert.match(await gate.innerText(),/同一次测试.*最终验收.*一次/);
     await gate.getByText('查看验收计数依据',{exact:true}).click();
     assert.match(await gate.innerText(),/G-RECOVERED.*通过.*检查项 7\/7.*验收修订 2/s);
+    assert.deepEqual(writes,[]);
+  } finally {await fixture.close();}
+});
+
+test('版本号发布计入回滚率分母，四项数值及各自样本同时展示',{timeout:20000},async()=>{
+  const stats={...northStar,
+    weekly_gain:{...northStar.weekly_gain,value:0,source:'paired_evaluation',
+      old:{value:100,successes:4,samples:4},new:{value:100,successes:4,samples:4}},
+    drift_recall:{source:'paired_evaluation',value:100,numerator:2,denominator:2},
+    gate_pass_rate:{value:80,numerator:4,denominator:5},
+    rollback_rate:{value:0,numerator:0,denominator:1,status:'available',observed_publications:3,excluded_unchanged:2,
+      records:[{edit_id:'P-VERSION',old_version:'1.0',new_version:'1.1',counted:true,version_only:true,rolled_back:false}]}};
+  const {fixture,page,writes}=await setup({northStats:stats});
+  try {
+    await page.goto(fixture.base+'/?view=expert');
+    const summary=page.getByRole('region',{name:'当前技能汇总',exact:true});
+    await summary.getByText('0 个百分点',{exact:true}).waitFor();
+    assert.equal(await summary.getByText('漂移召回率',{exact:true}).count(),1);
+    assert.equal(await summary.getByText('回滚率',{exact:true}).count(),1);
+    await page.getByRole('tab',{name:'运行效果',exact:true}).click();
+    const panel=page.getByRole('region',{name:'北极星指标',exact:true});
+    await panel.getByText('0 个百分点',{exact:true}).waitFor();
+    for(const [name,value,sample] of [['漂移召回率','100%','2/2'],['门禁通过率','80%','4/5'],['回滚率','0%','0/1']]) {
+      const article=panel.getByRole('article',{name,exact:true});
+      assert.equal(await article.getByText(value,{exact:true}).count(),1);
+      assert.match(await article.innerText(),new RegExp(sample));
+    }
+    const rollback=panel.getByRole('article',{name:'回滚率',exact:true});
+    await rollback.getByText('查看发布计数依据',{exact:true}).click();
+    assert.match(await rollback.innerText(),/仅版本号更新.*未回滚/);
+    assert.equal(await panel.getByText('待统计',{exact:true}).count(),0);
+    assert.deepEqual(writes,[]);
+  } finally {await fixture.close();}
+});
+
+test('同内容评估复用明确保留实际评估版本和时间，不能冒充本次新评估',{timeout:20000},async()=>{
+  const reuse={evaluated_version:'1.0',current_version:'1.1',publication_ids:['P-VERSION']};
+  const stats={...northStar,
+    weekly_gain:{...northStar.weekly_gain,source:'paired_evaluation',value:0,evaluation_reuse:reuse,
+      evaluated_at:'2026-10-14T13:33:34+00:00'},
+    drift_recall:{source:'paired_evaluation',value:50,numerator:1,denominator:2,evaluation_reuse:reuse,
+      evaluated_at:'2026-10-14T13:33:34+00:00'}};
+  const {fixture,page,writes}=await setup({northStats:stats});
+  try {
+    await page.goto(fixture.base+'/?view=expert');
+    await page.getByRole('region',{name:'当前技能汇总',exact:true}).getByText(/同内容历史评估复用.*非本次新评估/).waitFor();
+    await page.getByRole('tab',{name:'运行效果',exact:true}).click();
+    const panel=page.getByRole('region',{name:'北极星指标',exact:true});
+    assert.equal(await panel.getByText('同内容历史评估',{exact:true}).count(),2);
+    for(const name of ['周进化收益','漂移召回率']) {
+      assert.match(await panel.getByRole('article',{name,exact:true}).innerText(),
+        /实际评估版本 1\.0.*当前版本 1\.1.*未重新运行模型.*2026.*10.*14.*21:33:34.*北京时间/s);
+    }
     assert.deepEqual(writes,[]);
   } finally {await fixture.close();}
 });
@@ -229,7 +283,7 @@ test('运行效果直接展示不完整窗口的已有记录，仍保留缺口�
   } finally {await fixture.close();}
 });
 
-test('技能优化循环展示真实分类和计划进度，不设周额度，暂停不操作机器',{timeout:20000},async()=>{
+test('技能优化循环展示真实分类和计划进度，按技能限制正式更新，暂停不操作机器',{timeout:20000},async()=>{
   const {fixture,page,writes,errors}=await setup({loopStats:true});
   try {
     await page.goto(fixture.base+'/?view=expert');
@@ -239,8 +293,9 @@ test('技能优化循环展示真实分类和计划进度，不设周额度，�
     await panel.getByText('真实窗口显示证据不足',{exact:true}).waitFor();
     assert.match(await panel.innerText(),/基础设施异常.*1/);
     assert.match(await panel.innerText(),/全系统本周计划.*共 5 项.*已处理 4 项.*待处理 1 项/);
-    assert.match(await panel.innerText(),/不设每周份数上限/);
-    assert.doesNotMatch(await panel.innerText(),/额度|每周最多|已占用/);
+    assert.match(await panel.innerText(),/每个技能每周最多正式更新 3 次/);
+    assert.match(await panel.innerText(),/草稿和测试不计次数/);
+    assert.doesNotMatch(await panel.innerText(),/全系统.{0,12}每周最多|已占用.*额度|本周额度/);
     assert.match(await panel.innerText(),/收益未评估/);
     await panel.getByRole('button',{name:'暂停技能优化',exact:true}).click();
     assert.deepEqual(writes,[{path:'/api/expert/skill-loop/control',body:{paused:true}}]);

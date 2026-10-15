@@ -114,3 +114,72 @@ def test_comparison_does_not_replace_available_business_metrics(manager, monkeyp
     result = service.metrics.status(None, 'diagnosis', 'alarm_diagnosis_skill', NOW)
     assert result['weekly_gain']['value'] == 10 and result['drift_recall']['value'] == 20
     assert result['weekly_gain'].get('source') != 'paired_evaluation'
+
+
+def version_only_comparison(manager, versions=('1.1',)):
+    record = comparison(manager)
+    publications = []
+    for index, version in enumerate(versions, 1):
+        current = manager.detail('diagnosis', record['name'])
+        saved = manager.update('diagnosis', record['name'], {'expected_revision':current['revision'],
+            'version':version,'document':current['document'],'goal':current['goal'],'reason':'仅修改版本号'},
+            {'user_id':'U-COMPARISON','role':'technician'})
+        audit = json.loads((manager.backup_root/'diagnosis'/record['name']/(saved['edit_id']+'.json')).read_text(encoding='utf-8'))
+        publications.append({**audit['north_star'], 'published_at':(NOW+timedelta(minutes=index)).isoformat()})
+    return record, manager.detail('diagnosis', record['name']), publications
+
+
+def test_metadata_only_publication_reuses_identical_behavior_without_rewriting_answers(manager):
+    from app.skills.comparison import project_comparison
+    record, current, publications = version_only_comparison(manager, ('1.1','1.2'))
+    before = deepcopy(record)
+    result = project_comparison(record, current, NOW+timedelta(minutes=3), publications=publications)
+    assert result['weekly_gain']['value'] == 25 and result['drift_recall']['value'] == 100
+    reuse = result['weekly_gain']['evaluation_reuse']
+    assert reuse['evaluated_version'] == '1.0' and reuse['current_version'] == '1.2'
+    assert len(reuse['publication_ids']) == 2
+    assert result['weekly_gain']['new_version'] == '1.2'
+    assert result['weekly_gain']['evaluated_at'] == record['completed_at']
+    assert result['weekly_gain']['publication_revision'] == current['revision']
+    assert result['drift_recall']['evaluation_reuse'] == reuse
+    assert record == before
+
+
+@pytest.mark.parametrize('change', ['behavior','revision','fingerprint','agent','version','before_evaluation',
+    'future','missing_link','fork','fork_bad_fingerprint','fork_bad_version','expired','bad_answer','synthetic'])
+def test_reuse_requires_an_unbroken_verified_same_behavior_publication_chain(manager, change):
+    from app.skills.comparison import project_comparison
+    record, current, publications = version_only_comparison(manager)
+    if change == 'behavior': publications[0]['new_behavior'] = 'f'*64
+    if change == 'revision': publications[0]['old_revision'] = '0'*64
+    if change == 'fingerprint': publications[0]['old_fingerprint'] = '0'*64
+    if change == 'agent': publications[0]['agent'] = 'knowledge'
+    if change == 'version': publications[0]['old_version'] = '9.0'
+    if change == 'before_evaluation': publications[0]['published_at'] = (NOW-timedelta(minutes=1)).isoformat()
+    if change == 'future': publications[0]['published_at'] = (NOW+timedelta(days=1)).isoformat()
+    if change == 'missing_link': publications.clear()
+    if change == 'fork': publications.append({**publications[0],'edit_id':'other-publication'})
+    if change == 'fork_bad_fingerprint': publications.append({**publications[0],'edit_id':'other-publication','old_fingerprint':'f'*64})
+    if change == 'fork_bad_version': publications.append({**publications[0],'edit_id':'other-publication','old_version':'9.0'})
+    if change == 'expired': record['completed_at'] = (NOW-timedelta(days=7)).isoformat()
+    if change == 'bad_answer': record['cases'][0]['new']['risk_alert'] = 'true'
+    if change == 'synthetic': record['cases'][0]['new']['synthetic'] = True
+    assert project_comparison(record,current,NOW+timedelta(minutes=3),publications=publications) is None
+
+
+def test_status_uses_reuse_only_after_publication_journals_are_complete(manager):
+    from app.skills.evolution import SkillEvolution
+    record, current, publications = version_only_comparison(manager)
+    service = SkillEvolution(manager, store=IsolatedJsonStore())
+    service.store.get_or_create('skill_north_star_comparisons','diagnosis:alarm_diagnosis_skill',lambda:record)
+    for row in publications:
+        service.store.get_or_create('skill_north_star_publications',row['edit_id'],lambda:row)
+    sync=service.store.get_or_create('skill_north_star_sync','latest',lambda:{'complete':True})
+    result=service.metrics.status(None,'diagnosis','alarm_diagnosis_skill',NOW+timedelta(minutes=3))
+    assert result['weekly_gain']['value'] == 25
+    assert result['drift_recall']['value'] == 100
+    assert result['weekly_gain']['evaluation_reuse']['current_version'] == '1.1'
+    sync['complete']=False
+    service.store.records[('skill_north_star_sync','latest')]=sync
+    result=service.metrics.status(None,'diagnosis','alarm_diagnosis_skill',NOW+timedelta(minutes=3))
+    assert result['weekly_gain']['value'] is None and result['drift_recall']['value'] is None

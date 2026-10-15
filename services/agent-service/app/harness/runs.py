@@ -28,11 +28,12 @@ RAG_PHASES = (("rag", "RAG 问答"),)
 _IDENTITY_FIELDS = ('event_id', 'source_event_id', 'incident_id', 'device_id', 'alarm_code', 'alarm', 'job_id', 'actor_id',
                     'run_type', 'quality_check_id', 'check_id', 'object_id', 'target_id')
 _IDENTITY_SHAPE = dict.fromkeys(_IDENTITY_FIELDS)
-_CONTEXT_SHAPE = {**_IDENTITY_SHAPE, **dict.fromkeys(('agent',)),
+_CONTEXT_SHAPE = {**_IDENTITY_SHAPE, **dict.fromkeys(('agent', 'tool_call_id', 'agent_run_id')),
                   **{key: _IDENTITY_SHAPE for key in ('raw', 'event', 'trigger', 'abnormal_event', 'payload')}}
 RUN_INDEX_SHAPE = {
     **dict.fromkeys(('timestamp', 'trace_record_id', 'type', 'name', 'node', 'agent', 'event',
-                     'task_id', 'trace_id', 'agent_run_id', 'tool_name', 'tool', 'step', 'skill', 'error', 'allowed')),
+                     'task_id', 'trace_id', 'agent_run_id', 'tool_call_id', 'tool_name', 'tool', 'step', 'skill', 'error', 'allowed',
+                     'elapsed_ms', 'execution_time')),
     **_IDENTITY_SHAPE,
     **{key: _CONTEXT_SHAPE for key in ('context', 'runtime_context', 'execution_context')},
     'state_change': {**_CONTEXT_SHAPE, **dict.fromkeys(('source', 'status', 'stop_reason'))},

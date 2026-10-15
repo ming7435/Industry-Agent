@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {centerFixture,respond} from './helpers/center-fixture.mjs';
+import {centerFixture,respond,openLogSections} from './helpers/center-fixture.mjs';
 
 test('日志原始开始事件在对应调用结束后不再显示执行中，缺回执步骤保持待核对',async()=>{
   const fixture=await centerFixture({fullApp:true}),page=await fixture.browser.newPage();
@@ -26,6 +26,7 @@ test('日志原始开始事件在对应调用结束后不再显示执行中，�
   });
   try{
     await page.goto(fixture.base+'/?view=logs');
+    await openLogSections(page);
     await page.locator('.logs-list .log-event').nth(4).waitFor();
     assert.equal(await page.locator('.logs-list .log-event-running').count(),0);
     const missing=page.locator('.logs-list .log-event').filter({has:page.locator('h3',{hasText:'missing_receipt'})});

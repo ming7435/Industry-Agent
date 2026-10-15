@@ -27,6 +27,10 @@ def _legacy_knowledge_assessment(payload):
             and isinstance(payload.get('criteria'), dict) and 'query_relevance' not in payload['criteria'])
 
 
+def _final_assessment(payload):
+    return payload.get('trial_status', 'completed') in {'completed', 'failed'}
+
+
 def _unique(records, key, agent, name):
     return {r[key]: r for r in records if isinstance(r, dict) and r.get('schema') == 1 and
             r.get(key) and r.get('agent') == agent and r.get('name') == name}.values()
@@ -119,7 +123,7 @@ def project_metrics(health, alerts, gates, publications, agent, name, as_of, *, 
         recall.update(value=None, message='失败事件或预警记录不完整，不能计算召回率')
 
     completed = [r for r in _unique(gates, 'assessment_id', agent, name) if
-                 not _legacy_knowledge_assessment(r) and type(r.get('accepted')) is bool and _time(r.get('completed_at')) and
+                 _final_assessment(r) and not _legacy_knowledge_assessment(r) and type(r.get('accepted')) is bool and _time(r.get('completed_at')) and
                  start <= _time(r['completed_at']) <= end]
     gate = _rate(sum(r['accepted'] for r in completed), len(completed), '本周尚无已完成的真实验收')
     gate['records'] = [{key: r.get(key) for key in ('assessment_id', 'accepted', 'revision', 'completed_at')} | {
@@ -129,25 +133,32 @@ def project_metrics(health, alerts, gates, publications, agent, name, as_of, *, 
     if not journals_complete:
         gate.update(value=None, message='验收记录尚未同步完整')
 
-    # 只有实际发布链连续且新正文恢复到更早的内容，才是一次回滚。
-    rolled_back, previous, active_release, known_behaviors = set(), None, None, set()
+    # 正式版本发布包括版本号变化；重复保存不占分母，回滚必须有连续发布链上的恢复依据。
+    from app.skills.update_quota import is_update
+    rolled_back, previous, active_release, known_behaviors, known_fingerprints = set(), None, None, set(), set()
     for release in releases:
         if previous and (release['old_revision'] != previous['new_revision'] or
                          release['old_behavior'] != previous['new_behavior']):
-            active_release, known_behaviors = None, set()
-        if release['new_behavior'] != release['old_behavior']:
-            if active_release and release['new_behavior'] in known_behaviors:
+            active_release, known_behaviors, known_fingerprints = None, set(), set()
+        if is_update(release):
+            restored_behavior = (release['new_behavior'] != release['old_behavior'] and
+                                 release['new_behavior'] in known_behaviors)
+            restored_version = (release['new_fingerprint'] != release['old_fingerprint'] and
+                                release['new_fingerprint'] in known_fingerprints)
+            if active_release and (restored_behavior or restored_version):
                 rolled_back.add(active_release['edit_id'])
             active_release = release
         known_behaviors.update((release['old_behavior'], release['new_behavior']))
+        known_fingerprints.update((release['old_fingerprint'], release['new_fingerprint']))
         previous = release
     weekly_releases = [r for r in releases if start <= _time(r['published_at']) <= end]
-    cohort = {r['edit_id'] for r in weekly_releases if r['old_behavior'] != r['new_behavior']}
-    rollback = _rate(len(cohort & rolled_back), len(cohort), '本周没有内容变更的发布，回滚率不适用')
+    cohort = {r['edit_id'] for r in weekly_releases if is_update(r)}
+    rollback = _rate(len(cohort & rolled_back), len(cohort), '本周没有成功的正式版本发布，回滚率不适用')
     rollback.update(status='available' if cohort else 'not_applicable',
         observed_publications=len(weekly_releases), excluded_unchanged=len(weekly_releases) - len(cohort),
         records=[{key: r.get(key) for key in ('edit_id', 'published_at', 'old_version', 'new_version')} | {
-            'counted': r['edit_id'] in cohort, 'rolled_back': r['edit_id'] in cohort & rolled_back}
+            'counted': r['edit_id'] in cohort, 'rolled_back': r['edit_id'] in cohort & rolled_back,
+            'version_only': r['old_behavior'] == r['new_behavior'] and r.get('old_version') != r.get('new_version')}
             for r in reversed(weekly_releases[-20:])])
     if not journals_complete:
         rollback.update(value=None, status='incomplete', message='发布版本链尚未同步完整')
@@ -197,13 +208,18 @@ class NorthStarMetrics:
                 complete = False
                 continue
             try:
-                stat = path.stat()
-                key, signature = (id(self.store), str(path)), (stat.st_mtime_ns, stat.st_size)
-                cached = cache.get(key)
-                if cached and cached[0] == signature:
-                    legacy += cached[1]
-                    continue
-                record = json.loads(path.read_text(encoding='utf-8'))
+                with self.evolution.manager._transaction():
+                    stat = path.stat()
+                    key, signature = (id(self.store), str(path)), (stat.st_mtime_ns, stat.st_size)
+                    cached = cache.get(key)
+                    if cached and cached[0] == signature:
+                        legacy += cached[1]
+                        continue
+                    record = json.loads(path.read_text(encoding='utf-8'))
+                    checked = path.stat()
+                    if (checked.st_mtime_ns, checked.st_size) != signature:
+                        complete = False
+                        continue  # 文件在读取间被替换，不能给新内容绑定旧签名。
                 legacy_record = 0
                 if not isinstance(record, dict):
                     complete = False
@@ -227,6 +243,9 @@ class NorthStarMetrics:
                 elif record.get('mode') in {'machine_flow', 'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
                     from app.skills.optimization import assessment_keys, verification_mode
                     payload = record.get('assessment')
+                    if not payload and record.get('status') in {'awaiting_fault', 'running', 'awaiting_repair', 'awaiting_report'}:
+                        # 源回执已恢复等待时，也撤回旧账本中的临时失败；保留原验收内容作溯源。
+                        payload = self.store.get(self.namespaces[1], record.get('test_id', ''))
                     if payload:
                         criteria = payload.get('criteria') if isinstance(payload, dict) else None
                         legacy_knowledge = _legacy_knowledge_assessment(payload)
@@ -249,14 +268,22 @@ class NorthStarMetrics:
                             legacy += 1
                             cache[key] = (signature, 1)
                             continue
+                        payload = {**payload, 'trial_status': record.get('status'),
+                                   'source_signature': f'{stat.st_mtime_ns}:{stat.st_size}'}
                         saved = self.store.get_or_create(self.namespaces[1], payload['assessment_id'], lambda: payload)
-                        if payload.get('revision', 0) > saved.get('revision', 0):
+                        if saved.get('source_signature'):
+                            saved_modified = int(saved['source_signature'].split(':', 1)[0])
+                            if saved_modified > stat.st_mtime_ns:
+                                continue  # 已有较新的源快照，旧收集器不能恢复较早的失败状态。
+                        if (payload.get('revision', 0) > saved.get('revision', 0) or
+                                payload.get('revision', 0) == saved.get('revision', 0) and
+                                payload.get('trial_status') != saved.get('trial_status')):
                             # 同一次试验恢复后替换原验收，不新增分母；CAS 阻止迟到收集覆盖新版。
                             if any(saved.get(k) != payload.get(k) for k in ('agent', 'name', 'trial_fingerprint', 'basis')):
                                 complete = False
                                 continue
                             updated = self.store.compare_and_set(self.namespaces[1], payload['assessment_id'],
-                                'revision', saved.get('revision'), payload)
+                                'source_signature', saved.get('source_signature'), payload)
                             if updated is None:
                                 complete = False
                                 continue  # 未缓存该文件，下一轮重新读取最新版。
@@ -299,11 +326,13 @@ class NorthStarMetrics:
         complete = sync.get('complete', False) and all(len(rows) < 5000 for rows in records)
         result = project_metrics(health, *records, agent, name, now, journals_complete=complete)
         current = self.evolution.manager.detail(agent, name)
+        result['update_quota'] = current['update_quota']
         if result['weekly_gain'].get('publication_revision') != current['revision']:
             result['weekly_gain'] = {'value': None, 'old': _rate(0, 0), 'new': _rate(0, 0),
                 'method': 'observational', 'message': '当前技能发布记录尚未同步，等待后台对账与运行样本'}
         from app.skills.comparison import project_comparison
-        comparison = project_comparison(self.store.get('skill_north_star_comparisons', agent + ':' + name), current, now)
+        comparison = project_comparison(self.store.get('skill_north_star_comparisons', agent + ':' + name), current, now,
+                                        publications=records[2] if complete else ())
         if comparison:
             result['operational_metrics'] = {key: result[key] for key in ('weekly_gain', 'drift_recall')}
             for key in ('weekly_gain', 'drift_recall'):
@@ -315,7 +344,7 @@ class NorthStarMetrics:
             _time(r.get('created_at')) and _time(r.get('expires_at')) and
             _time(r['created_at']) <= now < _time(r['expires_at'])][-5:]
         assessments = [r for r in _unique(records[1], 'assessment_id', agent, name) if
-                       not _legacy_knowledge_assessment(r) and type(r.get('accepted')) is bool and _time(r.get('completed_at')) and
+                       _final_assessment(r) and not _legacy_knowledge_assessment(r) and type(r.get('accepted')) is bool and _time(r.get('completed_at')) and
                        _time(r['completed_at']) <= now]
         result['latest_assessment'] = max(assessments, key=lambda r: _time(r['completed_at']), default=None)
         return result

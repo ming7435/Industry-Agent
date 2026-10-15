@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener
 
 from .base import ProviderError
+from app.metrics import ModelMetrics
 
 
 def urlopen(request: Request, timeout: float):
@@ -181,6 +182,7 @@ class ModelGateway:
         self.vision_model = "fake-chat" if self.aux_provider.name == "fake" else self.aux_provider.model
         self._observation_lock = Lock()
         self._observations: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.metrics = ModelMetrics()
 
     @property
     def name(self) -> str:
@@ -214,12 +216,19 @@ class ModelGateway:
 
     def _invoke(self, function: Any, payload: Mapping[str, Any], capability: str, provider: Any) -> dict[str, Any]:
         model = provider.resolved_model(payload, capability) if hasattr(provider, "resolved_model") else str(payload.get("model") or "fake-" + capability)
+        synthetic = provider.name == 'fake'
+        started = self.metrics.begin(synthetic)
+        response, success = None, False
         try:
             response = function(payload)
             self._validate_response(response, payload, capability)
+            success = True
         except ProviderError as error:
             self._observe(provider.name, capability, model, False, type(error).__name__)
             raise
+        finally:
+            self.metrics.finish(started, capability, synthetic, success,
+                                response.get('usage') if success else None)
         self._observe(provider.name, capability, model, True)
         return self._with_metadata(response, payload, capability, provider)
 

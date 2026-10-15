@@ -4,6 +4,7 @@ from threading import Lock
 from copy import deepcopy
 from pathlib import Path
 from shutil import copyfile
+import re
 from types import SimpleNamespace
 from contextlib import contextmanager
 
@@ -21,6 +22,9 @@ def manager(tmp_path):
     (root / 'diagnosis').mkdir(parents=True)
     source = Path(__file__).parents[1] / 'app/skills/diagnosis/alarm_diagnosis.md'
     copyfile(source, root / 'diagnosis/alarm_diagnosis.md')
+    # 发布测试使用固定起点，不能随工作区正在使用的技能版本变化。
+    baseline = root / 'diagnosis/alarm_diagnosis.md'
+    baseline.write_text(re.sub(r'^version:.*$', "version: '1.0'", baseline.read_text(encoding='utf-8'), count=1, flags=re.M), encoding='utf-8')
     return SkillManager(SkillRegistry(root), ToolRegistry().definitions, trace=TraceRecorder(),
                         backup_root=tmp_path / 'revisions')
 

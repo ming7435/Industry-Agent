@@ -23,6 +23,7 @@ import ProductionCadWorkspace from "./production-cad/ProductionCadWorkspace.jsx"
 import { freeCadRequest } from "./production-cad/freecad.mjs";
 import PartQualityWorkspace from "./QualityWorkspace.jsx";
 import RepairCadPanel from './WorkorderDrawingPanel.jsx';
+import RuntimeMonitor from './RuntimeMonitor.jsx';
 import "../workbench.css";
 import TeamAccess from '../TeamAccess.jsx';
 import SupervisorQueue from '../SupervisorQueue.jsx';
@@ -1306,6 +1307,8 @@ const RawLogEvent = React.memo(function RawLogEvent({record,index,count,resolved
 });
 
 function LogsWorkspace({ snapshot, active = true }) {
+  const [runsOpen,setRunsOpen]=useState(false);
+  const [detailsOpen,setDetailsOpen]=useState(false);
   const initialRuns=peekWorkspaceRead('/api/runs?limit=5000');
   const [runRecords, setRunRecords] = useState(()=>initialRuns?normalizeRunResponse(initialRuns):[]);
   const [filter, setFilter] = useState("all");
@@ -1405,10 +1408,10 @@ function LogsWorkspace({ snapshot, active = true }) {
       detailRequest.current = null;
       setLoadingDetails(false);
     };
-  }, [active, selectedRunId]);
+  }, [active, selectedRunId, detailsOpen]);
 
   useEffect(() => {
-    if (!active || !selectedRun || detailRequest.current || (details.runId === selectedRunId && details.version === detailVersion)) return;
+    if (!active || !detailsOpen || !selectedRun || detailRequest.current || (details.runId === selectedRunId && details.version === detailVersion)) return;
     const generation = ++detailGeneration.current;
     const controller = new AbortController();
     const entry = { controller };
@@ -1432,7 +1435,7 @@ function LogsWorkspace({ snapshot, active = true }) {
         }
       });
     // 同一运行先完成在途读取；若期间版本增长，已读版本更新后再补取。
-  }, [active, selectedRunId, detailVersion, details.version]);
+  }, [active, detailsOpen, selectedRunId, detailVersion, details.version]);
 
   const records = useMemo(() => details.runId === selectedRunId ? details.records.filter(record => selectedRun && runEventMatches(selectedRun, record)) : [], [details, selectedRunId, selectedRun]);
   const eventSummaries = useMemo(() => buildTraceEventSummaries(records), [records]);
@@ -1443,8 +1446,8 @@ function LogsWorkspace({ snapshot, active = true }) {
     return String(record.type || "").toLowerCase() === filter;
   }).slice().reverse(),[records,filter]);
   const traceCount = runRecords.length;
-  const qualityRunCount = runRecords.filter((run) => run.run_type === "quality").length;
-  const productionRunCount = runRecords.filter((run) => run.run_type === "production_simulation").length;
+  const qualityRunCount = runRecords.filter(run=>run.run_type==='quality').length;
+  const productionRunCount = runRecords.filter(run=>run.run_type==='production_simulation').length;
   const toolCount = records.filter((record) => record.type === "tool" || record.tool_name || record.tool).length;
   const errorCount = records.filter((record) => Boolean(record.error) || /error|failed|timeout/i.test(String(record.event || ""))).length;
   const agentInvocations = useMemo(() => buildAgentInvocations(records), [records]);
@@ -1469,17 +1472,16 @@ function LogsWorkspace({ snapshot, active = true }) {
     <section className="workspace-view active module-board logs-workspace" aria-label="日志系统" hidden={!active} style={active ? undefined : { display: "none" }}>
       <ModuleHero eyebrow="Runtime Logs" title="日志系统" text="运行记录自动更新：监控 → 诊断 → 维修方案 → 工单派发 → 报告中心 → 经验总结；质检始终独立成单。" />
       {error && <div className="workspace-notice logs-notice" role="status">日志读取提示：{error}</div>}
-      <div className="module-grid logs-stat-grid">
-        <ModuleStat label="事件总数" value={records.length} text="Trace Recorder 保留记录" />
-        <ModuleStat label="运行记录" value={traceCount} text="故障闭环、RAG 问答、质检与模拟生产" />
-        {productionRunCount > 0 && <ModuleStat label="生产运行" value={productionRunCount} text="生产准备 → 模拟加工 → 模拟检测" />}
-        <ModuleStat label="独立质检" value={qualityRunCount} text="不会并入故障闭环" />
-        <ModuleStat label="工具调用" value={toolCount} text="含输入参数与返回体" />
-        <ModuleStat label="异常事件" value={errorCount} text={errorCount ? "需要进一步检查" : "当前没有错误记录"} />
-      </div>
-      <section className="panel module-panel logs-panel logs-runs-panel" aria-label="运行记录">
-        <div className="panel-heading logs-panel-heading"><div><span className="eyebrow">Lifecycle Runs</span><h2>运行记录</h2></div><span className="logs-run-hint">故障从监控开始，到报告与经验总结结束</span></div>
-        {runRecords.length ? <div className="logs-runs-list">{runRecords.map((run) => <button key={run.run_id} type="button" className={`logs-run-card ${selectedRunId === run.run_id ? "is-selected" : ""}`} onClick={() => setSelectedRunId(run.run_id)}>
+      <RuntimeMonitor active={active}/>
+      <details className="panel module-panel logs-panel logs-runs-panel logs-collapse" aria-label="运行记录" open={runsOpen} onToggle={event=>{if(event.target===event.currentTarget)setRunsOpen(event.currentTarget.open);}}>
+        <summary className="panel-heading logs-panel-heading"><div><h2>运行记录</h2></div><span className="logs-collapse-count">{traceCount} 条记录</span></summary>
+        {runsOpen&&<>
+        <div className="module-grid logs-stat-grid">
+          <ModuleStat label="运行记录" value={traceCount} text="已保留的生命周期记录"/>
+          <ModuleStat label="独立质检" value={qualityRunCount} text="不会并入故障闭环"/>
+          {productionRunCount>0&&<ModuleStat label="生产运行" value={productionRunCount} text="生产准备 → 模拟加工 → 模拟检测"/>}
+        </div>
+        {runRecords.length ? <div className="logs-runs-list">{runRecords.map((run) => <button key={run.run_id} type="button" className={`logs-run-card ${selectedRunId === run.run_id ? "is-selected" : ""}`} onClick={() => {setSelectedRunId(run.run_id);setDetailsOpen(true);}}>
           <div className="logs-run-card-head"><strong>{run.label || (run.run_type === "quality" ? "质检运行" : "运行记录")}</strong><span className={`logs-run-status logs-run-${run.status}`}>{statusText(run.status)}</span></div>
           <div className="logs-run-card-title">{run.device_id ? getDeviceDisplayName(run.device_id, { snapshot }) : "未绑定设备"}{run.alarm_code ? ` · 报警 ${run.alarm_code}` : ""}</div>
           <div className="logs-run-card-meta"><span>{run.started_at ? formatTime(run.started_at) : "--"}</span><span>{run.event_count || 0} 个事件</span><span>{run.error_count || 0} 个异常</span></div>
@@ -1487,8 +1489,9 @@ function LogsWorkspace({ snapshot, active = true }) {
           {run.status_reason && <div className="logs-run-hint">{run.status_reason}</div>}
           <div className="logs-run-id">{run.run_id}</div>
         </button>)}</div> : <div className="empty-state logs-empty">{loading ? '正在加载运行记录…' : indexError ? '运行记录暂未加载，系统会自动重试。' : '暂无运行记录；监控确认故障或执行质检后，这里会生成生命周期记录。'}</div>}
-      </section>
-      {experienceSummaries.length > 0 && <section className="panel module-panel logs-panel" aria-label="故障经验总结">
+        </>}
+      </details>
+      {detailsOpen&&experienceSummaries.length > 0 && <section className="panel module-panel logs-panel" aria-label="故障经验总结">
         <div className="panel-heading"><div><span className="eyebrow">Repair Experience</span><h2>经验总结</h2></div></div>
         <div className="document-list logs-experience-summaries">{experienceSummaries.map((experience) => <article key={experience.experience_id}>
           <strong>{cleanDisplayText(experience.title) || "维修经验总结"}</strong>
@@ -1497,9 +1500,15 @@ function LogsWorkspace({ snapshot, active = true }) {
           <FormattedText value={cleanDisplayText(experience.content).replace(/\n/g, "\n\n")} />
         </article>)}</div>
       </section>}
-      <section className="panel module-panel logs-panel" aria-label="执行日志">
+      <details className="panel module-panel logs-panel logs-execution-panel logs-collapse" aria-label="执行日志" open={detailsOpen} onToggle={event=>{if(event.target===event.currentTarget)setDetailsOpen(event.currentTarget.open);}}>
+        <summary className="panel-heading logs-panel-heading"><div><h2>执行明细</h2></div><span className="logs-collapse-count">{selectedRun?.label||'选择运行查看'}</span></summary>
+        {detailsOpen&&<>
+        <div className="module-grid logs-stat-grid">
+          <ModuleStat label="所选运行事件" value={records.length} text="当前运行保留的日志记录" />
+          <ModuleStat label="工具事件" value={toolCount} text="包含开始和结束，非调用次数" />
+          <ModuleStat label="异常事件" value={errorCount} text="不等于故障数量" />
+        </div>
         <div className="panel-heading logs-panel-heading">
-          <div><span className="eyebrow">Execution Timeline</span><h2>执行明细</h2></div>
           <div className="logs-filter" aria-label="日志筛选">
             <select className="select-input logs-trace-select" value={selectedRunId} onChange={(event) => setSelectedRunId(event.target.value)} aria-label="按运行记录筛选"><option value="">选择运行记录</option>{runRecords.map((run) => <option key={run.run_id} value={run.run_id}>{run.label || "运行记录"} · {run.run_id}</option>)}</select>
             {[['all', '全部'], ['agent', 'Agent'], ['tool', '工具'], ['runtime', '运行时'], ['error', '异常']].map(([value, label]) => <button key={value} type="button" className={`logs-filter-button ${filter === value ? "is-active" : ""}`} onClick={() => setFilter(value)}>{label}</button>)}
@@ -1511,7 +1520,8 @@ function LogsWorkspace({ snapshot, active = true }) {
         </section>}
         <div className="logs-subsection-heading"><span className="eyebrow">Raw Events</span><h3>底层事件明细</h3><span>保留每条原始记录，便于核对调用顺序与返回体</span></div>
         {initialDetailsLoading ? <div className="empty-state logs-empty">正在加载所选执行链路的完整返回体…</div> : filteredRecords.length ? <div className="logs-list">{filteredRecords.map((record,index) => <RawLogEvent key={record.trace_record_id || `${traceIdentity(record,index)}-${record.timestamp || index}-${record.event || ""}-${record.name || ""}`} record={record} index={index} count={filteredRecords.length} resolvedSummary={eventSummaries.get(record)} />)}</div> : <div className="empty-state logs-empty">暂无执行日志；触发一次诊断、知识检索或工单操作后，这里会显示完整执行链路。</div>}
-      </section>
+        </>}
+      </details>
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {centerFixture,respond} from './helpers/center-fixture.mjs';
+import {centerFixture,respond,openLogSections} from './helpers/center-fixture.mjs';
 
 test('进入工作台后预读三个页面目录，首次切页直接显示已读目录且不读取整份工单',async()=>{
   const fixture=await centerFixture({fullApp:true});
@@ -34,13 +34,14 @@ test('进入工作台后预读三个页面目录，首次切页直接显示已�
     await page.waitForFunction(()=>performance.getEntriesByType('resource').some(item=>new URL(item.name).pathname==='/api/maintenance/plans')
       &&performance.getEntriesByType('resource').some(item=>new URL(item.name).pathname==='/api/runs')
       &&performance.getEntriesByType('resource').some(item=>new URL(item.name).pathname==='/api/workorders')
-      &&performance.getEntriesByType('resource').some(item=>new URL(item.name).pathname==='/api/workorders/WO-WARM')
-      &&performance.getEntriesByType('resource').some(item=>new URL(item.name).pathname==='/api/trace'),null,{timeout:6000});
+      &&performance.getEntriesByType('resource').some(item=>new URL(item.name).pathname==='/api/workorders/WO-WARM'),null,{timeout:6000});
     assert.ok(reads.includes('/api/workorders?summary=true'));
     assert.ok(!reads.includes('/api/workorders'),'不得预读整份工单');
+    assert.ok(!reads.some(path=>path.startsWith('/api/trace')),'明细未展开时不得预读完整Trace');
     hold=true;
     for(const [name,selector] of [['维修方案','.maintenance-plan-queue .workorder-queue-item'],['工单系统','.workorder-page .workorder-queue-item'],['日志系统','.logs-run-card']]){
       await page.getByRole('navigation',{name:'功能导航'}).getByRole('button',{name,exact:true}).click();
+      if(name==='日志系统')await openLogSections(page);
       await page.locator(selector).first().waitFor({timeout:1000});
       if(name==='工单系统')await page.locator('.workorder-titlebar').waitFor({timeout:1000});
       if(name==='日志系统')await page.locator('.agent-invocations').getByText(/预读诊断结论/).waitFor({timeout:1000});

@@ -70,7 +70,7 @@ export default function SkillEvolutionPanel({ actor, skill, onCandidate, onAdopt
   return <section className="expert-card skill-evolution" aria-label="自动优化修改稿">
     <div className="expert-section-title"><h2>自动优化修改稿</h2>
       <span>{worker?.enabled ? '自动收集已开启' : '后台状态待确认'}</span></div>
-    <p>独立技能优化循环每分钟更新运行观察，按上一个完整周形成计划，所有符合条件的技能依次准备修改稿，不设每周份数上限。纯连接错误、余额问题和专家测试不触发优化。</p>
+    <p>独立技能优化循环每分钟更新运行观察，按上一个完整周形成计划，所有符合条件的技能依次准备修改稿。每个技能每周最多正式更新 3 次，草稿和测试不计次数。纯连接错误、余额问题和专家测试不触发优化。</p>
     <p>系统只准备建议，不直接改正在使用的技能。修改说明与预期结果会填入下方编辑区，由人工审核、测试并点击发布到系统。</p>
     {worker?.message && <p className="skill-evolution-note">{worker.message}</p>}
     {error && <p role="alert" className="expert-alert">{error}</p>}

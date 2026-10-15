@@ -817,6 +817,8 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             return True
         if path == '/api/runtime/service-exceptions' or path.startswith('/api/runtime/service-exceptions/'):
             return True
+        if path in {'/api/runtime/metrics', '/api/v1/runtime/metrics'}:
+            return True
 
         return path.startswith((
             "/api/agent/",
@@ -841,6 +843,10 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
 
     def _proxy_to_agent_service(self, method: str) -> None:
         """把平台 API 请求转发给 Agent Service，保持前端同源调用。"""
+
+        if urlparse(self.path).path in {'/api/runtime/metrics', '/api/v1/runtime/metrics'} and method != 'GET':
+            self._error(HTTPStatus.METHOD_NOT_ALLOWED, '运行监控仅支持读取')
+            return
 
         body = None
         # Starlette 的终端 '$' 也接受最终换行，斜杠重定向还能去掉尾斜杠；两者均须防护。

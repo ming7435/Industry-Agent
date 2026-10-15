@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {centerFixture,respond} from './helpers/center-fixture.mjs';
+import {centerFixture,respond,openLogSections} from './helpers/center-fixture.mjs';
 
 test('发布后的技能核查展示在所属 Agent 中，保留真实业务结果且不执行业务写入',async()=>{
   const fixture=await centerFixture({fullApp:true}),page=await fixture.browser.newPage();
@@ -26,6 +26,7 @@ test('发布后的技能核查展示在所属 Agent 中，保留真实业务结�
   });
   try {
     await page.goto(fixture.base+'/?view=logs');
+    await openLogSections(page);
     const review=page.getByRole('region',{name:'技能执行核查',exact:true});
     await review.waitFor({timeout:6000});
     await review.locator('summary').click();

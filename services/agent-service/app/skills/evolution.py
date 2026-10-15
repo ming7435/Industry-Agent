@@ -27,6 +27,8 @@ def build_draft(current, source, client):
          'expected_result（中文测试预期，最多2000字；说明可观察的改善，不得声称已验证成功）。'
          '不得返回工具调用、完整Markdown、审批或验证回执；不得更改权限、停止预算、安全规则或验收标准。'
          '不能把证据不足改成成功，不能把日志错误当根因，不能编造设备观察或阈值。'
+         '每条新规则须针对运行记录中的具体判断错误、缺失或冲突，说明触发条件、核查动作与结论处理。'
+         '不得只复述原有规则或修改版本号；预期结果应说明失败样例如何改善、正常判断如何保留。'
          '规则须指导取证、区分事实与推测或表达不确定性，不得包含标题、程序或密钥。'},
         {'role': 'user', 'content': json.dumps({'skill': current['name'], 'goal': current['goal'],
          'current_document': current['document'], 'execution_source': source}, ensure_ascii=False)},
@@ -53,7 +55,17 @@ def build_draft(current, source, client):
                 re.search(r'(绕过|取消|跳过|移除|忽略|禁用).{0,12}(审批|验证|安全|门禁|鉴权)', rule) or
                 re.search(r'(sk-[a-zA-Z0-9]{8,}|api-[a-f0-9-]{20,})', rule + reason)):
             raise SkillEditError(422, '追加规则包含非法格式、敏感内容或越权要求')
-    rules = list(dict.fromkeys(rule.strip() for rule in rules))
+    def rule_text(value):
+        return re.sub(r'^\s*[-*](?:\s+|$)', '', value).strip()
+
+    rules = list(dict.fromkeys(rule_text(rule) for rule in rules))
+    # 追加一遍旧规则虽改变文档哈希，却不产生新的业务判断，不能据此递增版本。
+    original = current['document']
+    existing_rules = {re.sub(r'\s+', '', rule_text(line))
+                      for line in original.splitlines() if line.strip()}
+    rules = [rule for rule in rules if rule and re.sub(r'\s+', '', rule) not in existing_rules]
+    if not rules:
+        raise SkillEditError(422, '没有新增业务判断规则，未生成新版')
     expected_result = proposed.get('expected_result',
         '应按本次追加规则补充核查信息，区分观察事实与推测；证据不足时列出待核查项，保持原审批、安全和验收门禁。')
     if (not isinstance(expected_result, str) or not expected_result.strip() or len(expected_result) > 2000 or
@@ -69,7 +81,6 @@ def build_draft(current, source, client):
     trigger_summary = ' '.join(trigger_summary.split())[:120] or '业务运行降级或证据不足，需要补充核查规则'
     planning = ('周窗口优化：' + str(source['planning_reason'])[:100] + '。') if source.get('planning_reason') else ''
     reason = (planning + '优化依据：' + trigger_summary + '。修改内容：' + reason.strip()[:300])[:440]
-    original = current['document']
     heading = re.search(r'^## 业务判断规则[^\n]*\n', original, re.M)
     if not heading:
         raise SkillEditError(422, '当前技能没有业务判断规则章节，不能自动修改')

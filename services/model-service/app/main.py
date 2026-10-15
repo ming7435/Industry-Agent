@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .providers import ModelGateway, ProviderError
+from .metrics import METRIC_WINDOWS
 
 
 class ChatRequest(BaseModel):
@@ -34,6 +35,14 @@ class RerankRequest(BaseModel):
 
 app = FastAPI(title="Industry Agent Model Service", version="1.0.0")
 gateway = ModelGateway()
+
+
+@app.get('/internal/metrics')
+def runtime_metrics(window_minutes: int = 15) -> dict[str, Any]:
+    """只读近期真实回执；不探测、不生成、不回显业务正文。"""
+    if window_minutes not in METRIC_WINDOWS:
+        raise HTTPException(status_code=422, detail='监控支持1小时、1天、1周和30天范围')
+    return gateway.metrics.snapshot(window_minutes)
 
 
 @app.get("/health")

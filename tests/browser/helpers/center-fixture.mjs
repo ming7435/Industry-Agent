@@ -37,3 +37,11 @@ export function deferred() {
 }
 
 export const respond = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+
+// 旧日志行为测试显式展开后再检查内容；默认折叠另由 runtime-monitor 测试覆盖。
+export async function openLogSections(page){
+  for(const selector of ['.logs-runs-panel','.logs-execution-panel']){
+    const section=page.locator(selector);
+    if(await section.getAttribute('open')===null)await section.locator('summary').first().click();
+  }
+}

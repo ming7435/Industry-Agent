@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Mapping
 
 from . import evidence, parsing, tool_policy
 from .schemas import DiagnosisState
+from .numeric_consistency import numeric_claim_errors
 
 
 def _successful_external_evidence(state: DiagnosisState) -> bool:
@@ -53,6 +54,8 @@ def validate_candidate(
     if not state.evidence and not evidence.event_evidence(event):
         errors.append("缺少 Evidence")
     if parsed:
+        for key in ('summary','diagnosis','recommendation'):
+            errors.extend(numeric_claim_errors(parsed.get(key)))
         if not str(parsed.get("summary") or "").strip():
             errors.append("summary 为空")
         if not str(parsed.get("diagnosis") or "").strip():

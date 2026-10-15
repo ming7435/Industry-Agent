@@ -78,7 +78,7 @@ export default function SkillLoopSummary({ actor, skill, onMetrics }) {
       </div>;
     })}
     <details><summary>运行窗口与优化计划</summary>
-    <p>完整周记录用于准备优化修改稿，不设每周份数上限。同一技能同时只保留一份待处理稿，修改稿必须经人工审核、测试和最终发布才能生效。</p>
+    <p>完整周记录用于准备优化修改稿。每个技能每周最多正式更新 3 次，按北京时间周一 00:00 重置，草稿和测试不计次数。同一技能同时只保留一份待处理稿，修改稿必须经人工审核、测试和最终发布才能生效。</p>
     <h3>本周优化计划</h3>
     {value?.plan ? <>
       <p>全系统本周计划：共 {value.plan.total ?? '待统计'} 项，已处理 {value.plan.used} 项，待处理 {value.plan.pending ?? '待统计'} 项。已处理包含生成中和生成未完成的任务，具体结果见各技能状态。</p>

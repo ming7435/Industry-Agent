@@ -55,7 +55,7 @@ test('工单目录与预读正文版本不一致时不缓存旧正文，下一�
   } finally {globalThis.fetch=original;invalidateWorkspaceReads();}
 });
 
-test('后台持续更新小目录，版本未变化不重复下载正文，版本变化后更新正文',async()=>{
+test('后台只预取日志目录，工单版本不变复用正文，版本变化后更新正文',async()=>{
   setTeamSessionActor({user_id:'U-IDLE',role:'technician'},{force:true});
   const original={fetch:globalThis.fetch,setTimeout:globalThis.setTimeout,clearTimeout:globalThis.clearTimeout,setInterval:globalThis.setInterval,clearInterval:globalThis.clearInterval};
   const originalNow=Date.now;let clock=Date.now();Date.now=()=>clock;
@@ -82,10 +82,10 @@ test('后台持续更新小目录，版本未变化不重复下载正文，版�
     clock+=30000;heartbeat();scheduled();await settle();
     assert.equal(reads.get('/api/workorders?summary=true'),2);
     assert.equal(reads.get('/api/workorders/WO-IDLE'),1);
-    assert.equal(reads.get('/api/trace?trace_id=T-IDLE&limit=5000'),1);
+    assert.equal(reads.get('/api/trace?trace_id=T-IDLE&limit=5000')||0,0);
     revision=2;clock+=30000;heartbeat();scheduled();await settle();
     assert.equal(reads.get('/api/workorders/WO-IDLE'),2);
-    assert.equal(reads.get('/api/trace?trace_id=T-IDLE&limit=5000'),2);
+    assert.equal(reads.get('/api/trace?trace_id=T-IDLE&limit=5000')||0,0);
   } finally {stop?.();Object.assign(globalThis,original);Date.now=originalNow;invalidateWorkspaceReads();}
 });
 

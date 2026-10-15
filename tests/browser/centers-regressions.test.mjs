@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { centerFixture, deferred, respond } from './helpers/center-fixture.mjs';
+import { centerFixture, deferred, respond, openLogSections } from './helpers/center-fixture.mjs';
 
 let fixture;
 before(async () => { fixture = await centerFixture(); });
@@ -26,8 +26,9 @@ test('Memory 检索的完整生命周期和负责人明细在日志页可见', a
   try {
     await page.route('**/api/**', route => respond(route, new URL(route.request().url()).pathname === '/api/runs' ? { runs: [memory] } : { trace: records }));
     await page.goto(`${fixture.base}/?view=logs`);
+    await openLogSections(page);
     await page.getByRole('heading', { level: 4, name: 'memory', exact: true }).waitFor();
-    assert.equal(await page.locator('.logs-stat-grid .module-card').filter({ hasText: '事件总数' }).locator('strong').innerText(), '12');
+    assert.equal(await page.locator('.logs-stat-grid .module-card').filter({ hasText: '所选运行事件' }).locator('strong').innerText(), '12');
     assert.equal(await page.locator('.logs-run-card.is-selected .logs-run-status').innerText(), '异常');
     assert.ok((await page.locator('.agent-invocation-meta').innerText()).includes('MEMORY-1'));
   } finally { await context.close(); }
@@ -46,6 +47,7 @@ test('日志详情晚返回不能覆盖已切换的运行记录', async () => {
       return respond(route, { trace: url.searchParams.get('trace_id') === 'TRACE-B' ? [agent('B')] : [] });
     });
     await page.goto(`${fixture.base}/?view=logs`);
+    await openLogSections(page);
     await requested.promise;
     await page.getByRole('button', { name: /Audit Run B/ }).click();
     await page.getByRole('heading', { level: 4, name: 'AuditAgentB' }).waitFor();
@@ -71,6 +73,7 @@ test('慢日志轮询只保留一个在途索引请求且不读取全库正文�
       return respond(route, { trace: [] });
     });
     await page.goto(`${fixture.base}/?view=logs`);
+    await openLogSections(page);
     await requested.promise;
     await page.clock.runFor(11000);
     assert.equal(pending.length, 1);

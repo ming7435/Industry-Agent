@@ -173,11 +173,11 @@
 .expert-spec-fields div { display: flex; gap: 18px; justify-content: space-between; font-size: 13px; }
 .expert-spec-fields dd { margin: 0; overflow-wrap: anywhere; }
 .expert-technical pre { max-height: 320px; overflow: auto; padding: 14px; font-size: 12px; border-radius: 8px; background: #f5f8f8; white-space: pre-wrap; overflow-wrap: anywhere; }
-.expert-skill-metric-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; background: #f4f9f7; border: 1px solid #dceae5; border-radius: 10px; padding: 14px 16px; }
-.expert-skill-metric-summary > div { display: grid; gap: 4px; flex: 1; }
+.expert-skill-metric-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); align-items: start; gap: 14px; background: #f4f9f7; border: 1px solid #dceae5; border-radius: 10px; padding: 14px 16px; }
+.expert-skill-metric-summary > div { display: grid; gap: 4px; min-width: 0; }
 .expert-skill-metric-summary span, .expert-skill-metric-summary small { font-size: 11px; color: #69808a; }
 .expert-skill-metric-summary strong { font-size: 19px; }
-.expert-skill-metric-summary button { font-size: 12px; padding: 8px 10px; }
+.expert-skill-metric-summary button { grid-column: 1 / -1; justify-self: end; font-size: 12px; padding: 8px 10px; }
 .expert-main .skill-north-star { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); border-top: 0; margin-top: 0; padding-top: 4px; }
 .skill-north-star > :not(article) { grid-column: 1 / -1; }
 .skill-north-star article { background: #fff; padding: 18px; }
@@ -188,6 +188,7 @@
 @media (max-width: 1180px) {
   .expert-layout { grid-template-columns: 220px minmax(0,1fr); gap: 14px; }
   .expert-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .expert-skill-metric-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .expert-main > .expert-card { padding: 18px; }
 }
 @media (max-width: 850px) {

@@ -400,6 +400,14 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         return {"trace": compact_trace_summary(records) if summary else records,
                 'storage_warning':'；'.join(filter(None, (getattr(runtime.container.trace,'storage_error',''), production_warning)))}
 
+    @app.get('/api/runtime/metrics')
+    @app.get('/api/v1/runtime/metrics')
+    def performance_metrics(window_minutes: int = 15) -> Dict[str, Any]:
+        if window_minutes not in (5, 15, 60, 1440, 10080, 43200):
+            raise HTTPException(status_code=422, detail='监控支持1小时、1天、1周和30天范围')
+        from app.api.runtime_metrics import runtime_metrics
+        return runtime_metrics(runtime.container.trace, window_minutes)
+
     def saved_production_records(request, records):
         from app.production_simulation.run_facts import is_production_record, production_job_id, production_run_facts
         identities = list(dict.fromkeys(production_job_id(item) for item in records if is_production_record(item)))

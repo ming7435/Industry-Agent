@@ -1,6 +1,6 @@
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { centerFixture, respond } from './helpers/center-fixture.mjs';
+import { centerFixture, respond, openLogSections } from './helpers/center-fixture.mjs';
 
 const actor = { user_id: 'U-OPERATOR-TEST', username: '维修人员甲', role: 'technician' };
 const sample = { device_id: 'D-OPERATOR-TEST', alarm_code: '700015', status: 'alarm' };
@@ -120,6 +120,7 @@ test('报告保留正文和资料不完整状态，隐藏内部校验列表', as
 
 test('日志中心保持原有完整证据与回执，不受到业务页面隐藏规则影响', async t => {
   const { page, writes, errors } = await pageFor(t, 'logs');
+  await openLogSections(page);
   await page.getByRole('heading', { level: 4, name: 'maintenance', exact: true }).waitFor();
   const body = await page.locator('body').innerText();
   assert.match(body, /validator_pass/); assert.match(body, /EXP-B39D8CB379/);

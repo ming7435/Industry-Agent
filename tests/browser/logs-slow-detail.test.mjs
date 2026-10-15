@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { centerFixture, deferred, respond } from './helpers/center-fixture.mjs';
+import { centerFixture, deferred, respond, openLogSections } from './helpers/center-fixture.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const frame = page => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
@@ -38,6 +38,7 @@ test('运行持续新增事件时慢首次详情仍能呈现且正文请求保�
       return respond(route, {});
     });
     await page.goto(`${fixture.base}/?view=logs`);
+    await openLogSections(page);
     await started.promise;
     // The first full-body read takes longer than two index polling cycles.
     await page.clock.runFor(5000); await frame(page);

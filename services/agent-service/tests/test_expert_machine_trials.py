@@ -180,6 +180,26 @@ def test_metrics_require_real_four_stage_acceptance_and_deduplicate_reads(machin
     assert measured['gate_pass_rate']['value'] == 100
 
 
+def test_recovered_pending_trial_clears_obsolete_failed_assessment(machine_trial):
+    test = machine_trial
+    receipt = start(test)
+    pending = diagnose(test, receipt)
+    assert pending['status'] == 'awaiting_repair'
+    test.trials._save_changes(receipt['test_id'], status='failed', assessment={
+        'schema': 1, 'assessment_id': receipt['test_id'], 'accepted': False,
+        'revision': 1, 'criteria': {'workorder': False, 'report': False}})
+    recovered = test.trials.get(receipt['test_id'], ACTOR)
+    assert recovered['status'] == 'awaiting_repair'
+    assert recovered['assessment'] is None, '等待人工维修的测试没有最终验收结论'
+    assert test.trials._read(receipt['test_id'], ACTOR)['assessment']['revision'] == 1
+    assert test.backend.orders['WO-NEW']['status'] == 'in_progress'
+    complete_business(test)
+    finished = test.trials.get(receipt['test_id'], ACTOR)
+    assert finished['status'] == 'completed'
+    assert finished['assessment']['accepted'] is True
+    assert finished['assessment']['revision'] == 2
+
+
 def test_running_trial_reads_stage_and_completed_business_without_waiting_for_callback(machine_trial):
     test = machine_trial
     receipt = start(test)

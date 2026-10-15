@@ -1,7 +1,6 @@
 import {request} from './apiRequest.mjs';
 import {getTeamSession,subscribeTeamSession} from '../teamSession.mjs';
 import {rememberDeletedMaintenancePlans,subscribeMaintenanceChanges} from './maintenanceChanges.mjs';
-import {normalizeRunResponse} from './traceLog.mjs';
 
 const paths=['/api/maintenance/plans','/api/runs?limit=5000','/api/workorders?summary=true'];
 const detailPath=path=>/^\/api\/workorders\/[^/?]+$/.test(path);
@@ -96,12 +95,7 @@ export function startWorkspacePrefetch({chooseOrder}={}) {
       const selected=getTeamSession().actor ? paths : paths.slice(0,2);
       const reads=selected.map(path=>readWorkspace(path,{freshFor:5000}));
       Promise.allSettled(reads);
-      reads[1].then(body=>{
-        if(stopped||owner!==getTeamSession().version)return;
-        const run=normalizeRunResponse(body)[0],ids=workspaceRunTraceIds(run);
-        if(!run||ids.length>3)return;
-        return Promise.allSettled(ids.map(id=>readVerifiedBody(`/api/trace?trace_id=${encodeURIComponent(id)}&limit=5000`,workspaceRunVersion(run))));
-      }).catch(()=>{});
+      // 完整 Trace 由日志明细展开时读取；全局心跳只预取目录，不跨页面搬运正文。
       if(reads[2])reads[2].then(async body=>{
         if(stopped||owner!==getTeamSession().version)return;
         const items=body?.items||[];

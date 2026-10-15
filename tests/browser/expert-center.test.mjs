@@ -10,14 +10,15 @@ const skill = { agent: 'diagnosis', agent_label: '智能诊断', name: 'alarm_di
   tools: ['get_device_logs'], steps: ['collect_evidence'], stop_conditions: [] };
 
 async function setup({ role = 'technician', conflict = false, delayedRead = null, testFailure = false, delayedTrial = null,
-  machineFlow = false, extraSkills = [], version = skill.version, document = skill.document, result = { summary: '样例刀塔旋转超时', diagnosis: '需核对就位反馈', recommendation: '检查分度机构' } } = {}) {
+  machineFlow = false, extraSkills = [], updateQuota, version = skill.version, document = skill.document, result = { summary: '样例刀塔旋转超时', diagnosis: '需核对就位反馈', recommendation: '检查分度机构' } } = {}) {
   const fixture = await centerFixture({ fullApp: true });
   const page = await fixture.browser.newPage();
   page.setDefaultTimeout(8000);
   const writes = [], trials = [], errors = [], completions = [];
   let flowStage = 'awaiting_repair';
   const actor = role ? { user_id: 'U-EXPERT', username: '专家', role } : null;
-  let current = { ...skill, version, document };
+  let current = { ...skill, version, document, update_quota:updateQuota===null ? null :
+    {scope:'skill',agent:skill.agent,name:skill.name,limit:3,used:0,remaining:3,complete:true,enforced:true,...updateQuota} };
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/**', route => {
     const req = route.request(), path = new URL(req.url()).pathname;
@@ -70,6 +71,8 @@ async function setup({ role = 'technician', conflict = false, delayedRead = null
           return respond(route, { detail: '技能已被其它修改更新，请先刷新' }, 409);
         }
         current = { ...current, ...body, revision: 'b'.repeat(64), last_modified_at: '2026-10-12T02:30:00+00:00' };
+        if(current.update_quota) current.update_quota={...current.update_quota,
+          used:current.update_quota.used+1,remaining:Math.max(0,current.update_quota.remaining-1)};
       }
       return respond(route, { ...current, can_edit: ['supervisor', 'technician'].includes(role) });
     }
@@ -94,6 +97,44 @@ async function readOnlyNote(page) {
   assert.equal(await note.isEditable(), false);
   await page.getByRole('tab', {name:'测试与结果',exact:true}).click();
   return note;
+}
+
+test('每个技能本周更新三次后禁止再次发布，但仍可运行测试',async()=>{
+  const {fixture,page,writes,trials,errors}=await setup({updateQuota:{used:3,remaining:0}});
+  try {
+    await page.goto(fixture.base+'/?view=expert');
+    await page.getByText(/本技能本周已更新 3\/3 次.*剩余 0 次/).waitFor();
+    await testAndReview(page);
+    assert.equal(trials.length,1);
+    assert.equal(await page.getByRole('button',{name:'发布到系统',exact:true}).isDisabled(),true);
+    assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
+  } finally {await fixture.close();}
+});
+
+test('第三次正式发布后同步显示本技能已用三次且剩余零次',async()=>{
+  const {fixture,page,writes,errors}=await setup({updateQuota:{used:2,remaining:1}});
+  try {
+    await page.goto(fixture.base+'/?view=expert');
+    await page.getByText(/本技能本周已更新 2\/3 次.*剩余 1 次/).waitFor();
+    await testAndReview(page);
+    await page.getByRole('button',{name:'发布到系统',exact:true}).click();
+    await page.getByText(/本技能本周已更新 3\/3 次.*剩余 0 次/).waitFor();
+    assert.equal(writes.length,1);assert.deepEqual(errors,[]);
+  } finally {await fixture.close();}
+});
+
+for(const updateQuota of [null,{used:1,remaining:null,complete:false},
+  {used:1,remaining:2,enforced:false}]) {
+  test(`次数数据${updateQuota===null ? '缺失' : updateQuota.complete===false ? '未核对' : '未启用'}时禁止发布，仍能测试`,async()=>{
+    const {fixture,page,writes,trials,errors}=await setup({updateQuota});
+    try {
+      await page.goto(fixture.base+'/?view=expert');
+      await testAndReview(page);
+      assert.equal(trials.length,1);
+      assert.equal(await page.getByRole('button',{name:'发布到系统',exact:true}).isDisabled(),true);
+      assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
+    } finally {await fixture.close();}
+  });
 }
 
 test('修改说明等待系统生成且不能手填，不虚构尚未发生的修改', async () => {

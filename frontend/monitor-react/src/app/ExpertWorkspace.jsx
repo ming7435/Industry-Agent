@@ -8,6 +8,7 @@ import SkillLoopSummary from './SkillLoopSummary.jsx';
 import ExpertTestMetrics, {testTypes,trialPassed} from './ExpertTestMetrics.jsx';
 import SkillTaskSample, {taskSampleFor,taskPayload} from './SkillTaskSample.jsx';
 import {nextSkillVersion,withSkillDraftVersion,skillVersionPlan} from './skillVersion.mjs';
+import {skillUpdateQuota,canPublishWithQuota} from './skillUpdateQuota.mjs';
 import './expert.css';
 
 const endpoint = skill => `/api/expert/skills/${encodeURIComponent(skill.agent)}/${encodeURIComponent(skill.name)}`;
@@ -79,6 +80,8 @@ export default function ExpertWorkspace({ actor }) {
   const locked = busy || loading || activeTrial(trial) || autoRunning;
   const mode = current?.optimization?.mode || 'machine_flow';
   const accepted = trialPassed(trial,mode);
+  const updateQuota=skillUpdateQuota(current,northStar?.owner===metricsOwner ? northStar : null);
+  const quotaBlocked=!canPublishWithQuota(updateQuota);
   const visibleSkills=items.filter(skill=>(!agentFilter || skill.agent===agentFilter) &&
     [skill.title,skill.name,skill.goal,skill.agent_label].join(' ').toLowerCase().includes(query.trim().toLowerCase()));
   const tabs=[['test','测试与结果'],['content','技能内容'],['metrics','运行效果']];
@@ -235,7 +238,7 @@ export default function ExpertWorkspace({ actor }) {
 
   async function save(event) {
     event.preventDefault();
-    if (!editable || busy || loading || remote || documentError || !accepted || !reviewed ||
+    if (!editable || busy || loading || remote || documentError || quotaBlocked || !accepted || !reviewed ||
         (proposal && proposal.status !== 'awaiting_publication')) return;
     const id = ++sequence.current;
     action.current?.abort();
@@ -383,6 +386,12 @@ export default function ExpertWorkspace({ actor }) {
         <p className="expert-current-summary">{current.agent_label} · {dirty
           ? `已发布版本 ${current.version} · 待发布版本 ${versionError ? '待核对' : draft.version} · 有未发布修改`
           : `版本 ${current.version} · 当前已发布版本`}</p>
+        <p className="expert-update-quota" aria-label="每周更新次数">{updateQuota?.complete
+          ? `本技能本周已更新 ${updateQuota.used}/${updateQuota.limit} 次 · 剩余 ${updateQuota.remaining} 次`
+          : '每个技能每周最多正式更新 3 次，已用次数待核对'}。北京时间周一 00:00 重置，草稿和测试不计次数。
+          {updateQuota?.enforced===false && ' 新规则尚未启用，暂不能发布。'}
+          {!updateQuota && ' 更新次数未核对，暂不能发布。'}
+          {updateQuota?.complete===false && updateQuota.message}</p>
         <nav className="expert-tabs" role="tablist" aria-label="技能工作区">{tabs.map(([key,label],index)=><button key={key} id={`expert-tab-${key}`}
           type="button" role="tab" aria-selected={tab===key} aria-controls={`expert-panel-${key}`} tabIndex={tab===key ? 0 : -1}
           onClick={()=>setTab(key)} onKeyDown={event=>selectTab(event,index)}>{label}</button>)}</nav>
@@ -483,14 +492,14 @@ export default function ExpertWorkspace({ actor }) {
               </section>}
             </section>}
           {editable && <div className="expert-publish-bar"><p>{accepted ? '验收已通过，人工核对后可发布。' : '完成测试并通过各项验收后，才能核对发布。'}草稿修改后需要重新测试。</p>
-            <button className="expert-save" type="submit" disabled={busy || loading || Boolean(remote) || Boolean(documentError) || !accepted || !reviewed ||
+            <button className="expert-save" type="submit" disabled={busy || loading || Boolean(remote) || Boolean(documentError) || quotaBlocked || !accepted || !reviewed ||
               (Boolean(proposal) && proposal.status !== 'awaiting_publication')}>
               {busy && !testing ? '正在发布…' : '发布到系统'}</button></div>}
         </div>
         </form>
         <div id="expert-panel-metrics" role="tabpanel" aria-labelledby="expert-tab-metrics" hidden={tab!=='metrics'}>
-          <SkillLoopSummary actor={actor} skill={current} onMetrics={setNorthStar} />
           <SkillNorthStarPanel snapshot={northStar?.owner === metricsOwner ? northStar : null} />
+          <SkillLoopSummary actor={actor} skill={current} onMetrics={setNorthStar} />
         </div>
       </section>}
       </div></div>

@@ -27,6 +27,7 @@ async function setup(entry=cases[0], assessmentOverride=undefined) {
   page.setDefaultTimeout(5000);
   const errors=[],writes=[];
   const makeSkill=selected=>({...selected,agent_label:selected.title,optimization:{mode:selected.mode,enabled:true},
+    update_quota:{scope:'skill',agent:selected.agent,name:selected.name,limit:3,used:0,remaining:3,complete:true,enforced:true},
     version:'1.0',revision:'a'.repeat(64),goal:'核对证据并完成验证',document:'# 技能\n\n核对真实资料。',
     tools:[],steps:[],stop_conditions:[],can_edit:true});
   const skill=makeSkill(entry),skills=[skill,...cases.filter(item=>item.name!==entry.name).map(makeSkill)];

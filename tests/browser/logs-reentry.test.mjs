@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { deferred, respond } from './helpers/center-fixture.mjs';
+import { deferred, respond, openLogSections } from './helpers/center-fixture.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const evidenceDir = resolve(root, '.runtime/verification/logs-reentry-20261007');
@@ -93,7 +93,7 @@ test('日志重进保留运行选择筛选明细和展开状态，同版本索�
     return respond(route, { trace: events(url.searchParams.get('trace_id').slice(6)) });
   });
   try {
-    await page.goto(`${fixture.base}/?view=logs`); await resultVisible(page, 'A');
+    await page.goto(`${fixture.base}/?view=logs`); await openLogSections(page); await resultVisible(page, 'A');
     await chooseRun(page, 'B'); await resultVisible(page, 'B');
     await page.getByRole('button', { name: '工具', exact: true }).click();
     await rawDetail(page).locator('summary').click();
@@ -128,7 +128,7 @@ test('后台索引刷新不显示刷新中，旧明细保留且新运行记录�
     return respond(route, { trace: events('A') });
   });
   try {
-    await page.goto(`${fixture.base}/?view=logs`); await resultVisible(page, 'A');
+    await page.goto(`${fixture.base}/?view=logs`); await openLogSections(page); await resultVisible(page, 'A');
     await page.clock.runFor(5000); await polled.promise;
     const busyButton = await page.getByRole('button', { name: '刷新中…', exact: true }).count() > 0;
     const oldDetailVisible = (await logsText(page)).includes('Result-A-v1');
@@ -158,7 +158,7 @@ test('同运行版本增加时明细挂起或503保留已读正文及展开状�
     heldDetail = route; detailStarted.resolve();
   });
   try {
-    await page.goto(`${fixture.base}/?view=logs`); await resultVisible(page, 'A');
+    await page.goto(`${fixture.base}/?view=logs`); await openLogSections(page); await resultVisible(page, 'A');
     await page.getByRole('button', { name: '工具', exact: true }).click(); await rawDetail(page).locator('summary').click();
     await page.clock.runFor(5000); await detailStarted.promise;
     const pendingPreserved = (await logsText(page)).includes('Result-A-v1');
@@ -194,7 +194,7 @@ test('离开日志页暂停轮询且晚返回索引和明细不改已读缓存',
     heldDetail = route; lateDetailStarted.resolve();
   });
   try {
-    await page.goto(`${fixture.base}/?view=logs`); await resultVisible(page, 'A');
+    await page.goto(`${fixture.base}/?view=logs`); await openLogSections(page); await resultVisible(page, 'A');
     await page.clock.runFor(5000); await lateDetailStarted.promise;
     await page.clock.runFor(5000); await lateIndexStarted.promise;
     await navigate(page, '智能诊断'); await page.locator('.logs-workspace').waitFor({ state: 'hidden' });
@@ -222,7 +222,7 @@ test('不同运行切换后旧运行明细晚回包不串入新选择', async ()
     return respond(route, { trace: events('B') });
   });
   try {
-    await page.goto(`${fixture.base}/?view=logs`); await oldStarted.promise;
+    await page.goto(`${fixture.base}/?view=logs`); await openLogSections(page); await oldStarted.promise;
     await chooseRun(page, 'B'); await resultVisible(page, 'B');
     await respond(heldDetail, { trace: events('A', 'late') }); await frame(page);
     const text = await logsText(page);
@@ -241,7 +241,7 @@ test('正常日志页自动同步，不显示手动刷新入口且不重复下�
     return respond(route, { trace: events('A', ++traceReads === 1 ? 'v1' : 'v2') });
   });
   try {
-    await page.goto(`${fixture.base}/?view=logs`); await resultVisible(page, 'A');
+    await page.goto(`${fixture.base}/?view=logs`); await openLogSections(page); await resultVisible(page, 'A');
     assert.equal(await page.getByRole('button', { name: '刷新运行记录', exact: true }).count(),0);
     await page.clock.runFor(5100); await frame(page);
     assert.equal(traceReads,1);
@@ -258,7 +258,7 @@ test('事件数量未变但最新事件时间改变时自动更新当前正文',
     return respond(route, { trace: events('A', ++traceReads === 1 ? 'v1' : 'v2') });
   });
   try {
-    await page.goto(`${fixture.base}/?view=logs`); await resultVisible(page, 'A');
+    await page.goto(`${fixture.base}/?view=logs`); await openLogSections(page); await resultVisible(page, 'A');
     await page.clock.runFor(5000);
     const updated = await resultVisible(page, 'A', 'v2').then(() => true, () => false);
     observations.push({ case: 'same_count_new_ended_at', event_count: 3, detail_reads: traceReads,

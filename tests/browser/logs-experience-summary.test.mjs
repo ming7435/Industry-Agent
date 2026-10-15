@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { centerFixture, respond } from './helpers/center-fixture.mjs';
+import { centerFixture, respond, openLogSections } from './helpers/center-fixture.mjs';
 
 test('日志直接展示当前故障的经验总结正文，重进无需生成或刷新', async () => {
   const fixture = await centerFixture({ fullApp: true });
@@ -27,6 +27,7 @@ test('日志直接展示当前故障的经验总结正文，重进无需生成�
   });
   try {
     await page.goto(`${fixture.base}/?view=logs`);
+    await openLogSections(page);
     const summary = page.getByRole('region', { name: '故障经验总结', exact: true });
     await summary.waitFor({ timeout: 4000 });
     assert.match(await summary.innerText(), /实际处理说明：完成/);

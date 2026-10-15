@@ -372,7 +372,7 @@ def validate_diagnosis_candidate(state: DiagnosisGraphState) -> Dict[str, Any]:
 
     runtime.messages.append({
         "role": "system",
-        "content": "Validator未通过：%s。请只调用允许工具补充证据，仍不足时输出低置信度并说明需人工检查。" % "；".join(runtime.validation_errors),
+        "content": "Validator未通过：%s。请先纠正数值比较及证据矛盾；已有观察足够时直接重写诊断，需要补充事实时仅调用允许工具。仍不足时输出低置信度并说明需人工检查。" % "；".join(runtime.validation_errors),
     })
     return {"agent_state": runtime, "validation": validation, "route": "reason"}
 
