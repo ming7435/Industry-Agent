@@ -2,6 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDiagnosisView, getLatestDiagnosis } from "./diagnosisView.mjs";
 
+test('已入队任务明确显示排队，不能显示诊断完成或允许生成工单', () => {
+  const view = buildDiagnosisView({ device_id: 'D-1', diagnosis: { latest: {
+    device_id: 'D-1', status: 'queued', workflow_status: 'running', summary: '事件已保存，等待设备任务处理',
+  } } });
+  assert.equal(view.statusLabel, '排队等待诊断');
+  assert.equal(view.noRepairRequired, false);
+  assert.doesNotMatch(view.statusLabel, /完成|已返回/);
+});
+
 test('诊断页面保留现场事实但不展示内部回执，原始依据仍保留给日志', () => {
   const evidence = ['现场复测：液压压力 0.42 MPa', '历史趋势：barfeed_ready_signal falling，最新值=0.0',
     'Monitor 已提供实时快照', '停止原因：validator_pass', 'EXP-B39D8CB379',

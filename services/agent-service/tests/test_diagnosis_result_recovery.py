@@ -141,6 +141,20 @@ def test_monitor_does_not_retry_rejected_post(monkeypatch):
     assert calls == ["POST"]
 
 
+def test_queued_response_is_polled_not_mistaken_for_completed_diagnosis(monkeypatch):
+    calls, stages = [], []
+    def external_http(request, **_):
+        calls.append(request.get_method())
+        if request.get_method() == 'POST':
+            return Response({'status': 'queued', 'job_id': 'a' * 64})
+        return Response({'status': 'available', 'result': RESULT})
+    monkeypatch.setattr(monitor, 'urlopen', external_http)
+    monkeypatch.setattr(monitor, 'AGENT_RESULT_POLL_SECONDS', 0.01)
+    assert monitor.dispatch_agent_event(EVENT, on_recovery=stages.append) == RESULT
+    assert calls == ['POST', 'GET']
+    assert stages[0]['status'] == 'queued'
+
+
 def test_post_completes_at_wait_timeout_boundary_without_losing_its_result(monkeypatch):
     """模拟等待边界与 POST 完成交错；使用真实线程执行 POST，不重复提交。"""
     calls = []

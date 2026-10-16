@@ -1,6 +1,23 @@
 name: industry-agent-infra
 
 services:
+  rabbitmq:
+    image: rabbitmq:4.1-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-industry}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD for local broker}
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   mysql:
     image: mysql:8.4
     restart: unless-stopped
@@ -201,8 +218,14 @@ services:
       ALLOW_DEGRADED_STORAGE: ${ALLOW_DEGRADED_STORAGE:-false}
       RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
       AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
+      AGENT_EVENT_TRANSPORT: rabbitmq
+      RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL with an encoded password and rabbitmq hostname}
+      AGENT_EVENT_PARTITIONS: ${AGENT_EVENT_PARTITIONS:-16}
+      AGENT_EVENT_WORKERS: ${AGENT_EVENT_WORKERS:-4}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
+      rabbitmq:
+        condition: service_healthy
       backend-service:
         condition: service_healthy
       model-service:
@@ -345,6 +368,7 @@ services:
       - "127.0.0.1:${MODEL_PORT:-8040}:8040"
 
 volumes:
+  rabbitmq-data:
   agent-runtime-data:
   mysql-data:
   redis-data:

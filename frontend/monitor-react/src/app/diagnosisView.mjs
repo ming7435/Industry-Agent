@@ -66,7 +66,7 @@ export function buildDiagnosisView(snapshot, sample) {
   const status = isCurrent ? String(latest.status || diagnosis.status || "waiting") : "waiting";
   const evidenceInsufficient = latest.evidence_status === "insufficient";
   const reviewRequired = latest.requires_human_review === true || status === "fallback";
-  const labels = { completed: "诊断已返回", waiting: "等待诊断", running: "正在诊断", recovering: "正在回查结果",
+  const labels = { completed: "诊断已返回", waiting: "等待诊断", queued: "排队等待诊断", running: "正在诊断", recovering: "正在回查结果",
     blocked: "诊断待核实", failed: "诊断调用失败", unknown: "结果待确认", idle: "等待异常事件", fallback: "诊断待核实" };
   const resultReturned = ["completed", "fallback"].includes(status);
   const treatment = {...(latest.raw || {}), ...latest};

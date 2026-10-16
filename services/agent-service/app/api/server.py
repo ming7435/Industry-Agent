@@ -204,7 +204,7 @@ def compact_event_result(value: Mapping[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
+def create_app(orchestrator: AgentOrchestrator | None = None, *, event_queue_factory=None) -> FastAPI:
     app = FastAPI(title="Industrial Maintenance Agent Service", version="1.0.0")
 
     @app.middleware("http")
@@ -241,6 +241,7 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     app.add_event_handler('startup', expert_manager.evolution_worker.start)
     app.add_event_handler('shutdown', expert_manager.evolution_worker.close)
     event_results = EventResultStore()
+    event_queue = None
     runtime.container.event_results = event_results
     production_worker = getattr(runtime.container, 'virtual_production_reconciler', None)
     if production_worker is not None and os.getenv('APP_ENV', 'development').lower() != 'testing':
@@ -257,7 +258,6 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
         app.state.knowledge_sync_worker = knowledge_worker
         app.add_event_handler('startup', knowledge_worker.start)
         app.add_event_handler('shutdown', knowledge_worker.close)
-    app.add_event_handler("shutdown", event_results.close)
 
     def closure_call(callable_: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """把质检闭环的业务拒绝转换成可读的 HTTP 状态。"""
@@ -330,6 +330,34 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     @app.post("/api/v1/agent/event", dependencies=[Depends(require_write_auth)])
     def abnormal_event(request: AbnormalEventRequest) -> Dict[str, Any]:
         event = dict(request.event or {})
+        if event_queue is not None:
+            from app.runtime.event_jobs import event_identity
+            try:
+                _, fingerprint, _ = event_identity(event)
+            except (TypeError, ValueError, OverflowError):
+                raise HTTPException(422, '异步事件需要有效的设备编号、事件编号和正整数修订') from None
+            event_key = event_result_key(event)
+            if event_results.has_unmigrated_legacy_result(str(event['event_id']), event_key):
+                raise HTTPException(409, '旧版事件结果需先核对归属和工单，不能自动重放')
+            try:
+                # 启用队列前已保存的结果和断点也参与同一参数指纹门禁。
+                event_results.get_result(event_key, fingerprint=fingerprint)
+                if recovery is not None:
+                    recovery.for_event(event)
+                receipt = event_queue.submit(event)
+            except (EventResultConflict, RecoveryConflict) as error:
+                raise HTTPException(409, str(error)) from None
+            except ValueError as error:
+                raise HTTPException(409, str(error)) from None
+            except Exception:
+                raise HTTPException(503, '任务未确认入库，请按原事件编号查询状态；禁止生成新编号盲目重试') from None
+            return JSONResponse(status_code=202, content={'status': receipt['status'], 'job_id': receipt['job_id'],
+                'event_id': str(event['event_id']), 'device_id': str(event['device_id']),
+                'event_revision': event.get('event_revision', 1)})
+        return process_event(event)
+
+    def process_event(event):
+        """仅消费者或显式同步开发模式调用，复用原事件幂等、审批与试运行边界。"""
         event_id = str(event.get("event_id") or "")
         event_key = event_result_key(event)
         if event_id:
@@ -368,11 +396,31 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             except Exception:
                 # 临时缓存故障不能冒充业务完成；最终结果查询仍然可用。
                 stage = None
+            if event_queue is not None:
+                from hashlib import sha256
+                record = event_queue.jobs.get(sha256(key.encode()).hexdigest())
+                if record is not None:
+                    if stage is None or record['status'] in {'unknown', 'failed'}:
+                        return JSONResponse(status_code=202, content={'status': record['status'], 'job_id': record['job_id'],
+                            'event_id': event_id, 'device_id': device_id, 'event_revision': event_revision,
+                            'error_code': record['error_code'],
+                            **({'result': compact_event_result(stage)} if stage is not None else {})})
             if stage is not None:
                 return {"status": "in_progress", "result": compact_event_result(stage)}
             return JSONResponse(status_code=202, content={"status": "pending_or_unknown",
                                 "event_id": event_id, "device_id": device_id, "event_revision": event_revision})
         return {"status": "available", "result": compact_event_result(result)}
+
+    @app.get('/api/v1/runtime/event-queue')
+    def event_queue_status():
+        """只读队列状态；不返回连接地址、口令或任务正文。"""
+        if event_queue is None:
+            return {'transport': 'inline', 'ready': True}
+        try:
+            return event_queue.snapshot()
+        except Exception:
+            return JSONResponse(status_code=503, content={'transport': 'rabbitmq', 'ready': False,
+                                'error_code': 'queue_storage_unavailable'})
 
     @app.get("/api/rag/status", deprecated=True)
     @app.get("/api/v1/rag/status")
@@ -931,6 +979,19 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     app.include_router(build_freecad_router(require_write_auth, trace=getattr(runtime.container, "trace", None),recovery=getattr(runtime.container,'recovery',None)))
     from app.api.freecad_documents import build_document_router
     app.include_router(build_document_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))
+    from app.runtime.event_queue import queue_enabled, build_event_queue
+    if event_queue_factory is not None or queue_enabled():
+        trace = getattr(runtime.container, 'trace', None)
+        def lookup_queued_event(event):
+            from app.runtime.event_jobs import event_identity
+            return event_results.get_result(event_result_key(event), fingerprint=event_identity(event)[1])
+        event_queue = (event_queue_factory or build_event_queue)(process_event,
+            lookup_queued_event,
+            getattr(trace, 'record', None))
+        app.state.event_queue = event_queue
+        app.add_event_handler('startup', event_queue.start)
+        app.add_event_handler('shutdown', event_queue.close)
+    app.add_event_handler('shutdown', event_results.close)
     return app
 
 

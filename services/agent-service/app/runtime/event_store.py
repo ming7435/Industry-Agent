@@ -127,7 +127,7 @@ class EventResultStore:
             for value in stored
         ]
 
-    def get_result(self, scoped_key: str) -> Dict[str, Any] | None:
+    def get_result(self, scoped_key: str, *, fingerprint: str = "") -> Dict[str, Any] | None:
         """按事件作用域只读回查；不认领任务，不等待生产锁，也不重放写操作。"""
 
         if not scoped_key:
@@ -139,6 +139,8 @@ class EventResultStore:
                 stored = self._results.get(scoped_key)
         if stored is None:
             return None
+        if fingerprint and (stored.get('_event_result_store_version') != 2 or stored.get('fingerprint') != fingerprint):
+            raise EventResultConflict('相同事件修订的请求参数不一致')
         if stored.get("_event_result_store_version") == 2:
             return dict(stored.get("result") or {})
         return dict(stored)

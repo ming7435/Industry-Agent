@@ -279,7 +279,12 @@ def dispatch_agent_event(event: Dict[str, Any], *, on_recovery: Callable | None 
                 try:
                     received, value = wait_for_response(max(0.001, min(interval, deadline - monotonic())))
                     if received:
-                        return value
+                        if value.get('job_id') and value.get('status') in {'queued', 'running', 'unknown', 'succeeded', 'failed'}:
+                            post_finished = True
+                            publish({**_event_identity(event), 'status': 'queued', 'workflow_status': 'running', 'summary': '事件已保存，等待设备任务处理',
+                                     'job_id': value['job_id']})
+                        else:
+                            return value
                 except TimeoutError:
                     post_finished = True
                     start_recovery()
@@ -309,6 +314,16 @@ def dispatch_agent_event(event: Dict[str, Any], *, on_recovery: Callable | None 
                     raise ValueError("回查响应必须是对象")
                 if payload.get("status") == "available" and isinstance(payload.get("result"), dict):
                     return payload["result"]
+                if payload.get('job_id') and payload.get('status') in {'unknown', 'failed'}:
+                    completed_stage = (payload.get('result') or {}).get('diagnosis')
+                    if isinstance(completed_stage, dict) and completed_stage.get('status') in {'completed', 'fallback'}:
+                        publish({**completed_stage, **_event_identity(event)})
+                    reason = '后台执行结果未知，需要核对原任务；未重新执行。' if payload['status'] == 'unknown' else '任务未能执行，请查看服务异常记录。'
+                    return {'event': dict(event), 'status': payload['status'],
+                            'diagnosis': {**(diagnosis if diagnosis.get('status') in {'completed', 'fallback'} else _event_identity(event)),
+                                          'status': diagnosis.get('status') if diagnosis.get('status') in {'completed', 'fallback'} else payload['status'],
+                                          'workflow_status': payload['status'], 'summary': diagnosis.get('summary') or reason,
+                                          'error': reason}}
                 if payload.get("status") == "in_progress" and isinstance(payload.get("result"), dict):
                     progress = compact_public_pipeline(payload['result'])
                     stage = progress.get("diagnosis")
@@ -376,7 +391,8 @@ class MonitorWebState:
         self._last_alarm_codes: Dict[str, Optional[str]] = {}
         self.trigger_history = deque(maxlen=30)
         self.diagnosis_executor = ThreadPoolExecutor(
-            max_workers=1,
+            # 这里只并行提交/只读回查，不执行 Agent；设备串行由持久化队列保证。
+            max_workers=max(1, min(32, int(os.getenv('MONITOR_EVENT_WATCHERS', '16')))),
             thread_name_prefix="diagnosis-agent",
         )
         from app.clients.backend import BackendServiceClient
