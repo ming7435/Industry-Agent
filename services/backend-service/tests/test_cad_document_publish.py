@@ -21,11 +21,17 @@ def test_publish_same_revision_returns_original_run(tmp_path):
     standard=dict(schema_version='freecad_document_parameters_v1',document_id=doc.document_id,revision=1,
                   run_id=run_id,extractor_version='native-1',parameters=[],uncovered=[])
     standard['digest']=canonical_digest(standard)
+    artifacts=[dict(job_id=job.job_id,name=name,size=10,sha256='a'*64) for name in ('model.py','model.json','model.step','model.stl')]
+    snapshot['artifacts']=artifacts
     receipt=NativeReceipt(job_id=job.job_id,input_digest=job.input_digest,state='completed',snapshot=snapshot,
-                          artifacts=[],validation=snapshot['validation'],result={})
+                          artifacts=artifacts,validation=snapshot['validation'],result={})
     saved=repo.commit_publication('worker-a',receipt,standard)
     again=repo.claim_publication('USER-a',doc.document_id,'CMD-publish-2',1)
     assert again.state=='completed' and again.result['run_id']==run_id
     assert repo.list_designs('USER-a')['directory_version']==1
     assert saved['result']['version']==1
     assert repo.get_document('USER-a',doc.document_id).part_number=='00001'
+    published=repo.find_published('USER-a',run_id)
+    assert {a['name'] for a in published['artifacts']}=={'model.py','model.json','model.step','model.stl'}
+    assert published['standard_parameters']['schema_version']=='freecad_document_parameters_v1'
+    assert all(a['url'].startswith('/api/cad/text-to-cad/runs/') for a in published['artifacts'])

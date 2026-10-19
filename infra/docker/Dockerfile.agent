@@ -1,15 +1,25 @@
+FROM node:22-bookworm-slim AS cad-node
 FROM python:3.11-slim
 
 WORKDIR /app
+
+COPY --from=cad-node /usr/local/bin/node /usr/local/bin/node
+
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends libgl1 libglu1-mesa libxrender1 libxext6 libstdc++6 libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY services/agent-service/requirements.txt /tmp/agent-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/agent-requirements.txt
 
 COPY services/agent-service /app/services/agent-service
 COPY shared /app/shared
+COPY scripts/text_to_cad_runtime.py scripts/text_to_cad_smoke.py scripts/text_to_cad_document_worker.py /app/scripts/
 COPY frontend/monitor /app/frontend/monitor
 RUN mkdir -p /app/.runtime
+RUN python scripts/text_to_cad_runtime.py status
 
 ENV PYTHONPATH=/app/services/agent-service:/app
+ENV CADGEN_DAEMON=0 CADGEN_COMPONENT_WORKERS=1 CADGEN_CACHE_DIR=/app/.runtime/text-to-cad-cache
 
 CMD ["python", "-m", "uvicorn", "app.api.server:app", "--app-dir", "/app/services/agent-service", "--host", "0.0.0.0", "--port", "8010"]

@@ -1,13 +1,10 @@
 from app.cad_documents.capabilities import runtime_inventory
-import pytest
 
-def test_runtime_identity_mismatch_never_marks_native_ready(tmp_path):
-    import json
-    ready={'pid':42,'host':'127.0.0.1','port':9875,'freecad_version':['1','1','4']}
-    state={'pid':42,'executable':str(tmp_path/'FreeCAD.exe'),'start_time_utc':'2026-10-11T00:00:00Z'}
-    (tmp_path/'rpc-ready.json').write_text(json.dumps(ready));(tmp_path/'runtime-state.json').write_text(json.dumps(state))
-    probe=lambda pid:{'executable':state['executable'],'created_at':1791676800.,'ports':[9875]}
-    assert runtime_inventory(tmp_path,probe)['ready'] is True
-    assert runtime_inventory(tmp_path,lambda pid:{**probe(pid),'ports':[9999]})['ready'] is False
-    state['pid']=43;(tmp_path/'runtime-state.json').write_text(json.dumps(state))
-    assert runtime_inventory(tmp_path,probe)['ready'] is False
+
+def test_runtime_probe_requires_installed_geometry_evidence():
+    status={'provider':'text-to-cad','connected':True,'runtime':{'version':'0.7.10','build123d':'0.11.1','kernel':'OpenCascade'}}
+    good=runtime_inventory(probe=lambda:status)
+    assert good['ready'] is True and good['version_fingerprint']!='unknown'
+    assert runtime_inventory(probe=lambda:{**status,'provider':'freecad'})['ready'] is False
+    assert runtime_inventory(probe=lambda:{**status,'connected':False})['ready'] is False
+    assert runtime_inventory(probe=lambda:{**status,'runtime':{'version':'0.7.10'}})['ready'] is False

@@ -302,8 +302,8 @@ class CadDocumentRepository:
                 raise CadDocumentError('publication_invalid','发布几何、标准或修订不一致')
             version=(head.published_version or 0)+1
             artifacts=[{**a,'format':a['name'].rsplit('.',1)[-1].lower(),
-                        'url':f'/api/cad/freecad/runs/{expected_id}/artifacts/{a["name"]}'} for a in receipt.artifacts
-                       if a['name'] in {'model.FCStd','model.step','model.stl','drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'}]
+                        'url':f'/api/cad/text-to-cad/runs/{expected_id}/artifacts/{a["name"]}'} for a in receipt.artifacts
+                       if a['name'] in {'model.FCStd','model.py','model.json','model.step','model.stl','model.glb','model.3mf','drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'}]
             publication=dict(run_id=expected_id,status='completed',document_id=head.document_id,revision=head.revision,version=version,
                              part_name=head.part_name,part_number=head.part_number,spec=snapshot.source_spec,validation=receipt.validation,
                              standard_parameters=standard.model_dump(mode='json'),artifacts=artifacts,published_at=time.time())

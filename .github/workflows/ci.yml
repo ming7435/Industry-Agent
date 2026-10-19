@@ -8,11 +8,17 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    env:
+      CADGEN_DAEMON: "0"
+      CADGEN_COMPONENT_WORKERS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Install service dependencies
         run: |
           python -m pip install --upgrade pip
@@ -25,6 +31,8 @@ jobs:
           pip install -r services/agent-service/requirements-test.txt
       - name: Run service and contract tests
         run: python scripts/test_all.py
+      - name: Verify native text-to-cad exports
+        run: python scripts/text_to_cad_smoke.py --output-dir .runtime/verification/text-to-cad-ci
 
   docker-contract:
     runs-on: ubuntu-latest
@@ -44,6 +52,8 @@ jobs:
         run: docker build -f infra/docker/Dockerfile.rag -t industry-agent-rag:ci .
       - name: Verify Monitor frontend is in image
         run: docker run --rm industry-agent-agent:ci test -f /app/frontend/monitor/index.html
+      - name: Verify Agent image CAD exports
+        run: docker run --rm industry-agent-agent:ci python scripts/text_to_cad_smoke.py --output-dir /tmp/text-to-cad-ci
 
   compose-e2e:
     runs-on: ubuntu-latest

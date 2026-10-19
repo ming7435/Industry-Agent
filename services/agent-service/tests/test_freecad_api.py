@@ -178,7 +178,7 @@ def test_two_runs_are_bounded_and_inflight_duplicate_is_read_only():
         try:
             entered.wait(timeout=5)
             assert client.post(PREFIX + "/runs", json=body).json()["status"] == "running"
-            assert client.post(PREFIX + "/runs", json={**body, "command_id": "three"}).status_code == 429
+            assert client.post("/api/cad/text-to-cad/runs", json={**body, "command_id": "three"}).status_code == 429
             assert len(store.rows) == 2
         finally:
             release.set()
@@ -229,7 +229,7 @@ def test_result_storage_failure_never_replays_and_turns_unknown():
 
 
 def test_downloads_only_recorded_artifacts_from_server_owned_path(tmp_path, monkeypatch):
-    import app.tools.cad.freecad_mcp as tool
+    import app.tools.cad.text_to_cad as tool
     run_id = "FC-" + "f" * 64
     model_file = tmp_path / "model.stl"
     model_file.write_bytes(b"solid model\nendsolid model\n")
@@ -284,10 +284,10 @@ def test_every_active_endpoint_keeps_service_authentication():
 
 
 def test_api_runs_real_graph_skill_tool_and_serves_generated_artifacts(tmp_path, monkeypatch):
-    from freecad_test_kernel import ScriptMCP
+    from app.clients.text_to_cad import TextToCadClient
     from app.harness.trace import TraceRecorder
 
-    class Client(ScriptMCP, LocalClient):
+    class Client(TextToCadClient):
         pass
 
     monkeypatch.setenv("FREECAD_ARTIFACT_ROOT", str(tmp_path))
@@ -305,7 +305,7 @@ def test_api_runs_real_graph_skill_tool_and_serves_generated_artifacts(tmp_path,
     result = client.get(PREFIX + "/runs/" + run_id).json()
     assert result["status"] == "completed", result
     assert result["validation"]["solid_count"] == 1
-    assert result["execution"]["tool"] == "freecad_mcp"
+    assert result["execution"]["tool"] == "text_to_cad"
     for artifact in result["artifacts"]:
         assert client.get(artifact["url"]).status_code == 200
     assert client.post(PREFIX + "/runs", json=body).json() == result

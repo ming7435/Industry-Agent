@@ -44,8 +44,15 @@ class Gateway:
         while time.monotonic()<deadline:
             record=self.job(job.job_id)
             if record.state=='completed': return record.result
-            if record.state=='failed': raise CadDocumentError(record.error_code or 'native_failed','FreeCAD未通过原生验证')
+            if record.state=='failed':
+                code=record.error_code or 'native_failed'
+                messages={
+                    'runtime_unavailable':'Text-to-CAD 建模运行环境不可用，请检查本地 Python 环境和几何内核依赖。',
+                    'native_offline':'Text-to-CAD 本地建模内核未就绪，请检查内核运行环境。',
+                    'managed_runtime_mismatch':'Text-to-CAD 托管内核运行环境校验未通过，请检查内核版本及运行环境配置。',
+                }
+                raise CadDocumentError(code,messages.get(code,'text-to-cad 未通过几何验证'))
             if record.state=='outcome_unknown': break
             time.sleep(0.25)
-        from app.clients.freecad import FreeCADConnectionError
-        raise FreeCADConnectionError('outcome_unknown','FreeCAD命令结果尚未确认；请查回原任务，不会自动重放',504)
+        from app.clients.text_to_cad import TextToCadConnectionError
+        raise TextToCadConnectionError('outcome_unknown','CAD命令结果尚未确认；请查回原任务，不会自动重放',504)

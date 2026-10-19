@@ -3,7 +3,7 @@ from uuid import uuid4
 import pytest
 from shared.freecad_documents import NativeJob,canonical_digest
 from test_freecad_document_native import run
-from freecad_document_test_kernel import FakeKernel
+from text_to_cad_document_test_runtime import DocumentRuntime
 
 
 def publication(tmp_path,previous):
@@ -13,8 +13,8 @@ def publication(tmp_path,previous):
     job=NativeJob(job_id='JOB-'+uuid4().hex,input_digest=canonical_digest(['publish',previous.snapshot.revision]),
                   job_kind='publish',owner_user_id='USER-a',document_id=previous.snapshot.document_id,
                   expected_revision=previous.snapshot.revision,envelope=None,source={'snapshot':previous.snapshot.model_dump(mode='json')})
-    native=store.entry_path(next(a for a in previous.artifacts if a['name']=='model.FCStd'))
-    FakeKernel().call_tool('execute_code',{'code':render_document_program(job,store.job_directory(job.job_id),native)})
+    native=store.entry_path(next(a for a in previous.artifacts if a['name']=='model.json'))
+    DocumentRuntime().call_tool('execute_code',{'code':render_document_program(job,store.job_directory(job.job_id),native)})
     return store.validate_candidate(job,store.read_receipt(job.job_id))
 
 
@@ -23,7 +23,7 @@ def test_hidden_product_still_exports(tmp_path):
     b=run(tmp_path,'set_visibility',dict(object_id=a.snapshot.objects[0].object_id,visible=False),a)
     result=publication(tmp_path,b)
     assert result.validation['solid_count']==1
-    assert result.validation['volume_mm3']==8000
+    assert result.validation['volume_mm3']==pytest.approx(8000)
     assert result.snapshot.revision==b.snapshot.revision
 
 

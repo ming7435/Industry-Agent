@@ -189,13 +189,12 @@ def test_export_evidence_requires_correct_units_and_real_numbers(tmp_path, monke
             m.freecad_mcp(pin())
 
 
-@pytest.mark.parametrize('triangulated_bounds', [False, True])
-def test_server_generated_program_executes_through_mcp_and_exports(tmp_path, monkeypatch, triangulated_bounds):
+def test_server_generated_program_executes_through_mcp_and_exports(tmp_path, monkeypatch):
     """仅隔离 FreeCAD 依赖，执行真实生成脚本，断言切除后体积与导出副作用。"""
     m = module()
     monkeypatch.setenv('FREECAD_ARTIFACT_ROOT', str(tmp_path))
     from freecad_test_kernel import ScriptMCP
-    client = ScriptMCP(triangulated_bounds=triangulated_bounds)
+    client = ScriptMCP()
     with m.freecad_tool_scope(client, RUN):
         result = m.freecad_mcp(pin())
         with pytest.raises(m.FreeCADModelError, match='重复'):
@@ -203,7 +202,7 @@ def test_server_generated_program_executes_through_mcp_and_exports(tmp_path, mon
     assert result['status'] == 'completed'
     assert result['validation']['volume_mm3'] == pytest.approx(31415.9265358979)
     assert result['validation']['solid_count'] == 1
-    assert {a['format'] for a in result['artifacts']} == {'stl', 'step', 'fcstd'}
+    assert {a['format'] for a in result['artifacts']} == {'stl', 'step', 'py'}
     assert result['calls'][0]['tool'] == 'execute_code'
     assert m.artifact_path(RUN, 'model.stl').is_file()
 

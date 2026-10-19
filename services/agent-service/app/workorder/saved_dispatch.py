@@ -69,27 +69,28 @@ class SavedPlanDispatcher:
                     continue
                 if RuntimePolicy._explicit_approval_required({}, record) or record.get('requires_approval'):
                     continue
-                current = self.registry.execute('get_device_status', {'device_id':device_id},
-                    context={'agent':'workorder','step':'saved_plan_dispatch_readback','event_id':event_id})
                 try:
-                    checked = datetime.fromisoformat(str(current.get('checked_at') or '').replace('Z','+00:00'))
-                    age = (datetime.now(timezone.utc) - checked).total_seconds()
-                except (ValueError,TypeError):
-                    age = float('inf')
-                if (current.get('found') is not True or current.get('success') is not True
-                        or current.get('device_id') != device_id or not -30 <= age <= 30
-                        or not current.get('alarm_code') or str(current['alarm_code']) != str(event.get('alarm_code'))):
-                    continue
-                directory = self.backend.call('query_technicians', {'device_id':device_id})
-                if directory.get('success') is False or not isinstance(directory.get('items'),list):
-                    continue
-                candidates = WorkOrderAgent.rank_candidates({'device_id':device_id,'candidates':directory['items']},{},plan)
-                if not candidates:
-                    continue
-                diagnosis = record.get('diagnosis') or plan.get('diagnosis') or {}
-                if not maintenance_decision(diagnosis, event, plan)[0]:
-                    continue
-                try:
+                    # 单个故障的读取/派工失败只影响本条，不能饿死其它设备。
+                    current = self.registry.execute('get_device_status', {'device_id':device_id},
+                        context={'agent':'workorder','step':'saved_plan_dispatch_readback','event_id':event_id})
+                    try:
+                        checked = datetime.fromisoformat(str(current.get('checked_at') or '').replace('Z','+00:00'))
+                        age = (datetime.now(timezone.utc) - checked).total_seconds()
+                    except (ValueError,TypeError):
+                        age = float('inf')
+                    if (current.get('found') is not True or current.get('success') is not True
+                            or current.get('device_id') != device_id or not -30 <= age <= 30
+                            or not current.get('alarm_code') or str(current['alarm_code']) != str(event.get('alarm_code'))):
+                        continue
+                    directory = self.backend.call('query_technicians', {'device_id':device_id})
+                    if directory.get('success') is False or not isinstance(directory.get('items'),list):
+                        continue
+                    candidates = WorkOrderAgent.rank_candidates({'device_id':device_id,'candidates':directory['items']},{},plan)
+                    if not candidates:
+                        continue
+                    diagnosis = record.get('diagnosis') or plan.get('diagnosis') or {}
+                    if not maintenance_decision(diagnosis, event, plan)[0]:
+                        continue
                     WorkOrderValidator.validate_plan(plan)
                     allowed, _ = auto_workorder_decision(diagnosis, plan, event)
                     if (plan.get('plan_id') in self.store.deleted_plan_ids()
@@ -123,4 +124,10 @@ class SavedPlanDispatcher:
                         plan['plan_id'],event_id,assigned['workorder_id'],assigned['assignee'])
                 except ValueError:
                     # Unknown, mismatched or explicitly blocked evidence stays blocked.
+                    continue
+                except Exception as error:
+                    # 不在失败点立即重试写操作；下一轮先读工单，再按原幂等身份对账。
+                    logging.getLogger('uvicorn.error').warning(
+                        'saved_plan_workorder_dispatch_failed plan_id=%s event_id=%s device_id=%s error_type=%s',
+                        plan.get('plan_id'), event_id, device_id, type(error).__name__)
                     continue

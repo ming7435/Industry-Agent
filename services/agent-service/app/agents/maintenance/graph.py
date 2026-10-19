@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.agents.state import AgentExecutionState
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping
 
 from langgraph.graph import END, START, StateGraph
 
@@ -91,23 +91,64 @@ def request_cad(state: MaintenanceGraphState) -> Dict[str, Any]:
 def check_parts_tools(state: MaintenanceGraphState) -> Dict[str, Any]:
     agent = state["agent"]
     diagnosis = state["diagnosis"]
-    query = state["query"]
     plan = dict(state.get("plan_payload") or {})
     if plan.get("plan_kind") == "inspection" or hydraulic_inspection_plan_matches(plan):
         return {"inventory": {}, "part_availability": {}, "plan_payload": plan, "route": "safety_validate"}
-    inventory = agent._safe_tool("query_inventory", {"query": query, "device_id": diagnosis.device_id})
-    availability = agent._safe_tool("query_part_availability", {"query": query, "device_id": diagnosis.device_id})
-    components = list((state.get("cad") or {}).get("components") or [])
-    bom_items = list((state.get("cad") or {}).get("bom_items") or [])
+    cad = state.get("cad") or {}
+    components = [{**item, 'part_no': str(item.get('part_no') or '').strip(), 'name': str(item.get('name') or '').strip()}
+                  for item in agent._mapping_items(cad.get("components"))
+                  if not MaintenancePlanValidator.is_reference_only(item) and not MaintenancePlanValidator.is_reference_only(cad)]
+    bom_items = [{**item, 'part_no': str(item.get('part_no') or '').strip(), 'name': str(item.get('name') or '').strip()}
+                 for item in agent._mapping_items(cad.get("bom_items"))
+                 if not MaintenancePlanValidator.is_reference_only(item) and not MaintenancePlanValidator.is_reference_only(cad)]
     profile = agent._profile(diagnosis, components)
-    parts = agent._parts(profile, inventory, components, bom_items)
-    if parts:
-        plan["parts"] = parts
-        plan["required_parts"] = agent._required_parts(parts)
+    components = [item for item in components if agent._part_matches_profile(profile, item)]
+    bom_items = [item for item in bom_items if agent._part_matches_profile(profile, item)]
+    selected_parts = agent._parts(profile, {}, components, bom_items)
+    required = {}
+    numbered = {}
+    for item in bom_items + components:
+        identity = str(item.get('part_no') or '').strip()
+        name = str(item.get('name') or '').strip()
+        if identity and agent._part_matches_profile(profile, item):
+            numbered[f'{identity} {name}'.strip()] = identity
+    findings = list(state.get('validation_findings') or [])
+    for part in selected_parts:
+        if part in numbered:
+            required.setdefault(numbered[part], part)
+        else:
+            findings.append('维修部件缺少可核对的备件编号：'+part)
+    # 检索文本不等于件号。只有工程资料给出的身份才查询库存，库存响应不能新增维修对象。
+    inventory = _query_numbered_inventory(agent, 'query_inventory', required, diagnosis.device_id)
+    availability = _query_numbered_inventory(agent, 'query_part_availability', required, diagnosis.device_id)
+    plan['parts'] = selected_parts
+    plan['required_parts'] = list(required)
     plan["inventory_status"] = inventory
     plan["part_availability"] = availability
     plan["evidence"] = agent._evidence(diagnosis, state.get("knowledge") or {}, state.get("cad") or {}, inventory, profile, state.get("memory") or {})
-    return {"inventory": inventory, "part_availability": availability, "plan_payload": plan, "route": "safety_validate"}
+    return {"inventory": inventory, "part_availability": availability, "plan_payload": plan,
+            "validation_findings": findings, "route": "safety_validate"}
+
+
+def _query_numbered_inventory(agent, tool, identities, device_id):
+    results, parts = [], []
+    for identity in identities:
+        response = agent._safe_tool(tool, {'query': identity, 'device_id': device_id})
+        if not isinstance(response, Mapping):
+            response = {}
+        results.append(response)
+        for item in agent._mapping_items(response.get('parts') or response.get('stock') or response.get('items')):
+            if identity not in (str(item.get('part_no') or ''), str(item.get('part_id') or '')):
+                continue
+            if item not in parts:
+                parts.append(dict(item))
+    if not results:
+        return {}
+    merged = {**results[0], 'parts': parts, 'stock': list(parts), 'queries': list(identities)}
+    for marker in ('synthetic', 'degraded'):
+        if any(result.get(marker) is True for result in results):
+            merged[marker] = True
+    return merged
 
 
 def plan_repair(state: MaintenanceGraphState) -> Dict[str, Any]:

@@ -53,10 +53,10 @@ export default function DocumentWorkspace({api=defaultApi,actorId:providedActor,
     try {setBusy(true);setProposal(null);setError('');const result=await api.propose(id,{prompt,expected_revision:revision});if(current===generation.current)setProposal(result);}catch(failure){if(current===generation.current)setError(failure.message);}finally{if(current===generation.current)setBusy(false);}
   }
   const proposalCurrent=proposal?.command?.document_id===documentId&&proposal?.command?.expected_revision===cad.head?.revision;
-  return <section className="cad-document-workspace production-cad cad-mcp-workbench" aria-label="个人 FreeCAD 文档">
+  return <section className="cad-document-workspace production-cad cad-mcp-workbench" aria-label="个人 Text-to-CAD 文档">
     <WorkbenchMenuBar onNew={()=>reveal(newPanel)} onSave={cad.publish} onRefresh={cad.refresh} onProperties={()=>document.querySelector('.cad-document-properties')?.scrollIntoView({block:'nearest'})} onProposal={()=>reveal(proposalPanel)} onSpec={chooseSpec} canSpec={!blocked&&!!cad.snapshot} canSave={!blocked&&!!cad.snapshot?.product_root_ids?.length}/>
     <CommandCatalog actorId={actorId} blocked={blocked} canConfigure={!!cad.snapshot} onPrimitive={choosePrimitive} onSpec={chooseSpec}/>
-    <header className="cad-card-heading"><div><h2>FreeCAD 生产建模</h2><p>网页操作界面 · 建模命令经 MCP 执行 · 发布版本作为检测标准</p></div></header>
+    <header className="cad-card-heading"><div><h2>Text-to-CAD 生产建模</h2><p>网页操作界面 · 建模命令由 Text-to-CAD 执行 · 发布版本作为检测标准</p></div></header>
     {!actorId?<p role="alert">请先登录账号，再创建或打开个人文档。</p>:<>
     {(error||cad.error)&&<p role="alert" className="cad-alert">{error||cad.error}</p>}
     <details className="cad-card" open={!documentId} ref={newPanel}><summary>新建文档 / 复制历史设计</summary><form onSubmit={create}><label>新文档零件名称<input required maxLength={128} value={name} disabled={busy} onChange={e=>setName(e.target.value)}/></label><label>新文档零件编号<input pattern="[0-9]{5}" maxLength={5} value={number} disabled={busy||!!source.trim()} onChange={e=>setNumber(e.target.value)} placeholder={source.trim()?'复制时继承来源设计短号':'留空自动生成五位编号'}/></label><label>复制来源完整设计编号（选填）<input value={source} disabled={busy} onChange={e=>setSource(e.target.value)} placeholder="FC-…，原文件保持不变"/></label><button disabled={busy||!name.trim()}>创建个人文档</button></form></details>
@@ -70,7 +70,7 @@ export default function DocumentWorkspace({api=defaultApi,actorId:providedActor,
       {proposal?.status==='needs_input'&&<p>{proposal.questions?.join('；')||'请补充完整尺寸'}</p>}
       {proposalCurrent&&<div aria-label="待确认修改"><p>旧值：{JSON.stringify(cad.snapshot.objects.find(o=>o.object_id===proposal.command.parameters.object_id)?.properties||[])}</p><p>新提案：{proposal.command.command_type}</p><pre>{JSON.stringify(proposal.command.parameters,null,2)}</pre><button disabled={blocked} onClick={()=>{const command=proposal.command;setProposal(null);cad.submit(command);}}>确认并执行提案</button></div>}
     </section></aside></div><div className="cad-actions"><button className="cad-primary" disabled={blocked||!cad.snapshot?.product_root_ids?.length} onClick={cad.publish}>保存发布版本</button><button onClick={cad.refresh}>刷新文档</button></div>
-    <div className="cad-actions">{(cad.snapshot?.artifacts||[]).filter(a=>['model.FCStd','model.step','model.stl','drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'].includes(a.name)).map(a=><a key={a.name} href={`/api/cad/freecad/documents/${encodeURIComponent(documentId)}/snapshots/${cad.snapshot.revision}/artifacts/${a.name}`} download>下载 {a.name}</a>)}</div>
+    <div className="cad-actions">{(cad.snapshot?.artifacts||[]).filter(a=>['model.py','model.json','model.FCStd','model.step','model.stl','drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'].includes(a.name)).map(a=><a key={a.name} href={`/api/cad/text-to-cad/documents/${encodeURIComponent(documentId)}/snapshots/${cad.snapshot.revision}/artifacts/${a.name}`} download>下载 {a.name}</a>)}</div>
     </>}
     </>}
   </section>;

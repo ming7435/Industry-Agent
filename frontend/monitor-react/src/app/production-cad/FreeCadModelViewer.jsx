@@ -30,7 +30,7 @@ export default function FreeCadModelViewer({ url, motionUrl, dimensionControls, 
         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         renderer.setClearColor(0xf2f2f2);
-        renderer.domElement.setAttribute("aria-label", "FreeCAD 三维模型");
+        renderer.domElement.setAttribute("aria-label", "Text-to-CAD 三维模型");
         renderer.domElement.setAttribute("role", "img");
         renderer.domElement.addEventListener("webglcontextlost", onContextLost);
         host.appendChild(renderer.domElement);
@@ -41,7 +41,7 @@ export default function FreeCadModelViewer({ url, motionUrl, dimensionControls, 
         geometry = new STLLoader().parse(buffer);
         const positions = geometry.getAttribute("position");
         if (!positions || positions.count < 12 || positions.count % 3 || !Array.from(positions.array).every(Number.isFinite)) throw new Error("STL 文件无有效三角网格，无法显示模型。");
-        // FreeCAD 使用 Z 轴向上，展示时变换至 Three.js 的 Y 轴向上。
+        // Text-to-CAD 使用 Z 轴向上，展示时变换至 Three.js 的 Y 轴向上。
         geometry.rotateX(-Math.PI / 2); geometry.computeBoundingBox();
         let size = geometry.boundingBox.getSize(new THREE.Vector3());
         if (![size.x, size.y, size.z].every((value) => Number.isFinite(value) && value > 0)) throw new Error("STL 模型范围无效，无法显示实体。");

@@ -1,4 +1,5 @@
-const prefix = "/api/cad/freecad";
+const prefix = "/api/cad/text-to-cad";
+const legacyPrefix = "/api/cad/freecad";
 const sessionKey = "freecad.active-run";
 
 const drawingPart = { units: 'mm', operations: [
@@ -68,10 +69,10 @@ export async function freeCadRequest(path, { method = "GET", body, signal } = {}
     data = await response.json();
   } catch (error) {
     if (error.name === "AbortError") throw error;
-    throw Object.assign(new Error(writing ? "提交响应中断，结果待核对。请刷新状态查询本次运行。" : "无法读取本地 FreeCAD 状态，请检查连接后刷新。"), { outcomeUnknown: writing });
+    throw Object.assign(new Error(writing ? "提交响应中断，结果待核对。请刷新状态查询本次运行。" : "无法读取本地 Text-to-CAD 状态，请检查连接后刷新。"), { outcomeUnknown: writing });
   }
   if (!response.ok) {
-    const detail = typeof data?.detail === "string" ? data.detail : typeof data?.error === "string" ? data.error : `FreeCAD 请求失败（${response.status}）`;
+    const detail = typeof data?.detail === "string" ? data.detail : typeof data?.error === "string" ? data.error : `Text-to-CAD 请求失败（${response.status}）`;
     throw Object.assign(new Error(detail), { outcomeUnknown: writing && response.status >= 500, status: response.status });
   }
   return data;
@@ -81,6 +82,7 @@ export function freeCadArtifacts(run) {
   // 仅接受本轮、服务端校验成功的固定导出路径，模型文本不能提供下载地址。
   if (!validFreeCadRun(run?.run_id) || run.status !== "completed" || run.validation?.valid !== true) return [];
   const proof = run.validation;
+  if (proof.step_roundtrip !== true && (run.provider === 'text-to-cad' || (Array.isArray(run.artifacts) && run.artifacts.some(item => typeof item?.url === 'string' && item.url.startsWith(prefix + '/'))))) return [];
   if (proof.model_kind === 'assembly' || proof.model_kind === 'bim') {
     const building = proof.model_kind === 'bim';
     if (!Number.isInteger(proof.solid_count) || proof.solid_count < (building ? 1 : 2) || proof.solid_count > (building ? 32 : 8) ||
@@ -96,7 +98,7 @@ export function freeCadArtifacts(run) {
           (bim.openings > 0 && bim.opening_volume_removed <= 0)) return [];
     }
   } else if (proof.solid_count !== 1) return [];
-  const allowed = new Map([['model.stl', 'stl'], ['model.step', 'step'], ['model.FCStd', 'fcstd'], ['model.fcstd', 'fcstd']]);
+  const allowed = new Map([['model.py', 'py'], ['model.stl', 'stl'], ['model.step', 'step'], ['model.FCStd', 'fcstd'], ['model.fcstd', 'fcstd']]);
   if (proof.drawing?.verified === true) { allowed.set('drawing.svg', 'svg'); allowed.set('drawing.pdf', 'pdf'); }
   if (proof.sheet_metal?.verified === true) { allowed.set('unfold.svg', 'svg'); allowed.set('unfold.dxf', 'dxf'); }
   if (proof.model_kind === 'assembly' && proof.assembly?.verified === true && proof.assembly.solver_status === 0 &&
@@ -106,12 +108,12 @@ export function freeCadArtifacts(run) {
     if (!item || !allowed.has(item.name) || allowed.get(item.name) !== item.format) return false;
     // 保留旧记录的 fcstd 小写后缀，但工程图和展开图按各自固定名称保留。
     const name = item.name === 'model.fcstd' ? 'model.FCStd' : item.name;
-    if (seen.has(name) || item.url !== `${prefix}/runs/${run.run_id}/artifacts/${item.name}`) return false;
+    if (seen.has(name) || ![prefix, legacyPrefix].some(base => item.url === `${base}/runs/${run.run_id}/artifacts/${item.name}`)) return false;
     seen.add(name);
     return true;
   });
 }
 
 export function freeCadStatus(status) {
-  return { running: "FreeCAD 正在建模", submitting: "正在提交建模需求", completed: "建模完成", needs_input: "待补充需求（尚未建模）", failed: "建模失败", outcome_unknown: "结果待核对" }[status] || "正在读取运行记录";
+  return { running: "Text-to-CAD 正在建模", submitting: "正在提交建模需求", completed: "建模完成", needs_input: "待补充需求（尚未建模）", failed: "建模失败", outcome_unknown: "结果待核对" }[status] || "正在读取运行记录";
 }

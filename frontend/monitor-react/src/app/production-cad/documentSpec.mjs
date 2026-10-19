@@ -2,7 +2,8 @@ import {addDesignFeature,designTemplates} from './designEditor.mjs';
 import {freeCadWorkbenchExamples} from './freecad.mjs';
 
 const copy=value=>JSON.parse(JSON.stringify(value));
-const primitives={'Part::Box':'box','Part::Cylinder':'cylinder','Part::Sphere':'sphere','Part::Cone':'cone'};
+const primitives={'Part::Box':'box','Part::Cylinder':'cylinder','Part::Sphere':'sphere','Part::Cone':'cone',
+  'build123d::Box':'box','build123d::Cylinder':'cylinder','build123d::Sphere':'sphere','build123d::Cone':'cone'};
 const dimensions={box:['length','width','height'],cylinder:['diameter','length'],sphere:['diameter'],cone:['bottom_diameter','top_diameter','height']};
 export const specTasks=[
   {id:'edit',label:'编辑当前规格',current:true},
@@ -28,7 +29,8 @@ export function snapshotSpec(snapshot){
   const rotation=props.rotation;
   if(!rotation||!Number.isFinite(rotation.angle)||Math.abs(rotation.angle)>1e-9)throw new Error('当前主体旋转信息缺失或存在旋转，不能把它转为轴对齐规格；请使用原生属性编辑或新建文档。');
   const complete={cylinder:{'native.Angle':360},cone:{'native.Angle':360},sphere:{'native.Angle1':-90,'native.Angle2':90,'native.Angle3':360}}[kind]||{};
-  if(Object.entries(complete).some(([name,value])=>props[name]!==value))throw new Error('仅完整基础形体能转为规格，不能把部分圆柱、圆锥或球体当作完整主体。');
+  const angularNames={'native.Angle':'sweep_angle','native.Angle1':'latitude_min','native.Angle2':'latitude_max','native.Angle3':'sweep_angle'};
+  if(Object.entries(complete).some(([name,value])=>(Object.hasOwn(props,angularNames[name])?props[angularNames[name]]:props[name])!==value))throw new Error('仅完整基础形体能转为规格，不能把部分圆柱、圆锥或球体当作完整主体。');
   const position=props.position;
   if(!Array.isArray(position)||position.length!==3||position.some(v=>!Number.isFinite(v)||Math.abs(v)>10000))throw new Error('当前主体位置不完整。');
   const operation={type:kind,mode:'add'};

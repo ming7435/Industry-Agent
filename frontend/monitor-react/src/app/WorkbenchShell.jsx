@@ -49,7 +49,7 @@ function WorkbenchIcon({ name }) {
 export function WorkbenchSidebar({ activeView, onChange, hasError, connected }) {
   return (
     <aside className="workbench-sidebar" aria-label="工作台导航">
-      <div className="workbench-brand"><span className="workbench-brand-mark" aria-hidden="true">IA</span><span><strong>IND-Agent</strong><small>工业智能工作台</small></span></div>
+      <div className="workbench-brand"><span className="workbench-brand-mark" aria-hidden="true">工擎</span><span><strong>工擎智维</strong><small>工业智能运维与质检多智能体协作平台</small></span></div>
       <nav className="workbench-nav" aria-label="功能导航">
         {groups.map((group) => <div className="workbench-nav-group" key={group.label}>
           <span className="workbench-nav-caption">{group.label}</span>

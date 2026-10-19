@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import os
-import json
 import signal
 import socket
 import subprocess
 import sys
 import secrets
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -18,7 +16,6 @@ from urllib.request import urlopen
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-FREECAD_PLATFORM = sys.platform
 _LOCAL_INTERNAL_TOKEN = secrets.token_urlsafe(32)
 _LOCAL_RAG_TOKEN = secrets.token_urlsafe(32)
 
@@ -93,9 +90,6 @@ def _default_env() -> dict[str, str]:
         "MCP_CAD_URL": "http://127.0.0.1:8050",
         "CAD_SERVICE_BASE_URL": "http://127.0.0.1:8050",
         "AGENT_SERVICE_BASE_URL": "http://127.0.0.1:8010",
-        "AGENT_EVENT_TRANSPORT": "rabbitmq",
-        "AGENT_EVENT_PARTITIONS": "16",
-        "AGENT_EVENT_WORKERS": "4",
         "MONITOR_WEB_HOST": "127.0.0.1",
         "MONITOR_WEB_PORT": "8001",
         "FACTORY_API_BASE_URL": "http://127.0.0.1:4529",
@@ -104,6 +98,10 @@ def _default_env() -> dict[str, str]:
     for key, value in defaults.items():
         if not env.get(key):
             env[key] = value
+    if not env.get('CADGEN_PYTHON', '').strip():
+        # CAD dependencies live in the project venv even when the launcher uses Anaconda.
+        project_python = PROJECT_ROOT / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+        env['CADGEN_PYTHON'] = str(project_python) if project_python.is_file() else sys.executable
     return env
 
 
@@ -114,12 +112,7 @@ def _env_for_service(service_root: Path) -> dict[str, str]:
     下的旧 ``.env`` 不再参与合并，避免同一个变量在不同服务中出现两套值。
     """
 
-    env = _merge_env(
-        dict(os.environ),
-        _read_env_file(PROJECT_ROOT / ".env"),
-        {},
-    )
-    env.update({key: value for key, value in _default_env().items() if key not in env})
+    env = _default_env()
     if not env.get("BACKEND_INTERNAL_TOKEN", "").strip() and env.get("APP_ENV", "development").lower() == "development":
         # 本地六个子进程共享一次性内部身份；不写配置文件、不输出令牌。生产仍要求显式配置。
         env["BACKEND_INTERNAL_TOKEN"] = _LOCAL_INTERNAL_TOKEN
@@ -211,41 +204,24 @@ def _terminate(processes: list[tuple[str, subprocess.Popen[str]]]) -> None:
                 process.kill()
 
 
-def _start_optional_freecad(env: dict[str, str]) -> dict[str, object]:
-    """复用或启动已安装的本地 CAD；失败不阻止其他业务服务启动。"""
-    required = (
-        PROJECT_ROOT / '.runtime/freecad/bin/FreeCAD.exe',
-        PROJECT_ROOT / '.runtime/freecad-mcp-venv/Scripts/freecad-mcp.exe',
-        PROJECT_ROOT / 'scripts/freecad_runtime.ps1',
-    )
-    if not all(path.is_file() for path in required):
-        return {'ready': False, 'reason': 'not_installed'}
-    if FREECAD_PLATFORM != 'win32' or env.get('APP_ENV', 'development').lower() != 'development':
-        return {'ready': False, 'reason': 'manual_start_required'}
-    command = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-        str(required[-1]), 'start', '-WaitSeconds', '45']
+def _check_text_to_cad(env: dict[str, str]) -> dict[str, object]:
+    """Probe the selected Python kernel; CAD has no persistent GUI process."""
     try:
-        # A newly launched GUI can keep inherited pipe handles open after
-        # PowerShell exits. On Windows run() also drains those pipes without a
-        # timeout after killing the launcher. A regular file avoids both waits.
-        with tempfile.TemporaryFile() as output:
-            response = subprocess.run(command, cwd=PROJECT_ROOT, env=env,
-                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.DEVNULL,
-                timeout=55, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            output.seek(0)
-            evidence = json.loads(output.read(65536).decode('utf-8', errors='replace')) if response.returncode == 0 else {}
-        # 只读取启动器的受控确认，不打印继承的环境或第三方异常正文。
-        if isinstance(evidence, dict) and evidence.get('running') is True and evidence.get('rpc_ready') is True:
-            return {'ready': True}
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        pass
-    return {'ready': False, 'reason': 'start_failed'}
+        from scripts.text_to_cad_runtime import probe
+    except ModuleNotFoundError:
+        from text_to_cad_runtime import probe
+    return probe(env)
+
+
+def _start_optional_freecad(env: dict[str, str]) -> dict[str, object]:
+    """Compatibility for old launch callers; always uses text-to-cad."""
+    return _check_text_to_cad(env)
 
 
 def cad_document_worker_service(env):
-    if env.get('FREECAD_DOCUMENTS_ENABLED','').lower() != 'true':
+    if env.get('CAD_DOCUMENTS_ENABLED', env.get('FREECAD_DOCUMENTS_ENABLED', '')).lower() != 'true':
         return None
-    return ('cad-document-worker',[sys.executable,str(PROJECT_ROOT/'scripts/freecad_document_worker.py')],PROJECT_ROOT,PROJECT_ROOT)
+    return ('cad-document-worker',[sys.executable,str(PROJECT_ROOT/'scripts/text_to_cad_document_worker.py')],PROJECT_ROOT,PROJECT_ROOT)
 
 
 def unexpected_service_exit(processes):
@@ -336,11 +312,11 @@ def main() -> int:
     print("启动本地演示服务。模拟工厂需已在 http://127.0.0.1:4529 运行。")
     print("监控工作台：http://127.0.0.1:8001，按 Ctrl+C 统一停止。")
     try:
-        cad_status = _start_optional_freecad(launch_env)
+        cad_status = _check_text_to_cad(launch_env)
         if cad_status['ready']:
-            print("本地 FreeCAD 已启动或复用；完整 MCP 连通状态请在生产建模页面查看。")
+            print("text-to-cad 原生内核已就绪；生产建模使用受控 Python 子进程。")
         else:
-            print(f"本地 FreeCAD 未自动就绪（{cad_status['reason']}），其他服务继续启动；详见 docs/freecad-local-setup.md。")
+            print(f"text-to-cad 内核未就绪（{cad_status['reason']}），其他服务继续启动；详见 docs/text-to-cad-local-setup.md。")
         for name, command, cwd, env_root in services:
             port = service_port(name, command, monitor_port=monitor_port)
             if port is not None and _port_in_use("127.0.0.1", port):

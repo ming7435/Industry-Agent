@@ -470,7 +470,11 @@ export default function ExpertWorkspace({ actor }) {
                 (Boolean(proposal) && (!approvedDraft || autoFrozen))}>{testing ? '测试进行中…' : '测试修改'}</button>
               {trial && !taskMode && <section className="expert-machine-progress" aria-label="全流程进度">
                 <p role="status">{trial.message}</p>
-                <ol>{trial.progress?.map(item => <li key={item.label} className={item.completed ? 'is-completed' : ''}>{item.label}：{item.completed ? '已完成' : '等待完成'}</li>)}</ol>
+                {!!trial.details?.blockers?.length && <section className="expert-alert" aria-label="本轮阻断原因">
+                  <strong>需要先解决的问题</strong><ul>{trial.details.blockers.map((reason,index)=><li key={index}>{reason}</li>)}</ul>
+                </section>}
+                <ol>{trial.progress?.map(item => <li key={item.label} className={item.completed ? 'is-completed' : ''}>{item.label}：{item.completed ? '已完成' :
+                  item.status==='blocked' ? '受阻' : item.status==='not_started' || trial.status==='failed' ? '未开始' : '等待完成'}</li>)}</ol>
                 {trial.workorders?.map(order => <p key={order.workorder_id}>测试工单：
                   <a href={`/?view=workorder&workorder_id=${encodeURIComponent(order.workorder_id)}`}>{order.workorder_id}</a>
                   {order.status === 'completed' || order.status === 'closed' ? ' · 已完成' : ' · 待维修确认'}</p>)}

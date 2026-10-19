@@ -36,7 +36,7 @@ class ArtifactStore:
 
     def entry_path(self, entry):
         name = entry.get('name','')
-        if not re.fullmatch(r'(?:model\.(?:FCStd|step|stl)|drawing\.(?:svg|pdf)|unfold\.(?:svg|dxf)|motion\.json|OBJ-[A-Za-z0-9_-]+\.(?:stl|json))',name):
+        if not re.fullmatch(r'(?:model\.(?:FCStd|py|json|step|stl|glb|3mf)|drawing\.(?:svg|pdf)|unfold\.(?:svg|dxf)|motion\.json|OBJ-[A-Za-z0-9_-]+\.(?:stl|json))',name):
             raise CadDocumentError('artifact_name','文件不在允许的产物清单',422)
         directory=self.job_directory(entry.get('job_id'))
         path=directory/name
@@ -68,8 +68,8 @@ class ArtifactStore:
                 raise CadDocumentError('artifact_identity','文件身份不一致或重复')
             names.add(entry['name'])
             self.entry_path(entry)
-        if receipt.snapshot is not None and 'model.FCStd' not in names:
-            raise CadDocumentError('artifact_missing','原生文档文件缺失')
+        if receipt.snapshot is not None and not {'model.py','model.json'}.issubset(names):
+            raise CadDocumentError('artifact_missing','可编辑 CAD 源码和模型数据缺失')
         if job.job_kind=='publish' and (receipt.validation.get('step_roundtrip') is not True
                 or receipt.validation.get('solid_count',0)<1 or not {'model.step','model.stl'}.issubset(names)):
             raise CadDocumentError('publication_invalid','发布文件未通过实体回读验证')

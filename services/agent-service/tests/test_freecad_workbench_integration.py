@@ -43,7 +43,7 @@ class DrawingTransport:
     def call_tool(self, name, arguments, **kwargs):
         assert name == 'execute_code'
         compile(arguments['code'], '<trusted-freecad-program>', 'exec')
-        for filename in ('model.stl', 'model.step', 'model.FCStd'):
+        for filename in ('model.stl', 'model.step', 'model.py'):
             artifact_path(self.run_id, filename).write_bytes(b'test-transport-export')
         artifact_path(self.run_id, 'drawing.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L10 0L10 10Z"/></svg>', encoding='utf-8')
         artifact_path(self.run_id, 'drawing.pdf').write_bytes(b'%PDF-1.7\n%fixture\n%%EOF')
@@ -67,7 +67,7 @@ def test_verified_drawing_files_return_from_the_real_tool(tmp_path, monkeypatch)
     with freecad_tool_scope(DrawingTransport(run_id, spec), run_id):
         result = freecad_mcp(spec)
     assert result['status'] == 'completed'
-    assert {a['name'] for a in result['artifacts']} == {'model.stl', 'model.step', 'model.FCStd', 'drawing.svg', 'drawing.pdf'}
+    assert {a['name'] for a in result['artifacts']} == {'model.stl', 'model.step', 'model.py', 'drawing.svg', 'drawing.pdf'}
     assert len(result['calls']) == 1
 
 

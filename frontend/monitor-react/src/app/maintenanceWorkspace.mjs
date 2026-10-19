@@ -119,7 +119,8 @@ export function buildMaintenanceWorkspaceRecords({ snapshot = {}, items = [], or
     records.set(recordId,record);
   }
   const diagnosis = object(object(snapshot).diagnosis);
-  for (const pipeline of [...Object.values(object(diagnosis.pipeline_by_device)), diagnosis.pipeline]) {
+  for (const pipeline of [...Object.values(object(diagnosis.pipeline_by_event)),
+    ...Object.values(object(diagnosis.pipeline_by_device)), diagnosis.pipeline]) {
     if (pipeline) add(pipeline.maintenance_plan, pipeline);
   }
   for (const plan of items) add(plan, plan);

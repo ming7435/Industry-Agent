@@ -1,28 +1,23 @@
-import importlib
+from app.cad_documents.capabilities import read_capabilities
 
 
-def test_discovery_not_equal_readiness():
-    assert importlib.util.find_spec('app.cad_documents.capabilities'), 'capability directory missing'
-    from app.cad_documents.capabilities import read_capabilities
-    value=read_capabilities({'version_fingerprint':'1.1.4','modules':['Part','Sketcher'],'commands':['Part_Box']},{})
+def test_discovery_does_not_claim_manual_or_ai_verification():
+    value=read_capabilities({'provider':'text-to-cad','ready':True,'version_fingerprint':'v','modules':['cadgen','build123d','OCP'],
+        'commands':['build123d.Box','build123d.Cylinder','build123d.Sphere','build123d.Cone']},{})
     box=next(c for c in value['items'] if c['capability_id']=='create_primitive')
-    assert box['installed'] is True and box['manual_verified'] is False and box['ai_verified'] is False
-    sketch=next(c for c in value['items'] if c['module']=='Sketcher')
-    assert sketch['web_adapter'] is False
+    assert box['installed'] is True and box['dependency_ready'] is True
+    assert box['manual_verified'] is False and box['ai_verified'] is False
+    assert not any(c['module']=='Sketcher' for c in value['items'])
 
 
-def test_directory_is_not_execution_and_wrong_evidence_is_ignored():
-    assert importlib.util.find_spec('app.cad_documents.capabilities'), 'capability directory missing'
-    from app.cad_documents.capabilities import read_capabilities
-    value=read_capabilities({'version_fingerprint':'1.1.4','modules':['Part'],'commands':[]},
-                            {'version_fingerprint':'old','native_checks':{'passed':True},'command_coverage':['create_primitive']})
+def test_wrong_engine_evidence_cannot_verify_new_runtime():
+    value=read_capabilities({'provider':'text-to-cad','ready':True,'version_fingerprint':'v','adapter_digest':'a','modules':['build123d'],'commands':[]},
+        {'provider':'freecad','version_fingerprint':'v','adapter_digest':'a','native_checks':{'passed':True},
+         'api_checks':{'passed':True},'browser_checks':{'passed':True},'command_coverage':['publish']})
     assert not any(c['manual_verified'] or c['ai_verified'] for c in value['items'])
 
 
-def test_unrelated_gui_command_is_not_adapter_discovery():
-    from app.cad_documents.capabilities import read_capabilities
-    value=read_capabilities({'version_fingerprint':'v','modules':['Part'],'commands':['Help_About']},{})
+def test_incomplete_primitive_probe_cannot_enable_creation():
+    value=read_capabilities({'provider':'text-to-cad','ready':True,'version_fingerprint':'v','modules':['build123d'],'commands':['build123d.Box']},{})
     primitive=next(c for c in value['items'] if c['capability_id']=='create_primitive')
-    assert primitive['discovered'] is False
-    assert 'Part_Box' in primitive['native_commands']
-    assert primitive['parameter_schema_version']=='freecad_document_commands_v1'
+    assert primitive['discovered'] is False and primitive['dependency_ready'] is False

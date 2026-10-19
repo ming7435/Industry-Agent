@@ -56,7 +56,7 @@ def validate_task(agent, name, task):
             if not value['prompt'].strip() or value['query'] or value['documents'] or value['expected_document_ids'] is not None or value['expected_status'] not in {'ready', 'needs_input'}:
                 raise ValueError('CAD 样例需要设计需求及预期规格状态')
             if value['expected_status'] == 'ready':
-                from app.tools.cad.freecad_mcp import validate_spec
+                from app.tools.cad.text_to_cad import validate_spec
                 value['expected_spec'] = validate_spec(value['expected_spec'])
             elif value['expected_spec'] is not None:
                 raise ValueError('待补充样例不应提供成功规格')
@@ -125,12 +125,12 @@ def execute_task(record, registry, client):
                 'skill_used': state.get('skill_plan_used') is True and record['name'] in state.get('active_skills', [])}
             output['calls'] = tools.calls
         else:
-            from app.cad_documents.proposal import resolve_freecad_spec
+            from app.cad_documents.proposal import resolve_text_to_cad_spec
             initial_calls = client.calls
-            output = resolve_freecad_spec(task['prompt'], client)
+            output = resolve_text_to_cad_spec(task['prompt'], client)
             consumed = client.calls > initial_calls
             # 缺失尺寸探针使用同一候选正文，不能由模型或用户提供 passed 回执。
-            missing = resolve_freecad_spec('请设计一个零件，尺寸尚未提供', client)
+            missing = resolve_text_to_cad_spec('请设计一个零件，尺寸尚未提供', client)
             criteria = {'specification': output.get('status') in {'ready', 'needs_input'},
                 'missing_dimensions': missing.get('status') == 'needs_input' and not missing.get('spec'),
                 'expected_result': output.get('status') == task['expected_status'] and

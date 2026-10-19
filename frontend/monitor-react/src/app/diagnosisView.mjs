@@ -1,5 +1,5 @@
 import { cleanDisplayText, cleanEvidenceText, parseEmbeddedJson, normalizeResultText } from "./textFormatting.mjs";
-import { currentIncident, matchesIncident } from './incidentIdentity.mjs';
+import { currentIncident, incidentIdentity, matchesIncident } from './incidentIdentity.mjs';
 import { businessText } from './businessText.mjs';
 
 function resolveCurrentSample(snapshot, sample) {
@@ -29,6 +29,56 @@ export function getLatestPipeline(snapshot, sample) {
   return (deviceId && byDevice && typeof byDevice[deviceId] === "object" ? byDevice[deviceId] : null)
     || snapshot?.diagnosis?.pipeline
     || {};
+}
+
+// This is a read-only history projection, never an authorization to dispatch an old fault.
+function faultKey(event) {
+  return JSON.stringify([event.tenant_id, event.project_id, event.device_id,
+    event.event_id, event.event_revision || '1']);
+}
+
+export function buildDiagnosisTaskView(snapshot, sample, selectedKey = '') {
+  const diagnosis = snapshot?.diagnosis || {};
+  const deviceId = currentDeviceId(snapshot, sample);
+  const current = incidentIdentity(getLatestDiagnosis(snapshot, sample));
+  const pipelines = new Map();
+  for (const pipeline of [...Object.values(diagnosis.pipeline_by_event || {}),
+    ...Object.values(diagnosis.pipeline_by_device || {}), diagnosis.pipeline]) {
+    if (!pipeline?.event) continue;
+    const identity = incidentIdentity({event:pipeline.event});
+    if (identity.device_id && identity.event_id && !pipelines.has(faultKey(identity))) {
+      pipelines.set(faultKey(identity), pipeline);
+    }
+  }
+  const tasks = new Map();
+  for (const row of [...Object.values(diagnosis.by_event || {}), ...(diagnosis.history || []),
+    getLatestDiagnosis(snapshot, sample)]) {
+    const event = incidentIdentity(row);
+    if (!deviceId || event.device_id !== deviceId || !event.event_id) continue;
+    if (current.tenant_id && event.tenant_id !== current.tenant_id) continue;
+    if (current.project_id && event.project_id !== current.project_id) continue;
+    event.event_revision ||= '1';
+    const key = faultKey(event);
+    if (tasks.has(key)) continue;
+    const pipeline = pipelines.get(key) || {};
+    const plan = pipeline.maintenance_plan || {};
+    const order = pipeline.workorder?.workorder || pipeline.workorder || {};
+    const planEvent = incidentIdentity(plan);
+    const planMatches = planEvent.device_id === event.device_id
+      && ['event_id','event_revision','tenant_id','project_id'].every(field => !planEvent[field] || planEvent[field] === event[field]);
+    const planId = planMatches ? String(plan.plan_id || '') : '';
+    const workorderId = planId && order.plan_id === planId
+      && (!order.device_id || order.device_id === event.device_id) ? String(order.workorder_id || '') : '';
+    tasks.set(key, {key, event, diagnosis:row, pipeline, planId, workorderId,
+      label:`报警 ${event.alarm_code || '未编号'} · ${event.event_id.slice(-12)}（修订 ${event.event_revision}）`});
+  }
+  const selectedTask = tasks.get(selectedKey) || null;
+  // Isolate the explicitly selected event from live triggers. The normal live view keeps
+  // its original stale-result guards; visiting history neither changes it nor runs an Agent.
+  const view = selectedTask ? buildDiagnosisView({device_id:deviceId, diagnosis:{
+    latest:selectedTask.diagnosis, pipeline:selectedTask.pipeline,
+  }}, selectedTask.event) : buildDiagnosisView(snapshot, sample);
+  return {tasks:[...tasks.values()], selectedTask, view};
 }
 
 export function diagnosisMatchesCurrent(snapshot, sample, latest = snapshot?.diagnosis?.latest || {}) {

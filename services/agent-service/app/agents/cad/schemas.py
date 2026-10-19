@@ -1,4 +1,4 @@
-"""CAD 工程查询的请求契约；本地建模使用 FreeCAD 结构化规格。"""
+"""CAD 工程查询的请求契约；本地建模使用 Text-to-CAD 结构化规格。"""
 
 from __future__ import annotations
 

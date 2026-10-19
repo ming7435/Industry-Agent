@@ -73,3 +73,20 @@ def test_existing_read_auth_is_preserved(monkeypatch):
     client, calls = client_for({'drawings':[]})
     assert client.get('/api/cad/drawings', params={'device_id':DEVICE}).status_code == 401
     assert calls == []
+
+
+def test_device_reference_exposes_persisted_association_counts():
+    summary = {'device_id': DEVICE, 'cad_nodes': 121, 'manual_bom_items': 31,
+               'parent_links': 120, 'verified_inventory_items': 0}
+    client, _ = client_for({'drawings': [drawing()], 'association_summary': summary})
+    response = client.get('/api/cad/drawings', params={'device_id': DEVICE})
+    assert response.status_code == 200
+    assert response.json()['association_summary'] == summary
+
+
+@pytest.mark.parametrize('change', [{'device_id': 'OTHER'}, {'cad_nodes': -1}, {'cad_nodes': True}])
+def test_invalid_association_counts_are_not_displayed(change):
+    summary = {'device_id': DEVICE, 'cad_nodes': 121, 'manual_bom_items': 31,
+               'parent_links': 120, 'verified_inventory_items': 0, **change}
+    client, _ = client_for({'drawings': [drawing()], 'association_summary': summary})
+    assert client.get('/api/cad/drawings', params={'device_id': DEVICE}).status_code == 502

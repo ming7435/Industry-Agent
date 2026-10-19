@@ -39,6 +39,12 @@ def run(prompt, *, model=None, spec=None, client=None):
     return result, trace
 
 
+def execution_failure(result):
+    return {'error': result.get('error'), 'calls': [
+        {key: value for key, value in call.items() if key != 'arguments'}
+        for call in result.get('calls', [])]}
+
+
 def test_missing_dimensions_returns_needs_input_without_execution():
     result, trace = run("做一根带轴向通孔的销轴")
     assert result["status"] == "needs_input"
@@ -46,7 +52,7 @@ def test_missing_dimensions_returns_needs_input_without_execution():
     assert result["calls"] == []
     assert result["execution"]["node"] == "model_3d"
     assert result["execution"]["skill"] == "production_modeling_skill"
-    assert result["execution"]["tool"] == "freecad_mcp"
+    assert result["execution"]["tool"] == "text_to_cad"
     assert result["execution"]["step_history"]
 
 
@@ -93,37 +99,37 @@ def test_model_cannot_drop_unsupported_chamfer():
 
 
 def test_graph_skill_tool_exports_valid_cylinder_with_through_hole(tmp_path, monkeypatch):
-    from freecad_test_kernel import ScriptMCP
+    from app.clients.text_to_cad import TextToCadClient
     monkeypatch.setenv("FREECAD_ARTIFACT_ROOT", str(tmp_path))
-    result, trace = run("外径30mm、长50mm的销轴，带同轴通孔直径10mm", client=ScriptMCP())
-    assert result["status"] == "completed", result
+    result, trace = run("外径30mm、长50mm的销轴，带同轴通孔直径10mm", client=TextToCadClient())
+    assert result["status"] == "completed", execution_failure(result)
     assert result["spec"] == SPEC
     assert result["validation"]["solid_count"] == 1
     assert result["validation"]["volume_mm3"] == pytest.approx(31415.9265358979)
-    assert {item["format"] for item in result["artifacts"]} == {"stl", "step", "fcstd"}
+    assert {item["format"] for item in result["artifacts"]} == {"stl", "step", "py"}
     assert result["calls"][0]["tool"] == "execute_code"
     rows = [row for row in trace.list() if row["event"] == "tool_completed"]
     assert len(rows) == 1
     assert rows[0]["task_id"] == RUN_ID
     assert rows[0]["skill"] == "production_modeling_skill"
     assert rows[0]["input"]["spec"] == SPEC
-    assert result["execution"]["tool"] == "freecad_mcp"
+    assert result["execution"]["tool"] == "text_to_cad"
 
 
 def test_model_json_and_confirmed_spec_use_same_node_and_artifact_contract(tmp_path, monkeypatch):
-    from freecad_test_kernel import ScriptMCP
+    from app.clients.text_to_cad import TextToCadClient
     monkeypatch.setenv("FREECAD_ARTIFACT_ROOT", str(tmp_path))
     # 任意描述触发模型解析，输出仍经过尺寸校验和同一个技能工具步骤。
-    result, _ = run("按说明生成套筒：30mm外径，50mm长度，10mm同轴通孔孔径", model=JsonModel({"status": "ready", "spec": SPEC}), client=ScriptMCP())
-    assert result["status"] == "completed", result
+    result, _ = run("按说明生成套筒：30mm外径，50mm长度，10mm同轴通孔孔径", model=JsonModel({"status": "ready", "spec": SPEC}), client=TextToCadClient())
+    assert result["status"] == "completed", execution_failure(result)
     assert result["spec"] == SPEC
 
 
-def test_regular_tetrahedron_uses_the_existing_node_skill_and_mcp(tmp_path, monkeypatch):
-    from freecad_test_kernel import ScriptMCP
+def test_regular_tetrahedron_uses_the_existing_node_skill_and_local_kernel(tmp_path, monkeypatch):
+    from app.clients.text_to_cad import TextToCadClient
     monkeypatch.setenv("FREECAD_ARTIFACT_ROOT", str(tmp_path))
-    result, _ = run("正四面体（立体三角形、四面相同、边长100mm）", client=ScriptMCP())
-    assert result["status"] == "completed", result
+    result, _ = run("正四面体（立体三角形、四面相同、边长100mm）", client=TextToCadClient())
+    assert result["status"] == "completed", execution_failure(result)
     assert result["spec"] == {"units": "mm", "operations": [
         {"type": "tetrahedron", "mode": "add", "edge_length": 100, "position": [0, 0, 0]},
     ]}
@@ -132,7 +138,7 @@ def test_regular_tetrahedron_uses_the_existing_node_skill_and_mcp(tmp_path, monk
     assert result["validation"]["edge_count"] == 6
     assert result["execution"]["node"] == "model_3d"
     assert result["execution"]["skill"] == "production_modeling_skill"
-    assert result["execution"]["tool"] == "freecad_mcp"
+    assert result["execution"]["tool"] == "text_to_cad"
 
 
 @pytest.mark.parametrize("prompt,spec", [
@@ -189,16 +195,16 @@ def test_mcp_failure_is_retained_without_reporting_success(tmp_path, monkeypatch
     assert "请补充形状" not in result["answer"]
 
 
-def test_mcp_gui_timeout_remains_unknown_and_is_not_replayed(tmp_path, monkeypatch):
+def test_text_to_cad_process_timeout_remains_unknown_and_is_not_replayed(tmp_path, monkeypatch):
     monkeypatch.setenv("FREECAD_ARTIFACT_ROOT", str(tmp_path))
+    from app.clients.text_to_cad import TextToCadConnectionError
 
     class TimedOutMCP:
         count = 0
 
         def call_tool(self, name, arguments, **kwargs):
             self.count += 1
-            return {"content": [{"type": "text", "text":
-                "Failed to execute code: GUI dispatch timed out after 90s while 'execute_code' was still running on FreeCAD's GUI thread."}]}
+            raise TextToCadConnectionError('outcome_unknown', 'text-to-cad 执行超时；不会自动重放。', 504)
 
     client = TimedOutMCP()
     result, _ = run("明确规格", spec=SPEC, client=client)
@@ -206,7 +212,7 @@ def test_mcp_gui_timeout_remains_unknown_and_is_not_replayed(tmp_path, monkeypat
     assert result["error_code"] == "outcome_unknown"
     assert result["artifacts"] == []
     assert "不会自动重放" in result["answer"]
-    assert result["calls"][0]["result"]["content"]
+    assert result["calls"][0]["error"]
     assert client.count == 1
 
 

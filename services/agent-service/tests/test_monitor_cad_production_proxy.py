@@ -133,6 +133,10 @@ def test_host_must_use_current_proxy_port(proxy_boundary):
 
 
 @pytest.mark.parametrize("path", [
+    "/api/cad/text-to-cad/documents",
+    "/api/cad/text-to-cad/runs/",
+    "/api/cad/%74ext-to-cad/runs",
+    "/api/cad/text-to-cad%2Fruns",
     "/api/cad/freecad/documents",
     "/api/cad/freecad/runs/",
     "/api/cad/%66reecad/runs",
@@ -143,6 +147,14 @@ def test_production_prepare_dispatch_and_encoded_paths_share_the_guard(proxy_bou
     status, _ = send(path=path, host=f"evil.example:{proxy.server_port}")
     assert status == 403
     assert seen == []
+
+
+def test_text_to_cad_run_forwards_through_the_same_authenticated_guard(proxy_boundary):
+    _, seen, send = proxy_boundary
+    path = '/api/cad/text-to-cad/runs'
+    status, _ = send(path=path)
+    assert status == 200
+    assert seen == [{'method': 'POST', 'path': path, 'authorization': 'Bearer isolated-proxy-test-token', 'body': b'{}'}]
 
 
 @pytest.mark.parametrize("suffix", ["%0A", "%0A/"])

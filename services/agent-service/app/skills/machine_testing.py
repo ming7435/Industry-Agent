@@ -28,6 +28,8 @@ def _text(value):
 def _plan_details(plan):
     steps = plan.get('repair_steps') or plan.get('steps') or []
     return {'plan_id': plan.get('plan_id', ''), 'summary': _text(plan.get('summary') or plan.get('fault')),
+            'workorder_ready': plan.get('workorder_ready'),
+            'validation_findings': [item for item in plan.get('validation_findings') or [] if isinstance(item, str)],
             'steps': [step if isinstance(step, str) else next((step[key] for key in
                       ('instruction', 'action', 'description', 'title') if isinstance(step.get(key), str)), '')
                       for step in steps if isinstance(step, (str, dict))]}
@@ -383,6 +385,7 @@ class MachineTrials(SkillTrials):
         if cycle and not running:
             pending.append('本轮已有复机记录，但当前原测试设备未全部处于运行状态。')
         status, message = record['status'], record.get('message', '')
+        blockers = [item for item in plan.get('validation_findings') or [] if isinstance(item, str) and item.strip()] if not orders else []
         eligible = record['instance'] == self.instance and not record.get('cancelled_at')
         if eligible and status != 'completed':
             if missing:
@@ -396,7 +399,8 @@ class MachineTrials(SkillTrials):
             elif plan_done and flow.get('status') not in {'blocked', 'failed'}:
                 status, message = 'running', '维修方案已生成，等待对应工单派发'
             elif flow.get('status') in {'blocked', 'failed'}:
-                status, message = 'failed', '本轮尚未生成关联工单，请核对下方诊断和维修方案信息'
+                status = 'failed'
+                message = '维修方案未通过派工校验，本轮已停止，请处理下方阻断原因后重新测试' if blockers else '本轮流程已停止，尚未生成关联工单，请核对下方诊断和维修方案信息'
             elif diagnosis_done and status in ACTIVE:
                 message = '智能诊断已完成，正在同步维修方案和工单'
         details = {'diagnosis': {key: diagnosis.get(key) for key in ('status', 'summary', 'diagnosis', 'recommendation', 'confidence', 'requires_human_review')},
@@ -411,10 +415,14 @@ class MachineTrials(SkillTrials):
                                             'status': devices.get(device, {}).get('status', 'unknown')} for device in record['device_ids']]},
                    'report': {'report_id': (report or {}).get('report_id'), 'title': (report or {}).get('title'),
                               'article': _text((report or {}).get('article_text')), 'created_at': (report or {}).get('created_at')},
-                   'pending_reasons': pending}
+                   'pending_reasons': pending, 'blockers': blockers, 'stop_reason': flow.get('stop_reason') or ''}
         progress = [{'label': label, 'completed': completed} for label, completed in zip(
             ('智能诊断', '维修方案', '工单派发', '维修确认', '整线复机', '汇总报告'),
             (diagnosis_done, plan_done, bool(orders), finished, bool(cycle), bool(report)))]
+        blocked_stage = next((index for index, item in enumerate(progress) if not item['completed']), None) if status == 'failed' else None
+        for index, item in enumerate(progress):
+            item['status'] = ('completed' if item['completed'] else 'blocked' if index == blocked_stage else
+                              'not_started' if blocked_stage is not None else 'pending')
         assessment = record.get('assessment')
         terminal_transition = record.get('status') in ACTIVE and status in {'completed', 'failed'}
         if (eligible and record.get('baseline_revision') and event_id and status in {'completed', 'failed'}

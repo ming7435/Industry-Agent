@@ -45,7 +45,7 @@ class CADGraphState(AgentExecutionState, total=False):
     route: str
     modeling_result: Dict[str, Any]
     modeling_execution: Dict[str, Any]
-    freecad_client: Any
+    text_to_cad_client: Any
     model_client: Any
     result: CADResult | Dict[str, Any]
 
@@ -76,8 +76,9 @@ def load_skill(state: CADGraphState) -> Dict[str, Any]:
 def model_3d(state: CADGraphState) -> Dict[str, Any]:
     """唯一活动建模节点仅执行本地技能声明的结构化建模工具。"""
     import json
-    from app.tools.cad.freecad_mcp import FreeCADModelError, freecad_tool_scope, validate_spec
-    from app.clients.freecad import FreeCADConnectionError
+    from app.tools.cad.text_to_cad import TextToCadModelError, text_to_cad_tool_scope, validate_spec
+    from app.clients.text_to_cad import TextToCadConnectionError
+    from shared.freecad_documents import CadDocumentError
 
     selected = get_skill_registry().select("cad", names=state.get("active_skills") or [])
     if len(selected) != 1:
@@ -88,34 +89,34 @@ def model_3d(state: CADGraphState) -> Dict[str, Any]:
     request, model = state["request"], state.get("model_client")
     stage = "specification"
     try:
-        if request.get("provider") != "freecad":
-            raise FreeCADModelError("CAD 建模仅支持本地 FreeCAD 接口。")
-        from app.cad_documents.proposal import resolve_freecad_spec
-        resolved = resolve_freecad_spec(request["prompt"], model, request.get("spec"))
+        if request.get("provider") != "text-to-cad":
+            raise TextToCadModelError("CAD 建模仅支持本地 Text-to-CAD 接口。")
+        from app.cad_documents.proposal import resolve_text_to_cad_spec
+        resolved = resolve_text_to_cad_spec(request["prompt"], model, request.get("spec"))
         spec = resolved.get("spec")
         if resolved.get("status") == "needs_input":
             result["answer"] = "请补充建模尺寸：\n" + "\n".join(resolved.get("questions") or [])[:2000]
         if spec is not None:
             spec = validate_spec(spec)
             result["spec"] = spec
-            stage = "freecad_mcp"
-            with freecad_tool_scope(state["freecad_client"], request["task_id"]):
+            stage = "text_to_cad"
+            with text_to_cad_tool_scope(state["text_to_cad_client"], request["task_id"]):
                 remote = skill.execute_tool_step("build_model", state["agent"].tools,
                     {"spec": spec}, context={"node": "model_3d"})
             result.update(remote)
             if result.get("status") == "completed":
-                result["answer"] = "FreeCAD 已生成并校验三维模型，可旋转查看并下载 STL、STEP 和 FCStd 文件。"
-    except FreeCADModelError as error:
+                result["answer"] = "Text-to-CAD 已生成并校验三维模型，可旋转查看并下载 STL、STEP 和可重建的 Python 源文件。"
+    except TextToCadModelError as error:
         result.update(status="needs_input" if stage == "specification" else "failed",
-            error=str(error), error_code="invalid_specification" if stage == "specification" else "freecad_run_failed",
+            error=str(error), error_code="invalid_specification" if stage == "specification" else "text_to_cad_run_failed",
             error_stage=stage)
         result["calls"] = list(getattr(error, "calls", []))
         result["answer"] = str(error)
     except Exception as error:
-        connection_error = isinstance(error, FreeCADConnectionError)
-        code = getattr(error, "code", "freecad_run_failed") if connection_error else "freecad_run_failed"
+        controlled_error = isinstance(error, (TextToCadConnectionError, CadDocumentError))
+        code = error.code if controlled_error else "text_to_cad_run_failed"
         result.update(status="outcome_unknown" if code == "outcome_unknown" else "failed", error_code=code,
-            error=str(error) if connection_error else "模型或 FreeCAD 调用失败，请检查本地连接和模型服务。",
+            error=str(error) if controlled_error else "模型或 Text-to-CAD 调用失败，请检查本地连接和模型服务。",
             error_stage=stage)
         result["calls"] = list(getattr(error, "calls", []))
         result["answer"] = result["error"]

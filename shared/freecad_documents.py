@@ -76,7 +76,13 @@ class Cone(Contract):
 
 Primitive = Annotated[Union[Box, Cylinder, Sphere, Cone], Field(discriminator='primitive_type')]
 PRIMITIVE_MODELS = {'box': Box, 'cylinder': Cylinder, 'sphere': Sphere, 'cone': Cone}
-PRIMITIVE_TYPES = {'box':'Part::Box', 'cylinder':'Part::Cylinder', 'sphere':'Part::Sphere', 'cone':'Part::Cone'}
+PRIMITIVE_TYPES = {'box':'build123d::Box', 'cylinder':'build123d::Cylinder', 'sphere':'build123d::Sphere', 'cone':'build123d::Cone'}
+LEGACY_PRIMITIVE_TYPES = {'box':'Part::Box', 'cylinder':'Part::Cylinder', 'sphere':'Part::Sphere', 'cone':'Part::Cone'}
+
+
+def primitive_type(type_id):
+    """Read historical snapshots without assigning them a different storage identity."""
+    return next((kind for kind in PRIMITIVE_TYPES if type_id in (PRIMITIVE_TYPES[kind], LEGACY_PRIMITIVE_TYPES[kind])), None)
 DIMENSIONS = {'box': ('length','width','height'), 'cylinder': ('diameter','length'),
               'sphere': ('diameter',), 'cone': ('bottom_diameter','top_diameter','height')}
 

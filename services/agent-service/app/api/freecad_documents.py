@@ -48,14 +48,14 @@ def same_origin(request):
 def application_for_request(request):
     from app.cad_documents.artifacts import ArtifactStore
     from app.cad_documents.service import CadDocumentApplication
-    from app.agents.cad.modeling_api import get_freecad_run_record
+    from app.agents.cad.modeling_api import get_text_to_cad_run_record
     root=Path(__file__).resolve().parents[4]
-    artifacts=ArtifactStore(Path(os.getenv('FREECAD_DOCUMENT_ARTIFACT_ROOT',str(root/'output/freecad-documents'))))
-    return CadDocumentApplication(artifacts=artifacts,source_reader=lambda run_id:get_freecad_run_record(request,run_id))
+    artifacts=ArtifactStore(Path(os.getenv('TEXT_TO_CAD_DOCUMENT_ARTIFACT_ROOT') or os.getenv('FREECAD_DOCUMENT_ARTIFACT_ROOT',str(root/'output/freecad-documents'))))
+    return CadDocumentApplication(artifacts=artifacts,source_reader=lambda run_id:get_text_to_cad_run_record(request,run_id))
 
 
 def build_document_router(require_write_auth,application_factory=application_for_request,trace=None):
-    router=APIRouter(prefix='/api/cad/freecad')
+    router=APIRouter()
 
     def app_actor(request):
         if not request.cookies.get('maintenance_session'): raise HTTPException(401,'请先登录账号')
@@ -164,9 +164,12 @@ def build_document_router(require_write_auth,application_factory=application_for
         entry=next((a for a in snapshot.artifacts if a['name']==name),None)
         if entry is None: raise HTTPException(404,'该修订没有此产物')
         path=call(application.artifacts.entry_path,entry)
-        from app.tools.cad.freecad_mcp import ARTIFACT_TYPES
+        from app.tools.cad.text_to_cad import ARTIFACT_TYPES
         media=ARTIFACT_TYPES.get(name,'application/json' if name.endswith('.json') else 'model/stl')
         return FileResponse(path,media_type=media,filename=name,headers={'X-Content-Type-Options':'nosniff',
                            'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; sandbox"})
 
-    return router
+    public=APIRouter()
+    public.include_router(router,prefix='/api/cad/text-to-cad')
+    public.include_router(router,prefix='/api/cad/freecad',include_in_schema=False)
+    return public

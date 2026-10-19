@@ -42,7 +42,11 @@ export default function WorkorderDrawingPanel({order, target}) {
           throw new Error('返回图纸的设备归属、版本或文件地址不匹配');
         }
         if (!cancelled) {
-          setDrawingState({status:body.status,drawings:body.drawings});
+          const association=body.association_summary;
+          setDrawingState({status:body.status,drawings:body.drawings,
+            association:association?.device_id === deviceId
+              && ['cad_nodes','manual_bom_items','parent_links','verified_inventory_items'].every(key=>Number.isInteger(association[key]) && association[key]>=0)
+              ? association : null});
           setSelectedId(body.drawings[0] ? drawingKey(body.drawings[0]) : '');
         }
       } catch (error) {
@@ -98,11 +102,20 @@ export default function WorkorderDrawingPanel({order, target}) {
           {drawingState.status === 'not_found' && <small>需要登记该设备的真实图纸，不使用其他机器的图纸代替。</small>}
         </div>}
     </div></div>
+    {drawingState.association && <div className="maintenance-plan-section" aria-label="图纸与BOM关联状态">
+      <strong>已保存图纸关联</strong>
+      <p>{drawingState.association.cad_nodes} 个装配节点 · {drawingState.association.parent_links} 条父子关系 · {drawingState.association.manual_bom_items} 条手册参考项</p>
+      <p>{drawingState.association.verified_inventory_items > 0
+        ? `${drawingState.association.verified_inventory_items} 条已核实库存关联`
+        : '库存待核实：现有模型编号尚未确认对应的正式备件料号和仓库库存。'}参考资料用于定位核对，具体维修仍需对应的工程依据。</p>
+    </div>}
     <div className="maintenance-plan-section" aria-label="故障部件定位状态" role="status">
       {location.status === 'found' ? <><strong>已检索到部件资料：{location.part.name} · {location.part.part_no || location.part.component_id}</strong>
         <p>{location.part.position || '安装位置未标注'}。部件资料已匹配，不表示查看器已自动高亮该部件。</p></>
         : <><strong>{location.status === 'loading' ? '正在查询故障部件资料':location.status === 'error' ? '故障部件定位暂不可用':'故障部件定位尚未建立'}</strong>
-          <p>{location.message || '整机图纸可独立查看；尚缺该设备的部件编号、装配关系与模型对象映射。'}</p></>}
+          <p>{location.message || (drawingState.association?.cad_nodes > 0
+            ? '设备图纸和原生装配编号已关联；本工单的故障部件尚未匹配到具体节点，需核实故障部位与正式料号。'
+            : '整机图纸可独立查看；尚缺该设备的部件编号、装配关系与模型对象映射。')}</p></>}
       {drawing && <p>{drawing.source_kind === 'original_edrawings' ? '整机原始图纸':'设备图纸与参考模型'} · {drawing.version_label || drawing.version_id || '版本未标注'}。支持查看器原有的旋转、缩放操作。</p>}
     </div>
   </section>;

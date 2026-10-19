@@ -2,7 +2,7 @@
 import json
 import os
 
-from shared.freecad_documents import NativeReceipt
+from shared.freecad_documents import NativeReceipt, CadDocumentError
 from .native_program import render_document_program
 
 
@@ -26,16 +26,17 @@ class CadDocumentWorker:
             from pathlib import Path
             from .capabilities import local_inventory
             inventory=local_inventory();report=receipt.result
-            if not inventory.get('ready') or report.get('version_fingerprint')!=inventory['version_fingerprint']:
+            if (not inventory.get('ready') or report.get('provider')!='text-to-cad'
+                    or report.get('version_fingerprint')!=inventory['version_fingerprint']):
                 raise ValueError('发现结果与当前原生版本不一致')
             commands=report.get('commands')
             if not isinstance(commands,list) or not all(isinstance(c,str) and 0<len(c)<256 for c in commands) or len(commands)>20000:
                 raise ValueError('原生命令清单无效')
-            target=Path(os.getenv('FREECAD_DISCOVERY_REPORT',str(Path(__file__).resolve().parents[4]/'.runtime/verification/freecad-discovery.json')))
+            target=Path(os.getenv('TEXT_TO_CAD_DISCOVERY_REPORT',str(Path(__file__).resolve().parents[4]/'.runtime/verification/text-to-cad-discovery.json')))
             target.parent.mkdir(parents=True,exist_ok=True);temporary=target.with_suffix('.tmp')
             temporary.write_text(json.dumps(report,ensure_ascii=False),encoding='utf-8');os.replace(temporary,target)
         if job.job_kind=='legacy_generate' and receipt.state=='completed':
-            from app.tools.cad.freecad_mcp import read_validated_result,artifact_path
+            from app.tools.cad.text_to_cad import read_validated_result,artifact_path
             from hashlib import sha256
             result=read_validated_result(job.source['spec'],job.source['run_id'])
             if result['validation']!=receipt.validation:raise ValueError('原任务终结证明不一致')
@@ -68,7 +69,7 @@ class CadDocumentWorker:
             status=self.native_client.status()
             if status.get('connected') is not True:
                 return self.backend.fail_job(self.worker_id,job.job_id,status.get('error_code','native_offline'))
-            if os.getenv('FREECAD_REQUIRE_MANAGED_RUNTIME','').lower()=='true':
+            if os.getenv('CAD_REQUIRE_MANAGED_RUNTIME','').lower()=='true':
                 from .capabilities import local_inventory
                 if not local_inventory().get('ready'):return self.backend.fail_job(self.worker_id,job.job_id,'managed_runtime_mismatch')
             if job.job_kind=='legacy_generate':
@@ -82,29 +83,32 @@ class CadDocumentWorker:
                 return self._register(job,receipt)
             source=job.source.get('snapshot') or {}
             source_path=None
-            native_file=next((a for a in source.get('artifacts',[]) if a['name']=='model.FCStd'),None)
+            native_file=next((a for a in source.get('artifacts',[]) if a['name']=='model.json'),None)
+            if native_file is None:
+                native_file=next((a for a in source.get('artifacts',[]) if a['name']=='model.FCStd'),None)
             if native_file: source_path=self.artifacts.entry_path(native_file)
             if job.job_kind=='import': source_path=self.artifacts.entry_path(job.source['native_artifact'])
             code=render_document_program(job,directory,source_path)
             dispatched=True
-            self.native_client.call_tool('execute_code',{'code':code,'include_screenshot':False,'timeout':90.0},timeout=100)
+            self.native_client.call_tool('execute_code',{'code':code,'include_screenshot':False,'timeout':240.0},timeout=240)
             receipt=self.artifacts.read_receipt(job.job_id)
             if receipt is None:
                 return self.backend.fail_job(self.worker_id,job.job_id,'receipt_pending',outcome_unknown=True)
             return self._register(job,receipt)
-        except Exception:
+        except Exception as error:
             # CAD may have finished while the HTTP/DB result was lost. Only the original receipt resolves it.
             receipt=self.artifacts.read_receipt(job.job_id)
             if receipt is not None:
                 try:return self._register(job,receipt)
                 except Exception: return {'state':'blocked','job_id':job.job_id,'reason':'收据待核验或存储待恢复'}
-            return self.backend.fail_job(self.worker_id,job.job_id,'transport_or_validation_failed',outcome_unknown=dispatched)
+            code=error.code if not dispatched and isinstance(error,CadDocumentError) else 'transport_or_validation_failed'
+            return self.backend.fail_job(self.worker_id,job.job_id,code,outcome_unknown=dispatched)
 
     def _legacy(self,job,directory):
-        from app.tools.cad.freecad_mcp import freecad_mcp,freecad_tool_scope,artifact_path,_requested_files
+        from app.tools.cad.text_to_cad import text_to_cad,text_to_cad_tool_scope,artifact_path,_requested_files
         from .gateway import worker_execution
         client=self.native_client
-        # The GUI writes a terminal receipt even when the MCP reply or worker process is lost.
+        # The model process writes a terminal receipt even when its reply or worker process is lost.
         data=dict(job_id=job.job_id,input_digest=job.input_digest,run_id=job.source['run_id'],
                   files=_requested_files(job.source['spec']),directory=str(directory),
                   legacy_directory=str(artifact_path(job.source['run_id'],'manifest.json').parent))
@@ -115,15 +119,15 @@ class CadDocumentWorker:
                 return client.call_tool(name,{**arguments,'code':code},**kwargs)
         token=worker_execution.set(True)
         try:
-            with freecad_tool_scope(ReceiptClient(),job.source['run_id']):
-                freecad_mcp(job.source['spec'])
+            with text_to_cad_tool_scope(ReceiptClient(),job.source['run_id']):
+                text_to_cad(job.source['spec'])
         finally:
             worker_execution.reset(token)
         return self._register(job,self.artifacts.read_receipt(job.job_id))
 
 
 def legacy_receipt_program(trusted_program,data):
-    return ('import json,os,hashlib\nfrom pathlib import Path\n'
+    return ('import json,os,hashlib,subprocess,sys\nfrom pathlib import Path\n'
             'data=json.loads('+repr(json.dumps(data,ensure_ascii=False))+')\n'
             'trusted_program='+repr(trusted_program)+'\n'+r'''
 out=Path(data['directory'])
@@ -131,7 +135,11 @@ with (out/'.execution-claimed').open('x',encoding='utf-8') as claim:claim.write(
 receipt={'job_id':data['job_id'],'input_digest':data['input_digest'],'state':'failed','snapshot':None,
          'artifacts':[],'validation':{},'result':{},'error_code':'legacy_native_failed'}
 try:
-    exec(compile(trusted_program,'<trusted-legacy-builder>','exec'),{})
+    program=out/'.legacy_model.py'
+    program.write_text(trusted_program,encoding='utf-8')
+    completed=subprocess.run([sys.executable,'-X','utf8',str(program)],capture_output=True,text=True,encoding='utf-8',errors='replace',
+        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    if completed.returncode:raise ValueError('CAD model process failed: '+completed.stderr[-1200:])
     legacy=Path(data['legacy_directory'])
     proof=json.loads((legacy/'manifest.json').read_text(encoding='utf-8'))
     entries=[]
@@ -143,8 +151,8 @@ try:
         target.write_bytes(content)
         entries.append({'job_id':data['job_id'],'name':name,'size':len(content),'sha256':hashlib.sha256(content).hexdigest()})
     receipt.update(state='completed',artifacts=entries,validation={k:v for k,v in proof.items() if k not in ('spec','run_id')},error_code=None)
-except Exception:
-    pass
+except Exception as error:
+    receipt['result']={'error_type':type(error).__name__,'error_detail':str(error)[:1600]}
 temporary=out/'receipt.tmp'
 temporary.write_text(json.dumps(receipt,ensure_ascii=False,allow_nan=False),encoding='utf-8')
 os.replace(str(temporary),str(out/'receipt.json'))
@@ -152,37 +160,6 @@ os.replace(str(temporary),str(out/'receipt.json'))
 
 
 def discovery_program(job,directory):
+    from .capabilities import DISCOVERY_SOURCE
     data=dict(job_id=job.job_id,input_digest=job.input_digest,directory=str(directory),workbench_id=job.source.get('workbench_id',''))
-    return 'import FreeCAD as App,FreeCADGui as Gui,json,hashlib,os,time\nfrom pathlib import Path\ndata=json.loads('+repr(json.dumps(data))+')\n'+r'''
-out=Path(data['directory'])
-with (out/'.execution-claimed').open('x',encoding='utf-8') as claim:claim.write(data['input_digest'])
-receipt={'job_id':data['job_id'],'input_digest':data['input_digest'],'state':'failed','snapshot':None,'artifacts':[],'validation':{},'result':{},'error_code':'discovery_failed'}
-try:
-    before=Gui.activeWorkbench().name()
-    requested=data['workbench_id']
-    if requested:
-        if requested not in Gui.listWorkbenches():raise ValueError('unknown workbench')
-        if requested!=before and not Gui.activateWorkbench(requested):raise ValueError('workbench activation failed')
-        if Gui.activeWorkbench().name()!=requested:raise ValueError('wrong active workbench')
-    version=App.Version()
-    fingerprint=hashlib.sha256(json.dumps(version,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode('utf-8')).hexdigest()
-    commands=sorted(Gui.listCommands())
-    information={}
-    for name in commands:
-        try:
-            resources=Gui.Command.get(name).getInfo()
-            information[name]={key:str(resources.get(key,'') or '')[:2048] for key in ('menuText','toolTip','shortcut')}
-        except Exception:information[name]={}
-    workbenches=[{'id':name,'label':str(getattr(workbench,'MenuText',name))[:256]} for name,workbench in Gui.listWorkbenches().items()]
-    receipt.update(state='completed',validation={'valid':True},result={'version_fingerprint':fingerprint,'runtime_pid':os.getpid(),'discovered_at':time.time(),
-                   'commands':commands,'command_info':information,'workbenches':workbenches},error_code=None)
-except Exception:pass
-finally:
-    try:
-        if requested and Gui.activeWorkbench().name()!=before:
-            if not Gui.activateWorkbench(before) or Gui.activeWorkbench().name()!=before:raise ValueError('workbench restoration failed')
-    except Exception:
-        receipt.update(state='failed',error_code='workbench_restore_failed')
-temporary=out/'receipt.tmp';temporary.write_text(json.dumps(receipt,ensure_ascii=False),encoding='utf-8')
-os.replace(str(temporary),str(out/'receipt.json'))
-'''
+    return ('import json,os,hashlib,time\nfrom pathlib import Path\ndata=json.loads('+repr(json.dumps(data))+')\n'+DISCOVERY_SOURCE)

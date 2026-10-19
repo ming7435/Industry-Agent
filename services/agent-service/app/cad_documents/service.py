@@ -1,8 +1,8 @@
 from hashlib import sha256
 from pathlib import Path
 import re
-import zipfile
-import xml.etree.ElementTree as ET
+import json
+from types import SimpleNamespace
 
 from shared.freecad_documents import CadDocumentError, CommandRecord, DocumentHead, DocumentSnapshot, canonical_digest
 from .gateway import Gateway
@@ -34,61 +34,32 @@ class CadDocumentApplication:
         return head
 
     def _import_source(self,actor,head,request_id,source):
-        from app.tools.cad.freecad_mcp import artifact_path,validate_spec
+        from app.tools.cad.text_to_cad import artifact_path,validate_spec
+        from .native_program import _source_state
         spec=validate_spec(source['spec']) if source.get('spec') else None
-        if source.get('document_id'):
-            previous=self.snapshot(actor,source['document_id'],source['revision'])
-            entry=next(a for a in source['artifacts'] if a['name']=='model.FCStd')
-            path=self.artifacts.entry_path(entry)
-            names=[o.name for o in previous.objects if o.object_id in previous.product_root_ids]
+        previous=self.snapshot(actor,source['document_id'],source['revision']).model_dump(mode='json') if source.get('document_id') else {}
+        entry=next((a for a in source.get('artifacts',[]) if a['name']=='model.json'),None)
+        if entry:
+            path=self.artifacts.entry_path(entry) if source.get('document_id') else artifact_path(source['run_id'],'model.json')
+            if path.is_symlink() or not path.is_file() or not 0<path.stat().st_size<=100*1024*1024:
+                raise CadDocumentError('source_invalid','来源模型数据缺失或过期',422)
+            content=path.read_bytes()
         else:
-            path=artifact_path(source['run_id'],'model.FCStd')
-            if not path.is_file() or path.is_symlink() or not 0<path.stat().st_size<=100*1024*1024:
-                raise CadDocumentError('source_invalid','来源原生文件缺失或过期',422)
-            names=(source.get('validation') or {}).get('product_names') or self._legacy_product_names(path,spec)
-        if not names: raise CadDocumentError('source_roots','来源产品对象身份不完整，请重新生成该设计',422)
-        # Copy only a trusted server-resolved file; never accepts a path from the browser.
+            # Historical FCStd files stay immutable and downloadable. Rebuild only from trusted saved parameters.
+            state=_source_state(SimpleNamespace(source={'snapshot':previous,'spec':spec}),None)
+            if not state.get('base_spec') and not state['objects']:
+                raise CadDocumentError('migration_required','历史设计缺少可重建规格，需要迁移后再编辑；原文件仍可下载',422)
+            content=json.dumps(state,ensure_ascii=False,allow_nan=False,indent=2).encode('utf-8')
         source_job='JOB-source-'+canonical_digest([actor,head.document_id,request_id])
-        target=self.artifacts.job_directory(source_job)/'model.FCStd'
-        content=path.read_bytes()
-        if not target.exists(): target.write_bytes(content)
-        if sha256(target.read_bytes()).hexdigest()!=sha256(content).hexdigest():
+        target=self.artifacts.job_directory(source_job)/'model.json'
+        if target.is_symlink():raise CadDocumentError('source_invalid','来源副本不能为链接',422)
+        if not target.exists():target.write_bytes(content)
+        if sha256(target.read_bytes()).digest()!=sha256(content).digest():
             raise CadDocumentError('source_conflict','已存在的副本来源不一致')
-        entry={'job_id':source_job,'name':'model.FCStd','size':len(content),'sha256':sha256(content).hexdigest()}
-        auxiliary=[]
-        from app.tools.cad.freecad_mcp import _validate_extra_file
-        for original in source.get('artifacts',[]):
-            filename=original['name']
-            if filename not in {'drawing.svg','drawing.pdf','unfold.svg','unfold.dxf','motion.json'}:continue
-            auxiliary_path=self.artifacts.entry_path(original) if source.get('document_id') else artifact_path(source['run_id'],filename)
-            if auxiliary_path.is_symlink() or not 0<auxiliary_path.stat().st_size<=100*1024*1024:
-                raise CadDocumentError('source_invalid','来源附属文件缺失或过期',422)
-            _validate_extra_file(auxiliary_path)
-            content=auxiliary_path.read_bytes();target=self.artifacts.job_directory(source_job)/filename
-            if not target.exists():target.write_bytes(content)
-            if sha256(target.read_bytes()).digest()!=sha256(content).digest():raise CadDocumentError('source_conflict','附属文件来源不一致')
-            auxiliary.append(dict(job_id=source_job,name=filename,size=len(content),sha256=sha256(content).hexdigest()))
-        payload={'native_artifact':entry,'spec':spec,'product_names':names,'source_validation':source['validation'],'source_artifacts':auxiliary}
+        entry=dict(job_id=source_job,name='model.json',size=len(content),sha256=sha256(content).hexdigest())
+        payload={'native_artifact':entry,'spec':spec,'source_validation':source['validation']}
         self.gateway.call('claim_import',actor_id=actor,document_id=head.document_id,
                           command_id='CMD-import-'+canonical_digest(request_id)[:32],source=payload)
-
-    @staticmethod
-    def _legacy_product_names(path,spec):
-        if not spec: return []
-        with zipfile.ZipFile(path) as archive:
-            info=archive.getinfo('Document.xml')
-            if info.file_size>10*1024*1024: raise CadDocumentError('source_invalid','来源对象索引过大',422)
-            root=ET.fromstring(archive.read(info))
-        objects={o.get('name'):o for o in root.findall('./ObjectData/Object')}
-        if 'assembly' in spec: names=[n for n in objects if n.startswith('SolvedComponent')]
-        elif 'sheet_metal' in spec: names=['SheetMetalBend']
-        elif 'bim' in spec:
-            labels={p['name'] for p in [*spec['bim']['walls'],*spec['bim']['slabs']]}
-            names=[n for n,o in objects.items() if (o.find("./Properties/Property[@name='Label']/String") is not None
-                    and o.find("./Properties/Property[@name='Label']/String").get('value') in labels)]
-        elif 'parts' in spec: names=['Component'+str(i+1) for i in range(len(spec['parts']))]
-        else: names=['Model']
-        return names if all(n in objects for n in names) else []
 
     def submit(self,actor_id,command):
         head=self.head(actor_id,command.document_id)

@@ -56,16 +56,20 @@ def test_terminal_receipt_recovers_original_kind_without_native_reexecution(tmp_
 
 def test_legacy_terminal_receipt_survives_lost_native_response(tmp_path,monkeypatch):
     from app.cad_documents.coordinator import CadDocumentWorker
-    from freecad_test_kernel import ScriptMCP
+    from text_to_cad_document_test_runtime import DocumentRuntime
     monkeypatch.setenv('FREECAD_ARTIFACT_ROOT',str(tmp_path/'legacy'))
     job=NativeJob(job_id='JOB-legacy',input_digest='a'*64,job_kind='legacy_generate',owner_user_id='SYSTEM',document_id=None,expected_revision=None,envelope=None,
                   source={'run_id':'FC-'+'b'*64,'spec':{'units':'mm','operations':[{'type':'box','mode':'add','length':40,'width':20,'height':10,'position':[0,0,0]}]}})
     calls=[]
     class Stored(Backend):
         def complete_job(self,worker_id,receipt):calls.append(receipt);return {'state':'completed'}
-    class Lost(ScriptMCP):
+    class Lost(DocumentRuntime):
+        geometry_executions=0
         def status(self):return {'connected':True}
-        def call_tool(self,*args,**kwargs):super().call_tool(*args,**kwargs);raise TimeoutError('response lost after native completion')
+        def call_tool(self,*args,**kwargs):
+            self.geometry_executions+=1
+            super().call_tool(*args,**kwargs)
+            raise TimeoutError('response lost after native completion')
     native=Lost();backend=Stored(job);artifacts=ArtifactStore(tmp_path/'owned')
     worker=CadDocumentWorker(backend,native,artifacts,'old-worker')
     assert worker.tick()['state']=='completed'
@@ -75,24 +79,17 @@ def test_legacy_terminal_receipt_survives_lost_native_response(tmp_path,monkeypa
 
 
 def test_discovery_is_read_only_and_writes_version_bound_receipt(tmp_path,monkeypatch):
-    import sys,json,types
+    import json
     from app.cad_documents.coordinator import CadDocumentWorker
-    from app.cad_documents import capabilities
-    from shared.freecad_documents import canonical_digest
-    version=['1','1','4'];fingerprint=canonical_digest(version)
-    monkeypatch.setenv('FREECAD_DISCOVERY_REPORT',str(tmp_path/'discovery.json'))
-    monkeypatch.setattr(capabilities,'local_inventory',lambda:{'ready':True,'version_fingerprint':fingerprint})
-    monkeypatch.setitem(sys.modules,'FreeCAD',types.SimpleNamespace(Version=lambda:version))
-    monkeypatch.setitem(sys.modules,'FreeCADGui',types.SimpleNamespace(listCommands=lambda:['Part_Box','Part_Cylinder'],
-        activeWorkbench=lambda:types.SimpleNamespace(name=lambda:'PartWorkbench'),
-        listWorkbenches=lambda:{'PartWorkbench':types.SimpleNamespace(MenuText='Part')},
-        Command=types.SimpleNamespace(get=lambda name:types.SimpleNamespace(getInfo=lambda:{'menuText':name}))))
+    from app.cad_documents.capabilities import runtime_inventory
+    from text_to_cad_document_test_runtime import DocumentRuntime
+    monkeypatch.setenv('TEXT_TO_CAD_DISCOVERY_REPORT',str(tmp_path/'discovery.json'))
     job=NativeJob(job_id='JOB-discover',input_digest='d'*64,job_kind='discover',owner_user_id='SYSTEM',document_id=None,expected_revision=None,envelope=None)
     class Stored(Backend):
         def complete_job(self,worker_id,receipt):return {'state':'completed'}
-    class Native:
-        def status(self):return {'connected':True}
-        def call_tool(self,name,arguments,**kwargs):exec(arguments['code'],{})
-    assert CadDocumentWorker(Stored(job),Native(),ArtifactStore(tmp_path/'owned'),'worker').tick()['state']=='completed'
+    native=DocumentRuntime()
+    assert CadDocumentWorker(Stored(job),native,ArtifactStore(tmp_path/'owned'),'worker').tick()['state']=='completed'
     report=json.loads((tmp_path/'discovery.json').read_text(encoding='utf-8'))
-    assert report['commands']==['Part_Box','Part_Cylinder'] and report['version_fingerprint']==fingerprint
+    assert report['provider']=='text-to-cad'
+    assert 'build123d.Box' in report['commands']
+    assert report['version_fingerprint']==runtime_inventory(probe=native.status)['version_fingerprint']

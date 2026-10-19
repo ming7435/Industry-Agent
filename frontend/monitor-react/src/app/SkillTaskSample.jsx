@@ -50,7 +50,7 @@ export default function SkillTaskSample({skill,sample,change,disabled}) {
       maxLength={100000}/><small>{hint}</small></label>)}
   </>;
   return <>
-    <p>{cad ? '验证需求解析、补充问题和严格规格，不执行 FreeCAD、不生成实体、不启动机器。常规完整尺寸走固定解析，不代表已测试候选正文。'
+    <p>{cad ? '验证需求解析、补充问题和严格规格，不执行 Text-to-CAD、不生成实体、不启动机器。常规完整尺寸走固定解析，不代表已测试候选正文。'
       : '使用下面提供的测试问题和参考资料运行真实检索流程，不查询生产知识库，不触发模拟故障。'}</p>
     <label>{cad ? '测试设计需求' : '测试问题'}<textarea aria-label={cad ? '测试设计需求' : '测试问题'} value={cad ? sample.prompt : sample.query}
       onChange={change(cad ? 'prompt' : 'query')} disabled={disabled} required maxLength={4000} rows={3}/></label>

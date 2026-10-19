@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "rea
 import "../styles.css";
 import machineImage from "../assets/trak-tc820-machine-transparent.png";
 import { buildMaintenancePlanView, buildRepairCompletionPayload, buildWorkorderSheet, getDeviceDisplayName, getWorkorderAlarmCode, getWorkorderDisplayTitle } from "../workorderSheet.mjs";
-import { buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLatestPipeline } from "./diagnosisView.mjs";
+import { buildDiagnosisTaskView, buildDiagnosisView, diagnosisMatchesCurrent, getLatestDiagnosis, getLatestPipeline } from "./diagnosisView.mjs";
 import { currentIncident, incidentIdentity, matchesIncident, linkedPlanOrder, recordTimes, formatRecordTime } from './incidentIdentity.mjs';
 import { buildReportArticleChapters, buildReportDisplaySections, reportCompleteness, reportQualityLabel } from "./reportView.mjs";
 import { buildKnowledgeContext } from "./knowledgeScope.mjs";
@@ -712,7 +712,7 @@ function App() {
   const sample = result?.current_sample || selectedMachine?.sample || null;
   const prefetchContext=useRef(null);
   prefetchContext.current={snapshot,sample};
-  const workflowReadKey=JSON.stringify([...Object.values(snapshot?.diagnosis?.pipeline_by_device||{}),snapshot?.diagnosis?.pipeline].filter(Boolean)
+  const workflowReadKey=JSON.stringify([...Object.values(snapshot?.diagnosis?.pipeline_by_event||{}),...Object.values(snapshot?.diagnosis?.pipeline_by_device||{}),snapshot?.diagnosis?.pipeline].filter(Boolean)
     .map(pipeline=>[pipeline.event?.event_id||pipeline.event_id,pipeline.status,pipeline.diagnosis?.status,pipeline.knowledge?.status,
       pipeline.maintenance_plan?.plan_id,pipeline.workorder?.workorder?.workorder_id||pipeline.workorder?.workorder_id,
       pipeline.workorder?.workorder?.updated_at||pipeline.workorder?.updated_at,pipeline.report?.report_id,pipeline.memory?.experience?.experience_id]));
@@ -1205,16 +1205,30 @@ function PipelineData({ snapshot }) {
 
 
 function DiagnosisWorkspace({ snapshot, sample }) {
-  const view = buildDiagnosisView(snapshot, sample);
+  const [selectedFault, setSelectedFault] = useState('');
+  const {tasks, selectedTask, view} = buildDiagnosisTaskView(snapshot, sample, selectedFault);
   const confidence = view.confidence == null ? "--" : `${Math.round(view.confidence * 100)}%`;
-  const alarm = sample?.alarm_label || sample?.alarm_code || "当前无活动报警";
+  const alarm = selectedTask ? selectedTask.event.alarm_code : sample?.alarm_label || sample?.alarm_code || "当前无活动报警";
   return (
     <section className="workspace-view active module-board diagnosis-workspace" aria-label="智能诊断">
       <ModuleHero eyebrow="故障分析" title="智能诊断" text="查看设备故障判断、原因分析和处理建议。" />
+      {tasks.length > 0 && <section className="panel module-panel" aria-label="故障任务选择">
+        <label htmlFor="diagnosis-fault-task">查看故障任务</label>
+        <select id="diagnosis-fault-task" value={selectedTask?.key || ''} onChange={event => setSelectedFault(event.target.value)}>
+          <option value="">当前故障（自动跟随）</option>
+          {tasks.map(task => <option key={task.key} value={task.key}>{task.label}</option>)}
+        </select>
+        {selectedTask && <>
+          <p className="muted">正在查看所选故障的已保存结果，不会重新诊断或重复派工。</p>
+          <p>维修方案：{selectedTask.planId || '尚未生成'}　工单：{selectedTask.workorderId
+            ? <a href={`?view=workorder&workorder_id=${encodeURIComponent(selectedTask.workorderId)}`}>{selectedTask.workorderId}</a>
+            : '尚未派发，以方案校验和审批结果为准'}</p>
+        </>}
+      </section>}
       <div className="module-grid">
         <ModuleStat label="诊断状态" value={view.statusLabel} text={view.deviceId || "等待设备"} />
         <ModuleStat label="置信度" value={confidence} text="诊断结果参考" />
-        <ModuleStat label="当前报警" value={alarm} text={view.workflowReason || "持续监测中"} />
+        <ModuleStat label={selectedTask ? "所选故障报警" : "当前报警"} value={alarm} text={view.workflowReason || (selectedTask ? '所选故障的处理结果' : "持续监测中")} />
       </div>
       <div className="answer-grid diagnosis-content-grid result-diagnosis-grid">
         <section className="panel module-panel result-card result-summary-card" aria-label="诊断结论">
@@ -1748,11 +1762,11 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
     let plansPending = null;
     let ordersPending = null;
     const controller = new AbortController();
-    function refreshPlans(manual = false) {
+    function refreshPlans(manual = false, poll = false) {
       if (plansPending) return plansPending;
       if (manual) setLoading(true);
       const revision = workspaceRevision.current;
-      plansPending = loadMaintenancePlans(readWorkspace, { signal: controller.signal,freshFor:5000,force:manual }).then(result => {
+      plansPending = loadMaintenancePlans(readWorkspace, { signal: controller.signal,freshFor:5000,force:manual || poll }).then(result => {
         if (cancelled || revision !== workspaceRevision.current) return;
         setPlanItems(result.items);
         setDeletedPlanIds(previous => [...new Set([...previous, ...result.deletedPlanIds])]);
@@ -1783,7 +1797,12 @@ function MaintenancePlanWorkspace({ snapshot, sample, actor, active = true }) {
     setLoading(false);
     refreshRef.current = refresh;
     refresh();
-    const timer = window.setInterval(refresh, 5000);
+    // The response arrives after the interval's start; a matching cache TTL would
+    // otherwise reuse it at the next tick and hide a new assignment for another cycle.
+    const timer = window.setInterval(() => {
+      refreshPlans(false, true);
+      refreshOrders();
+    }, 5000);
     return () => {
       cancelled = true;
       controller.abort();

@@ -57,12 +57,12 @@ def test_feature_disabled_has_no_write(monkeypatch):
 def test_copy_does_not_claim_legacy_owner(tmp_path,monkeypatch):
     from app.cad_documents.service import CadDocumentApplication
     from app.cad_documents.artifacts import ArtifactStore
-    from app.tools.cad import freecad_mcp
+    from app.tools.cad import text_to_cad
     calls=[]
     head=DocumentHead(document_id='DOC-copy',owner_user_id='USER-a',part_name='底板',part_number='00123',revision=0,created_at=0,updated_at=0)
     native=tmp_path/'source.FCStd';native.write_bytes(b'trusted-source-document')
     auxiliary=tmp_path/'unfold.svg';auxiliary.write_text('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L10 10"/></svg>',encoding='utf-8')
-    monkeypatch.setattr(freecad_mcp,'artifact_path',lambda _,name:auxiliary if name=='unfold.svg' else native)
+    monkeypatch.setattr(text_to_cad,'artifact_path',lambda _,name:auxiliary if name=='unfold.svg' else native)
     class Gateway:
         backend=None
         def call(self,operation,**body):
@@ -80,9 +80,11 @@ def test_copy_does_not_claim_legacy_owner(tmp_path,monkeypatch):
     assert next(body for op,body in calls if op=='create_document')['part_number']=='00456'
     imported=next(body for op,body in calls if op=='claim_import')
     assert imported['document_id']=='DOC-copy' and imported['actor_id']=='USER-a'
-    assert imported['source']['native_artifact']['name']=='model.FCStd'
-    assert imported['source']['source_artifacts'][0]['name']=='unfold.svg'
-    assert app.artifacts.entry_path(imported['source']['source_artifacts'][0]).read_bytes()==auxiliary.read_bytes()
+    assert imported['source']['native_artifact']['name']=='model.json'
+    import json
+    data=json.loads(app.artifacts.entry_path(imported['source']['native_artifact']).read_text(encoding='utf-8'))
+    assert data['base_spec']==source['spec']
+    assert auxiliary.read_text(encoding='utf-8').startswith('<svg')
 
 
 def test_command_polling_has_explicit_identity_even_without_envelope(monkeypatch):

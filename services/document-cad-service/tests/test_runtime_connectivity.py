@@ -193,6 +193,20 @@ def test_count_observes_new_committed_rows(database):
     assert repo.count() == 2
 
 
+def test_reference_counts_keep_exact_device_identity_on_case_insensitive_database(database, monkeypatch):
+    database.add()
+    with sqlite3.connect(database.path) as db:
+        db.execute("UPDATE cad_entities SET device_id=?,entity_type=?", ('TRAK-TC820LTYSI-001', 'native_cad_node'))
+    repo = repository.get_repository()
+    query = repo._query
+    # The live MySQL column uses a case-insensitive collation. Reproduce that
+    # comparison while retaining the repository's actual SQL and aggregate.
+    monkeypatch.setattr(repo, '_query', lambda sql, params=(): query(
+        sql.replace('e.device_id=%s', 'e.device_id COLLATE NOCASE=%s'), params))
+    assert repo.device_association_summary(device_id='TRAK-TC820LTYSI-001')['cad_nodes'] == 1
+    assert repo.device_association_summary(device_id='trak-tc820ltysi-001')['cad_nodes'] == 0
+
+
 def test_failed_connection_is_evicted_from_repository_cache(database):
     database.add()
     first = repository.get_repository()

@@ -179,13 +179,13 @@ def test_edge_changes_use_actual_geometry_not_a_volume_decrease_assumption(kind,
     class KernelShape:
         def __init__(self, regions):
             self.regions = regions
-            self.Volume = sum(b-a for a,b in regions)
-            self.Solids = [self] if self.Volume > 0 else []
-            self.Edges = [object()]
-        def isNull(self): return self.Volume == 0
-        def isValid(self): return self.Volume >= 0
-        def makeFillet(self, radius, edges): return KernelShape(segments)
-        def makeChamfer(self, distance, edges): return KernelShape(segments)
+            self.volume = sum(b-a for a,b in regions)
+            self.is_valid = True
+        def solids(self): return [self] if self.volume > 0 else []
+        def edges(self): return [object()]
+        def translate(self, position): return self
+        def fillet(self, radius, edges): return KernelShape(segments)
+        def chamfer(self, distance, other, edges): return KernelShape(segments)
         def cut(self, other):
             result = list(self.regions)
             for start,end in other.regions:
@@ -204,14 +204,13 @@ def test_edge_changes_use_actual_geometry_not_a_volume_decrease_assumption(kind,
         {'type': kind, 'radius' if kind == 'fillet' else 'distance': 2, 'edges': [1]},
     ]})
     program = ast.parse(_program(spec, tmp_path, 'FC-'+'c'*64))
-    build = next(node for node in ast.walk(program) if isinstance(node, ast.FunctionDef) and node.name == 'build')
-    namespace = {'math': math, 'App': SimpleNamespace(Vector=lambda *a: a),
-        'Part': SimpleNamespace(makeBox=lambda *a: KernelShape([(0,100)]))}
-    exec(compile(ast.Module(body=[build], type_ignores=[]), '<真实CAD模板>', 'exec'), namespace)
+    functions = [node for node in program.body if isinstance(node, ast.FunctionDef) and node.name in {'build_operations','_solid','_volume','_orient'}]
+    namespace = {'math': math, 'bd': SimpleNamespace(ShapeList=list, Solid=SimpleNamespace(make_box=lambda *a: KernelShape([(0,100)])))}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), '<真实CAD模板>', 'exec'), namespace)
     if segments == [(0,100)]:
         with pytest.raises(ValueError):
-            namespace['build'](spec['operations'])
+            namespace['build_operations'](spec['operations'])
     else:
-        result = namespace['build'](spec['operations'])
+        result = namespace['build_operations'](spec['operations'])
         assert result.regions == segments
-        assert result.isValid() and len(result.Solids) == 1
+        assert result.is_valid and len(result.solids()) == 1

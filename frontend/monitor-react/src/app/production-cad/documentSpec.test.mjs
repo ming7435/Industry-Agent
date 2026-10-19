@@ -11,6 +11,16 @@ test('native box dimensions and document coordinates become a full spec without 
   assert.deepEqual(draft.operations[1],{type:'cylinder',mode:'cut',diameter:6,length:10,axis:'z',position:[30,15,0]});
   assert.equal(JSON.stringify(source),before);
 });
+test('text-to-cad primitives retain complete parameter evidence for editing',()=>{
+  assert.equal(snapshotSpec(snapshot('build123d::Box')).operations[0].type,'box');
+  const cylinder=snapshot('build123d::Cylinder',{diameter:20,length:30});
+  assert.throws(()=>snapshotSpec(cylinder),/完整/);
+  cylinder.objects[0].properties.push({name:'sweep_angle',value:360});
+  assert.equal(snapshotSpec(cylinder).operations[0].type,'cylinder');
+  const sphere=snapshot('build123d::Sphere',{diameter:20});
+  sphere.objects[0].properties.push(...Object.entries({latitude_min:-90,latitude_max:90,sweep_angle:360}).map(([name,value])=>({name,value})));
+  assert.equal(snapshotSpec(sphere).operations[0].type,'sphere');
+});
 test('spec edits retain every existing feature and auxiliary workbench setting',()=>{
   const source=snapshot();source.source_spec={units:'mm',operations:[{type:'box',mode:'add',length:40,width:20,height:10,position:[0,0,0]}],drawing:{projection:'first_angle',scale:0.5,section:null}};
   const draft=beginSpecTask(source,'fillet');

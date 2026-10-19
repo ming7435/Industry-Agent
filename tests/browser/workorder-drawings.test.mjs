@@ -129,3 +129,21 @@ test('已保存机型与返回图纸不一致时不显示图纸', async () => {
     assert.equal(await page.locator('.repair-drawing-frame').count(),0);
   } finally { await context.close(); }
 });
+
+test('显示系统已保存的装配和BOM关联，缺库存保持待核实', async () => {
+  const device=devices[0][0];
+  const result={...body(device,'TC820si.html'),association_summary:{device_id:device,
+    cad_nodes:121,manual_bom_items:31,parent_links:120,verified_inventory_items:0}};
+  const {context,page,calls}=await open([order(device)],route=>respond(route,result));
+  try {
+    const section=page.getByLabel('图纸与BOM关联状态');
+    await section.waitFor();
+    const text=await section.innerText();
+    assert.match(text,/121.*装配节点/);
+    assert.match(text,/120.*父子关系/);
+    assert.match(text,/31.*手册参考项/);
+    assert.match(text,/库存待核实/);
+    assert.match(await page.getByLabel('故障部件定位状态').innerText(),/本工单的故障部件尚未匹配到具体节点/);
+    assert.ok(calls.every(item=>item[0]==='GET'));
+  } finally { await context.close(); }
+});

@@ -48,7 +48,7 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - SiliconFlow BGE-M3 向量化、bge-reranker-v2-m3 重排、DeepSeek 生成。
 - Milvus 向量集合、Whoosh BM25 索引和 MySQL 文档/分块元数据。
 - CAD 图纸、BOM、部件、装配关系和部件位置查询；配置 CAD MySQL 后从工程元数据表读取，开发环境才使用显式 Demo fallback。
-- CAD 活动生成链为本地 FreeCAD MCP：生产建模页面 → `model_3d` 节点 → 中文 Markdown `production_modeling_skill` → `freecad_mcp` → FreeCAD。支持交互 STL 预览及 STEP/STL/FCStd 导出；已扩展球体、圆锥、渐开线直齿轮、圆角/倒角、圆截面放样及静态装配。外螺纹仍是实验功能，校验失败时不会提供成功文件。历史 BuildCAD 生成入口未挂载，维修工程查询不受影响。操作见 [CAD 技术设计](docs/项目说明书.md)。
+- CAD 生产建模使用 text-to-cad：生产建模页面 → `model_3d` 节点 → `production_modeling_skill` → `text_to_cad` → cadgen/build123d/OCP。受控 Python 子进程生成并校验精确几何，支持 STL 预览及 STEP/STL/model.py/model.json 下载；现有任务和历史发布记录保留。安装和检查见 [text-to-cad 运行说明](docs/text-to-cad-local-setup.md)。
 - 维修计划中的 target_part、drawing_context 和 viewer_context 数据契约。
 - WorkOrder 生命周期、维修反馈、维修完成、派工和 MySQL 持久化幂等；临时上下文与登录会话使用 Redis。
 - 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。
@@ -113,6 +113,14 @@ RAG Service 和一键启动脚本统一使用 8020；所有服务配置都在仓
 | 设备实时数据 | 模拟工厂服务 | Monitor → `GET http://127.0.0.1:4529/...` |
 
 浏览器只访问监控工作台 `8001`；工作台再将 `/api/...` 请求转发到 Agent Service `8010`。Agent 和 RAG 不直接读取模型供应商密钥，只通过 Model Service 调用统一接口。
+
+### 故障事件执行（已移除 RabbitMQ）
+
+监控确认异常后，通过 `POST /api/v1/agent/event` 直接调用原 Agent 编排；Monitor 自身的后台线程负责等待与更新页面，不再使用 RabbitMQ、分区消费者或事务发件箱。慢请求通过 `GET /api/v1/agent/event/{event_id}/result` 只读查询阶段进度和最终结果，不重新提交故障。
+
+原有租户/设备/事件修订作用域、参数指纹、MySQL 结果幂等、Redis 阶段缓存、审批和结果未知时禁止盲目重试的规则保留。普通启动直接使用 `scripts/start_all.py`；不需要 RabbitMQ 账号、连接地址或旧启动辅助脚本。`/api/v1/runtime/event-queue` 已删除，遗留 RabbitMQ 环境变量不会再启用消息队列。没有引入新的消息中间件。
+
+移除范围、回归结果及恢复方法见 [RabbitMQ 移除记录](docs/remove-rabbitmq-20261019.md)。
 
 Model Service 的聊天请求只转发到 DeepSeek 官方 OpenAI 兼容地址 `https://api.deepseek.com/chat/completions`；RAG 的向量化和重排请求才转发到 SiliconFlow 的 `https://api.siliconflow.cn/v1`（`/embeddings`、`/rerank`）。两条路径相互独立，不会把 DeepSeek 聊天回退到 SiliconFlow。供应商密钥只在 Model Service 进程环境中读取，不写入日志或前端。
 
@@ -204,7 +212,7 @@ DEEPSEEK_MODEL=deepseek-chat
 ### 一键启动本地演示服务
 
 ~~~powershell
-python scripts/start_all.py
+.venv/Scripts/python.exe scripts/start_all.py
 ~~~
 
 也可以使用 npm 脚本调用当前环境中的 Python：
@@ -225,6 +233,8 @@ npm run start:all
 | 监控工作台 | http://127.0.0.1:8001 |
 
 按 Ctrl+C 会统一停止这些子进程。模拟工厂仍需单独提前启动。
+
+三维建模内核随 Agent 依赖安装，固定 `cadgen[snapshot]==0.7.10`。启动器会执行真实几何探测；`CADGEN_PYTHON` 可指定独立解释器。设置 `CAD_DOCUMENTS_ENABLED=true` 后同时启动持久文档工作进程。详细命令、产物格式和历史数据说明见 [text-to-cad 运行说明](docs/text-to-cad-local-setup.md)。
 
 ### Release Candidate Docker 包
 

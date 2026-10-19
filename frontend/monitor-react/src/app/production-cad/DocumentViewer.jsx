@@ -22,7 +22,7 @@ export default function DocumentViewer({snapshot,selectedObjectId,onSelect}) {
       if(!snapshot)return;
       try {
         bundle=await buildDocumentScene(snapshot,async(object,entry,signal)=>{
-          const response=await fetch(`/api/cad/freecad/documents/${encodeURIComponent(snapshot.document_id)}/snapshots/${snapshot.revision}/artifacts/${encodeURIComponent(entry.name)}`,{signal,credentials:'same-origin',cache:'no-store'});
+          const response=await fetch(`/api/cad/text-to-cad/documents/${encodeURIComponent(snapshot.document_id)}/snapshots/${snapshot.revision}/artifacts/${encodeURIComponent(entry.name)}`,{signal,credentials:'same-origin',cache:'no-store'});
           if(!response.ok)throw new Error(`对象文件读取失败（${response.status}）`);
           if(Number(response.headers.get('content-length')||0)>100*1024*1024)throw new Error('对象文件过大');
           if(object.geometry.curves)return response.json();const bytes=await response.arrayBuffer();if(bytes.byteLength>100*1024*1024)throw new Error('STL 文件过大');try{return new STLLoader().parse(bytes);}catch{throw new Error('STL 网格文件损坏，无法显示对象');}
@@ -30,7 +30,7 @@ export default function DocumentViewer({snapshot,selectedObjectId,onSelect}) {
         if(disposed){bundle.dispose();return;}
         if(bundle.objectMap.size===0||bundle.bounds.isEmpty()){setStatus('无可见几何对象；非几何对象可在模型树中查看');return;}
         radius=Math.max(bundle.bounds.getBoundingSphere(new THREE.Sphere()).radius,.01);
-        renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));renderer.setClearColor(0xffffff);renderer.domElement.setAttribute('role','img');renderer.domElement.setAttribute('aria-label','FreeCAD 文档三维视图');renderer.domElement.addEventListener('webglcontextlost',lost);renderer.domElement.addEventListener('pointerdown',down);renderer.domElement.addEventListener('pointerup',pick);host.appendChild(renderer.domElement);
+        renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));renderer.setClearColor(0xffffff);renderer.domElement.setAttribute('role','img');renderer.domElement.setAttribute('aria-label','Text-to-CAD 文档三维视图');renderer.domElement.addEventListener('webglcontextlost',lost);renderer.domElement.addEventListener('pointerdown',down);renderer.domElement.addEventListener('pointerup',pick);host.appendChild(renderer.domElement);
         scene=new THREE.Scene();scene.add(bundle.root,new THREE.HemisphereLight(0xffffff,0x666666,3));const light=new THREE.DirectionalLight(0xffffff,4);light.position.set(radius*3,radius*4,radius*2);scene.add(light);
         camera=new THREE.PerspectiveCamera(40,1,.001,radius*100);controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.minDistance=radius*.1;controls.maxDistance=radius*30;fit();observer=new ResizeObserver(resize);observer.observe(host);
         actions.current={fit,view:name=>{direction=name;fit();},mode:cameraMode};

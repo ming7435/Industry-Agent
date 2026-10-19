@@ -6,7 +6,7 @@ import ipaddress
 import json
 import os
 import sys
-from collections import deque
+from collections import OrderedDict, deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from http import HTTPStatus
@@ -133,7 +133,7 @@ def compact_public_pipeline(pipeline: Mapping[str, Any] | None) -> Dict[str, Any
     if isinstance(pipeline.get("maintenance_plan"), Mapping):
         result["maintenance_plan"] = _compact_stage(
             pipeline["maintenance_plan"],
-            ("plan_id", "created_at", "diagnosis", "repair_target", "target_part", "engineering_context", "repair_steps", "tools", "parts", "safety", "required_tools", "required_parts", "safety_requirements", "pre_checks", "post_checks", "estimated_time", "estimated_duration", "cad_components", "inventory_status", "part_availability", "validation_findings", "risk_level", "workorder_ready", "workorder_draft", "evidence", "source_documents", "maintenance_required", "maintenance_reason", "cad_required", "synthetic", "plan_kind", "inspection_required", "inspection_reason"),
+            ("plan_id", "device_id", "event_id", "event_revision", "tenant_id", "project_id", "created_at", "diagnosis", "repair_target", "target_part", "engineering_context", "repair_steps", "tools", "parts", "safety", "required_tools", "required_parts", "safety_requirements", "pre_checks", "post_checks", "estimated_time", "estimated_duration", "cad_components", "inventory_status", "part_availability", "validation_findings", "risk_level", "workorder_ready", "workorder_draft", "evidence", "source_documents", "maintenance_required", "maintenance_reason", "cad_required", "synthetic", "plan_kind", "inspection_required", "inspection_reason"),
         )
     result["trace"] = _compact_trace(pipeline.get("trace"))
     runtime_result = pipeline.get("runtime_result")
@@ -206,6 +206,11 @@ def _event_identity(event: Mapping[str, Any]) -> Dict[str, Any]:
     return {**{key: event[key] for key in
             ("tenant_id", "project_id", "device_id", "device_name", "device_model", "event_id", "event_revision", "alarm_code", "task_id") if key in event},
             "event_timestamp": event.get('timestamp') or ''}
+
+
+def _diagnosis_event_key(event: Mapping[str, Any]) -> str:
+    return json.dumps([str(event.get('tenant_id') or ''), str(event.get('device_id') or ''),
+        str(event.get('event_id') or ''), event.get('event_revision', 1)], ensure_ascii=False)
 
 
 def dispatch_agent_event(event: Dict[str, Any], *, on_recovery: Callable | None = None,
@@ -391,7 +396,7 @@ class MonitorWebState:
         self._last_alarm_codes: Dict[str, Optional[str]] = {}
         self.trigger_history = deque(maxlen=30)
         self.diagnosis_executor = ThreadPoolExecutor(
-            # 这里只并行提交/只读回查，不执行 Agent；设备串行由持久化队列保证。
+            # 有界并行提交 HTTP 与只读回查；Agent 服务直接执行，不依赖消息中间件。
             max_workers=max(1, min(32, int(os.getenv('MONITOR_EVENT_WATCHERS', '16')))),
             thread_name_prefix="diagnosis-agent",
         )
@@ -407,6 +412,9 @@ class MonitorWebState:
         self.latest_diagnoses_by_device: Dict[str, Dict[str, Any]] = {}
         self.latest_pipelines_by_device: Dict[str, Dict[str, Any]] = {}
         self._diagnosis_events_by_device: Dict[str, Dict[str, Any]] = {}
+        self._diagnosis_events_by_id: Dict[str, Dict[str, Any]] = {}
+        self._diagnoses_by_event = OrderedDict()
+        self._pipelines_by_event = OrderedDict()
         self._latest_diagnosis_event: Dict[str, Any] = {}
         self._last_device_discovery = 0.0
         self._device_discovery_interval = max(
@@ -532,11 +540,14 @@ class MonitorWebState:
             event['device_name'] = device['name']
         if device.get('device_model') or device.get('model'):
             event['device_model'] = device.get('device_model') or device['model']
-        from app.monitor.models import MonitorStatus
-        if trigger.status == MonitorStatus.FAULT and self.line_controller:
-            control = self.control_executor.submit(self.line_controller.handle_fault, str(event.get('event_id') or event.get('key') or ''), trigger.device_id, str(event.get('message') or '监控确认故障'))
-            control.add_done_callback(self._on_line_control_done)
         with self.lock:
+            tracked = getattr(self, '_diagnosis_events_by_id', None)
+            if tracked is None:
+                tracked = self._diagnosis_events_by_id = {}
+            key = _diagnosis_event_key(event)
+            if key in tracked:
+                return  # 同一故障版本已在提交/回查，不重复发出 HTTP 或控制请求。
+            tracked[key] = dict(event)
             generation = self._diagnosis_generation
             self.diagnosis_pending += 1
             device_id = str(event.get("device_id") or "")
@@ -547,6 +558,11 @@ class MonitorWebState:
             self.latest_pipeline = {}
             self.latest_diagnoses_by_device = {**getattr(self, "latest_diagnoses_by_device", {}), device_id: diagnosis}
             self.latest_pipelines_by_device = {**getattr(self, "latest_pipelines_by_device", {}), device_id: {}}
+            self._remember_fault(event, diagnosis=diagnosis)
+        from app.monitor.models import MonitorStatus
+        if trigger.status == MonitorStatus.FAULT and self.line_controller:
+            control = self.control_executor.submit(self.line_controller.handle_fault, str(event.get('event_id') or event.get('key') or ''), trigger.device_id, str(event.get('message') or '监控确认故障'))
+            control.add_done_callback(self._on_line_control_done)
         future = self.diagnosis_executor.submit(partial(
             dispatch_agent_event, event,
             on_recovery=lambda diagnosis: self._on_diagnosis_progress(diagnosis, generation, event),
@@ -568,16 +584,40 @@ class MonitorWebState:
 
     def _diagnosis_is_current(self, generation: int, event: Dict[str, Any]) -> bool:
         with self.lock:
-            return generation == self._diagnosis_generation and self._diagnosis_events_by_device.get(str(event.get("device_id") or "")) == event
+            return generation == self._diagnosis_generation and self._tracks_fault(event)
+
+    def _tracks_fault(self, event):
+        """调用方持锁；旧故障继续回查，但不能替换设备最新故障。"""
+        tracked = getattr(self, '_diagnosis_events_by_id', None)
+        if tracked is not None:
+            return tracked.get(_diagnosis_event_key(event)) == event
+        return self._diagnosis_events_by_device.get(str(event.get('device_id') or '')) == event
+
+    def _remember_fault(self, event, *, diagnosis=None, pipeline=None):
+        """调用方持锁；只保留有界页面投影，正式结果仍由 Agent 存储。"""
+        key = _diagnosis_event_key(event)
+        for attribute, value in (('_diagnoses_by_event', diagnosis), ('_pipelines_by_event', pipeline)):
+            if value is None:
+                continue
+            records = getattr(self, attribute, None)
+            if records is None:
+                records = OrderedDict()
+                setattr(self, attribute, records)
+            records[key] = {**value, **(_event_identity(event) if attribute == '_diagnoses_by_event' else {'event': dict(event)})}
+            records.move_to_end(key)
+            while len(records) > 100:
+                records.popitem(last=False)
 
     def _on_diagnosis_progress(self, diagnosis: Dict[str, Any], generation: int, event: Dict[str, Any]) -> None:
         """回查期间立即显示真实状态；旧事件不能覆盖当前故障。"""
 
         with self.lock:
             device_id = str(event.get("device_id") or "")
-            if generation != self._diagnosis_generation or self._diagnosis_events_by_device.get(device_id) != event:
+            if generation != self._diagnosis_generation or not self._tracks_fault(event):
                 return
-            self.latest_diagnoses_by_device[device_id] = diagnosis
+            self._remember_fault(event, diagnosis=diagnosis)
+            if self._diagnosis_events_by_device.get(device_id) == event:
+                self.latest_diagnoses_by_device[device_id] = {**diagnosis, **_event_identity(event)}
             if self._latest_diagnosis_event == event:
                 self.latest_diagnosis = diagnosis
 
@@ -585,10 +625,12 @@ class MonitorWebState:
         """已生成的方案立即显示；阶段结果不冒充整流程完成或触发派工。"""
         with self.lock:
             device_id = str(event.get('device_id') or '')
-            if generation != self._diagnosis_generation or self._diagnosis_events_by_device.get(device_id) != event:
+            if generation != self._diagnosis_generation or not self._tracks_fault(event):
                 return
             progress = {**pipeline, 'event':dict(event), 'status':'running'}
-            self.latest_pipelines_by_device[device_id] = progress
+            self._remember_fault(event, pipeline=progress)
+            if self._diagnosis_events_by_device.get(device_id) == event:
+                self.latest_pipelines_by_device[device_id] = progress
             if self._latest_diagnosis_event == event:
                 self.latest_pipeline = progress
 
@@ -621,24 +663,29 @@ class MonitorWebState:
                 or diagnosis.get("device_id")
                 or ""
             ).strip()
-            if event and self._diagnosis_events_by_device.get(device_id) != event:
+            if event and not self._tracks_fault(event):
                 return
-            previous = self.latest_diagnoses_by_device.get(device_id) or {}
+            current = not event or self._diagnosis_events_by_device.get(device_id) == event
+            key = _diagnosis_event_key(event or {})
+            previous = getattr(self, '_diagnoses_by_event', {}).get(key) or (self.latest_diagnoses_by_device.get(device_id) if current else {}) or {}
             if diagnosis.get("status") == "failed" and previous.get("status") in {"completed", "fallback"}:
                 # 诊断已完成与整流程 HTTP 失败是两件事，后者不能擦掉前者的正文。
                 diagnosis = {**previous, "workflow_status": "unknown", "error": diagnosis.get("error", "后续流程结果未返回")}
-                prior_pipeline = self.latest_pipelines_by_device.get(device_id) or {}
+                prior_pipeline = getattr(self, '_pipelines_by_event', {}).get(key) or (self.latest_pipelines_by_device.get(device_id) if current else {}) or {}
                 pipeline = {**prior_pipeline, "event": dict(event or {}), "status": "unknown", "diagnosis": diagnosis,
                             "stop_reason": "agent_response_unavailable"}
             # 原始事件是可信归属；不依赖模型是否在正文中返回报警编号。
             diagnosis.update(_event_identity(event or {}))
-            if not getattr(self, "_latest_diagnosis_event", {}) or self._latest_diagnosis_event == event:
+            pipeline = {**pipeline, 'event': dict(event or {}), 'diagnosis': diagnosis}
+            self._remember_fault(event or {}, diagnosis=diagnosis, pipeline=pipeline)
+            if current and (not getattr(self, "_latest_diagnosis_event", {}) or self._latest_diagnosis_event == event):
                 self.latest_diagnosis = diagnosis
                 self.latest_pipeline = pipeline
-            if device_id:
+            if device_id and current:
                 self.latest_diagnoses_by_device[device_id] = diagnosis
                 self.latest_pipelines_by_device[device_id] = pipeline
             self.diagnosis_history.appendleft(diagnosis)
+            getattr(self, '_diagnosis_events_by_id', {}).pop(key, None)
 
     def _diagnosis_snapshot(self) -> Dict[str, Any]:
         """返回诊断智能体当前状态，供页面实时展示。"""
@@ -648,6 +695,9 @@ class MonitorWebState:
                 "pending": self.diagnosis_pending,
                 "latest": self.latest_diagnosis,
                 "latest_by_device": dict(self.latest_diagnoses_by_device),
+                "by_event": dict(getattr(self, '_diagnoses_by_event', {})),
+                "pipeline_by_event": {key: compact_public_pipeline(value)
+                    for key, value in getattr(self, '_pipelines_by_event', {}).items()},
                 "pipeline_by_device": {
                     device_id: compact_public_pipeline(pipeline)
                     for device_id, pipeline in self.latest_pipelines_by_device.items()
@@ -662,6 +712,9 @@ class MonitorWebState:
                 "summary": "诊断智能体正在分析" if self.diagnosis_pending else "等待异常事件",
             },
             "latest_by_device": dict(self.latest_diagnoses_by_device),
+            "by_event": dict(getattr(self, '_diagnoses_by_event', {})),
+            "pipeline_by_event": {key: compact_public_pipeline(value)
+                for key, value in getattr(self, '_pipelines_by_event', {}).items()},
             "pipeline_by_device": {
                 device_id: compact_public_pipeline(pipeline)
                 for device_id, pipeline in self.latest_pipelines_by_device.items()
@@ -752,6 +805,9 @@ class MonitorWebState:
             self.latest_diagnoses_by_device.clear()
             self.latest_pipelines_by_device.clear()
             self._diagnosis_events_by_device.clear()
+            getattr(self, '_diagnosis_events_by_id', {}).clear()
+            getattr(self, '_diagnoses_by_event', {}).clear()
+            getattr(self, '_pipelines_by_event', {}).clear()
             self._latest_diagnosis_event = {}
             self.diagnosis_history.clear()
             self.diagnosis_pending = 0
@@ -870,7 +926,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         cad_write = (
             method != "GET"
             and path_parts[:2] == ["api", "cad"]
-            and len(path_parts) > 2 and path_parts[2] == "freecad"
+            and len(path_parts) > 2 and path_parts[2] in {"text-to-cad", "freecad"}
         )
         production_write = method != 'GET' and path_parts[:3] == ['api', 'production', 'virtual']
         expert_write = method != 'GET' and path_parts[:2] == ['api', 'expert']

@@ -1,23 +1,6 @@
 name: industry-agent-infra
 
 services:
-  rabbitmq:
-    image: rabbitmq:4.1-management
-    restart: unless-stopped
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-industry}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD for local broker}
-    ports:
-      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
-      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-
   mysql:
     image: mysql:8.4
     restart: unless-stopped
@@ -202,6 +185,14 @@ services:
       RAG_INTERNAL_TOKEN: ${RAG_INTERNAL_TOKEN:-}
       BACKEND_INTERNAL_TOKEN: ${BACKEND_INTERNAL_TOKEN:-}
       MCP_CAD_URL: http://cad-service:8050
+      CADGEN_PYTHON: /usr/local/bin/python
+      CADGEN_NODE: /usr/local/bin/node
+      CADGEN_CACHE_DIR: /app/.runtime/text-to-cad-cache
+      CADGEN_DAEMON: "0"
+      CADGEN_COMPONENT_WORKERS: "1"
+      CAD_DOCUMENTS_ENABLED: ${CAD_DOCUMENTS_ENABLED:-false}
+      TEXT_TO_CAD_ARTIFACT_ROOT: /app/.runtime/cad-models
+      TEXT_TO_CAD_DOCUMENT_ARTIFACT_ROOT: /app/output/freecad-documents
       BACKEND_SERVICE_BASE_URL: http://backend-service:8030
       MCP_MES_URL: http://backend-service:8030
       MCP_INVENTORY_URL: http://backend-service:8030
@@ -218,14 +209,8 @@ services:
       ALLOW_DEGRADED_STORAGE: ${ALLOW_DEGRADED_STORAGE:-false}
       RAG_ALLOW_LOCAL_FALLBACK: ${RAG_ALLOW_LOCAL_FALLBACK:-false}
       AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
-      AGENT_EVENT_TRANSPORT: rabbitmq
-      RABBITMQ_URL: ${RABBITMQ_URL:?set RABBITMQ_URL with an encoded password and rabbitmq hostname}
-      AGENT_EVENT_PARTITIONS: ${AGENT_EVENT_PARTITIONS:-16}
-      AGENT_EVENT_WORKERS: ${AGENT_EVENT_WORKERS:-4}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318/v1/traces
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       backend-service:
         condition: service_healthy
       model-service:
@@ -240,6 +225,7 @@ services:
         condition: service_healthy
     volumes:
       - agent-runtime-data:/app/.runtime
+      - agent-output-data:/app/output
     ports:
       - "127.0.0.1:${AGENT_PORT:-8010}:8010"
     healthcheck:
@@ -247,6 +233,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  cad-document-worker:
+    profiles: ["cad-documents"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.agent
+    init: true
+    restart: on-failure
+    command: ["python", "scripts/text_to_cad_document_worker.py"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      BACKEND_SERVICE_BASE_URL: http://backend-service:8030
+      BACKEND_INTERNAL_TOKEN: ${BACKEND_INTERNAL_TOKEN:-}
+      CADGEN_PYTHON: /usr/local/bin/python
+      CADGEN_NODE: /usr/local/bin/node
+      CADGEN_CACHE_DIR: /app/.runtime/text-to-cad-cache
+      CADGEN_DAEMON: "0"
+      CADGEN_COMPONENT_WORKERS: "1"
+      CAD_DOCUMENTS_ENABLED: ${CAD_DOCUMENTS_ENABLED:-false}
+      CAD_WORKER_LOCK: /app/.runtime/cad-document-worker.lock
+      TEXT_TO_CAD_ARTIFACT_ROOT: /app/.runtime/cad-models
+      TEXT_TO_CAD_DOCUMENT_ARTIFACT_ROOT: /app/output/freecad-documents
+    depends_on:
+      backend-service:
+        condition: service_healthy
+    volumes:
+      - agent-runtime-data:/app/.runtime
+      - agent-output-data:/app/output
 
   agent-migrate:
     profiles: ["migrate"]
@@ -368,8 +382,8 @@ services:
       - "127.0.0.1:${MODEL_PORT:-8040}:8040"
 
 volumes:
-  rabbitmq-data:
   agent-runtime-data:
+  agent-output-data:
   mysql-data:
   redis-data:
   etcd-data:

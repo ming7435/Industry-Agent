@@ -6,7 +6,7 @@ def test_worker_is_launched_only_with_document_feature(monkeypatch):
     assert start_all.cad_document_worker_service({'FREECAD_DOCUMENTS_ENABLED':'false'}) is None
     entry=start_all.cad_document_worker_service({'FREECAD_DOCUMENTS_ENABLED':'true'})
     assert entry[0]=='cad-document-worker'
-    assert entry[1][-1].replace('\\','/').endswith('/scripts/freecad_document_worker.py')
+    assert entry[1][-1].replace('\\','/').endswith('/scripts/text_to_cad_document_worker.py')
 
 
 def test_successful_duplicate_worker_does_not_tear_down_app_services():

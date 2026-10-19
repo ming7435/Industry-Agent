@@ -26,22 +26,25 @@ class CADAgent(BaseAgent):
     def query_bom(self, query: str, device_id: str = "") -> CADResult:
         return self.run({"query": query, "device_id": device_id})
 
-    def run_freecad(self, prompt: str, *, run_id: str, client: Any,
+    def run_text_to_cad(self, prompt: str, *, run_id: str, client: Any,
                     model: Any = None, spec: dict[str, Any] | None = None) -> dict[str, Any]:
         """本地建模复用 CAD 图、建模节点及技能工具调度。"""
         context = {"agent": "cad", "node": "model_3d", "run_type": "cad_modeling", "agent_run_id": run_id}
         with self.tools.trace_context(task_id=run_id, trace_id=run_id, context=context):
             output = self.graph.invoke({
                 "agent": self, "operation": "production_modeling",
-                "freecad_client": client, "model_client": model,
+                "text_to_cad_client": client, "model_client": model,
                 "request": {"prompt": prompt, "task_id": run_id, "trace_id": run_id,
-                    "operation": "production_modeling", "provider": "freecad", "spec": spec},
+                    "operation": "production_modeling", "provider": "text-to-cad", "spec": spec},
             })
         result = output.get("result")
         if not isinstance(result, dict):
             raise RuntimeError("CAD 建模节点未生成结构化结果")
         return {**result, "execution": {**output.get("modeling_execution", {}),
             "step_history": list(output.get("step_history") or [])}}
+
+    # Old callers retain their public method while every execution uses Text-to-CAD.
+    run_freecad = run_text_to_cad
 
     def run(self, task: Any) -> CADResult:
         if isinstance(task, dict) and task.get('operation') == 'virtual_production':

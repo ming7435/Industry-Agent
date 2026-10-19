@@ -9,7 +9,7 @@ export default function WorkbenchMenuBar({onNew,onSave,onRefresh,onProperties,on
     工作台:[['三视图与工程图',()=>onSpec?.('drawing'),!canSpec],['工程图与剖视图',()=>onSpec?.('section'),!canSpec],['钣金折弯与展开',()=>onSpec?.('sheetmetal'),!canSpec],['转动关节与装配运动',()=>onSpec?.('motion'),!canSpec],['BIM 墙、楼板与门洞',()=>onSpec?.('bim'),!canSpec]],
     工具:[['查看完整命令目录',revealCatalog]],
     帮助:[['查看命令接入状态',revealCatalog]]};
-  return <div className="cad-workbench-menubar" role="menubar" aria-label="FreeCAD 建模菜单" onKeyDown={e=>{if(e.key==='Escape'){setOpen('');e.currentTarget.querySelector('[aria-expanded=true]')?.focus();}}}>
-    <strong>FreeCAD</strong>{Object.entries(menus).map(([name,items])=><div key={name}><button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={open===name} onClick={()=>setOpen(open===name?'':name)}>{name}</button>{open===name&&<div role="menu" aria-label={name}>{items.map(([label,callback,disabled])=><button key={label} role="menuitem" type="button" disabled={disabled} onClick={()=>{setOpen('');callback?.();}}>{label}</button>)}</div>}</div>)}<span>通过 MCP 调用内核</span>
+  return <div className="cad-workbench-menubar" role="menubar" aria-label="Text-to-CAD 建模菜单" onKeyDown={e=>{if(e.key==='Escape'){setOpen('');e.currentTarget.querySelector('[aria-expanded=true]')?.focus();}}}>
+    <strong>Text-to-CAD</strong>{Object.entries(menus).map(([name,items])=><div key={name}><button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={open===name} onClick={()=>setOpen(open===name?'':name)}>{name}</button>{open===name&&<div role="menu" aria-label={name}>{items.map(([label,callback,disabled])=><button key={label} role="menuitem" type="button" disabled={disabled} onClick={()=>{setOpen('');callback?.();}}>{label}</button>)}</div>}</div>)}<span>本地参数化建模</span>
   </div>;
 }

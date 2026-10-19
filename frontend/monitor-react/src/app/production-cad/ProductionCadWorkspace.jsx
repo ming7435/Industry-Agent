@@ -35,7 +35,7 @@ const quickExamples = [
   { ...designTemplates.flange, label: '法兰轴套' },
 ];
 
-const artifactLabels = { 'model.stl': 'STL', 'model.step': 'STEP', 'model.FCStd': 'FCStd', 'model.fcstd': 'FCStd',
+const artifactLabels = { 'model.py': 'Python 源文件', 'model.stl': 'STL', 'model.step': 'STEP', 'model.FCStd': 'FCStd', 'model.fcstd': 'FCStd',
   'drawing.svg': '工程图 SVG', 'drawing.pdf': '工程图 PDF', 'unfold.svg': '展开 SVG', 'unfold.dxf': '展开 DXF', 'motion.json': '运动帧 JSON' };
 
 function DimensionButtons({ dimensions, onEdit }) {
@@ -48,7 +48,7 @@ function DrawingPreview({ artifact, title, dimensions, onEdit, editProps }) {
     <figcaption>{title}</figcaption>
     {state === 'loading' && <p role="status">正在读取{title}…</p>}
     {state === 'error' ? <p className="cad-run-error" role="alert">{title}加载失败，请刷新结果或下载文件核对。</p> :
-      <div className="cad-drawing-stage"><img src={artifact.url} alt={`FreeCAD ${title}`} onLoad={() => setState('ready')} onError={() => setState('error')} />
+      <div className="cad-drawing-stage"><img src={artifact.url} alt={`Text-to-CAD ${title}`} onLoad={() => setState('ready')} onError={() => setState('error')} />
         {state === 'ready' && editProps && <InlineDimensionEditor {...editProps} kind="drawing" />}</div>}
     {onEdit && <DimensionButtons dimensions={dimensions} onEdit={onEdit} />}
   </figure>;
@@ -75,7 +75,7 @@ export default function ProductionCadWorkspace() {
     <div className="production-cad"><details className="cad-modeling-more"><summary>高级功能</summary>
       <p>日常建模直接使用上面的需求输入和尺寸编辑。文档结构、工作台命令与接入状态保留在这里。</p>
       {enabled&&mode!=='document'&&<button type="button" onClick={()=>setMode('document')}>打开专业文档编辑器</button>}
-      {capabilities?.items?.length>0&&<details className="cad-card"><summary>FreeCAD 功能与接入状态</summary><section aria-label="FreeCAD 能力目录"><p>安装工作台不等于已接入网页。当前内核：{capabilities.version_fingerprint?.slice(0,12)||'未确认'}；AI 验证状态单独显示。</p>{capabilities.items.map(item=><div key={item.capability_id}><strong>{names[item.capability_id]||item.module}</strong> · {item.manual_verified?'已验证可用':!item.installed?'缺少依赖':item.web_adapter?'已接入待验证':'待接入'} · AI {item.ai_verified?'已验证':'未验证'}{item.disabled_reason&&<p>{item.disabled_reason}</p>}</div>)}</section></details>}
+      {capabilities?.items?.length>0&&<details className="cad-card"><summary>Text-to-CAD 功能与接入状态</summary><section aria-label="Text-to-CAD 能力目录"><p>安装工作台不等于已接入网页。当前内核：{capabilities.version_fingerprint?.slice(0,12)||'未确认'}；AI 验证状态单独显示。</p>{capabilities.items.map(item=><div key={item.capability_id}><strong>{names[item.capability_id]||item.module}</strong> · {item.manual_verified?'已验证可用':!item.installed?'缺少依赖':item.web_adapter?'已接入待验证':'待接入'} · AI {item.ai_verified?'已验证':'未验证'}{item.disabled_reason&&<p>{item.disabled_reason}</p>}</div>)}</section></details>}
     </details></div>
   </>;
 }
@@ -143,7 +143,7 @@ function LegacyProductionCadWorkspace() {
         if (record.status === "running") timer = window.setTimeout(poll, 1500);
       } catch (failure) {
         if (abort.signal.aborted || version !== readVersion.current) return;
-        setError(failure.status === 404 ? "本次运行记录暂未找到。请确认本地 FreeCAD 状态后刷新查询。" : failure.message);
+        setError(failure.status === 404 ? "本次运行记录暂未找到。请确认本地 Text-to-CAD 状态后刷新查询。" : failure.message);
         setRun((value) => ({ ...value, status: "outcome_unknown" }));
       }
     };
@@ -303,7 +303,7 @@ function LegacyProductionCadWorkspace() {
         </details>
         <div className="cad-actions"><button type="submit" className="cad-primary" disabled={!connected || !supported || locked || !partNumberValid || !draftValid || !prompt.trim() || Boolean(specText.trim() && !confirmed)}>{busy === "submit" ? "正在提交…" : pending ? "正在生成模型…" : "生成 3D 模型"}</button></div>
         {!stl && <p className="cad-storage-note">生成后点击图上的“图上编辑”，直接改尺寸或拖动端点；核对后应用修改。设计文件不代表生产放行，不会启动机器。</p>}
-        <details className="cad-expert-options"><summary>设计范围与使用说明</summary><p className="cad-review-note">支持基础实体、齿轮、圆角、倒角、放样、工程图、关节装配、单折弯钣金和基础建筑。外螺纹为实验功能；装配未进行运动碰撞和强度验收，建筑未进行结构安全验收。下载 FCStd 可在 FreeCAD 继续编辑；设计生成不会启动机器。修改版本记录保存在当前浏览器会话，运行记录过期后仍可保留已下载的文件。</p></details>
+        <details className="cad-expert-options"><summary>设计范围与使用说明</summary><p className="cad-review-note">支持基础实体、齿轮、圆角、倒角、放样、工程图、关节装配、单折弯钣金和基础建筑。外螺纹为实验功能；装配未进行运动碰撞和强度验收，建筑未进行结构安全验收。下载 Python 源文件可重建模型，STEP 可在 CAD 软件中继续使用；设计生成不会启动机器。修改版本记录保存在当前浏览器会话，运行记录过期后仍可保留已下载的文件。</p></details>
       </form>
       </details>
     </section>
@@ -314,13 +314,13 @@ function LegacyProductionCadWorkspace() {
       <div className="cad-actions"><button type="button" disabled={Boolean(busy)} onClick={refresh}>{busy === "refresh" ? "正在刷新…" : "刷新结果"}</button>{stl && run.spec?.units === 'mm' && <button type="button" className="cad-primary" disabled={locked} onClick={() => editCurrent()}>修改设计</button>}
         {versions.length > 0 && <label className="cad-version-label">设计版本<select aria-label="设计版本" value={versions.some((item) => item.run_id === run.run_id) ? run.run_id : ''} disabled={locked} onChange={(event) => selectVersion(event.target.value)}><option value="" disabled>正在生成新版本</option>{versions.map((item, index) => <option key={item.run_id} value={item.run_id}>{item.part_name || `${validFreeCadPartNumber(item.part_number) ? '零件' : '设计短号'} ${freeCadDisplayNumber(item)}`} · 版本 {index + 1} · {new Date(item.created_at * 1000).toLocaleTimeString('zh-CN')}</option>)}</select></label>}</div>
       <details className="cad-design-brief"><summary>查看设计要求</summary><p className="cad-submitted-prompt">{run.prompt}</p></details>
-      {pending && <p role="status">正在等待 FreeCAD 实际执行结果。可以稍后回到此页继续查询。</p>}
-      {unknown && <div className="cad-alert"><p>尚未确认本次执行结果。请先刷新查询；如已在本地 FreeCAD 核对，可开始新需求。</p><button type="button" disabled={Boolean(busy)} onClick={startNew}>已核对，开始新需求</button></div>}
+      {pending && <p role="status">正在等待 Text-to-CAD 实际执行结果。可以稍后回到此页继续查询。</p>}
+      {unknown && <div className="cad-alert"><p>尚未确认本次执行结果。请先刷新查询；如已在本地 Text-to-CAD 核对，可开始新需求。</p><button type="button" disabled={Boolean(busy)} onClick={startNew}>已核对，开始新需求</button></div>}
       {run.error && <p className="cad-run-error" role="alert">{String(run.error)}</p>}
-      {run.answer && !stl && <p className="cad-result-text">{run.answer}</p>}
+      {run.answer && !stl && String(run.answer).trim() !== String(run.error ?? '').trim() && <p className="cad-result-text">{run.answer}</p>}
       {stl ? <>
         <div className="cad-validation"><span>模型检查通过</span>{Array.isArray(run.validation.bounds_mm) && <span>外形尺寸 {run.validation.bounds_mm.map((value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })).join(" × ")} mm</span>}</div>
-        {motion && <p className="cad-read-notice">播放的是 FreeCAD 关节求解生成的运动帧；尚未进行运动全过程的碰撞或强度验收。</p>}
+        {motion && <p className="cad-read-notice">播放的是 Text-to-CAD 关节求解生成的运动帧；尚未进行运动全过程的碰撞或强度验收。</p>}
         <p className="cad-storage-note">生成后点击图上的“图上编辑”，直接改尺寸或拖动端点；核对后应用修改。设计文件不代表生产放行，不会启动机器。</p>
         <Suspense fallback={<p role="status">正在加载三维查看器…</p>}><FreeCadModelViewer key={stl.url} url={stl.url} motionUrl={motion?.url} editProps={directProps && { ...directProps, onValidityChange: modelValidity }} dimensionControls={!locked && <DimensionButtons dimensions={dimensions} onEdit={editCurrent} />} /></Suspense>
         {revision?.run_id === run.run_id && <section id="cad-design-edit" className="cad-edit-design" aria-label="修改当前设计">

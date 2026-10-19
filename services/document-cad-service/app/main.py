@@ -59,7 +59,10 @@ def query_part(query: str = "", component: str = "", part_no: str = "", device_i
 
 def query_bom(query: str = "", component: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, tenant_id: str = "", project_id: str = "", **_: Any) -> Dict[str, Any]:
     matched = _match(query or component or part_no, device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version, include_history=include_history, component_id=component, part_no=part_no, tenant_id=tenant_id, project_id=project_id)
-    return {"query": query or component or part_no, "bom_items": [_bom(item) for item in matched], "engineering_status": "ready" if any(item.get("bom_items") for item in matched) else "insufficient_engineering_data", **_response_meta()}
+    status = _engineering_status(matched)
+    if status == 'ready' and not any(item.get('bom_items') for item in matched):
+        status = 'insufficient_engineering_data'
+    return {"query": query or component or part_no, "bom_items": [_bom(item) for item in matched], "engineering_status": status, **_response_meta()}
 
 
 def query_drawing(query: str = "", component: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, tenant_id: str = "", project_id: str = "", reference_only: bool = False, **_: Any) -> Dict[str, Any]:
@@ -73,7 +76,11 @@ def query_drawing(query: str = "", component: str = "", part_no: str = "", devic
             # 整机文件不带部件或租户归属；这些限定不能悄悄忽略。
             drawings = [] if any((component, part_no, tenant_id, project_id, _.get('component_id'))) else repository.search_device_drawings(
                 device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version)
+            association = repository.device_association_summary(device_id=device_id, device_model=device_model,
+                drawing_id=drawing_id, version=version) if hasattr(repository, 'device_association_summary') and not any(
+                    (component, part_no, tenant_id, project_id, _.get('component_id'))) else None
             return {'drawings':drawings, 'device_id':device_id, 'catalog_backend':'mysql-device-drawings',
+                    **({'association_summary': association} if association is not None else {}),
                     'engineering_status':'reference_only' if drawings else 'insufficient_engineering_data', **_response_meta()}
         except CADRepositoryError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
@@ -82,7 +89,7 @@ def query_drawing(query: str = "", component: str = "", part_no: str = "", devic
         device_id=device_id, device_model=device_model, drawing_id=drawing_id, version=version,
         tenant_id=tenant_id, project_id=project_id, component=component, part_no=part_no)
     return {"query": query or component or part_no, "drawings": drawings,
-            "engineering_status": "ready" if matched else "reference_only" if drawings else "insufficient_engineering_data", **_response_meta()}
+            "engineering_status": _engineering_status(matched, drawings), **_response_meta()}
 
 
 def query_relation(query: str = "", component: str = "", component_id: str = "", part_no: str = "", device_id: str = "", device_model: str = "", drawing_id: str = "", version: str = "", include_history: bool = False, tenant_id: str = "", project_id: str = "", **_: Any) -> Dict[str, Any]:
@@ -96,7 +103,7 @@ def fetch_engineering_record(query: str = "", component: str = "", part_no: str 
     relations = [relation for item in matched for relation in (item.get("part_relations") or [])]
     drawings = [_drawing(item) for item in matched] if matched else _reference_drawings(component=component, part_no=part_no, **arguments)
     return {"query": query or component or part_no, "device_id": arguments.get("device_id", ""), "components": matched, "drawings": drawings, "bom_items": [_bom(item) for item in matched], "assembly_relations": relations, "part_relations": relations, "locations": [_location(item) for item in matched if item.get("installation_location") or item.get("position")],
-            "engineering_status": "ready" if matched else "reference_only" if drawings else "insufficient_engineering_data", **_response_meta()}
+            "engineering_status": _engineering_status(matched, drawings), **_response_meta()}
 
 
 def _reference_drawings(device_id: str = '', device_model: str = '', **filters: Any) -> list[Dict[str, Any]]:
@@ -129,9 +136,20 @@ def _match(query: str, **filters: Any) -> list[Dict[str, Any]]:
 
 
 def _bom(item: Mapping[str, Any]) -> Dict[str, Any]:
+    provenance = {key: item[key] for key in ('metadata', 'evidence_scope', 'engineering_status', 'source_kind', 'source_path') if key in item}
     if not item.get("bom_items"):
-        return {"component_id": item.get("component_id", ""), "part_no": item.get("part_no", ""), "part_identity_status": item.get("part_identity_status", "unknown"), "name": item.get("name", ""), "quantity": item.get("quantity", 0), "material": item.get("material", ""), "drawing_ref": item.get("drawing_ref", ""), "status": "insufficient_engineering_data"}
-    return {"component_id": item["component_id"], "part_no": item["part_no"], "name": item["name"], "quantity": item["quantity"], "material": item["material"], "drawing_ref": item["drawing_ref"], "items": list(item["bom_items"])}
+        return {"component_id": item.get("component_id", ""), "part_no": item.get("part_no", ""), "part_identity_status": item.get("part_identity_status", "unknown"), "name": item.get("name", ""), "quantity": item.get("quantity", 0), "material": item.get("material", ""), "drawing_ref": item.get("drawing_ref", ""), "status": "insufficient_engineering_data", **provenance}
+    return {"component_id": item["component_id"], "part_no": item["part_no"], "name": item["name"], "quantity": item["quantity"], "material": item["material"], "drawing_ref": item["drawing_ref"], "items": list(item["bom_items"]), **provenance}
+
+
+def _engineering_status(items, drawings=()):
+    def reference(item):
+        metadata = item.get('metadata') if isinstance(item.get('metadata'), Mapping) else {}
+        return any(value.get('engineering_status') == 'reference_only'
+                   or value.get('evidence_scope') == 'device_reference' for value in (item, metadata))
+    if any(not reference(item) for item in items):
+        return 'ready'
+    return 'reference_only' if items or drawings else 'insufficient_engineering_data'
 
 
 def _drawing(item: Mapping[str, Any]) -> Dict[str, Any]:

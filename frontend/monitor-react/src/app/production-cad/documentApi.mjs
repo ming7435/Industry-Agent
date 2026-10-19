@@ -1,6 +1,6 @@
 import {request as defaultRequest} from '../apiRequest.mjs';
 export function createDocumentApi(request=defaultRequest) {
-  const prefix='/api/cad/freecad', id=encodeURIComponent;
+  const prefix='/api/cad/text-to-cad', id=encodeURIComponent;
   const call=async(path,options={})=>{
     try {return await request(prefix+path,{credentials:'same-origin',cache:'no-store',...options});}
     catch(error) {if(error.name!=='AbortError'&&options.method==='POST'&&(!error.status||error.status>=500)) error.outcomeUnknown=true; throw error;}

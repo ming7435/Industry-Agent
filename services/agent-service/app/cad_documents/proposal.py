@@ -30,8 +30,8 @@ def observed_cad_call(operation, *args, trace=None):
     return result
 
 
-def resolve_freecad_spec(prompt,model,explicit_spec=None):
-    from app.tools.cad.freecad_mcp import validate_spec
+def resolve_text_to_cad_spec(prompt,model,explicit_spec=None):
+    from app.tools.cad.text_to_cad import validate_spec
     from app.agents.cad.graph import (_explicit_advanced_spec,_explicit_tetrahedron_spec,
                                      _explicit_cylinder_spec,_explicit_box_spec,_dimensions_are_explicit)
     if explicit_spec is not None: return {'status':'ready','spec':validate_spec(explicit_spec)}
@@ -45,8 +45,8 @@ def resolve_freecad_spec(prompt,model,explicit_spec=None):
         response=model.chat([{'role':'system','content':skill.document},{'role':'user','content':json.dumps({'prompt':prompt},ensure_ascii=False)}])
         value=json.loads(response['choices'][0]['message']['content'])
         if not isinstance(value,dict) or set(value)-{'status','spec','questions'}:
-            from app.tools.cad.freecad_mcp import FreeCADModelError
-            raise FreeCADModelError('模型只允许返回严格规格或补充问题，不接受代码或额外字段')
+            from app.tools.cad.text_to_cad import TextToCadModelError
+            raise TextToCadModelError('模型只允许返回严格规格或补充问题，不接受代码或额外字段')
         if value.get('status')=='needs_input':
             questions=value.get('questions')
             if not isinstance(questions,list) or not 1<=len(questions)<=10 or any(not isinstance(q,str) or not q.strip() or len(q)>500 for q in questions):
@@ -73,7 +73,7 @@ def propose_document_command(head,snapshot,prompt,model=None):
         fields={'长度':'length','宽度':'width','高度':'height','直径':'diameter','底径':'bottom_diameter','顶径':'top_diameter'}
         command={'command_type':'set_primitive_dimensions','parameters':{'object_id':targets[0].object_id,'dimensions':{fields[field]:float(number)}}}
     else:
-        value=resolve_freecad_spec(prompt,model)
+        value=resolve_text_to_cad_spec(prompt,model)
         if value['status']!='ready': return value
         spec=value['spec'];operations=spec.get('operations',[])
         if len(operations)==1 and set(spec)=={'units','operations'} and operations[0]['type'] in PRIMITIVE_MODELS:
@@ -90,3 +90,8 @@ def propose_document_command(head,snapshot,prompt,model=None):
 
 def document_proposal_tool(head,snapshot,prompt):
     return propose_document_command(head,snapshot,prompt,None)
+
+
+# Stable Python entry points for callers and historical skill contracts.
+resolve_freecad_spec = resolve_text_to_cad_spec
+text_to_cad_document_proposal = document_proposal_tool

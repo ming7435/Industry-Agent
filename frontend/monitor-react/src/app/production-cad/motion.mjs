@@ -71,7 +71,7 @@ export function validateMotionData(value) {
 }
 
 export function validateMotionUrl(value, modelUrl) {
-  const artifact = /^\/api\/cad\/freecad\/runs\/(FC-[a-f0-9]{64})\/artifacts\/(motion\.json|model\.stl)$/;
+  const artifact = /^\/api\/cad\/(?:text-to-cad|freecad)\/runs\/(FC-[a-f0-9]{64})\/artifacts\/(motion\.json|model\.stl)$/;
   const motion = typeof value === 'string' && value.match(artifact);
   const model = typeof modelUrl === 'string' && modelUrl.match(artifact);
   if (!motion || !model || motion[2] !== 'motion.json' || model[2] !== 'model.stl' || motion[1] !== model[1]) {

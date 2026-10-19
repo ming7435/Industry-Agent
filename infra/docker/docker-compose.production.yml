@@ -23,6 +23,11 @@ services:
       MODEL_SERVICE_BASE_URL: http://model-service:8040
       FACTORY_API_BASE_URL: ${FACTORY_API_BASE_URL:?set a reachable private factory URL}
 
+  cad-document-worker:
+    environment:
+      APP_ENV: production
+      BACKEND_INTERNAL_TOKEN: ${BACKEND_INTERNAL_TOKEN:?set BACKEND_INTERNAL_TOKEN}
+
   rag-service:
     environment:
       RAG_INTERNAL_TOKEN: ${RAG_INTERNAL_TOKEN:?set RAG_INTERNAL_TOKEN}

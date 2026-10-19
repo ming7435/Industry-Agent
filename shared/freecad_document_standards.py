@@ -1,5 +1,5 @@
 """Nominal design parameters; never substitutes design values for observations."""
-from shared.freecad_documents import StandardParameters, canonical_digest, verify_document_standard, DIMENSIONS, PRIMITIVE_TYPES
+from shared.freecad_documents import StandardParameters, canonical_digest, verify_document_standard, DIMENSIONS, primitive_type
 
 __all__ = ['StandardParameters', 'verify_document_standard']
 
@@ -23,7 +23,7 @@ def build_document_standard(snapshot, run_id):
     else:
         for obj in snapshot.objects:
             if obj.object_id not in snapshot.product_root_ids: continue
-            primitive=next((k for k,v in PRIMITIVE_TYPES.items() if v==obj.type_id),None)
+            primitive=primitive_type(obj.type_id)
             if primitive is None:
                 uncovered.append(dict(key=obj.object_id+'.features',name=obj.label+' · 未适配特征',object_id=obj.object_id,
                                       expected=None,unit='—',kind='unknown',source_property='Shape',frame='local',comparable=False))
@@ -32,10 +32,10 @@ def build_document_standard(snapshot, run_id):
                 if prop.name in DIMENSIONS[primitive]:
                     parameters.append(row(obj.object_id+'.'+prop.name,obj.label+' · '+prop.name,prop.value,'mm','number',obj.object_id,prop.name))
                 elif prop.name=='position':
-                    for i,v in enumerate(prop.value): parameters.append(row(obj.object_id+'.position.'+str(i),obj.label+' · '+'XYZ'[i]+'位置',v,'mm','number',obj.object_id,'Placement.Base.'+'xyz'[i],'world'))
+                    for i,v in enumerate(prop.value): parameters.append(row(obj.object_id+'.position.'+str(i),obj.label+' · '+'XYZ'[i]+'位置',v,'mm','number',obj.object_id,'position.'+str(i),'world'))
                 elif prop.name=='rotation':
-                    parameters.append(row(obj.object_id+'.rotation.angle',obj.label+' · 旋转角度',prop.value['angle'],'deg','number',obj.object_id,'Placement.Rotation.Angle','world'))
-                    for i,v in enumerate(prop.value['axis']): parameters.append(row(obj.object_id+'.rotation.axis.'+str(i),obj.label+' · 旋转轴'+'XYZ'[i],v,'—','number',obj.object_id,'Placement.Rotation.Axis.'+'xyz'[i],'world'))
+                    parameters.append(row(obj.object_id+'.rotation.angle',obj.label+' · 旋转角度',prop.value['angle'],'deg','number',obj.object_id,'rotation.angle','world'))
+                    for i,v in enumerate(prop.value['axis']): parameters.append(row(obj.object_id+'.rotation.axis.'+str(i),obj.label+' · 旋转轴'+'XYZ'[i],v,'—','number',obj.object_id,'rotation.axis.'+str(i),'world'))
     body=dict(schema_version='freecad_document_parameters_v1',document_id=snapshot.document_id,revision=snapshot.revision,
-              run_id=run_id,extractor_version='native-document-1',parameters=parameters,uncovered=uncovered)
+              run_id=run_id,extractor_version='text-to-cad-document-1',parameters=parameters,uncovered=uncovered)
     return verify_document_standard({**body,'digest':canonical_digest(body)})

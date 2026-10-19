@@ -280,6 +280,27 @@ def test_late_callback_does_not_revive_a_cancelled_trial(machine_trial):
     assert value['message'] == '已按用户要求停止测试'
 
 
+def test_blocked_dispatch_exposes_actual_validation_findings_and_terminal_progress(machine_trial):
+    test = machine_trial
+    receipt = start(test)
+    test.trials._save_changes(receipt['test_id'], status='running', event_id='E-NEW')
+    findings = ['缺少匹配故障部件的 CAD/BOM 依据', '备件库存为演示数据，不能作为正式派工依据']
+    stage = {'event': {'event_id': 'E-NEW', 'device_id': 'D-1'}, 'status': 'blocked',
+             'stop_reason': 'replan_limit_exceeded', 'diagnosis': {'status': 'completed', 'summary': '诊断完成'},
+             'maintenance_plan': {'plan_id': 'PLAN-BLOCKED', 'workorder_ready': False,
+                                  'validation_findings': findings, 'repair_steps': ['保持停机并核实工程依据']}}
+    test.trials.runtime.container.event_results = SimpleNamespace(get_result=lambda _: stage, get_stage=lambda _: stage)
+    value = test.trials.get(receipt['test_id'], ACTOR)
+    assert value['status'] == 'failed'
+    assert value['details']['blockers'] == findings
+    assert value['details']['maintenance_plan']['validation_findings'] == findings
+    assert value['details']['maintenance_plan']['workorder_ready'] is False
+    assert value['details']['stop_reason'] == 'replan_limit_exceeded'
+    assert value['progress'][2]['status'] == 'blocked'
+    assert all(item['status'] == 'not_started' for item in value['progress'][3:])
+    assert value['workorders'] == []
+
+
 def test_stale_or_other_machine_event_does_not_claim_draft(machine_trial):
     test = machine_trial
     receipt = start(test)

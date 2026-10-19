@@ -99,6 +99,32 @@ async function readOnlyNote(page) {
   return note;
 }
 
+test('派工校验阻断直接展示原因，终止后后续步骤显示未开始', async () => {
+  const {fixture,page,writes,completions,errors}=await setup();
+  const blockers=['缺少匹配故障部件的 CAD/BOM 依据','备件库存为演示数据，不能作为正式派工依据'];
+  const receipt={test_id:'c'.repeat(32),status:'failed',mode:'machine_flow',workorders:[],
+    machine:{device_id:'D-1',name:'测试车床',alarm_code:'700000'},
+    message:'维修方案未通过派工校验，本轮已停止，请处理下方阻断原因后重新测试',
+    progress:[{label:'智能诊断',completed:true,status:'completed'},{label:'维修方案',completed:true,status:'completed'},
+      {label:'工单派发',completed:false,status:'blocked'},{label:'维修确认',completed:false,status:'not_started'},
+      {label:'整线复机',completed:false,status:'not_started'},{label:'汇总报告',completed:false,status:'not_started'}],
+    details:{blockers,maintenance_plan:{plan_id:'PLAN-BLOCKED',workorder_ready:false,validation_findings:blockers,steps:['保持停机']}}};
+  try {
+    await page.route('**/api/expert/tests/*',route=>respond(route,receipt));
+    await page.goto(fixture.base+'/?view=expert');
+    await page.getByRole('button',{name:'测试修改',exact:true}).click();
+    const reasons=page.getByRole('region',{name:'本轮阻断原因',exact:true});
+    await reasons.waitFor({timeout:5000});
+    for(const text of blockers) assert.equal(await reasons.getByText(text,{exact:true}).count(),1);
+    const progress=page.getByRole('region',{name:'全流程进度',exact:true});
+    assert.match(await progress.innerText(),/工单派发：受阻/);
+    assert.match(await progress.innerText(),/维修确认：未开始/);
+    assert.doesNotMatch(await progress.innerText(),/等待完成/);
+    assert.equal(await page.getByRole('button',{name:'发布到系统',exact:true}).isDisabled(),true);
+    assert.deepEqual(writes,[]);assert.deepEqual(completions,[]);assert.deepEqual(errors,[]);
+  } finally {await fixture.close();}
+});
+
 test('每个技能本周更新三次后禁止再次发布，但仍可运行测试',async()=>{
   const {fixture,page,writes,trials,errors}=await setup({updateQuota:{used:3,remaining:0}});
   try {

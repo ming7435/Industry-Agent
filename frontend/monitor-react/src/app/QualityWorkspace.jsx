@@ -134,7 +134,7 @@ export default function QualityWorkspace() {
     const refresh=async()=>{
       clearTimeout(timer);if(document.visibilityState==='hidden'||readingDirectory)return;readingDirectory=true;
       try {
-        const items=[];let cursor='';do{const page=await request('/api/cad/freecad/designs?limit=100&cursor='+encodeURIComponent(cursor),{signal:abort.signal});if(!Array.isArray(page.items))throw new Error('发布目录返回无效');items.push(...page.items);cursor=page.next_cursor||'';}while(cursor&&!abort.signal.aborted);
+        const items=[];let cursor='';do{const page=await request('/api/cad/text-to-cad/designs?limit=100&cursor='+encodeURIComponent(cursor),{signal:abort.signal});if(!Array.isArray(page.items))throw new Error('发布目录返回无效');items.push(...page.items);cursor=page.next_cursor||'';}while(cursor&&!abort.signal.aborted);
         if(abort.signal.aborted)return;
         const fingerprint=JSON.stringify(items.map(p=>[p.run_id,p.revision,p.standard_parameters?.digest]));
         if(fingerprint!==publishedFingerprint.current) {

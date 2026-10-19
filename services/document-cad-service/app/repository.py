@@ -337,6 +337,38 @@ class MySQLCADRepository:
             value["part_relations"] = relations.get(value["component_id"], [])
         return values
 
+    def device_association_summary(self, *, device_id: str, device_model: str = '',
+                                   drawing_id: str = '', version: str = '') -> dict[str, Any]:
+        """Count persisted reference links for one device, without asserting spare stock."""
+        empty = {'device_id': device_id, 'cad_nodes': 0, 'manual_bom_items': 0,
+                 'parent_links': 0, 'verified_inventory_items': 0}
+        if not device_id.strip():
+            return empty
+        # MySQL's configured collation is case-insensitive. Keep the indexed
+        # predicate and require byte equality before aggregating identities.
+        clauses = ['e.device_id=%s', 'HEX(e.device_id)=HEX(%s)', 'e.entity_type IN (%s,%s)']
+        params: list[Any] = [device_id.strip(), device_id.strip(), 'native_cad_node', 'manual_bom_reference']
+        if device_model:
+            clauses.append("HEX(JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.device_model')))=HEX(%s)")
+            params.append(device_model)
+        if drawing_id:
+            clauses.append("HEX(JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.metadata.device_drawing_id')))=HEX(%s)")
+            params.append(drawing_id)
+        if version:
+            clauses.append('(HEX(d.version_id)=HEX(%s) OR HEX(d.version_label)=HEX(%s))')
+            params.extend([version, version])
+        else:
+            clauses.append('d.is_current=1')
+        rows = self._query("SELECT "
+            "SUM(CASE WHEN e.entity_type='native_cad_node' THEN 1 ELSE 0 END) AS cad_nodes, "
+            "SUM(CASE WHEN e.entity_type='manual_bom_reference' THEN 1 ELSE 0 END) AS manual_bom_items, "
+            "SUM(CASE WHEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.metadata.parent_component_id')),'')<>'' THEN 1 ELSE 0 END) AS parent_links, "
+            "SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(e.raw_json, '$.metadata.inventory_status'))='verified' THEN 1 ELSE 0 END) AS verified_inventory_items "
+            "FROM cad_entities e JOIN cad_drawings d ON d.drawing_id=e.drawing_id WHERE "
+            + ' AND '.join(clauses), tuple(params))
+        row = rows[0] if rows else {}
+        return {**empty, **{key: int(row.get(key) or 0) for key in empty if key != 'device_id'}}
+
     def _relations_for(self, component_id: str) -> list[dict[str, Any]]:
         """Load persisted CAD entity relations when the parser populated them."""
 
@@ -373,9 +405,10 @@ class MySQLCADRepository:
                     metadata = {}
             source = str(row.get("source_entity_id") or "")
             target = str(row.get("target_entity_id") or "")
+            metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
             relation = {
                 "component_id": source or target,
-                "part_no": target,
+                "part_no": str(metadata.get('part_no') or '') if metadata.get('target_identity_kind') == 'cad_component' else target,
                 "relation": str(row.get("relation_type") or ""),
                 "assembly_relation": str(row.get("relation_type") or ""),
                 "location": str(row.get("evidence_text") or ""),
@@ -383,12 +416,12 @@ class MySQLCADRepository:
                 "target_entity_id": target,
                 "relation_type": str(row.get("relation_type") or ""),
                 "evidence_text": str(row.get("evidence_text") or ""),
-                "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
+                "metadata": metadata,
             }
             if source in values:
                 values[source].append(relation)
             if target in values and target != source:
-                values[target].append(relation)
+                values[target].append({**relation, 'component_id': target})
         return values
 
     def count(self) -> int:
@@ -406,6 +439,8 @@ class MySQLCADRepository:
                 raw = {}
         raw = dict(raw) if isinstance(raw, Mapping) else {}
         component_id = str(row.get("entity_id") or raw.get("component_id") or "")
+        metadata = dict(raw['metadata']) if isinstance(raw.get('metadata'), Mapping) else {}
+        metadata.update({key: raw[key] for key in ('evidence_scope', 'engineering_status', 'source_kind', 'source_path') if key in raw})
         return {
             "component_id": component_id,
             "part_no": str(raw.get("part_no") or ""),
@@ -423,7 +458,7 @@ class MySQLCADRepository:
             "current": bool(row.get("is_current", True)),
             "source_format": str(row.get("source_format") or "unknown"),
             "object_ref": str(row.get("object_ref") or ""),
-            "quantity": int(raw.get("quantity") or 1),
+            "quantity": int(raw['quantity']) if raw.get('quantity') is not None else 1,
             "material": str(raw.get("material") or ""),
             "device_id": str(row.get("device_id") or ""),
             "device_model": str(raw.get("device_model") or row.get("device_model") or ""),
@@ -431,6 +466,7 @@ class MySQLCADRepository:
             "project_id": str(raw.get("project_id") or row.get("project_id") or ""),
             "bom_items": list(raw.get("bom_items") or []),
             "part_relations": list(raw.get("part_relations") or []),
+            "metadata": metadata,
             **{key: raw[key] for key in ('drawing_url', 'model_url', 'viewer_url', 'mesh_id', 'mesh_name',
                                         'default_view', 'drawing_type', 'evidence_scope', 'engineering_status',
                                         'source_kind', 'source_path') if key in raw},

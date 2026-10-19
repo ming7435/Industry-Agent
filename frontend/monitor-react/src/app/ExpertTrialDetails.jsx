@@ -34,6 +34,8 @@ export default function ExpertTrialDetails({ trial, actor, formatTime }) {
       <section className="expert-trial-detail">
         <h4>维修方案</h4>
         {plan.plan_id ? <p>方案编号：{plan.plan_id}</p> : <p>本轮尚未生成可读取的维修方案。</p>}
+        {plan.workorder_ready===false && <p>方案已生成，尚未通过派工校验。</p>}
+        {!!plan.validation_findings?.length && <ul>{plan.validation_findings.map((finding,index)=><li key={index}>{finding}</li>)}</ul>}
         {plan.summary && <ExpertDocument value={plan.summary} label="维修方案说明" readOnly />}
         {!!plan.steps?.length && <ol>{plan.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>}
       </section>

@@ -22,13 +22,13 @@ export default function DocumentSpecTasks({snapshot,pending,onSubmit,request}){
   return <section className="cad-spec-tasks" aria-label="规格建模任务">
     <label>建模任务<select value={task} disabled={pending} onChange={e=>{setTask(e.target.value);setDraft(null);setPrepared(null);setConfirmed(false);setError('');}}>{specTasks.map(item=><option key={item.id} value={item.id}>{item.label}{item.current?' · 当前模型':' · 新规格'}</option>)}</select></label>
     <button type="button" disabled={pending||!snapshot} onClick={()=>prepare()}>读取任务参数</button>
-    <p>这些任务通过现有 MCP 规格适配器执行。重建会替换当前工作文档中的对象并生成新修订，历史修订和已发布版本保留；不直接运行原生 GUI 命令。</p>
+    <p>这些任务通过 Text-to-CAD 执行。重建会替换当前工作文档中的对象并生成新修订，历史修订和已发布版本保留。</p>
     {error&&<p role="alert">{error}</p>}{stale&&<p role="alert">工作修订已更新，请重新读取参数并确认。</p>}
     {draft&&<><p>草稿来源：工作修订 {prepared.revision} · {specTasks.find(item=>item.id===task)?.label}</p>
       <DesignParameterEditor key={epoch} spec={draft} onChange={change} disabled={pending||stale} onValidityChange={setValid} idPrefix="document-spec" openAllInitially/>
       <details><summary>核对完整规格（只读）</summary><pre>{JSON.stringify(draft,null,2)}</pre></details>
       <label className="cad-confirm"><input type="checkbox" checked={confirmed} disabled={pending||stale||!valid} onChange={e=>setConfirmed(e.target.checked)}/>我确认按以上参数重建当前文档（生成新修订）</label>
-      <button type="button" disabled={pending||stale||!valid||!confirmed} onClick={execute}>通过 MCP 执行规格任务</button>
+      <button type="button" disabled={pending||stale||!valid||!confirmed} onClick={execute}>执行建模任务</button>
     </>}
   </section>;
 }
