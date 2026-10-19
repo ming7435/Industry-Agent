@@ -929,6 +929,7 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
             and len(path_parts) > 2 and path_parts[2] in {"text-to-cad", "freecad"}
         )
         production_write = method != 'GET' and path_parts[:3] == ['api', 'production', 'virtual']
+        vision_write = method != 'GET' and path_parts[:3] == ['api', 'quality', 'vision']
         expert_write = method != 'GET' and path_parts[:2] == ['api', 'expert']
         exception_write = method != 'GET' and (path_parts[:3] == ['api','runtime','service-exceptions'] or
             path_parts[:2] == ['api','reports'] and len(path_parts)>2 and path_parts[2].startswith('EXR-'))
@@ -950,8 +951,13 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
                 self._error(HTTPStatus.FORBIDDEN, '仅允许同源请求')
                 return
             if method in {"POST", "PUT", "PATCH"}:
-                length = int(self.headers.get("Content-Length", "0"))
-                body = self.rfile.read(length) if length else b""
+                if vision_write:
+                    body = self._read_bounded_body(label='视觉检测', max_bytes=40 * 1024 * 1024)
+                    if body is None:
+                        return
+                else:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    body = self.rfile.read(length) if length else b""
         headers = agent_request_headers(self.headers.get("Content-Type", "application/json"))
         if self.headers.get('Cookie'):
             headers['Cookie'] = self.headers['Cookie']
@@ -1016,6 +1022,14 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         if len(origins) != 1 or origins[0].lower() != "http://" + hosts[0].lower():
             reject(HTTPStatus.FORBIDDEN, f"{label} 接口需要完整的 HTTP 同源 Origin")
             return None
+        return self._read_bounded_body(label=label, max_bytes=max_bytes)
+
+    def _read_bounded_body(self, label: str, max_bytes: int) -> bytes | None:
+        """Bound request framing, size and read time before forwarding uploads."""
+        def reject(status: HTTPStatus, message: str) -> None:
+            self.close_connection = True
+            self._error(status, message)
+
         lengths = self.headers.get_all("Content-Length", [])
         if (
             self.headers.get_all("Transfer-Encoding", [])
@@ -1025,7 +1039,6 @@ class MonitorRequestHandler(BaseHTTPRequestHandler):
         ):
             reject(HTTPStatus.BAD_REQUEST, f"{label} 请求的 Content-Length 无效")
             return None
-        # 新入口仅接收 JSON 需求，不再接收原本地模型文件上传。
         if len(lengths[0]) > 10 or int(lengths[0]) > max_bytes:
             reject(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, f"{label} 请求体过大")
             return None

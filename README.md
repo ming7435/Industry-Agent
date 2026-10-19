@@ -52,6 +52,8 @@ Quality Agent 的业务定义是**生产出来的零件质量检测**，不是�
 - 维修计划中的 target_part、drawing_context 和 viewer_context 数据契约。
 - WorkOrder 生命周期、维修反馈、维修完成、派工和 MySQL 持久化幂等；临时上下文与登录会话使用 Redis。
 - 生产零件质检、质检申诉、整改任务、审计日志和 MySQL 持久化。
+- 质检页面支持 PatchCore 正常样本建库、异常热图和 YOLO 缺陷框检测；模型就绪检查、算法流程和图片检测结果独立展示。依赖、权重与使用方法见 [视觉缺陷检测说明](docs/quality-vision.md)。
+- PatchCore 支持保存预处理配置和独立样本阈值校准；核心集逻辑、合成场景漏检对照、真实数据评估入口见 [PatchCore 采样与评估报告](docs/patchcore-evaluation.md)。
 - TraceRecorder 记录 Agent、Node、Tool、模块和 A2A 调用轨迹。
 - React + Vite 监控工作台和内置静态前端。
 - Runtime Evaluator、LoopGuard、ExecutionManager 和 CapabilityRegistry 提供统一的可控、证据驱动循环基础设施；不新增 Agent。

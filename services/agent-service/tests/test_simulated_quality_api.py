@@ -65,7 +65,7 @@ def connected(tmp_path, monkeypatch):
     def factory():
         calls['factory'] += 1
         if getattr(app.state, 'factory_error', False): raise RuntimeError('factory offline')
-        return snapshot()
+        return getattr(app.state, 'factory_snapshot', None) or snapshot()
     app = FastAPI(); app.include_router(build_simulation_router(lambda: None, backend_factory=Bridge, cad_reader=cad, factory_reader=factory))
     client = TestClient(app); client.cookies.set('maintenance_session', 'U-1')
     return client, app, repo, calls
@@ -124,6 +124,43 @@ def test_same_request_other_design_conflicts_and_offline_factory_is_not_a_bad_ba
     response = client.post('/api/quality/simulation/detect', json={'design_run_id': RUN_ID, 'request_id': 'click-2'})
     assert response.status_code == 503
     assert response.json()['detail']['execution_started'] is False
+    assert len(repo.list_records('simulated_quality_batch')) == 1
+
+
+@pytest.mark.parametrize('state,reason', [
+    ('stopped', '操作员暂停检测工位'),
+    ('emergency_stop', '保留待处理旧故障；未提交维修完成回执'),
+    ('stopped', None),
+])
+def test_stopped_meter_returns_actionable_state_without_creating_a_batch(connected, state, reason):
+    client, app, repo, calls = connected
+    data = snapshot()
+    data['devices'][0]['status'] = state
+    data['monitor']['status'] = state
+    data['detail']['control_state'] = state
+    if reason is not None:
+        data['detail']['control_reason'] = reason
+    app.state.factory_snapshot = data
+    payload = {'design_run_id': RUN_ID, 'request_id': 'stopped-meter'}
+
+    response = client.post('/api/quality/simulation/detect', json=payload)
+
+    assert response.status_code == 409
+    detail = response.json()['detail']
+    assert isinstance(detail, dict), detail
+    assert detail['code'] == 'simulation_station_not_running'
+    assert detail['execution_started'] is False
+    assert detail['station'] == {
+        'device_id': 'RENISHAW-EQUATOR300-001', 'device_status': state,
+        'monitor_status': state, 'control_state': state, 'control_reason': reason,
+    }
+    assert repo.list_records('simulated_quality_batch') == []
+    assert data['detail']['control_state'] == state
+    assert client.get('/api/quality/simulation/requests/stopped-meter').status_code == 404
+
+    app.state.factory_snapshot = snapshot()
+    retry = client.post('/api/quality/simulation/detect', json=payload)
+    assert retry.status_code == 200, retry.text
     assert len(repo.list_records('simulated_quality_batch')) == 1
 
 

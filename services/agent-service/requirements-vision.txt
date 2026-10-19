@@ -1,0 +1,12 @@
+# Optional CPU-capable visual inspection runtime; install explicitly.
+# Use a compatible torch/torchvision pair from https://pytorch.org/get-started/locally/.
+# Local, operator-supplied pretrained ResNet18 state_dict and defect-trained YOLO
+# weights are required. No model weights are downloaded by this application.
+numpy>=1.26,<3
+Pillow>=10.3,<13
+# Ultralytics requires this distribution; do not also install opencv-python-headless.
+opencv-python>=4.10,<6
+torch>=2.6,<3
+torchvision>=0.21,<1
+ultralytics>=8.3,<9
+# For local .onnx YOLO exports, additionally install: onnxruntime>=1.19,<2

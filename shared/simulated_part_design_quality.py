@@ -17,6 +17,20 @@ SOURCE = 'local-simulated-equator-adapter'
 SAMPLE_COUNT = 10
 
 
+class StationNotRunningError(ValueError):
+    """A rejected measurement with the station's observed state, not a repair claim."""
+    def __init__(self, device, monitor, detail):
+        super().__init__('模拟比对仪未运行，未生成测量样本')
+        reason = next((block['control_reason'].strip() for block in (detail, monitor, device)
+                       if isinstance(block.get('control_reason'), str) and block['control_reason'].strip()), None)
+        self.detail = {
+            'code': 'simulation_station_not_running', 'message': str(self), 'execution_started': False,
+            'station': {'device_id': DEVICE_ID, 'device_status': device.get('status'),
+                        'monitor_status': monitor.get('status'), 'control_state': detail.get('control_state'),
+                        'control_reason': reason},
+        }
+
+
 def digest(value):
     return sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
@@ -359,7 +373,7 @@ def validate_station(snapshot, now=None):
         if monitor.get('device_id') != DEVICE_ID or detail.get('device_id') != DEVICE_ID or device.get('device_type') != 'equator_gauge':
             raise ValueError('比对仪身份不匹配')
         if monitor.get('status') != 'running' or device.get('status') != 'running' or detail.get('control_state') != 'running':
-            raise ValueError('模拟比对仪未运行，未生成测量样本')
+            raise StationNotRunningError(device, monitor, detail)
         if any(block.get(field) not in {None, '', 'running'} for block in [device, monitor, detail] for field in ['status', 'control_state']):
             raise ValueError('模拟比对仪运行和控制状态矛盾，未生成测量样本')
         if any(block.get(k) for block in [device, monitor, detail] for k in ['alarm_code', 'alarm_codes', 'alarm_message']):

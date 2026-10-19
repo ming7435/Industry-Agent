@@ -12,6 +12,20 @@ const response = (body, status = 200) => ({ status, ok: status < 400, json: asyn
 const loginA = () => setTeamSessionActor(actorA, { force: true });
 const stale = error => error.sessionChanged === true && error.name === 'AbortError';
 
+test('视觉模型和检测响应绑定账号，旧响应丢弃且401同步退出', async () => {
+  for (const path of ['/api/quality/vision/capabilities', '/api/quality/vision/patchcore/train', '/api/quality/vision/detect']) {
+    loginA(); let release;
+    globalThis.fetch = () => new Promise(done => { release = done; });
+    const pending = request(path);
+    setTeamSessionActor(actorB, { force: true }); release(response({ inspection_id: 'old-private' }));
+    await assert.rejects(pending, stale);
+    loginA(); globalThis.fetch = async () => response({ detail: '会话过期' }, 401);
+    await assert.rejects(request(path), error => error.status === 401);
+    assert.equal(getTeamSession().actor, null);
+  }
+  assert.equal(isTeamSessionPath('/api/quality/visionary'), false);
+});
+
 test('会话保护范围排除公开方案与CAD服务状态', () => {
   for (const path of ['/api/workorders', '/api/workorders/W/action', '/api/workorders/W/revalidate-plan', '/api/maintenance/plans/delete', '/api/maintenance/plans/P/retry', '/api/team/me', '/api/team/reminders']) assert.equal(isTeamSessionPath(path), true, path);
   for (const path of ['/api/maintenance/plans', '/api/reports', '/api/quality/checks', '/api/cad/resolve', '/api/cad/freecad/status', '/api/team/devices', '/api/team/line', '/api/team/login', '/api/team/register']) assert.equal(isTeamSessionPath(path), false, path);

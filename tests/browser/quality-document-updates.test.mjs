@@ -10,7 +10,7 @@ test('published-only refresh follows new standards without detecting; a delibera
   await page.route('**/api/**',route=>{
     const path=new URL(route.request().url()).pathname;
     if(path==='/api/team/me')return respond(route,{user:{user_id:'USER-a',role:'technician'}});
-    if(path==='/api/cad/freecad/designs')return respond(route,{items:records,next_cursor:'',directory_version:records.length});
+    if(['/api/cad/freecad/designs','/api/cad/text-to-cad/designs'].includes(path))return respond(route,{items:records,next_cursor:'',directory_version:records.length});
     if(path.endsWith('/simulation/capabilities'))return respond(route,{enabled:true});
     if(path.endsWith('/simulation/designs'))return respond(route,{items:[]});
     if(path.includes('/simulation/designs/')) {const id=path.split('/').at(-1),run=records.find(r=>r.run_id===id);return respond(route,{basis:{...run,parameters:run.standard_parameters.parameters},latest:saved.get(id)||null});}

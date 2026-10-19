@@ -29,7 +29,7 @@ async function setup({loggedIn=false,hasModel=true,cadUnavailable=false}={}) {
     reads.push(path);
     if(!['GET','HEAD'].includes(req.method()))writes.push(path);
     if(path==='/api/team/me')return respond(route,loggedIn?{user:{user_id:'U1',role:'technician'}}:{detail:'请先登录'},loggedIn?200:401);
-    if(path==='/api/cad/freecad/runs/'+runId)return cadUnavailable?respond(route,{detail:'建模记录暂不可用'},503):respond(route,record);
+    if(['/api/cad/freecad/runs/','/api/cad/text-to-cad/runs/'].some(prefix=>path===prefix+runId))return cadUnavailable?respond(route,{detail:'建模记录暂不可用'},503):respond(route,record);
     if(path==='/api/quality/simulation/capabilities')return respond(route,{enabled:true,device_id:'RENISHAW-EQUATOR300-001',sample_count:10});
     if(path==='/api/quality/simulation/designs')return respond(route,{items:[]});
     if(path==='/api/quality/simulation/designs/'+runId)return respond(route,{basis,latest:savedBatch});

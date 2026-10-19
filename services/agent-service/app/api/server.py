@@ -938,6 +938,8 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
     app.include_router(build_virtual_production_router(production, production.backend if production else None, require_write_auth))
     from app.api.quality_simulation import build_simulation_router
     app.include_router(build_simulation_router(require_write_auth,recovery=getattr(runtime.container,'recovery',None)))
+    from app.api.quality_vision import build_quality_vision_router
+    app.include_router(build_quality_vision_router(require_write_auth))
     app.include_router(build_text_to_cad_router(require_write_auth, trace=getattr(runtime.container, "trace", None),recovery=getattr(runtime.container,'recovery',None)))
     from app.api.freecad_documents import build_document_router
     app.include_router(build_document_router(require_write_auth, trace=getattr(runtime.container, "trace", None)))

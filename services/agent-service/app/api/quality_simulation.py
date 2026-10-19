@@ -124,6 +124,8 @@ def build_simulation_router(require_write_auth, *, backend_factory=BackendServic
                     failure_error=str(error)
                     raise HTTPException(503, {'message': '模拟工厂或比对仪连接不可用，未生成检测样本', 'execution_started': False}) from None
                 sim.validate_station(snapshot)
+            except sim.StationNotRunningError as error:
+                raise HTTPException(409, error.detail) from None
             except ValueError as error:
                 raise HTTPException(409, str(error)) from None
             try:

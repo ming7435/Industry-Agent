@@ -35,7 +35,7 @@ async function setup({oldDetectionGate, newDetectionGate, modelGate, runningMode
   },{oldId});
   context.on('page',page=>{page.setDefaultTimeout(6000);page.on('pageerror',error=>errors.push(error.message));});
   await context.route('**/api/**',async route=>{
-    const req=route.request(),path=new URL(req.url()).pathname;
+    const req=route.request(),path=new URL(req.url()).pathname.replace('/api/cad/text-to-cad/','/api/cad/freecad/');
     if(path==='/api/team/me')return respond(route,{user:{user_id:'U-1',role:'technician'}});
     if(path==='/api/cad/freecad/status')return respond(route,{connected:true,part_identity_supported:true,tools:[{name:'execute_code'}]});
     if(path==='/api/cad/freecad/runs'&&req.method()==='POST'){
@@ -136,9 +136,9 @@ test('quality opened before modeling finishes follows its completion even after 
   const {fixture,page,records,posts}=await setup({runningModel:true});
   try{
     await page.getByRole('button',{name:'打开建模',exact:true}).click();await generate(page);
-    await page.getByText('FreeCAD 正在建模',{exact:true}).waitFor();
+    await page.getByText('Text-to-CAD 正在建模',{exact:true}).waitFor();
     const newId=[...records.keys()].find(id=>id!==oldId);
-    const read=page.waitForResponse(response=>response.url().endsWith('/api/cad/freecad/runs/'+newId));
+    const read=page.waitForResponse(response=>response.url().replace('/api/cad/text-to-cad/','/api/cad/freecad/').endsWith('/api/cad/freecad/runs/'+newId));
     await page.getByRole('button',{name:'打开质检',exact:true}).click();await read;
     assert.equal(posts.length,0);
     records.set(newId,model(newId,80,2));
@@ -152,7 +152,7 @@ test('a model finishing between leaving CAD and the first quality read still rep
   const {fixture,page,records,posts}=await setup({runningModel:true});
   try{
     await page.getByRole('button',{name:'打开建模',exact:true}).click();await generate(page);
-    await page.getByText('FreeCAD 正在建模',{exact:true}).waitFor();
+    await page.getByText('Text-to-CAD 正在建模',{exact:true}).waitFor();
     const newId=[...records.keys()].find(id=>id!==oldId);
     records.set(newId,model(newId,80,2));
     await page.getByRole('button',{name:'打开质检',exact:true}).click();
@@ -167,10 +167,10 @@ test('a temporarily unavailable new run is followed until its saved model become
   const {fixture,page,records,posts}=await setup({runningModel:true});
   try{
     await page.getByRole('button',{name:'打开建模',exact:true}).click();await generate(page);
-    await page.getByText('FreeCAD 正在建模',{exact:true}).waitFor();
+    await page.getByText('Text-to-CAD 正在建模',{exact:true}).waitFor();
     const newId=[...records.keys()].find(id=>id!==oldId);
     records.delete(newId);
-    const read=page.waitForResponse(response=>response.url().endsWith('/api/cad/freecad/runs/'+newId)&&response.status()===404);
+    const read=page.waitForResponse(response=>response.url().replace('/api/cad/text-to-cad/','/api/cad/freecad/').endsWith('/api/cad/freecad/runs/'+newId)&&response.status()===404);
     await page.getByRole('button',{name:'打开质检',exact:true}).click();await read;
     assert.equal(posts.length,0);
     records.set(newId,model(newId,80,2));

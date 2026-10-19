@@ -7,9 +7,11 @@ import { getTeamSession, setTeamSessionActor, subscribeTeamSession } from '../te
 import { teamRequest } from '../teamApi.mjs';
 import { detectSimulation, formatSimulationRate, pendingSimulationKey, simulationResult, simulationItemSummary, possibleProblemLocations } from './qualitySimulation.mjs';
 import './qualityPart.css';
+import QualityVisionWorkspace from './QualityVisionWorkspace.jsx';
 
 const prefix = '/api/quality/simulation';
 const statusLabel = { qualified: '模拟一致性合格', unqualified: '模拟一致性不合格', partial: '存在不一致／待判定样本', review: '待复核' };
+const stationStateLabel = value => ({ running: '运行中', stopped: '已停止', emergency_stop: '急停', alarm: '报警', offline: '离线', idle: '待机', paused: '已暂停' }[value] || '未知状态');
 const displayLineName = name => name === '模拟 A 线' ? 'A 线' : name || '未知产线';
 
 function qualitySource() {
@@ -54,6 +56,7 @@ export default function QualityWorkspace() {
   const [loading, setLoading] = useState(true), [reading, setReading] = useState(false);
   const [capability, setCapability] = useState(null), [basis, setBasis] = useState(null), [result, setResult] = useState(null);
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
+  const [stationBlock, setStationBlock] = useState(null);
   const [catalogEpoch,setCatalogEpoch] = useState(0),[followCurrent,setFollowCurrent]=useState(true),[newVersionNotice,setNewVersionNotice]=useState(false);
   const [waitingRunIds,setWaitingRunIds] = useState([]);
   const revision = useRef(0), posting = useRef(false);
@@ -180,7 +183,7 @@ export default function QualityWorkspace() {
   useEffect(() => {
     const generation = ++revision.current, abort = new AbortController();
     posting.current=false;setBusy(false);
-    setBasis(null); setResult(null); setPending(null);
+    setBasis(null); setResult(null); setPending(null); setStationBlock(null);
     if (loading || !selected || !userId) { setReading(false); return () => abort.abort(); }
     setMessage(''); setReading(true);
     let savedRequest;
@@ -213,7 +216,7 @@ export default function QualityWorkspace() {
     if (posting.current || !basis || !userId || capability?.enabled !== true) return;
     const generation = revision.current, retrying = !!pending, body = pending || { design_run_id: selected, request_id: crypto.randomUUID() };
     const storageKey = pendingSimulationKey(userId, selected);
-    posting.current = true; setBusy(true); setMessage(''); setResult(null); setPending(body);
+    posting.current = true; setBusy(true); setMessage(''); setResult(null); setPending(body); setStationBlock(null);
     try { sessionStorage.setItem(storageKey, JSON.stringify(body)); } catch { /* current-page reconciliation remains available */ }
     try {
       const saved = await detectSimulation(request, body);
@@ -223,6 +226,10 @@ export default function QualityWorkspace() {
     } catch (error) {
       if (generation !== revision.current) return;
       setMessage(error.message);
+      if (error.status === 409 && error.detail?.code === 'simulation_station_not_running'
+        && error.detail.execution_started === false && error.detail.station?.device_id === 'RENISHAW-EQUATOR300-001') {
+        setStationBlock(error.detail.station);
+      }
       if (!retrying && !error.outcomeUnknown && !error.sessionChanged) {
         setPending(null); try { sessionStorage.removeItem(storageKey); } catch { /* no storage */ }
       }
@@ -248,6 +255,7 @@ export default function QualityWorkspace() {
   const displayedCounts=itemSummary?.counts || counts, displayedRates=itemSummary?.rates || result?.rates;
   return <section className="workspace-view active quality-workspace" aria-label="质检系统">
     <header className="module-hero quality-heading"><h1>质量检测</h1></header>
+    <QualityVisionWorkspace auth={auth} checked={checked} part={part} />
     <section className="quality-part-panel" aria-labelledby="quality-part-heading">
       <h2 id="quality-part-heading">检测零件</h2>
       <dl className="quality-part-fields">
@@ -283,6 +291,13 @@ export default function QualityWorkspace() {
           : result ? `模拟检测已保存：共 ${counts.total || 0} 件，${counts.determinate || 0} 件可判定，${counts.pending || 0} 件待判定。`
             : '点击开始检测，自动生成并比对 10 件模拟测量样本。')}</p>
       {capability && !capability.enabled && <p className="quality-standard-note">{capability.reason || '模拟检测未启用'}</p>}
+      {stationBlock && <section className="quality-location-card" aria-labelledby="quality-station-block-heading">
+        <h3 id="quality-station-block-heading">检测工位未就绪</h3>
+        <p>本次读取的比对仪状态：设备{stationStateLabel(stationBlock.device_status)} · 监控{stationStateLabel(stationBlock.monitor_status)} · 控制{stationStateLabel(stationBlock.control_state)}。</p>
+        <p>{stationBlock.control_reason ? `停机原因：${stationBlock.control_reason}` : '工位未提供停机原因，请先核查工位状态和相关维修记录。'}</p>
+        <p>如有待处理工单，请完成核查和维修，再在工单中申请复机；没有关联工单时，请先核查停机原因。比对仪恢复运行后，返回本页重新开始检测。</p>
+        <a className="button" href="/?view=workorder">前往工单系统核查／申请复机</a>
+      </section>}
       <dl className="quality-rate-fields">
         <div><dt>{itemSummary?'已检测项通过率':'模拟合格率（良品率／优良率）'}</dt><dd>{formatSimulationRate(displayedRates?.qualified)}</dd>{result && <small>{displayedCounts.qualified ?? '—'} / {displayedCounts.determinate ?? '—'} {itemSummary?'项':'件'}</small>}</div>
         <div><dt>{itemSummary?'已检测项不通过率':'模拟不良率'}</dt><dd>{formatSimulationRate(displayedRates?.defect)}</dd>{result && <small>{displayedCounts.unqualified ?? '—'} / {displayedCounts.determinate ?? '—'} {itemSummary?'项':'件'}</small>}</div>

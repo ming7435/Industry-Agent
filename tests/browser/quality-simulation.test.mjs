@@ -32,7 +32,7 @@ async function setup({ gate, failure, loggedIn=true, pendingWithCadError=false, 
   await page.route('**/api/**', async route => {
     const req=route.request(), path=new URL(req.url()).pathname;
     if (path==='/api/team/me') return respond(route, loggedIn ? {user:{user_id:'U-1',role:'technician'}} : {detail:'请先登录'}, loggedIn?200:401);
-    if (path.startsWith('/api/cad/freecad/runs/')) {
+    if (/^\/api\/cad\/(?:freecad|text-to-cad)\/runs\//.test(path)) {
       if (savedWithCadError) return respond(route,{detail:'Redis 暂不可用'},503);
       const current=path.split('/').at(-1);
       return respond(route, {...run,...runOverrides,run_id:current,part_name:current===id?'安装底板':'销轴',part_number:current===id?'92531':'00009'});
@@ -44,7 +44,7 @@ async function setup({ gate, failure, loggedIn=true, pendingWithCadError=false, 
     if (path.endsWith('/simulation/detect')) {
       const body=req.postDataJSON(); posts.push(body);
       if (gate) await gate.promise;
-      if (failure) return respond(route,{detail:{message:'比对仪离线，未生成检测样本',execution_started:false}},503);
+      if (failure) return respond(route,{detail:typeof failure==='object'?failure:{message:'比对仪离线，未生成检测样本',execution_started:false}},typeof failure==='object'?409:503);
       saved={...batch(body.request_id,body.design_run_id),...resultOverrides}; return respond(route,saved);
     }
     if (path.includes('/simulation/requests/')) return saved ? respond(route,saved) : respond(route,{detail:'尚未查到'},404);
@@ -104,6 +104,34 @@ test('offline meter yields the actual reason and no invented rates',async()=>{
     await page.getByText('比对仪离线，未生成检测样本',{exact:false}).waitFor();
     assert.deepEqual(await page.locator('.quality-rate-fields dd').allTextContents(),['—','—','—']);
     assert.equal(posts.length,1);
+  } finally {await fixture.close();}
+});
+
+for (const [state,label,reason] of [
+  ['stopped','已停止','操作员暂停检测工位'],
+  ['emergency_stop','急停','保留待处理旧故障；未提交维修完成回执'],
+  ['stopped','已停止',null],
+]) test(`stopped meter explains ${state} (${reason?'with reason':'without reason'}) and links to workorders`,async()=>{
+  const failure={code:'simulation_station_not_running',message:'模拟比对仪未运行，未生成测量样本',execution_started:false,
+    station:{device_id:'RENISHAW-EQUATOR300-001',device_status:state,monitor_status:state,control_state:state,control_reason:reason}};
+  const {fixture,page,posts,errors}=await setup({failure});
+  try {
+    await page.goto(fixture.base+'/?view=quality');
+    await page.getByRole('button',{name:'开始检测',exact:true}).click();
+    const recovery=page.getByRole('region',{name:'检测工位未就绪',exact:true});
+    await recovery.waitFor();
+    assert.match(await recovery.textContent(),new RegExp(label));
+    assert.match(await recovery.textContent(),new RegExp(reason || '工位未提供停机原因'));
+    assert.match(await recovery.textContent(),/如有待处理工单/);
+    assert.match(await recovery.textContent(),/没有关联工单时/);
+    assert.deepEqual(await page.locator('.quality-rate-fields dd').allTextContents(),['—','—','—']);
+    assert.equal(await page.getByRole('button',{name:'开始检测',exact:true}).isEnabled(),true);
+    assert.equal(await page.getByRole('button',{name:'按原请求重试',exact:true}).count(),0);
+    assert.equal(posts.length,1);
+    const link=recovery.getByRole('link',{name:'前往工单系统核查／申请复机',exact:true});
+    await Promise.all([page.waitForURL('**/?view=workorder'),link.click()]);
+    assert.equal(new URL(page.url()).searchParams.get('view'),'workorder');
+    assert.deepEqual(errors,[]);
   } finally {await fixture.close();}
 });
 
