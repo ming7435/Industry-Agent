@@ -13,7 +13,6 @@ from app.api.team_auth import team_actor
 from app.clients.backend import BackendServiceClient, BackendServiceError
 from app.vision.service import VisionService, VisionServiceError
 from app.vision.combined import CombinedQualityService
-from app.vision.sequential import SequentialVisionService
 from app.vision.preprocessing import parse_patchcore_config
 from app.vision.production import ProductionVisionService, JOB_PATTERN, REQUEST_PATTERN
 from app.production_simulation.backend import VirtualProductionBackend
@@ -157,7 +156,6 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
     router = APIRouter(prefix='/api/quality/vision', tags=['quality-vision'])
     vision = service or VisionService()
     combined = CombinedQualityService(vision)
-    sequential = SequentialVisionService(vision)
     production = ProductionVisionService(vision)
 
     def context(request):
@@ -212,9 +210,9 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
 
     @router.post('/sequential/fuse', dependencies=[Depends(require_write_auth)])
     async def fuse_sequential(request: Request):
-        owner = await run_in_threadpool(actor, request)
-        values = await _body(request, SequentialFuseRequest)
-        return await run_in_threadpool(call, sequential.fuse, owner, values)
+        await run_in_threadpool(actor, request)
+        await _body(request, SequentialFuseRequest)
+        raise HTTPException(410, '顺序联合检测已停用，请选择 PatchCore 或 YOLO 单算法检测。')
 
     @router.get('/inspections/{inspection_id}')
     def inspection(inspection_id: str, request: Request):
@@ -241,10 +239,9 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
 
     @router.post('/production/verify', dependencies=[Depends(require_write_auth)])
     async def production_verify(request: Request):
-        user, backend = await run_in_threadpool(context, request)
-        values = await _body(request, ProductionVerifyRequest)
-        return await run_in_threadpool(call, production.verify, user, VirtualProductionBackend(backend),
-                                      values['job_id'], values['request_id'])
+        await run_in_threadpool(actor, request)
+        await _body(request, ProductionVerifyRequest)
+        raise HTTPException(410, '双模型合成流程验证已停用，请选择 PatchCore 或 YOLO 单算法检测。')
 
     @router.get('/production/jobs/{job_id}/latest')
     def production_latest(job_id: str, request: Request):

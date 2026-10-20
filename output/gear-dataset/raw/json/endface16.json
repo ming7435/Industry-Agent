@@ -1,0 +1,117 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          375.95933806146564,
+          116.78888888888893
+        ],
+        [
+          383.8789598108746,
+          125.53593380614662
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          455.1,
+          408.9
+        ],
+        [
+          465.7,
+          419.8
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          445.8,
+          406.6
+        ],
+        [
+          451.2,
+          412.9
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          433.0,
+          501.6
+        ],
+        [
+          441.9,
+          511.1
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          887.9040667361835,
+          553.8060479666319
+        ],
+        [
+          899.2700729927008,
+          564.3378519290928
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          522.1,
+          269.0
+        ],
+        [
+          531.8,
+          278.8
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface16.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

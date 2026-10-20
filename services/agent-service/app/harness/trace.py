@@ -185,6 +185,27 @@ class TraceRecorder:
                     return [run_index_record(item) for item in list(self._records)[-limit:]]
         return [run_index_record(item) for item in self.list(limit=limit)]
 
+    def list_agent_index(self, limit=5000):
+        from .agent_index import AGENT_EVENTS, agent_index_record
+        limit=max(1,min(5000,int(limit)))
+        query=getattr(self.store,'list_agent_index',None)
+        with self._lock:
+            memory=[dict(item) for item in self._records if item.get('event') in AGENT_EVENTS]
+        if callable(query):
+            try:
+                records=query(limit=limit)
+                ids={item.get('trace_record_id') for item in records}
+                records.extend(agent_index_record(item) for item in memory if item.get('storage_warning')
+                               and item.get('trace_record_id') not in ids)
+                self.storage_error='轨迹持久化不可用，当前含内存样本' if any(item.get('storage_warning') for item in memory) else ''
+                records.sort(key=lambda item:str(item.get('timestamp') or ''))
+                return records[-limit:]
+            except Exception:
+                self.storage_error='专家运行统计存储不可用，当前仅显示内存记录'
+        elif self.store is not None:
+            self.storage_error='专家运行统计索引不可用，当前仅显示内存记录'
+        return [agent_index_record(item) for item in memory[-limit:]]
+
 
 def safe_trace_value(value: Any) -> Any:
     """日志快照脱敏和限长；保留业务值，明确标记历史排除和截断。"""

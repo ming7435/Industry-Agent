@@ -1,0 +1,45 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          545.7,
+          555.3
+        ],
+        [
+          554.9,
+          564.9
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          558.6,
+          458.2
+        ],
+        [
+          563.9,
+          464.5
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "toothface440.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

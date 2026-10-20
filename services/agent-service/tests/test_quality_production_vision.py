@@ -1,4 +1,4 @@
-"""Linked-flow boundary tests; fake detectors do not establish model accuracy."""
+"""Retired linked-flow API and historical records; fake detectors do not establish accuracy."""
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -12,7 +12,9 @@ import pytest
 
 from app.api.quality_vision import build_quality_vision_router
 from app.clients.backend import BackendServiceError
-from app.vision.service import VisionService
+from app.vision.service import VisionService, VisionServiceError
+from app.vision.production import ProductionVisionService
+from app.production_simulation.backend import VirtualProductionBackend
 from test_quality_vision_api import FakePatchCore, install_test_preset, picture
 
 
@@ -87,6 +89,7 @@ def linked(tmp_path, monkeypatch):
     client = TestClient(app)
     client.cookies.set('maintenance_session', 'A')
     client.headers['x-write'] = 'allowed'
+    state['backend'] = Backend()
     return client, service, state
 
 
@@ -94,17 +97,47 @@ def verify(client, **changes):
     return client.post('/api/quality/vision/production/verify', json={'job_id': JOB, 'request_id': str(uuid4()), **changes})
 
 
+def historical_verify(linked, **changes):
+    """Exercise legacy storage logic directly, never bypass the retired API route."""
+    client, service, state = linked
+    user = state['backend'].resolve_session(client.cookies.get('maintenance_session'))
+    return ProductionVisionService(service).verify(
+        user, VirtualProductionBackend(state['backend']), changes.get('job_id', JOB),
+        changes.get('request_id', str(uuid4())))
+
+
+def assert_historical_verify_rejected(linked, status, **changes):
+    with pytest.raises(VisionServiceError) as error:
+        historical_verify(linked, **changes)
+    assert error.value.status_code == status
+
+
 def latest(client):
     return client.get('/api/quality/vision/production/jobs/' + JOB + '/latest')
+
+
+def test_retired_production_verify_returns_410_without_inference_or_writes(linked, monkeypatch):
+    client, service, state = linked
+    existing = {str(path.relative_to(service.root)): path.read_bytes()
+                for path in service.root.rglob('*') if path.is_file()}
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('The retired endpoint must not call the historical dual-model service')
+
+    monkeypatch.setattr(ProductionVisionService, 'verify', forbidden)
+    response = verify(client)
+    assert response.status_code == 410, response.text[:500]
+    assert '已停用' in response.json()['detail'] and '单算法' in response.json()['detail']
+    assert not state['calls'] and not FakeYolo.calls
+    assert {str(path.relative_to(service.root)): path.read_bytes()
+            for path in service.root.rglob('*') if path.is_file()} == existing
 
 
 def test_complete_flow_same_images_provenance_and_idempotent_restore(linked):
     client, service, state = linked
     assert latest(client).json() == {'run': None}
     request_id = str(uuid4())
-    response = verify(client, request_id=request_id)
-    assert response.status_code == 200, response.text
-    run = response.json()
+    run = historical_verify(linked, request_id=request_id)
     assert run['status'] == 'completed' and run['source']['part_id'] == PART
     assert run['source']['actor_id'] == 'A'
     assert run['generator']['scope'] == 'synthetic_pipeline_only'
@@ -122,22 +155,24 @@ def test_complete_flow_same_images_provenance_and_idempotent_restore(linked):
     assert run['metrics'] == {'patchcore': {'tp': 2, 'fn': 0, 'tn': 0, 'fp': 1},
                               'yolo': {'tp': 0, 'fn': 2, 'tn': 1, 'fp': 0}}
     assert latest(client).json() == {'run': run}
-    assert verify(client, request_id=request_id).json() == run
+    assert verify(client, request_id=request_id).status_code == 410
+    assert latest(client).json() == {'run': run}
+    assert historical_verify(linked, request_id=request_id) == run
     assert FakeYolo.calls == 3
     assert sum(path.endswith('/inspect') for path, _ in state['calls']) == 1
-    rerun = verify(client).json()
+    rerun = historical_verify(linked)
     assert [s['image_sha256'] for s in rerun['scenarios']] == [s['image_sha256'] for s in run['scenarios']]
 
 
 def test_owner_isolation_and_supervisor_uses_own_record_namespace(linked):
     client, _, _ = linked
-    run = verify(client).json()
+    run = historical_verify(linked)
     client.cookies.set('maintenance_session', 'B')
     assert latest(client).status_code == 403
-    assert verify(client).status_code == 403
+    assert verify(client).status_code == 410
     client.cookies.set('maintenance_session', 'S')
     assert latest(client).json() == {'run': None}
-    own = verify(client).json()
+    own = historical_verify(linked)
     assert own['status'] == 'completed' and own['source']['actor_id'] == 'A'
     client.cookies.set('maintenance_session', 'A')
     assert latest(client).json()['run']['run_id'] == run['run_id']
@@ -152,8 +187,7 @@ def test_owner_isolation_and_supervisor_uses_own_record_namespace(linked):
 def test_source_guard_runs_before_inspection_or_inference(linked, location, key, value):
     client, service, state = linked
     (state['job'] if location == 'job' else state['job']['output'])[key] = value
-    response = verify(client)
-    assert response.status_code == 409, response.text
+    assert_historical_verify_rejected(linked, 409)
     assert not FakeYolo.calls and not list(service.root.rglob('VI-*.json'))
     assert all(path.endswith('/get') for path, _ in state['calls'])
 
@@ -162,29 +196,29 @@ def test_failed_partial_result_is_saved_and_same_request_does_not_retry(linked):
     client, _, _ = linked
     FakeYolo.fail = True
     request_id = str(uuid4())
-    response = verify(client, request_id=request_id)
-    assert response.status_code == 200, response.text
-    run = response.json()
+    run = historical_verify(linked, request_id=request_id)
     assert run['status'] == 'failed' and run['error']
     assert len(run['scenarios']) == 1 and len(run['scenarios'][0]['results']) == 1
     assert 'internal secret' not in json.dumps(run)
     assert latest(client).json()['run'] == run
     FakeYolo.fail = False
-    assert verify(client, request_id=request_id).json() == run
+    assert historical_verify(linked, request_id=request_id) == run
     assert FakeYolo.calls == 1
-    assert verify(client).json()['status'] == 'completed'
+    assert historical_verify(linked)['status'] == 'completed'
 
 
 def test_auth_strict_schema_and_origin_cannot_supply_source(linked):
     client, _, state = linked
     client.cookies.clear()
     assert verify(client).status_code == 401
+    assert latest(client).status_code == 401
     client.cookies.set('maintenance_session', 'A')
     client.headers.pop('x-write')
     assert verify(client).status_code == 401
     client.headers['x-write'] = 'allowed'
     assert verify(client, source=source_job()).status_code == 422
     assert verify(client, request_id='not-a-uuid').status_code == 422
+    assert verify(client).status_code == 410
     client.headers['origin'] = 'https://untrusted.example'
     assert verify(client).status_code == 403
     assert not state['calls']
@@ -203,30 +237,30 @@ def test_running_progress_is_readable_without_restarting_inference(linked, monke
     monkeypatch.setattr(FakeYolo, 'predict', blocked)
     request_id = str(uuid4())
     with ThreadPoolExecutor(max_workers=1) as worker:
-        future = worker.submit(verify, client, request_id=request_id)
+        future = worker.submit(historical_verify, linked, request_id=request_id)
         try:
             assert entered.wait(10)
             progress = latest(client).json()['run']
             assert progress['status'] == 'running'
             assert len(progress['scenarios'][0]['results']) == 1
-            assert verify(client, request_id=request_id).json() == progress
-            assert verify(client).status_code == 409
+            assert historical_verify(linked, request_id=request_id) == progress
+            assert_historical_verify_rejected(linked, 409)
         finally:
             release.set()
-        assert future.result(timeout=15).json()['status'] == 'completed'
+        assert future.result(timeout=15)['status'] == 'completed'
     assert FakeYolo.calls == 3
 
 
 def test_interrupted_record_becomes_failed_and_original_request_stays_idempotent(linked):
     from app.vision.production import ProductionVisionService
     client, service, _ = linked
-    run = verify(client).json()
+    run = historical_verify(linked)
     run['status'] = 'running'
     ProductionVisionService(service)._save('A', run)
     restored = latest(client).json()['run']
     assert restored['status'] == 'failed' and restored['error']
     assert restored['scenarios'] == run['scenarios']
-    assert verify(client, request_id=run['request_id']).json() == restored
+    assert historical_verify(linked, request_id=run['request_id']) == restored
     assert FakeYolo.calls == 3
 
 
@@ -234,7 +268,7 @@ def test_corrupt_saved_record_or_foreign_index_is_not_returned(linked):
     from app.vision.production import ProductionVisionService
     client, service, _ = linked
     flow = ProductionVisionService(service)
-    run = verify(client).json()
+    run = historical_verify(linked)
     path = flow._folder('A') / 'runs' / (run['run_id'] + '.json')
     envelope = json.loads(path.read_text(encoding='utf-8'))
     envelope['record']['source']['part_id'] = 'forged-part'
@@ -246,13 +280,13 @@ def test_corrupt_saved_record_or_foreign_index_is_not_returned(linked):
 
 def test_request_cannot_change_bound_source_and_generated_masks_match_labels(linked):
     client, service, state = linked
-    run = verify(client).json()
+    run = historical_verify(linked)
     for scenario in run['scenarios']:
         with service._decode(scenario['mask_image']) as image:
             assert any(image.tobytes()) is (scenario['label'] == 'defect')
     state['job']['output']['output_digest'] = '1' * 64
     state['job']['output_digest'] = '1' * 64
-    assert verify(client, request_id=run['request_id']).status_code == 409
+    assert_historical_verify_rejected(linked, 409, request_id=run['request_id'])
     assert FakeYolo.calls == 3
 
 
@@ -269,12 +303,12 @@ def test_replay_repairs_missing_latest_pointer_after_initial_crash_gap(linked):
     from app.vision.production import ProductionVisionService
     client, service, _ = linked
     flow = ProductionVisionService(service)
-    run = verify(client).json()
+    run = historical_verify(linked)
     run['status'] = 'running'
     flow._save('A', run)
     flow._pointer_path('A', JOB).unlink()
     assert latest(client).json() == {'run': None}
-    restored = verify(client, request_id=run['request_id']).json()
+    restored = historical_verify(linked, request_id=run['request_id'])
     assert restored['status'] == 'failed'
     assert latest(client).json() == {'run': restored}
     assert FakeYolo.calls == 3
@@ -284,13 +318,13 @@ def test_replay_repairs_older_pointer_but_never_replaces_a_newer_run(linked):
     from app.vision.production import ProductionVisionService
     client, service, _ = linked
     flow = ProductionVisionService(service)
-    older = verify(client).json()
+    older = historical_verify(linked)
     previous_pointer = flow._pointer_path('A', JOB).read_bytes()
-    newer = verify(client).json()
+    newer = historical_verify(linked)
     flow._pointer_path('A', JOB).write_bytes(previous_pointer)
-    assert verify(client, request_id=newer['request_id']).json() == newer
+    assert historical_verify(linked, request_id=newer['request_id']) == newer
     assert latest(client).json()['run'] == newer
-    assert verify(client, request_id=older['request_id']).json() == older
+    assert historical_verify(linked, request_id=older['request_id']) == older
     assert latest(client).json()['run'] == newer
     assert FakeYolo.calls == 6
 
@@ -299,13 +333,12 @@ def test_pointer_repair_never_hides_corruption_or_dangling_target(linked):
     from app.vision.production import ProductionVisionService
     client, service, _ = linked
     flow = ProductionVisionService(service)
-    run = verify(client).json()
+    run = historical_verify(linked)
     pointer = flow._pointer_path('A', JOB)
     for value in [{'owner_id': 'B', 'job_id': JOB, 'run_id': run['run_id']},
                   {'owner_id': 'A', 'job_id': JOB, 'run_id': 'PV-' + '0' * 32}]:
         service._atomic_json(pointer, value)
-        response = verify(client, request_id=run['request_id'])
-        assert response.status_code == 503
+        assert_historical_verify_rejected(linked, 503, request_id=run['request_id'])
         assert json.loads(pointer.read_text(encoding='utf-8')) == value
     assert FakeYolo.calls == 3
 
@@ -314,22 +347,22 @@ def test_idempotent_replay_skips_pointer_repair_while_flow_lock_is_held(linked):
     from app.vision.production import ProductionVisionService, _FLOW_LOCK
     client, service, _ = linked
     flow = ProductionVisionService(service)
-    run = verify(client).json()
+    run = historical_verify(linked)
     pointer = flow._pointer_path('A', JOB)
     pointer.unlink()
     assert _FLOW_LOCK.acquire(blocking=False)
     try:
-        assert verify(client, request_id=run['request_id']).json() == run
+        assert historical_verify(linked, request_id=run['request_id']) == run
         assert not pointer.exists()
     finally:
         _FLOW_LOCK.release()
-    assert verify(client, request_id=run['request_id']).json() == run
+    assert historical_verify(linked, request_id=run['request_id']) == run
     assert latest(client).json()['run'] == run
 
 
 def test_zero_overlap_image_alarms_are_not_localization_true_positives(linked):
     client, _, _ = linked
-    run = verify(client).json()
+    run = historical_verify(linked)
     assert run['metrics']['patchcore']['tp'] == 2  # Alarm-only result, not localization.
     assert run['localization_metrics'] == {
         'method': 'label_agnostic_bbox_iou', 'iou_threshold': .5,
@@ -354,7 +387,7 @@ def test_full_frame_patchcore_region_does_not_count_as_precise_localization(link
         return result
 
     monkeypatch.setattr(FakePatchCore, 'predict', full_frame)
-    run = verify(client).json()
+    run = historical_verify(linked)
     assert run['metrics']['patchcore']['tp'] == 2
     assert run['localization_metrics']['patchcore'] == {'tp': 0, 'fn': 2, 'fp': 3, 'ground_truth_count': 2}
     for scene in run['scenarios'][1:]:
@@ -369,11 +402,11 @@ def test_localization_counts_and_ground_truth_are_recomputed_on_read(linked):
     from app.vision.production import ProductionVisionService
     client, service, _ = linked
     flow = ProductionVisionService(service)
-    run = verify(client).json()
+    run = historical_verify(linked)
     run['localization_metrics']['patchcore']['tp'] = 2
     flow._save('A', run)  # Even a freshly hashed but inconsistent record is rejected.
     assert latest(client).status_code == 409
-    run = verify(client).json()
+    run = historical_verify(linked)
     run['scenarios'][1]['localization']['ground_truth_boxes'] = [[1, 2, 5, 6]]
     flow._save('A', run)
     assert latest(client).status_code == 409
@@ -383,7 +416,7 @@ def test_historical_records_without_localization_remain_unmodified_and_readable(
     from app.vision.production import ProductionVisionService
     client, service, _ = linked
     flow = ProductionVisionService(service)
-    old = verify(client).json()
+    old = historical_verify(linked)
     old.pop('localization_metrics', None)
     for scene in old['scenarios']:
         scene.pop('localization', None)
@@ -391,7 +424,7 @@ def test_historical_records_without_localization_remain_unmodified_and_readable(
     path = flow._folder('A') / 'runs' / (old['run_id'] + '.json')
     saved_bytes = path.read_bytes()
     assert latest(client).json()['run'] == old
-    assert verify(client, request_id=old['request_id']).json() == old
+    assert historical_verify(linked, request_id=old['request_id']) == old
     assert path.read_bytes() == saved_bytes
 
 
@@ -410,7 +443,7 @@ def test_production_uses_saved_yolo_defaults_and_retains_parameter_provenance(li
     model = next(item for item in client.get('/api/quality/vision/capabilities').json()['models'] if item['algorithm'] == 'yolo')
     assert model['recommended_confidence'] == .65 and model['recommended_iou'] == .35
     assert model['calibration_scope'] == 'synthetic_calibration_only'
-    run = verify(client).json()
+    run = historical_verify(linked)
     assert run['status'] == 'completed'
     for scene in run['scenarios']:
         result = next(item for item in scene['results'] if item['algorithm'] == 'yolo')
@@ -429,7 +462,7 @@ def test_invalid_calibrated_model_metadata_fails_safely_before_inference(linked,
     yolo_metadata(service, service.root.parent, monkeypatch, **changes)
     caps = client.get('/api/quality/vision/capabilities').json()
     assert not next(item for item in caps['algorithms'] if item['id'] == 'yolo')['available']
-    result = verify(client).json()
+    result = historical_verify(linked)
     assert result['status'] == 'failed'
     assert not FakeYolo.calls and result['scenarios'] == []
 

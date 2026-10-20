@@ -1,0 +1,24 @@
+{
+  "path": "L:\\industry_agent\\output\\gear-dataset\\prepared",
+  "train": "images/train",
+  "val": "images/calibration",
+  "names": [
+    "broken",
+    "bulge",
+    "burn",
+    "damage",
+    "darkspot",
+    "dirt",
+    "flash",
+    "flow",
+    "hair",
+    "missing",
+    "overflow",
+    "perforation",
+    "reverse",
+    "shortshot",
+    "void",
+    "white"
+  ],
+  "nc": 16
+}

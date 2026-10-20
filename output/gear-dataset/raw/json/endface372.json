@@ -1,0 +1,63 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "perforation",
+      "points": [
+        [
+          270.1530612244898,
+          226.97959183673467
+        ],
+        [
+          359.4387755102041,
+          313.96938775510205
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "hair",
+      "points": [
+        [
+          380.77388149939543,
+          332.043530834341
+        ],
+        [
+          415.1148730350665,
+          343.04715840386945
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "hair",
+      "points": [
+        [
+          323.4,
+          322.7
+        ],
+        [
+          344.6,
+          366.0
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface372.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

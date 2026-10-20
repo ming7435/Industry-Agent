@@ -1,0 +1,63 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "perforation",
+      "points": [
+        [
+          341.39814814814815,
+          287.02777777777777
+        ],
+        [
+          412.9259259259259,
+          373.3703703703704
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          741.8076923076924,
+          242.66346153846155
+        ],
+        [
+          749.3798076923077,
+          250.59615384615384
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          666.5673076923077,
+          310.21153846153845
+        ],
+        [
+          673.7788461538462,
+          318.1442307692308
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface645.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

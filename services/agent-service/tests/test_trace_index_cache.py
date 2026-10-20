@@ -3,6 +3,7 @@ import json
 from threading import Lock
 
 from app.harness.trace_store import MySQLTraceStore
+from app.harness.agent_index import AGENT_EVENTS
 
 
 def test_trace_index_only_projects_new_rows_and_respects_authoritative_deletions(monkeypatch):
@@ -40,3 +41,34 @@ def test_trace_index_only_projects_new_rows_and_respects_authoritative_deletions
     assert [item['trace_record_id'] for item in store.list_run_index()]==['T2','T3']
     assert projections==[[3]]
     assert set(store._run_index_cache)=={2,3}
+
+
+def test_expert_index_filters_tools_and_caches_small_lifecycle_rows(monkeypatch):
+    projections=[]
+    row={'trace_record_id':'T1','agent':'workorder','event':'agent_completed',
+         'output':{'status':'blocked','error':1,'success':False,'workorder_ready':False}}
+    class Cursor:
+        def execute(self,sql,params=()):
+            if sql.startswith('SELECT sequence_id FROM'):
+                assert 'JSON_EXTRACT' in sql
+                assert tuple(params[:-1])==AGENT_EVENTS
+                self.rows=[(1,)]
+            else:
+                assert 'SELECT sequence_id,payload' not in sql
+                assert '$.input' not in sql and '$.document' not in sql
+                projections.append(params)
+                self.rows=[(1,json.dumps(row))]
+        def fetchall(self):return self.rows
+        def close(self):pass
+    class Connection:
+        def cursor(self):return Cursor()
+    @contextmanager
+    def session(*_args,**_kwargs):yield Connection()
+    monkeypatch.setattr('app.harness.trace_store.mysql_session',session)
+    store=MySQLTraceStore.__new__(MySQLTraceStore)
+    store._config={};store._agent_index_cache={};store._run_index_lock=Lock()
+    first=store.list_agent_index()
+    assert first[0]['output']['workorder_ready'] is False
+    first[0]['output']['status']='caller changed'
+    assert store.list_agent_index()[0]['output']['status']=='blocked'
+    assert len(projections)==1,'Repeated overview reads must reuse the narrow cache'

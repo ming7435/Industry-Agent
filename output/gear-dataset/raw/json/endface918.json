@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "reverse",
+      "points": [
+        [
+          301.36518771331055,
+          249.48805460750853
+        ],
+        [
+          530.3754266211604,
+          483.95904436860064
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface918.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

@@ -1,0 +1,99 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "perforation",
+      "points": [
+        [
+          377.14522821576764,
+          452.6887966804979
+        ],
+        [
+          460.54771784232366,
+          532.356846473029
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          537.381679389313,
+          564.6946564885496
+        ],
+        [
+          548.0687022900763,
+          574.0458015267176
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          537.0,
+          607.0610687022901
+        ],
+        [
+          545.7786259541984,
+          616.412213740458
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          672.7932285368803,
+          507.98065296251514
+        ],
+        [
+          680.894800483676,
+          515.7194679564692
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          361.5384615384615,
+          383.36798336798336
+        ],
+        [
+          370.89397089397085,
+          393.1392931392931
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface634.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

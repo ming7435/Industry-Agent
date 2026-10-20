@@ -1,0 +1,153 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          792.6300578034682,
+          472.6531791907514
+        ],
+        [
+          805.635838150289,
+          486.3815028901734
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          609.2988505747127,
+          592.6436781609194
+        ],
+        [
+          631.9425287356322,
+          615.0574712643678
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          630.5632183908046,
+          677.9310344827585
+        ],
+        [
+          635.735632183908,
+          682.9885057471264
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          546.7701149425287,
+          522.7586206896551
+        ],
+        [
+          553.8965517241379,
+          531.0344827586206
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          530.4,
+          454.4
+        ],
+        [
+          536.5,
+          461.0
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          534.8,
+          488.9
+        ],
+        [
+          539.8,
+          493.7
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          218.90109890109892,
+          511.0769230769231
+        ],
+        [
+          224.17582417582418,
+          516.7912087912088
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          498.4,
+          669.2
+        ],
+        [
+          512.5,
+          683.6
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface100.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

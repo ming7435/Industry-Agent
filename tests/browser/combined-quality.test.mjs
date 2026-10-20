@@ -7,11 +7,11 @@ import { combinedVerdict } from '../../frontend/monitor-react/src/app/combinedQu
 const prefix = '/api/quality/vision/combined/parts';
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=';
 const image = 'data:image/png;base64,' + png;
-async function setup({ loseReviewReply = false } = {}) {
+async function setup({ loseReviewReply = false, patchcoreEnabled = false } = {}) {
   const fixture = await centerFixture({ withStyles: true });
   const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 1000 } });
   page.setDefaultTimeout(7000);
-  const rows = [], posts = [], errors = [], requests = new Map();
+  const rows = [], posts = [], errors = [], requests = new Map(), inspections = new Map();
   let lost = false;
   page.on('pageerror', e => errors.push(e.message));
   await page.route('**/api/**', async route => {
@@ -49,8 +49,9 @@ async function setup({ loseReviewReply = false } = {}) {
       return respond(route, { ...row, status: combinedVerdict(row) });
     }
     if (path === '/api/quality/vision/capabilities') return respond(route, {
-      data_mode: 'gear', algorithms: [{ id: 'patchcore', available: false }, { id: 'yolo', available: true }],
-      models: [{ model_id: 'yolo-default', algorithm: 'yolo', name: '齿轮 YOLO11', classes: ['darkspot'], recommended_confidence: .075, recommended_iou: .45 }],
+      data_mode: 'gear', algorithms: [{ id: 'patchcore', available: patchcoreEnabled }, { id: 'yolo', available: true }],
+      models: [{ model_id: 'yolo-default', algorithm: 'yolo', name: '齿轮 YOLO11', classes: ['darkspot'], recommended_confidence: .075, recommended_iou: .45 },
+        ...(patchcoreEnabled ? [{ model_id: 'PC-normal', algorithm: 'patchcore', name: '正常齿轮测试记忆库', sample_count: 2, memory_size: 20, suggested_threshold: 1 }] : [])],
     });
     if (path === '/api/quality/vision/detect') {
       const body = req.postDataJSON(); posts.push({ path, body });
@@ -59,18 +60,31 @@ async function setup({ loseReviewReply = false } = {}) {
         row.revision++;
         if (row.visual.decision === 'pass') row.visual = { decision: 'pending' };
       }
-      return respond(route, { inspection_id: 'VI-' + posts.length.toString(16).padStart(32, '0'), algorithm: 'yolo', model_id: body.model_id,
+      const pc = body.algorithm === 'patchcore';
+      const value = { inspection_id: 'VI-' + posts.length.toString(16).padStart(32, '0'), algorithm: body.algorithm, model_id: body.model_id,
         quality_part_id: body.quality_part_id, image_source: body.image_source, part_id: body.part_id || '',
-        created_at: new Date().toISOString(), filename: body.filename, status: 'clear', score: 0, threshold: body.confidence,
-        image: { width: 1, height: 1 }, annotated_image: image, defects: [],
-        steps: [{ name: '图像推理', status: 'completed', detail: '浏览器交互测试桩，不代表实际模型精度' }] });
+        quality_identity: row && Object.fromEntries(['scope', 'batch_id', 'serial_number', 'design_version'].map(key => [key, row[key]])),
+        image_sha256: 'a'.repeat(64), image_digest_format: 'rgb-pixels-with-size-v1',
+        parameters: { threshold: pc ? body.threshold : body.confidence, confidence: body.confidence, iou: body.iou },
+        created_at: new Date().toISOString(), filename: body.filename, status: pc ? 'defect' : 'clear', score: pc ? 1.5 : 0, threshold: pc ? body.threshold : body.confidence,
+        image: { width: 1, height: 1 }, annotated_image: image, ...(pc ? { heatmap_image: image } : {}),
+        defects: pc ? [{ label: 'anomaly', confidence: null, bbox: [0, 0, 1, 1] }] : [],
+        steps: [{ name: '图像推理', status: 'completed', detail: '浏览器交互测试桩，不代表实际模型精度' }] };
+      inspections.set(value.inspection_id, value);
+      if (row) row.latest_inspection_id = value.inspection_id;
+      return respond(route, value);
     }
+    if (path === '/api/quality/vision/sequential/fuse') {
+      posts.push({ path, body: req.postDataJSON() });
+      return respond(route, { detail: 'Unexpected sequential fusion in independent mode' }, 409);
+    }
+    if (path.startsWith('/api/quality/vision/inspections/')) return respond(route, inspections.get(path.split('/').at(-1)));
     return respond(route, { items: [], devices: [], runs: [], enabled: true });
   });
   await page.goto(fixture.base + '/?view=quality');
   await page.getByRole('heading', { name: '综合判定与合格率', exact: true }).waitFor();
   await page.getByTestId('combined-quality-metrics').locator('dd').nth(1).getByText('0', { exact: true }).waitFor();
-  return { fixture, page, rows, posts, errors };
+  return { fixture, page, rows, posts, errors, inspections };
 }
 
 async function register(page, serial) {
@@ -160,6 +174,50 @@ test('another visual inspection removes a stale pass from rates until human revi
     await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
     await page.getByText('参数：确认通过 · 外观：待复检', { exact: false }).waitFor();
     assert.deepEqual(await metrics.locator('dd').allTextContents(), ['—', '1', '0.00%']);
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+test('independent PatchCore and YOLO evidence is quoted separately and requires manual review', async () => {
+  const { fixture, page, rows, posts, errors, inspections } = await setup({ patchcoreEnabled: true });
+  try {
+    await register(page, 'GEAR-INDEPENDENT');
+    await page.getByLabel('待检测图片', { exact: true }).setInputFiles({ name: 'gear.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+    await page.getByLabel('视觉检测算法').selectOption('patchcore');
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await page.getByText('检出视觉缺陷', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '引用本次视觉检测', exact: true }).click();
+    const patchcoreId = await page.getByLabel('综合复核依据').inputValue();
+    assert.equal(inspections.get(patchcoreId).algorithm, 'patchcore');
+    assert.equal(await page.getByLabel('综合确认结果').inputValue(), 'pending');
+    assert.doesNotMatch(await page.getByLabel('综合复核说明').inputValue(), /联合检测/);
+    await page.getByLabel('综合复核说明').fill('仅引用 PatchCore 热力图，待人工检查。');
+    await page.getByRole('button', { name: '保存本项复核', exact: true }).click();
+    await page.getByText('已保存；综合判定和合格率按最新记录更新。', { exact: true }).waitFor();
+    assert.equal(rows[0].visual.inspection_id, patchcoreId);
+    assert.equal(rows[0].visual.decision, 'pending');
+    await page.getByLabel('视觉检测算法').selectOption('yolo');
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await page.getByText('未检出视觉缺陷', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '引用本次视觉检测', exact: true }).click();
+    const yoloId = await page.getByLabel('综合复核依据').inputValue();
+    assert.notEqual(yoloId, patchcoreId);
+    assert.equal(inspections.get(yoloId).algorithm, 'yolo');
+    assert.equal(await page.getByLabel('综合确认结果').inputValue(), 'pending', 'a clear YOLO result does not approve the part');
+    const metrics = page.getByTestId('combined-quality-metrics');
+    assert.deepEqual(await metrics.locator('dd').allTextContents(), ['—', '1', '0.00%']);
+    await page.getByLabel('综合复核说明').fill('人工核对全部视觉必检项目，单独引用本次 YOLO 检测。');
+    await page.getByLabel('综合确认结果').selectOption('pass');
+    await page.getByRole('checkbox', { name: '已完成本项目全部必检内容并核对实物、批次和设计版本' }).check();
+    await page.getByRole('button', { name: '保存本项复核', exact: true }).click();
+    await page.getByText('参数：待复检 · 外观：确认通过', { exact: false }).waitFor();
+    assert.equal(rows[0].visual.inspection_id, yoloId);
+    assert.equal(rows[0].visual.decision, 'pass');
+    assert.equal(rows[0].parameters.decision, 'pending');
+    assert.deepEqual([...inspections.values()].map(value => value.algorithm), ['patchcore', 'yolo']);
+    assert.deepEqual(posts.filter(p => p.path.endsWith('/detect')).map(p => p.body.algorithm), ['patchcore', 'yolo']);
+    assert.equal(posts.filter(p => p.path.endsWith('/sequential/fuse')).length, 0);
+    assert.equal(await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).count(), 0);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });

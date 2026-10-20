@@ -122,8 +122,6 @@ RAG Service 和一键启动脚本统一使用 8020；所有服务配置都在仓
 
 原有租户/设备/事件修订作用域、参数指纹、MySQL 结果幂等、Redis 阶段缓存、审批和结果未知时禁止盲目重试的规则保留。普通启动直接使用 `scripts/start_all.py`；不需要 RabbitMQ 账号、连接地址或旧启动辅助脚本。`/api/v1/runtime/event-queue` 已删除，遗留 RabbitMQ 环境变量不会再启用消息队列。没有引入新的消息中间件。
 
-移除范围、回归结果及恢复方法见 [RabbitMQ 移除记录](docs/remove-rabbitmq-20261019.md)。
-
 Model Service 的聊天请求只转发到 DeepSeek 官方 OpenAI 兼容地址 `https://api.deepseek.com/chat/completions`；RAG 的向量化和重排请求才转发到 SiliconFlow 的 `https://api.siliconflow.cn/v1`（`/embeddings`、`/rerank`）。两条路径相互独立，不会把 DeepSeek 聊天回退到 SiliconFlow。供应商密钥只在 Model Service 进程环境中读取，不写入日志或前端。
 
 项目中没有接入 TypeSafe AI 的真实 Jev 模型。当前运行时的输入解析是本地 `RuntimeInputParser`；如果以后接入 Jev，需要单独配置 TypeSafe API Key，不能把本地解析器名称当作模型调用。

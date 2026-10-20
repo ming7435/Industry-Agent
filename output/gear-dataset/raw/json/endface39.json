@@ -1,0 +1,81 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          646.0,
+          204.4
+        ],
+        [
+          660.1,
+          218.2
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          634.6,
+          203.8
+        ],
+        [
+          645.4,
+          215.1
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "hair",
+      "points": [
+        [
+          910.8,
+          243.7
+        ],
+        [
+          922.8,
+          250.0
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "hair",
+      "points": [
+        [
+          394.5,
+          392.7
+        ],
+        [
+          408.3,
+          400.8
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface39.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          602.8914728682171,
+          365.11240310077517
+        ],
+        [
+          617.0387596899225,
+          378.0968992248062
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface112.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

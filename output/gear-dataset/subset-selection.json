@@ -1,0 +1,1446 @@
+{
+  "seed": 20261025,
+  "selected": [
+    {
+      "name": "json/endface564.json",
+      "size": 1302582,
+      "compressed": 986489,
+      "offset": 1354436571
+    },
+    {
+      "name": "json/endface520.json",
+      "size": 1273169,
+      "compressed": 964056,
+      "offset": 1311627910
+    },
+    {
+      "name": "json/endface374.json",
+      "size": 1292781,
+      "compressed": 978517,
+      "offset": 1166933763
+    },
+    {
+      "name": "json/endface344.json",
+      "size": 1216398,
+      "compressed": 921263,
+      "offset": 1139241522
+    },
+    {
+      "name": "json/endface716.json",
+      "size": 1218992,
+      "compressed": 922193,
+      "offset": 1493108579
+    },
+    {
+      "name": "json/endface582.json",
+      "size": 1251051,
+      "compressed": 947364,
+      "offset": 1372886152
+    },
+    {
+      "name": "json/endface21.json",
+      "size": 603188,
+      "compressed": 456333,
+      "offset": 1028927323
+    },
+    {
+      "name": "json/endface55.json",
+      "size": 577964,
+      "compressed": 436238,
+      "offset": 1340085526
+    },
+    {
+      "name": "json/endface506.json",
+      "size": 1290346,
+      "compressed": 976448,
+      "offset": 1297151321
+    },
+    {
+      "name": "json/endface288.json",
+      "size": 1127954,
+      "compressed": 854156,
+      "offset": 1095255267
+    },
+    {
+      "name": "json/endface28.json",
+      "size": 615897,
+      "compressed": 465800,
+      "offset": 1087987837
+    },
+    {
+      "name": "json/endface173.json",
+      "size": 533449,
+      "compressed": 402828,
+      "offset": 1014983593
+    },
+    {
+      "name": "json/endface482.json",
+      "size": 1263411,
+      "compressed": 956779,
+      "offset": 1274556822
+    },
+    {
+      "name": "json/endface58.json",
+      "size": 592769,
+      "compressed": 448266,
+      "offset": 1370465208
+    },
+    {
+      "name": "json/endface53.json",
+      "size": 616295,
+      "compressed": 465677,
+      "offset": 1321384210
+    },
+    {
+      "name": "json/endface815.json",
+      "size": 1218575,
+      "compressed": 922844,
+      "offset": 1542603461
+    },
+    {
+      "name": "json/endface214.json",
+      "size": 1341554,
+      "compressed": 1016004,
+      "offset": 1032451599
+    },
+    {
+      "name": "json/endface500.json",
+      "size": 1263756,
+      "compressed": 956979,
+      "offset": 1291371220
+    },
+    {
+      "name": "json/endface739.json",
+      "size": 1285758,
+      "compressed": 973711,
+      "offset": 1502396372
+    },
+    {
+      "name": "json/endface812.json",
+      "size": 1220430,
+      "compressed": 924231,
+      "offset": 1539830539
+    },
+    {
+      "name": "json/endface224.json",
+      "size": 1293914,
+      "compressed": 980043,
+      "offset": 1039550483
+    },
+    {
+      "name": "json/endface619.json",
+      "size": 1291462,
+      "compressed": 977921,
+      "offset": 1410536612
+    },
+    {
+      "name": "json/endface73.json",
+      "size": 605207,
+      "compressed": 457696,
+      "offset": 1500966526
+    },
+    {
+      "name": "json/endface16.json",
+      "size": 607860,
+      "compressed": 458804,
+      "offset": 1011713476
+    },
+    {
+      "name": "json/endface759.json",
+      "size": 1322551,
+      "compressed": 998549,
+      "offset": 1515664446
+    },
+    {
+      "name": "json/endface822.json",
+      "size": 1209599,
+      "compressed": 916035,
+      "offset": 1549501026
+    },
+    {
+      "name": "json/endface191.json",
+      "size": 1296227,
+      "compressed": 981726,
+      "offset": 1019100348
+    },
+    {
+      "name": "json/endface243.json",
+      "size": 1228427,
+      "compressed": 930154,
+      "offset": 1057227599
+    },
+    {
+      "name": "json/endface138.json",
+      "size": 531263,
+      "compressed": 401908,
+      "offset": 1006788559
+    },
+    {
+      "name": "json/endface405.json",
+      "size": 1307744,
+      "compressed": 990154,
+      "offset": 1197909625
+    },
+    {
+      "name": "json/endface559.json",
+      "size": 1239078,
+      "compressed": 938092,
+      "offset": 1349189587
+    },
+    {
+      "name": "json/endface607.json",
+      "size": 1297070,
+      "compressed": 982061,
+      "offset": 1398452103
+    },
+    {
+      "name": "json/endface368.json",
+      "size": 1290857,
+      "compressed": 977334,
+      "offset": 1160609246
+    },
+    {
+      "name": "json/endface627.json",
+      "size": 1289619,
+      "compressed": 976587,
+      "offset": 1418710714
+    },
+    {
+      "name": "json/endface155.json",
+      "size": 535463,
+      "compressed": 404944,
+      "offset": 1010504739
+    },
+    {
+      "name": "json/endface119.json",
+      "size": 540705,
+      "compressed": 406600,
+      "offset": 1001897019
+    },
+    {
+      "name": "json/endface469.json",
+      "size": 1267197,
+      "compressed": 959448,
+      "offset": 1261112310
+    },
+    {
+      "name": "json/endface377.json",
+      "size": 1291391,
+      "compressed": 977923,
+      "offset": 1169836531
+    },
+    {
+      "name": "json/endface529.json",
+      "size": 1291861,
+      "compressed": 978249,
+      "offset": 1320405891
+    },
+    {
+      "name": "json/endface675.json",
+      "size": 1266645,
+      "compressed": 956208,
+      "offset": 1466776026
+    },
+    {
+      "name": "json/endface60.json",
+      "size": 606157,
+      "compressed": 458224,
+      "offset": 1391254241
+    },
+    {
+      "name": "json/endface42.json",
+      "size": 596171,
+      "compressed": 450030,
+      "offset": 1212992519
+    },
+    {
+      "name": "json/endface751.json",
+      "size": 1531053,
+      "compressed": 1158910,
+      "offset": 1506434309
+    },
+    {
+      "name": "json/endface468.json",
+      "size": 1295658,
+      "compressed": 981012,
+      "offset": 1260131228
+    },
+    {
+      "name": "json/endface96.json",
+      "size": 607353,
+      "compressed": 458253,
+      "offset": 1584704105
+    },
+    {
+      "name": "json/endface278.json",
+      "size": 1124315,
+      "compressed": 851332,
+      "offset": 1086288584
+    },
+    {
+      "name": "json/endface603.json",
+      "size": 1144865,
+      "compressed": 866879,
+      "offset": 1394647983
+    },
+    {
+      "name": "json/endface594.json",
+      "size": 1291963,
+      "compressed": 978323,
+      "offset": 1384929286
+    },
+    {
+      "name": "json/endface918.json",
+      "size": 1245820,
+      "compressed": 943493,
+      "offset": 1578187918
+    },
+    {
+      "name": "json/endface505.json",
+      "size": 1291546,
+      "compressed": 977425,
+      "offset": 1296173826
+    },
+    {
+      "name": "json/endface436.json",
+      "size": 1251426,
+      "compressed": 947634,
+      "offset": 1229353268
+    },
+    {
+      "name": "json/endface378.json",
+      "size": 1293265,
+      "compressed": 978913,
+      "offset": 1170814524
+    },
+    {
+      "name": "json/endface910.json",
+      "size": 1245690,
+      "compressed": 943382,
+      "offset": 1570660156
+    },
+    {
+      "name": "json/endface265.json",
+      "size": 1118753,
+      "compressed": 847115,
+      "offset": 1074811088
+    },
+    {
+      "name": "json/endface461.json",
+      "size": 1266198,
+      "compressed": 958638,
+      "offset": 1253477856
+    },
+    {
+      "name": "json/endface306.json",
+      "size": 1120302,
+      "compressed": 848325,
+      "offset": 1111926940
+    },
+    {
+      "name": "json/endface816.json",
+      "size": 1219313,
+      "compressed": 923428,
+      "offset": 1543526375
+    },
+    {
+      "name": "json/endface646.json",
+      "size": 1293124,
+      "compressed": 979019,
+      "offset": 1438115060
+    },
+    {
+      "name": "json/endface448.json",
+      "size": 1256519,
+      "compressed": 951539,
+      "offset": 1241206426
+    },
+    {
+      "name": "json/endface540.json",
+      "size": 1293143,
+      "compressed": 978914,
+      "offset": 1331379886
+    },
+    {
+      "name": "json/endface51.json",
+      "size": 581071,
+      "compressed": 438812,
+      "offset": 1301005665
+    },
+    {
+      "name": "json/endface7.json",
+      "size": 600966,
+      "compressed": 454684,
+      "offset": 1479641396
+    },
+    {
+      "name": "json/endface424.json",
+      "size": 1252772,
+      "compressed": 948714,
+      "offset": 1217282268
+    },
+    {
+      "name": "json/endface697.json",
+      "size": 1301912,
+      "compressed": 985126,
+      "offset": 1476647204
+    },
+    {
+      "name": "json/endface538.json",
+      "size": 1405714,
+      "compressed": 1064171,
+      "offset": 1328880476
+    },
+    {
+      "name": "json/endface187.json",
+      "size": 539007,
+      "compressed": 407501,
+      "offset": 1017841153
+    },
+    {
+      "name": "json/endface834.json",
+      "size": 1222346,
+      "compressed": 925709,
+      "offset": 1561003606
+    },
+    {
+      "name": "json/endface266.json",
+      "size": 1121165,
+      "compressed": 848936,
+      "offset": 1075658273
+    },
+    {
+      "name": "json/endface221.json",
+      "size": 1338978,
+      "compressed": 1013722,
+      "offset": 1036508545
+    },
+    {
+      "name": "json/endface294.json",
+      "size": 1122512,
+      "compressed": 850030,
+      "offset": 1100816197
+    },
+    {
+      "name": "json/endface97.json",
+      "size": 592202,
+      "compressed": 448033,
+      "offset": 1585162427
+    },
+    {
+      "name": "json/endface86.json",
+      "size": 603871,
+      "compressed": 454129,
+      "offset": 1567460278
+    },
+    {
+      "name": "json/endface663.json",
+      "size": 1236651,
+      "compressed": 936343,
+      "offset": 1454476411
+    },
+    {
+      "name": "json/endface442.json",
+      "size": 1256495,
+      "compressed": 951312,
+      "offset": 1235499364
+    },
+    {
+      "name": "json/endface647.json",
+      "size": 1144029,
+      "compressed": 866352,
+      "offset": 1439094149
+    },
+    {
+      "name": "json/endface496.json",
+      "size": 1292112,
+      "compressed": 978246,
+      "offset": 1287556589
+    },
+    {
+      "name": "json/endface530.json",
+      "size": 1290366,
+      "compressed": 977164,
+      "offset": 1321849956
+    },
+    {
+      "name": "json/endface372.json",
+      "size": 1293152,
+      "compressed": 978830,
+      "offset": 1164976655
+    },
+    {
+      "name": "json/endface329.json",
+      "size": 1217206,
+      "compressed": 921382,
+      "offset": 1128204583
+    },
+    {
+      "name": "json/endface419.json",
+      "size": 1251391,
+      "compressed": 947648,
+      "offset": 1212044801
+    },
+    {
+      "name": "json/endface79.json",
+      "size": 603339,
+      "compressed": 456250,
+      "offset": 1524786149
+    },
+    {
+      "name": "json/endface802.json",
+      "size": 1213777,
+      "compressed": 918811,
+      "offset": 1530746837
+    },
+    {
+      "name": "json/endface320.json",
+      "size": 1216796,
+      "compressed": 921506,
+      "offset": 1119919521
+    },
+    {
+      "name": "json/endface100.json",
+      "size": 581854,
+      "compressed": 438664,
+      "offset": 993983931
+    },
+    {
+      "name": "json/endface355.json",
+      "size": 1291235,
+      "compressed": 977660,
+      "offset": 1147920032
+    },
+    {
+      "name": "json/endface571.json",
+      "size": 1336058,
+      "compressed": 1006545,
+      "offset": 1361723503
+    },
+    {
+      "name": "json/endface557.json",
+      "size": 1316034,
+      "compressed": 992703,
+      "offset": 1347255437
+    },
+    {
+      "name": "json/endface810.json",
+      "size": 1219323,
+      "compressed": 923394,
+      "offset": 1537981940
+    },
+    {
+      "name": "json/endface434.json",
+      "size": 1250397,
+      "compressed": 946889,
+      "offset": 1227458893
+    },
+    {
+      "name": "json/endface618.json",
+      "size": 1290810,
+      "compressed": 977445,
+      "offset": 1409559097
+    },
+    {
+      "name": "json/endface371.json",
+      "size": 1292626,
+      "compressed": 978286,
+      "offset": 1163998299
+    },
+    {
+      "name": "json/endface10.json",
+      "size": 603097,
+      "compressed": 456109,
+      "offset": 993527753
+    },
+    {
+      "name": "json/endface803.json",
+      "size": 1278096,
+      "compressed": 967443,
+      "offset": 1531665718
+    },
+    {
+      "name": "json/endface598.json",
+      "size": 1292934,
+      "compressed": 978664,
+      "offset": 1388841541
+    },
+    {
+      "name": "json/endface508.json",
+      "size": 1250736,
+      "compressed": 947021,
+      "offset": 1299084918
+    },
+    {
+      "name": "json/endface825.json",
+      "size": 1219207,
+      "compressed": 923329,
+      "offset": 1552252814
+    },
+    {
+      "name": "json/endface665.json",
+      "size": 1348057,
+      "compressed": 1020960,
+      "offset": 1456375411
+    },
+    {
+      "name": "json/endface593.json",
+      "size": 1291706,
+      "compressed": 978147,
+      "offset": 1383951069
+    },
+    {
+      "name": "json/endface798.json",
+      "size": 1209024,
+      "compressed": 915594,
+      "offset": 1526159044
+    },
+    {
+      "name": "json/endface352.json",
+      "size": 1143681,
+      "compressed": 866013,
+      "offset": 1145208877
+    },
+    {
+      "name": "json/endface392.json",
+      "size": 1292442,
+      "compressed": 978675,
+      "offset": 1185398350
+    },
+    {
+      "name": "json/endface358.json",
+      "size": 1292398,
+      "compressed": 978319,
+      "offset": 1150854631
+    },
+    {
+      "name": "json/endface486.json",
+      "size": 1252466,
+      "compressed": 948293,
+      "offset": 1277447915
+    },
+    {
+      "name": "json/endface347.json",
+      "size": 1214158,
+      "compressed": 919375,
+      "offset": 1141998926
+    },
+    {
+      "name": "json/endface112.json",
+      "size": 526979,
+      "compressed": 398744,
+      "offset": 999886186
+    },
+    {
+      "name": "json/endface375.json",
+      "size": 1251193,
+      "compressed": 947305,
+      "offset": 1167912350
+    },
+    {
+      "name": "json/endface645.json",
+      "size": 1294230,
+      "compressed": 979666,
+      "offset": 1437135324
+    },
+    {
+      "name": "json/endface393.json",
+      "size": 1293274,
+      "compressed": 979159,
+      "offset": 1186377095
+    },
+    {
+      "name": "json/endface178.json",
+      "size": 530283,
+      "compressed": 401113,
+      "offset": 1016586720
+    },
+    {
+      "name": "json/endface304.json",
+      "size": 1124677,
+      "compressed": 851624,
+      "offset": 1110225804
+    },
+    {
+      "name": "json/endface300.json",
+      "size": 1124314,
+      "compressed": 851381,
+      "offset": 1106823085
+    },
+    {
+      "name": "json/endface616.json",
+      "size": 1290017,
+      "compressed": 976857,
+      "offset": 1407604177
+    },
+    {
+      "name": "json/endface654.json",
+      "size": 1292277,
+      "compressed": 978595,
+      "offset": 1446283805
+    },
+    {
+      "name": "json/endface515.json",
+      "size": 1292966,
+      "compressed": 978915,
+      "offset": 1306325044
+    },
+    {
+      "name": "json/endface356.json",
+      "size": 1292357,
+      "compressed": 978261,
+      "offset": 1148897762
+    },
+    {
+      "name": "json/endface565.json",
+      "size": 1241850,
+      "compressed": 940455,
+      "offset": 1355423130
+    },
+    {
+      "name": "json/endface588.json",
+      "size": 1291382,
+      "compressed": 977923,
+      "offset": 1378725519
+    },
+    {
+      "name": "json/endface578.json",
+      "size": 1261144,
+      "compressed": 952686,
+      "offset": 1368505511
+    },
+    {
+      "name": "json/endface18.json",
+      "size": 600848,
+      "compressed": 453496,
+      "offset": 1017387588
+    },
+    {
+      "name": "json/endface39.json",
+      "size": 607205,
+      "compressed": 458782,
+      "offset": 1182981908
+    },
+    {
+      "name": "json/endface577.json",
+      "size": 1337153,
+      "compressed": 1008571,
+      "offset": 1367496870
+    },
+    {
+      "name": "json/endface397.json",
+      "size": 1250258,
+      "compressed": 946617,
+      "offset": 1190293144
+    },
+    {
+      "name": "json/endface362.json",
+      "size": 1292694,
+      "compressed": 978481,
+      "offset": 1154768627
+    },
+    {
+      "name": "json/endface346.json",
+      "size": 1210625,
+      "compressed": 916866,
+      "offset": 1141081990
+    },
+    {
+      "name": "json/endface131.json",
+      "size": 530310,
+      "compressed": 400830,
+      "offset": 1003977612
+    },
+    {
+      "name": "json/endface634.json",
+      "size": 1295242,
+      "compressed": 979956,
+      "offset": 1426019674
+    },
+    {
+      "name": "json/endface673.json",
+      "size": 1268880,
+      "compressed": 956807,
+      "offset": 1464864264
+    },
+    {
+      "name": "json/endface387.json",
+      "size": 1292647,
+      "compressed": 978652,
+      "offset": 1180044484
+    },
+    {
+      "name": "json/endface664.json",
+      "size": 1272633,
+      "compressed": 962517,
+      "offset": 1455412824
+    },
+    {
+      "name": "json/endface289.json",
+      "size": 1123408,
+      "compressed": 850757,
+      "offset": 1096109493
+    },
+    {
+      "name": "json/endface639.json",
+      "size": 1293146,
+      "compressed": 979240,
+      "offset": 1430799125
+    },
+    {
+      "name": "json/endface474.json",
+      "size": 1265697,
+      "compressed": 958041,
+      "offset": 1266369575
+    },
+    {
+      "name": "json/endface449.json",
+      "size": 1255682,
+      "compressed": 950725,
+      "offset": 1242158035
+    },
+    {
+      "name": "json/endface330.json",
+      "size": 1220428,
+      "compressed": 923439,
+      "offset": 1129583616
+    },
+    {
+      "name": "json/endface46.json",
+      "size": 603593,
+      "compressed": 456311,
+      "offset": 1252062282
+    },
+    {
+      "name": "json/endface340.json",
+      "size": 1214061,
+      "compressed": 919476,
+      "offset": 1135568858
+    },
+    {
+      "name": "json/endface738.json",
+      "size": 1283764,
+      "compressed": 972011,
+      "offset": 1501424291
+    },
+    {
+      "name": "json/endface635.json",
+      "size": 1290748,
+      "compressed": 977097,
+      "offset": 1426999700
+    },
+    {
+      "name": "json/endface516.json",
+      "size": 1289390,
+      "compressed": 976416,
+      "offset": 1307304029
+    },
+    {
+      "name": "json/endface412.json",
+      "size": 1303069,
+      "compressed": 986873,
+      "offset": 1205232712
+    },
+    {
+      "name": "json/endface462.json",
+      "size": 1267333,
+      "compressed": 959679,
+      "offset": 1254436564
+    },
+    {
+      "name": "json/endface562.json",
+      "size": 1243399,
+      "compressed": 939380,
+      "offset": 1352518852
+    },
+    {
+      "name": "json/endface415.json",
+      "size": 1260174,
+      "compressed": 953778,
+      "offset": 1208194502
+    },
+    {
+      "name": "json/endface528.json",
+      "size": 1292810,
+      "compressed": 978965,
+      "offset": 1319426856
+    },
+    {
+      "name": "json/endface921.json",
+      "size": 1240755,
+      "compressed": 939630,
+      "offset": 1581480767
+    },
+    {
+      "name": "json/endface69.json",
+      "size": 597767,
+      "compressed": 450348,
+      "offset": 1470092317
+    },
+    {
+      "name": "json/endface460.json",
+      "size": 1266822,
+      "compressed": 959124,
+      "offset": 1252518662
+    },
+    {
+      "name": "json/endface220.json",
+      "size": 1338682,
+      "compressed": 1013815,
+      "offset": 1035494660
+    },
+    {
+      "name": "json/endface633.json",
+      "size": 1292363,
+      "compressed": 978652,
+      "offset": 1425040952
+    },
+    {
+      "name": "json/endface88.json",
+      "size": 601689,
+      "compressed": 454635,
+      "offset": 1568373195
+    },
+    {
+      "name": "json/endface570.json",
+      "size": 1269188,
+      "compressed": 956072,
+      "offset": 1360767361
+    },
+    {
+      "name": "json/endface107.json",
+      "size": 603441,
+      "compressed": 455704,
+      "offset": 997169389
+    },
+    {
+      "name": "json/endface913.json",
+      "size": 1246087,
+      "compressed": 943681,
+      "offset": 1573479742
+    },
+    {
+      "name": "json/endface722.json",
+      "size": 1228007,
+      "compressed": 925742,
+      "offset": 1499113965
+    },
+    {
+      "name": "json/endface67.json",
+      "size": 604275,
+      "compressed": 454142,
+      "offset": 1461486356
+    },
+    {
+      "name": "json/endface277.json",
+      "size": 1121910,
+      "compressed": 849581,
+      "offset": 1085438933
+    },
+    {
+      "name": "json/endface418.json",
+      "size": 1272778,
+      "compressed": 963141,
+      "offset": 1211081590
+    },
+    {
+      "name": "json/endface109.json",
+      "size": 600661,
+      "compressed": 453824,
+      "offset": 998080507
+    },
+    {
+      "name": "json/endface24.json",
+      "size": 573562,
+      "compressed": 431345,
+      "offset": 1054749998
+    },
+    {
+      "name": "json/endface264.json",
+      "size": 1115368,
+      "compressed": 844412,
+      "offset": 1073966606
+    },
+    {
+      "name": "json/toothface150.json",
+      "size": 528,
+      "compressed": 253,
+      "offset": 1586366792
+    },
+    {
+      "name": "json/toothface58.json",
+      "size": 527,
+      "compressed": 257,
+      "offset": 1588208075
+    },
+    {
+      "name": "json/toothface109.json",
+      "size": 530,
+      "compressed": 272,
+      "offset": 1586351165
+    },
+    {
+      "name": "json/toothface372.json",
+      "size": 527,
+      "compressed": 259,
+      "offset": 1587180955
+    },
+    {
+      "name": "json/toothface85.json",
+      "size": 527,
+      "compressed": 268,
+      "offset": 1588218104
+    },
+    {
+      "name": "json/toothface431.json",
+      "size": 1102,
+      "compressed": 283,
+      "offset": 1587188323
+    },
+    {
+      "name": "json/toothface32.json",
+      "size": 477,
+      "compressed": 232,
+      "offset": 1587162639
+    },
+    {
+      "name": "json/toothface274.json",
+      "size": 528,
+      "compressed": 264,
+      "offset": 1586785339
+    },
+    {
+      "name": "json/toothface201.json",
+      "size": 527,
+      "compressed": 268,
+      "offset": 1586758599
+    },
+    {
+      "name": "json/toothface294.json",
+      "size": 528,
+      "compressed": 271,
+      "offset": 1586792257
+    },
+    {
+      "name": "json/toothface125.json",
+      "size": 527,
+      "compressed": 269,
+      "offset": 1586357197
+    },
+    {
+      "name": "json/toothface128.json",
+      "size": 527,
+      "compressed": 269,
+      "offset": 1586358218
+    },
+    {
+      "name": "json/toothface152.json",
+      "size": 525,
+      "compressed": 267,
+      "offset": 1586367455
+    },
+    {
+      "name": "json/toothface315.json",
+      "size": 526,
+      "compressed": 269,
+      "offset": 1587160936
+    },
+    {
+      "name": "json/toothface153.json",
+      "size": 525,
+      "compressed": 263,
+      "offset": 1586367794
+    },
+    {
+      "name": "json/toothface182.json",
+      "size": 527,
+      "compressed": 268,
+      "offset": 1586378498
+    },
+    {
+      "name": "json/toothface229.json",
+      "size": 528,
+      "compressed": 266,
+      "offset": 1586768635
+    },
+    {
+      "name": "json/toothface247.json",
+      "size": 526,
+      "compressed": 267,
+      "offset": 1586775254
+    },
+    {
+      "name": "json/toothface454.json",
+      "size": 793,
+      "compressed": 266,
+      "offset": 1587196542
+    },
+    {
+      "name": "json/toothface504.json",
+      "size": 1301256,
+      "compressed": 985470,
+      "offset": 1587215843
+    },
+    {
+      "name": "json/toothface193.json",
+      "size": 528,
+      "compressed": 269,
+      "offset": 1586382499
+    },
+    {
+      "name": "json/toothface452.json",
+      "size": 516,
+      "compressed": 241,
+      "offset": 1587195858
+    },
+    {
+      "name": "json/toothface444.json",
+      "size": 478,
+      "compressed": 233,
+      "offset": 1587193019
+    },
+    {
+      "name": "json/toothface269.json",
+      "size": 527,
+      "compressed": 267,
+      "offset": 1586783368
+    },
+    {
+      "name": "json/toothface131.json",
+      "size": 478,
+      "compressed": 235,
+      "offset": 1586359542
+    },
+    {
+      "name": "json/toothface311.json",
+      "size": 528,
+      "compressed": 260,
+      "offset": 1587159584
+    },
+    {
+      "name": "json/toothface151.json",
+      "size": 525,
+      "compressed": 266,
+      "offset": 1586367117
+    },
+    {
+      "name": "json/toothface346.json",
+      "size": 527,
+      "compressed": 262,
+      "offset": 1587172311
+    },
+    {
+      "name": "json/toothface349.json",
+      "size": 528,
+      "compressed": 268,
+      "offset": 1587173326
+    },
+    {
+      "name": "json/toothface217.json",
+      "size": 527,
+      "compressed": 267,
+      "offset": 1586764337
+    },
+    {
+      "name": "json/toothface97.json",
+      "size": 527,
+      "compressed": 250,
+      "offset": 1588222454
+    },
+    {
+      "name": "json/toothface172.json",
+      "size": 527,
+      "compressed": 269,
+      "offset": 1586374832
+    },
+    {
+      "name": "json/toothface101.json",
+      "size": 528,
+      "compressed": 269,
+      "offset": 1586348481
+    },
+    {
+      "name": "json/toothface14.json",
+      "size": 477,
+      "compressed": 234,
+      "offset": 1586362664
+    },
+    {
+      "name": "json/toothface139.json",
+      "size": 528,
+      "compressed": 264,
+      "offset": 1586362328
+    },
+    {
+      "name": "json/toothface435.json",
+      "size": 1414,
+      "compressed": 301,
+      "offset": 1587189696
+    },
+    {
+      "name": "json/toothface10.json",
+      "size": 477,
+      "compressed": 233,
+      "offset": 1586347841
+    },
+    {
+      "name": "json/toothface162.json",
+      "size": 526,
+      "compressed": 262,
+      "offset": 1586371182
+    },
+    {
+      "name": "json/toothface489.json",
+      "size": 478,
+      "compressed": 235,
+      "offset": 1587209992
+    },
+    {
+      "name": "json/toothface43.json",
+      "size": 477,
+      "compressed": 233,
+      "offset": 1587187686
+    },
+    {
+      "name": "json/toothface356.json",
+      "size": 525,
+      "compressed": 263,
+      "offset": 1587175962
+    },
+    {
+      "name": "json/toothface453.json",
+      "size": 841,
+      "compressed": 299,
+      "offset": 1587196171
+    },
+    {
+      "name": "json/toothface321.json",
+      "size": 528,
+      "compressed": 258,
+      "offset": 1587163262
+    },
+    {
+      "name": "json/toothface343.json",
+      "size": 528,
+      "compressed": 270,
+      "offset": 1587171295
+    },
+    {
+      "name": "json/toothface450.json",
+      "size": 478,
+      "compressed": 232,
+      "offset": 1587195218
+    },
+    {
+      "name": "json/toothface319.json",
+      "size": 527,
+      "compressed": 268,
+      "offset": 1587162299
+    },
+    {
+      "name": "json/toothface93.json",
+      "size": 528,
+      "compressed": 263,
+      "offset": 1588221103
+    },
+    {
+      "name": "json/toothface281.json",
+      "size": 478,
+      "compressed": 236,
+      "offset": 1586787718
+    },
+    {
+      "name": "json/toothface79.json",
+      "size": 528,
+      "compressed": 270,
+      "offset": 1588215758
+    },
+    {
+      "name": "json/toothface75.json",
+      "size": 527,
+      "compressed": 262,
+      "offset": 1588214413
+    },
+    {
+      "name": "json/toothface458.json",
+      "size": 478,
+      "compressed": 235,
+      "offset": 1587197933
+    },
+    {
+      "name": "json/toothface350.json",
+      "size": 529,
+      "compressed": 256,
+      "offset": 1587173969
+    },
+    {
+      "name": "json/toothface108.json",
+      "size": 528,
+      "compressed": 270,
+      "offset": 1586350823
+    },
+    {
+      "name": "json/toothface288.json",
+      "size": 478,
+      "compressed": 236,
+      "offset": 1586790275
+    },
+    {
+      "name": "json/toothface122.json",
+      "size": 528,
+      "compressed": 270,
+      "offset": 1586356176
+    },
+    {
+      "name": "json/toothface494.json",
+      "size": 527,
+      "compressed": 268,
+      "offset": 1587211888
+    },
+    {
+      "name": "json/toothface1.json",
+      "size": 365189,
+      "compressed": 276388,
+      "offset": 1586071383
+    },
+    {
+      "name": "json/toothface475.json",
+      "size": 526,
+      "compressed": 269,
+      "offset": 1587204965
+    },
+    {
+      "name": "json/toothface59.json",
+      "size": 527,
+      "compressed": 268,
+      "offset": 1588208403
+    },
+    {
+      "name": "json/toothface282.json",
+      "size": 527,
+      "compressed": 270,
+      "offset": 1586788026
+    },
+    {
+      "name": "json/toothface116.json",
+      "size": 528,
+      "compressed": 269,
+      "offset": 1586353830
+    },
+    {
+      "name": "json/toothface90.json",
+      "size": 525,
+      "compressed": 266,
+      "offset": 1588220086
+    },
+    {
+      "name": "json/toothface170.json",
+      "size": 530,
+      "compressed": 247,
+      "offset": 1586374171
+    },
+    {
+      "name": "json/toothface17.json",
+      "size": 525,
+      "compressed": 265,
+      "offset": 1586373835
+    },
+    {
+      "name": "json/toothface358.json",
+      "size": 478,
+      "compressed": 236,
+      "offset": 1587176638
+    },
+    {
+      "name": "json/toothface298.json",
+      "size": 527,
+      "compressed": 265,
+      "offset": 1586793618
+    },
+    {
+      "name": "json/toothface285.json",
+      "size": 887,
+      "compressed": 321,
+      "offset": 1586789147
+    },
+    {
+      "name": "json/toothface439.json",
+      "size": 478,
+      "compressed": 235,
+      "offset": 1587191105
+    },
+    {
+      "name": "json/toothface508.json",
+      "size": 528,
+      "compressed": 263,
+      "offset": 1588202368
+    },
+    {
+      "name": "json/toothface503.json",
+      "size": 515,
+      "compressed": 256,
+      "offset": 1587215515
+    },
+    {
+      "name": "json/toothface440.json",
+      "size": 790,
+      "compressed": 260,
+      "offset": 1587191717
+    },
+    {
+      "name": "json/toothface446.json",
+      "size": 478,
+      "compressed": 233,
+      "offset": 1587193663
+    },
+    {
+      "name": "json/toothface261.json",
+      "size": 526,
+      "compressed": 267,
+      "offset": 1586780659
+    },
+    {
+      "name": "json/toothface253.json",
+      "size": 527,
+      "compressed": 269,
+      "offset": 1586777637
+    },
+    {
+      "name": "json/toothface443.json",
+      "size": 478,
+      "compressed": 232,
+      "offset": 1587192715
+    },
+    {
+      "name": "json/toothface84.json",
+      "size": 524,
+      "compressed": 267,
+      "offset": 1588217766
+    },
+    {
+      "name": "json/toothface363.json",
+      "size": 525,
+      "compressed": 264,
+      "offset": 1587178277
+    },
+    {
+      "name": "json/toothface225.json",
+      "size": 526,
+      "compressed": 264,
+      "offset": 1586767350
+    },
+    {
+      "name": "json/toothface223.json",
+      "size": 526,
+      "compressed": 269,
+      "offset": 1586766668
+    },
+    {
+      "name": "json/toothface312.json",
+      "size": 527,
+      "compressed": 264,
+      "offset": 1587159916
+    }
+  ],
+  "policy": "160 endface and 80 toothface randomly selected before reading labels; not the full1165-image dataset"
+}

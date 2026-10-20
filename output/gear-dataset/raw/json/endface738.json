@@ -1,0 +1,45 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "flash",
+      "points": [
+        [
+          424.263431542461,
+          275.90987868284225
+        ],
+        [
+          449.5667244367417,
+          291.8544194107452
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "hair",
+      "points": [
+        [
+          451.99306759098783,
+          218.8908145580589
+        ],
+        [
+          482.1490467937608,
+          240.5545927209705
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface738.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

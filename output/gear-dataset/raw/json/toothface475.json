@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          569.172932330827,
+          439.84962406015035
+        ],
+        [
+          589.3662728249194,
+          465.3061224489796
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "toothface475.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

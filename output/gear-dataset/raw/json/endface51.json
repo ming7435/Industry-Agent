@@ -1,0 +1,99 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          736.5354330708661,
+          260.755905511811
+        ],
+        [
+          758.4251968503936,
+          284.6929133858267
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "damage",
+      "points": [
+        [
+          438.6,
+          787.3
+        ],
+        [
+          451.3,
+          796.9
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "hair",
+      "points": [
+        [
+          888.9,
+          336.2
+        ],
+        [
+          912.3,
+          358.7
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          885.5,
+          366.4
+        ],
+        [
+          891.0,
+          372.3
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "flash",
+      "points": [
+        [
+          952.8,
+          288.6
+        ],
+        [
+          961.2,
+          298.9
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface51.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

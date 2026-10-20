@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "flash",
+      "points": [
+        [
+          845.7777777777778,
+          704.6666666666666
+        ],
+        [
+          857.3333333333334,
+          713.8888888888889
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface97.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

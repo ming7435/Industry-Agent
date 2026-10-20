@@ -1,0 +1,45 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "overflow",
+      "points": [
+        [
+          419.4772431729519,
+          284.8920676202861
+        ],
+        [
+          445.3550065019506,
+          308.9492847854356
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "overflow",
+      "points": [
+        [
+          447.4356306892068,
+          287.2327698309493
+        ],
+        [
+          474.22366710013006,
+          308.1690507152146
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "toothface285.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

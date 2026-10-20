@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "perforation",
+      "points": [
+        [
+          276.80608365019015,
+          268.0608365019012
+        ],
+        [
+          350.5703422053232,
+          347.9087452471483
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface588.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

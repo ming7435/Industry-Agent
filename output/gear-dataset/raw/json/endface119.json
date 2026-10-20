@@ -1,0 +1,243 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "hair",
+      "points": [
+        [
+          575.0325814536341,
+          200.11779448621553
+        ],
+        [
+          610.6215538847117,
+          245.4812030075188
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          649.1476888387824,
+          316.44419391206316
+        ],
+        [
+          662.5636978579481,
+          328.62006764374297
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          714.2,
+          464.5
+        ],
+        [
+          719.3,
+          469.8
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          709.3,
+          453.5
+        ],
+        [
+          718.4,
+          463.0
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          587.1,
+          641.2
+        ],
+        [
+          592.9,
+          647.7
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          635.0,
+          599.8
+        ],
+        [
+          643.7,
+          607.1
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          642.7,
+          584.4
+        ],
+        [
+          650.6,
+          590.3
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          655.2,
+          526.3
+        ],
+        [
+          662.4,
+          532.6
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "hair",
+      "points": [
+        [
+          398.24766355140184,
+          254.4392523364486
+        ],
+        [
+          404.5560747663551,
+          282.47663551401865
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          651.8,
+          403.4
+        ],
+        [
+          659.5,
+          411.1
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          355.6,
+          421.5
+        ],
+        [
+          362.2,
+          428.2
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "flash",
+      "points": [
+        [
+          722.1,
+          333.0
+        ],
+        [
+          732.8,
+          348.3
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "flash",
+      "points": [
+        [
+          654.3,
+          658.4
+        ],
+        [
+          664.8,
+          668.1
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface119.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

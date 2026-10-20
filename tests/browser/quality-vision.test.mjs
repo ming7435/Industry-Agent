@@ -29,20 +29,20 @@ const calibrated = body => {
     calibration: { policy: body.policy, normal_count, defect_count, created_at: '2026-10-19T04:00:00Z', strategies } };
 };
 
-async function setup({ models = [model], gate, calibrationGate, malformed = false, malformedCalibration = false, cascadePatchcoreFailure = false,
-  stagePatches = {}, fusionPatch = {}, restoredFusionPatch = {}, dropFirstFusionResponse = false,
-  yoloReady = true, modelWarnings = [], dataset = null } = {}) {
+async function setup({ models = [model], gate, calibrationGate, malformed = false, malformedCalibration = false, patchcoreFailure = false,
+  patchcoreReady = true, legacyReceipt = null, yoloReady = true, modelWarnings = [], dataset = null } = {}) {
   const fixture = await centerFixture({ withStyles: true }), page = await fixture.browser.newPage();
   page.setDefaultTimeout(5000);
-  const posts = [], gets = [], errors = [], inspections = new Map(), fusions = new Map();
-  let trainedModel, nextInspection = 0, fusionAttempts = 0;
+  const posts = [], gets = [], errors = [];
+  let trainedModel, nextInspection = 0;
   const nextId = () => 'VI-' + (++nextInspection).toString(16).padStart(32, '0');
+  if (legacyReceipt) await page.addInitScript(receipt => { sessionStorage.setItem('quality-sequential:U-vision', JSON.stringify(receipt)); }, legacyReceipt);
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/team/me') return respond(route, { user: { user_id: 'U-vision', role: 'technician' } });
     if (path === '/api/quality/vision/capabilities') return respond(route, {
-      algorithms: [{ id: 'patchcore', name: 'PatchCore', available: true, can_train: true, reason: '' },
+      algorithms: [{ id: 'patchcore', name: 'PatchCore', available: patchcoreReady, can_train: true, reason: patchcoreReady ? '' : 'PatchCore 模型不可用' },
         { id: 'yolo', name: 'YOLO', available: yoloReady, can_train: false, reason: yoloReady ? '' : '尚未配置缺陷检测权重' }],
       models, model_warnings: modelWarnings, dataset, limits: { max_image_bytes: 4194304, max_training_images: 24 },
     });
@@ -60,90 +60,118 @@ async function setup({ models = [model], gate, calibrationGate, malformed = fals
     if (path === '/api/quality/vision/detect') {
       const body = route.request().postDataJSON(); posts.push({ path, body });
       if (gate) await gate.promise;
-      if (cascadePatchcoreFailure && body.algorithm === 'patchcore') return respond(route, { detail: 'PatchCore 模型不可用' }, 503);
-      const value = { ...result(body, nextId()), ...stagePatches[body.algorithm] };
+      if (patchcoreFailure && body.algorithm === 'patchcore') return respond(route, { detail: 'PatchCore 模型不可用' }, 503);
+      const value = result(body, nextId());
       if (malformed) Object.assign(value, { status: 'clear', defects: [], annotated_image: '' });
-      inspections.set(value.inspection_id, value);
       return respond(route, value);
     }
     if (path === '/api/quality/vision/sequential/fuse') {
-      const body = route.request().postDataJSON(); posts.push({ path, body });
-      const pair = JSON.stringify(body);
-      if (!fusions.has(pair)) {
-        const patchcore = inspections.get(body.patchcore_inspection_id), yoloResult = inspections.get(body.yolo_inspection_id);
-        if (!patchcore || !yoloResult) return respond(route, { detail: '检测记录不存在' }, 404);
-        const classification = yoloResult.status === 'defect' ? 'known_defect' : patchcore.status === 'defect' ? 'unknown_anomaly' : 'clear';
-        const common = Object.fromEntries(['filename', 'part_id', 'quality_part_id', 'quality_identity',
-          'image', 'image_source', 'image_sha256', 'image_digest_format', 'source_context']
-          .filter(key => Object.hasOwn(patchcore, key)).map(key => [key, patchcore[key]]));
-        const value = { ...common, algorithm: 'patchcore_yolo', inspection_id: nextId(),
-          created_at: '2026-10-19T04:01:00Z', status: classification === 'clear' ? 'clear' : 'defect',
-          classification, patchcore, yolo: yoloResult, inspection_ids: [patchcore.inspection_id, yoloResult.inspection_id] };
-        fusions.set(pair, value); inspections.set(value.inspection_id, value);
-      }
-      fusionAttempts++;
-      if (dropFirstFusionResponse && fusionAttempts === 1) return route.abort('failed');
-      return respond(route, { ...fusions.get(pair), ...fusionPatch });
+      posts.push({ path, body: route.request().postDataJSON() });
+      return respond(route, { detail: 'Unexpected sequential request in independent mode' }, 409);
     }
     if (path.startsWith('/api/quality/vision/inspections/')) {
       gets.push(path);
-      const value = inspections.get(path.split('/').pop());
-      return value ? respond(route, { ...value, ...restoredFusionPatch }) : respond(route, { detail: '检测记录不存在' }, 404);
+      return respond(route, { detail: 'Legacy sequential history must not be restored automatically' }, 404);
     }
     return respond(route, { items: [], devices: [], runs: [], enabled: true });
   });
   await page.goto(fixture.base + '/?view=quality');
-  return { fixture, page, posts, gets, errors, inspections };
+  return { fixture, page, posts, gets, errors };
 }
 
-test('sequential inspection always runs PatchCore before YOLO11 on the same image', async () => {
+test('two models expose only independent selection and never a sequential entry or output', async () => {
+  const { fixture, page, posts, errors } = await setup({ models: [model, yolo] });
+  try {
+    await page.getByLabel('检测记忆库', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('region', { name: '顺序联合检测结果', exact: true }).count(), 0);
+    assert.equal(await page.getByLabel('联合检测PatchCore记忆库', { exact: true }).count(), 0);
+    assert.equal(await page.getByLabel('联合检测YOLO模型', { exact: true }).count(), 0);
+    assert.deepEqual(posts, []);
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+test('independent PatchCore and YOLO selections each run only their selected model', async () => {
   const recommended = { ...yolo, recommended_confidence: .4, recommended_iou: .55 };
   const { fixture, page, posts, errors } = await setup({ models: [model, recommended] });
   try {
-    await page.getByLabel('待检测图片').setInputFiles(file('gear-production.png'));
-    await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).click();
-    const output = page.getByRole('region', { name: '顺序联合检测结果', exact: true });
-    await output.getByText('已知缺陷', { exact: true }).waitFor();
-    assert.equal(posts.length, 3);
-    assert.deepEqual(posts.map(item => item.path), [
-      '/api/quality/vision/detect', '/api/quality/vision/detect', '/api/quality/vision/sequential/fuse',
-    ]);
-    assert.deepEqual(posts.slice(0, 2).map(item => item.body.algorithm), ['patchcore', 'yolo']);
-    assert.deepEqual(posts[2].body, {
-      patchcore_inspection_id: 'VI-' + '1'.padStart(32, '0'), yolo_inspection_id: 'VI-' + '2'.padStart(32, '0'),
-    });
-    assert.equal(posts[0].body.image, posts[1].body.image);
-    assert.equal(posts[0].body.filename, posts[1].body.filename);
+    const output = page.getByRole('region', { name: '视觉检测结果', exact: true });
+    await page.getByLabel('待检测图片').setInputFiles(file('independent-gear.png'));
+    await page.getByLabel('视觉检测算法').selectOption('patchcore');
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await output.getByText('检出视觉缺陷', { exact: true }).waitFor();
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].path, '/api/quality/vision/detect');
+    assert.equal(posts[0].body.algorithm, 'patchcore');
     assert.equal(posts[0].body.model_id, model.model_id);
     assert.equal(posts[0].body.threshold, model.suggested_threshold);
+    assert.equal(await output.getByAltText('PatchCore 异常热力图').count(), 1);
+    await page.getByLabel('视觉检测算法').selectOption('yolo');
+    assert.equal(await output.getByText('检出视觉缺陷', { exact: true }).count(), 0);
+    assert.equal(await output.getByAltText('PatchCore 异常热力图').count(), 0);
+    assert.equal(posts.length, 1, 'changing selection must not automatically run inference');
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await output.getByText('检出视觉缺陷', { exact: true }).waitFor();
+    assert.equal(posts.length, 2);
+    assert.equal(posts[1].path, '/api/quality/vision/detect');
+    assert.equal(posts[1].body.algorithm, 'yolo');
     assert.equal(posts[1].body.model_id, recommended.model_id);
     assert.equal(posts[1].body.confidence, .4);
     assert.equal(posts[1].body.iou, .55);
-    assert.equal(await output.getByAltText('联合检测PatchCore热力图').count(), 1);
-    assert.equal(await output.getByAltText('联合检测YOLO定位图').count(), 1);
+    assert.equal(await output.getByAltText('PatchCore 异常热力图').count(), 0);
+    assert.equal(await output.getByAltText('缺陷定位结果').count(), 1);
+    await page.getByLabel('视觉检测算法').selectOption('patchcore');
+    assert.equal(await output.getByText('检出视觉缺陷', { exact: true }).count(), 0);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
 
-test('PatchCore failure stops the sequential flow before YOLO11', async () => {
-  const { fixture, page, posts, errors } = await setup({ models: [model, yolo], cascadePatchcoreFailure: true });
+for (const selected of ['patchcore', 'yolo']) test(`unavailable other model does not block independent ${selected} detection`, async () => {
+  const { fixture, page, posts, errors } = await setup({ models: [model, yolo], patchcoreReady: selected === 'patchcore', yoloReady: selected === 'yolo' });
   try {
-    await page.getByLabel('待检测图片').setInputFiles(file('gear-production.png'));
-    await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).click();
-    await page.getByRole('alert').getByText('PatchCore 未完成，已停止后续 YOLO', { exact: false }).waitFor();
-    assert.deepEqual(posts.map(item => item.body.algorithm), ['patchcore']);
+    await page.getByLabel('待检测图片').setInputFiles(file('gear.png'));
+    await page.getByLabel('视觉检测算法').selectOption(selected);
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await page.getByText('检出视觉缺陷', { exact: true }).waitFor();
+    assert.deepEqual(posts.map(item => [item.path, item.body.algorithm]), [['/api/quality/vision/detect', selected]]);
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+for (const receipt of [
+  { patchcore_inspection_id: 'VI-' + 'a'.repeat(32), yolo_inspection_id: 'VI-' + 'b'.repeat(32) },
+  { inspection_id: 'VI-' + 'c'.repeat(32) },
+]) test(`legacy sequential ${receipt.inspection_id ? 'saved' : 'pending'} receipt neither restores nor blocks independent detection`, async () => {
+  const { fixture, page, posts, gets, errors } = await setup({ models: [model, yolo], legacyReceipt: receipt });
+  try {
+    await page.getByLabel('待检测图片').setInputFiles(file('current-gear.png'));
+    const run = page.getByRole('button', { name: '运行缺陷检测', exact: true });
+    assert.equal(await run.isEnabled(), true);
+    assert.equal(await page.getByRole('button', { name: '重试保存联合结果', exact: true }).count(), 0);
     assert.equal(await page.getByRole('region', { name: '顺序联合检测结果', exact: true }).count(), 0);
+    await run.click();
+    await page.getByText('检出视觉缺陷', { exact: true }).waitFor();
+    assert.deepEqual(posts.map(item => item.path), ['/api/quality/vision/detect']);
+    assert.deepEqual(gets, []);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
 
-test('sequential inspection remains disabled until both model stages exist', async () => {
-  const { fixture, page, posts } = await setup({ models: [yolo] });
+test('PatchCore failure does not invoke YOLO automatically and explicit YOLO selection remains usable', async () => {
+  const { fixture, page, posts, errors } = await setup({ models: [model, yolo], patchcoreFailure: true });
   try {
-    await page.getByLabel('待检测图片').setInputFiles(file('gear-production.png'));
-    assert.equal(await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).isDisabled(), true);
-    await page.getByText('当前缺少正常齿轮 PatchCore 记忆库', { exact: false }).waitFor();
-    assert.deepEqual(posts, []);
+    await page.getByLabel('待检测图片').setInputFiles(file('gear.png'));
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await page.getByRole('alert').getByText('PatchCore 模型不可用', { exact: false }).waitFor();
+    assert.deepEqual(posts.map(item => item.body.algorithm), ['patchcore']);
+    assert.equal(await page.getByText('检出视觉缺陷', { exact: true }).count(), 0);
+    await page.getByLabel('视觉检测算法').selectOption('yolo');
+    assert.equal(posts.length, 1);
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await page.getByText('检出视觉缺陷', { exact: true }).waitFor();
+    assert.deepEqual(posts.map(item => item.body.algorithm), ['patchcore', 'yolo']);
+    assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
 

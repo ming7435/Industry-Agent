@@ -1,0 +1,45 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          558.267716535433,
+          186.58267716535434
+        ],
+        [
+          575.7480314960629,
+          205.63779527559058
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          530.3937007874015,
+          324.8503937007874
+        ],
+        [
+          539.3700787401574,
+          335.244094488189
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface461.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

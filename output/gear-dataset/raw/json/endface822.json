@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "missing",
+      "points": [
+        [
+          351.18918918918916,
+          368.20270270270265
+        ],
+        [
+          509.2972972972973,
+          516.1756756756756
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface822.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

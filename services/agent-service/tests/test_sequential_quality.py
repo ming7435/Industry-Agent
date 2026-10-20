@@ -1,7 +1,9 @@
-"""Persisted two-stage evidence must survive review, retries, and later inspections."""
+"""The retired fusion API cannot write; historical two-stage evidence stays readable."""
 from copy import deepcopy
 from itertools import product
 import pytest
+from app.vision.sequential import SequentialVisionService
+from app.vision.service import VisionServiceError
 
 from test_quality_vision_api import connected, install_test_preset, picture
 from test_combined_quality import register, report, review
@@ -47,11 +49,38 @@ def replace_record(service, record, **changes):
     return value
 
 
+def historical_fuse(service, body):
+    """Create legacy evidence directly; the retired public endpoint must never do so."""
+    return SequentialVisionService(service).fuse('A', body)
+
+
+def assert_historical_fuse_rejected(service, body, status=409):
+    with pytest.raises(VisionServiceError) as error:
+        historical_fuse(service, body)
+    assert error.value.status_code == status
+
+
+def test_sequential_endpoint_is_disabled_without_writing_evidence(sequence, monkeypatch):
+    client, service, _, _, body = sequence
+    before = report(client)
+    directory = service._owner_root('A') / 'inspections'
+    original_files = {path.name: path.read_bytes() for path in directory.glob('VI-*.json')}
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('The retired endpoint must not call the historical fusion service')
+
+    monkeypatch.setattr(SequentialVisionService, 'fuse', forbidden)
+    response = client.post(BASE + '/sequential/fuse', json=body)
+    assert response.status_code == 410, response.text
+    assert '已停用' in response.json()['detail']
+    assert '单算法' in response.json()['detail']
+    assert report(client) == before
+    assert {path.name: path.read_bytes() for path in directory.glob('VI-*.json')} == original_files
+
+
 def test_unknown_anomaly_is_saved_and_both_stages_enter_human_review(sequence):
     client, service, part, records, body = sequence
-    response = client.post(BASE + '/sequential/fuse', json=body)
-    assert response.status_code == 200, response.text
-    fused = response.json()
+    fused = historical_fuse(service, body)
     assert fused['algorithm'] == 'patchcore_yolo'
     assert fused['status'] == 'defect' and fused['classification'] == 'unknown_anomaly'
     assert fused['patchcore'] == records[0] and fused['yolo'] == records[1]
@@ -74,26 +103,25 @@ def test_unknown_anomaly_is_saved_and_both_stages_enter_human_review(sequence):
 
 
 def test_fusion_retry_does_not_invalidate_review_or_increment_revision(sequence):
-    client, _, _, _, body = sequence
-    first = client.post(BASE + '/sequential/fuse', json=body)
-    assert first.status_code == 200, first.text
+    client, service, _, _, body = sequence
+    first = historical_fuse(service, body)
     current = report(client)['items'][0]
-    saved, _ = review(client, current, 'visual', 'pass', inspection_id=first.json()['inspection_id'])
+    saved, _ = review(client, current, 'visual', 'pass', inspection_id=first['inspection_id'])
     assert saved.status_code == 200
-    retried = client.post(BASE + '/sequential/fuse', json=body)
-    assert retried.status_code == 200 and retried.json() == first.json()
+    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 410
+    assert report(client)['items'][0] == saved.json()
+    assert historical_fuse(service, body) == first
     assert report(client)['items'][0] == saved.json()
 
 
 def test_existing_fusion_retry_never_overwrites_a_later_inspection(sequence):
-    client, _, part, _, body = sequence
-    first = client.post(BASE + '/sequential/fuse', json=body)
-    assert first.status_code == 200
+    client, service, part, _, body = sequence
+    first = historical_fuse(service, body)
     later = client.post(BASE + '/detect', json=dict(algorithm='yolo', model_id='yolo-default',
         filename='other.png', image=picture('black'), quality_part_id=part['quality_part_id']))
     assert later.status_code == 200
     before = report(client)['items'][0]
-    assert client.post(BASE + '/sequential/fuse', json=body).json() == first.json()
+    assert historical_fuse(service, body) == first
     assert report(client)['items'][0] == before
     assert before['latest_inspection_id'] == later.json()['inspection_id']
 
@@ -104,7 +132,7 @@ def test_new_fusion_cannot_replace_later_inspection(sequence):
         image=picture('black'), quality_part_id=part['quality_part_id']))
     assert later.status_code == 200
     before = report(client)['items'][0]
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 409
+    assert_historical_fuse_rejected(service, body)
     assert report(client)['items'][0] == before
     assert len(list((service._owner_root('A') / 'inspections').glob('VI-*.json'))) == 3
 
@@ -116,9 +144,8 @@ def test_persisted_fusion_truth_table(sequence, pc_defect, yolo_defect):
         replace_record(service, record, status='defect' if defect else 'clear', score=.9 if defect else 0,
             defects=[dict(label='anomaly' if record['algorithm'] == 'patchcore' else 'scratch',
                 confidence=None if record['algorithm'] == 'patchcore' else .9, bbox=[1, 2, 5, 6])] if defect else [])
-    response = client.post(BASE + '/sequential/fuse', json=body)
-    assert response.status_code == 200, response.text
-    assert response.json()['classification'] == ('known_defect' if yolo_defect else 'unknown_anomaly' if pc_defect else 'clear')
+    result = historical_fuse(service, body)
+    assert result['classification'] == ('known_defect' if yolo_defect else 'unknown_anomaly' if pc_defect else 'clear')
 
 
 @pytest.mark.parametrize('changes', [
@@ -133,7 +160,7 @@ def test_persisted_fusion_truth_table(sequence, pc_defect, yolo_defect):
 def test_unrelated_or_incomplete_saved_evidence_cannot_fuse(sequence, changes):
     client, service, _, records, body = sequence
     replace_record(service, records[1], **changes)
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 409
+    assert_historical_fuse_rejected(service, body)
 
 
 def test_missing_pc_digest_also_fails_closed(sequence):
@@ -141,10 +168,10 @@ def test_missing_pc_digest_also_fails_closed(sequence):
     pc = deepcopy(records[0])
     pc.pop('image_sha256')
     replace_record(service, pc)
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 409
+    assert_historical_fuse_rejected(service, body)
 
 
-def test_fuse_requires_write_same_origin_owner_and_bounded_id_input(sequence):
+def test_disabled_fuse_keeps_write_auth_session_origin_and_input_validation(sequence):
     client, _, _, _, body = sequence
     assert client.post(BASE + '/sequential/fuse', json={**body, 'status': 'clear'}).status_code == 422
     assert client.post(BASE + '/sequential/fuse', json={**body, 'yolo_inspection_id': body['patchcore_inspection_id']}).status_code == 422
@@ -153,7 +180,7 @@ def test_fuse_requires_write_same_origin_owner_and_bounded_id_input(sequence):
     client.headers['x-write'] = 'allowed'
     assert client.post(BASE + '/sequential/fuse', json=body, headers={'origin': 'https://outside.invalid'}).status_code == 403
     client.cookies.set('maintenance_session', 'B')
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 404
+    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 410
     client.cookies.clear()
     assert client.post(BASE + '/sequential/fuse', json=body).status_code == 401
 
@@ -169,13 +196,13 @@ def test_registry_write_failure_is_recoverable_without_double_revision(sequence,
         return original(path, value)
 
     monkeypatch.setattr(service, '_atomic_json', fail_registry)
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 503
+    with pytest.raises(OSError, match='simulated storage failure'):
+        historical_fuse(service, body)
     monkeypatch.setattr(service, '_atomic_json', original)
-    saved = client.post(BASE + '/sequential/fuse', json=body)
-    assert saved.status_code == 200, saved.text
+    saved = historical_fuse(service, body)
     current = report(client)['items'][0]
     assert current['revision'] == before + 1
-    assert current['latest_inspection_id'] == saved.json()['inspection_id']
+    assert current['latest_inspection_id'] == saved['inspection_id']
 
 
 def test_latest_inspection_is_compared_under_the_write_lock(sequence, monkeypatch):
@@ -191,7 +218,7 @@ def test_latest_inspection_is_compared_under_the_write_lock(sequence, monkeypatc
         return original(self, owner, inspection, **kwargs)
 
     monkeypatch.setattr(CombinedQualityService, 'record_inspection', concurrent_record)
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 409
+    assert_historical_fuse_rejected(service, body)
     assert report(client)['items'][0]['latest_inspection_id'] == newer['inspection_id']
     assert len(list((service._owner_root('A') / 'inspections').glob('VI-*.json'))) == 3
 
@@ -203,13 +230,15 @@ def test_unassociated_image_pair_can_fuse_and_owner_cannot_read_other_account(se
         value.pop('quality_part_id')
         value.pop('quality_identity')
         replace_record(service, value)
-    response = client.post(BASE + '/sequential/fuse', json=body)
-    assert response.status_code == 200, response.text
-    assert 'quality_part_id' not in response.json()
-    assert client.post(BASE + '/sequential/fuse', json=body).json() == response.json()
-    route = BASE + '/inspections/' + response.json()['inspection_id']
+    record = historical_fuse(service, body)
+    assert 'quality_part_id' not in record
+    assert historical_fuse(service, body) == record
+    route = BASE + '/inspections/' + record['inspection_id']
+    assert client.get(route).json() == record
     client.cookies.set('maintenance_session', 'B')
     assert client.get(route).status_code == 404
+    client.cookies.clear()
+    assert client.get(route).status_code == 401
 
 
 def test_public_or_simulated_images_cannot_be_fused_as_production_evidence(sequence):
@@ -222,7 +251,7 @@ def test_public_or_simulated_images_cannot_be_fused_as_production_evidence(seque
             quality_identity={k: production[k] for k in ('scope', 'batch_id', 'serial_number', 'design_version')},
             image_source='public_gear_reference')
         CombinedQualityService(service).record_inspection('A', replacement)
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 409
+    assert_historical_fuse_rejected(service, body)
 
 
 def test_failed_aggregate_file_write_does_not_advance_part(sequence, monkeypatch):
@@ -236,7 +265,8 @@ def test_failed_aggregate_file_write_does_not_advance_part(sequence, monkeypatch
         return original(path, value)
 
     monkeypatch.setattr(service, '_atomic_json', fail_aggregate)
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 503
+    with pytest.raises(OSError, match='simulated full disk'):
+        historical_fuse(service, body)
     assert report(client)['items'][0] == before
     monkeypatch.setattr(service, '_atomic_json', original)
-    assert client.post(BASE + '/sequential/fuse', json=body).status_code == 200
+    assert historical_fuse(service, body)['algorithm'] == 'patchcore_yolo'

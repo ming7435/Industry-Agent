@@ -1,0 +1,351 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          267.2217453505007,
+          417.310443490701
+        ],
+        [
+          280.52646638054364,
+          437.48211731044347
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          302.84406294706724,
+          533.7625178826895
+        ],
+        [
+          313.5736766809728,
+          551.0729613733905
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          357.3,
+          509.7
+        ],
+        [
+          363.1,
+          516.4
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          407.0,
+          645.5952380952381
+        ],
+        [
+          414.0238095238095,
+          654.6428571428571
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          403.3095238095238,
+          597.2619047619047
+        ],
+        [
+          412.23809523809524,
+          609.6428571428571
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          619.3324905183313,
+          590.5158027812895
+        ],
+        [
+          626.2857142857143,
+          599.3653603034134
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          631.8482932996208,
+          617.9494310998736
+        ],
+        [
+          644.6169405815424,
+          625.787610619469
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          741.9295774647887,
+          562.3561368209256
+        ],
+        [
+          755.41046277666,
+          577.0442655935614
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          600.7125890736343,
+          522.5368171021378
+        ],
+        [
+          615.2019002375297,
+          537.0261282660332
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          448.6166007905138,
+          365.8102766798419
+        ],
+        [
+          461.2648221343873,
+          379.05138339920944
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          602.6941649899396,
+          419.9014084507042
+        ],
+        [
+          613.1569416498994,
+          429.6599597585513
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          615.1,
+          197.3
+        ],
+        [
+          623.1,
+          206.1
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          579.1,
+          211.6
+        ],
+        [
+          591.6,
+          225.5
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          715.0375939849623,
+          160.90225563909775
+        ],
+        [
+          726.9602577873254,
+          173.79162191192265
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          496.4102564102564,
+          141.94871794871796
+        ],
+        [
+          501.94871794871796,
+          148.30769230769232
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          541.8461538461538,
+          80.1025641025641
+        ],
+        [
+          555.1794871794872,
+          96.1025641025641
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          582.7692307692307,
+          77.43589743589743
+        ],
+        [
+          593.4358974358975,
+          90.56410256410257
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          506.35897435897436,
+          100.0
+        ],
+        [
+          526.4615384615385,
+          118.46153846153847
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "darkspot",
+      "points": [
+        [
+          546.8717948717949,
+          104.82051282051282
+        ],
+        [
+          560.1025641025641,
+          114.87179487179488
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface557.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

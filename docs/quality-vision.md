@@ -68,13 +68,34 @@ QUALITY_VISION_DATASET_MANIFEST=L:/industry_agent/output/gear-dataset/prepared/m
 
 算法链路：缺陷图片与框标注 → 离线训练及验证 → 加载缺陷权重 → 图片预处理 → YOLO 推理 → 置信度筛选 / NMS → 恢复原图坐标 → 标注和检测记录。
 
-## PatchCore → YOLO11 顺序联合检测
+## 两种独立的视觉检测方式
 
-页面对同一张待检测图片提供专门的顺序联合按钮。第一阶段使用所选正常齿轮PatchCore记忆库及其已保存阈值；第一阶段成功后，无论结果正常或异常，都继续运行YOLO11齿轮缺陷模型。两阶段结果必须具有相同文件名、图像摘要、尺寸、图片来源和实物关联，否则前端拒绝融合。
+页面通过“视觉检测算法”选择PatchCore或YOLO11，点击“运行缺陷检测”只执行所选算法。PatchCore独立输出异常距离、热力图和异常区域；YOLO11独立输出缺陷类别、置信度和检测框。两种方式各自保存模型参数与检测记录，各自检查是否就绪；一种模型缺失或失败不会自动调用另一种模型。
 
-联合判定采用召回优先的“任一检出即异常”规则：YOLO11检出时标记为“已知缺陷”；PatchCore异常但YOLO11未检出时标记为“未知异常，待复检”；两者均未检出时仅表示当前图片在两种模型覆盖范围内未检出异常。PatchCore执行失败会停止后续YOLO11；PatchCore成功而YOLO11失败时保留第一阶段证据，但不生成完整联合结论。单模型入口继续保留，用于建库、校准和调试。
+顺序联合入口及联合结论已取消。旧浏览器缓存中的联合记录编号和待保存状态不再恢复，也不会阻止单模型检测。旧的`sequential/fuse`和`production/verify`写接口在认证后返回410停用提示；已经保存的历史记录仍可按原有账号权限读取。
 
-联合按钮只有在当前账号已有PatchCore记忆库、YOLO11齿轮权重可用且已经选择图片时才启用。不能用公开缺陷齿轮图片建立“正常”记忆库；必须上传经人工确认的真实合格齿轮图片。
+正常记忆库必须使用明确正常标签且与待检产品和拍摄条件相匹配的真实图片。后台2068张正常齿轮图全量建库任务独立于页面算法选择，继续按下文的数据划分执行。参数检测与视觉外观的人工综合复核仍按实物记录，引用的是本次选择的单模型检测证据。
+
+### 公开正常齿轮数据
+
+已核实 [MANTA 官方项目](https://grainnet.github.io/MANTA)提供带正常标签的独立齿轮类别，作者的 [Figshare 存储](https://figshare.com/articles/dataset/27937518)可匿名下载单独的 `gear.tar.gz`（2,692,003,445字节）。[作者补充材料](https://grainnet.github.io/static/pdfs/Manta-supp.pdf)列出2068张正常训练图、162张正常测试图、81张异常测试图。每张为同一物体的五视角拼图，划分和评估应保留整个原图身份，不能将不同视角分配到训练和测试两侧。
+
+来源核验记录保存在 `.runtime/quality-research/manta-gear-source.json`，数据准备目录为 `.runtime/datasets/manta-gear/`；下载完成、完整摘要校验和实际文件计数以该目录的准备状态及清单为准。官网声明CC BY-NC-SA 4.0、非商业用途，Figshare元数据标CC BY 4.0，两处不一致；本项目仅用于非商业研究验证，商业产线使用前须澄清授权。
+
+MANTA与当前塑料齿轮YOLO11训练数据的产品及拍摄域不同，必须单独建库、校准和评估。不能把该正常库当作现有塑料齿轮的合格标准，也不能将跨域组合的结果报告为产线准确率。
+
+可复现入口（已有下载任务运行时不要重复启动下载）：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/prepare_manta_dataset.py
+.\.venv\Scripts\python.exe scripts/evaluate_manta_patchcore.py --wait-for-data
+```
+
+准备脚本支持断点续传，校验作者MD5、解压路径、文件数量及文件SHA256。评估脚本只有在准备状态为`complete`且清单校验通过后才运行；缺少或损坏数据时停止，不生成指标。全量方案使用官方`train/good`的2068张正常图全部建库。官方`test/good`中的12张正常图及`test/fragmentation`中的12张缺陷图固定用于阈值校准，其余150张正常图和69张缺陷图用于独立测试。每个原图只进入一个集合，缺陷图不会进入正常记忆库。这是完整正常训练集加自定义校准/测试划分，不能称为官方MANTA基准成绩。阈值在独立测试前锁定，五视角整图不跨集合，输出逐图分数、误报/漏检名单和三种阈值策略的测试结果。
+
+全量建库走离线入口，逐张读取并提取特征，每张图先选最多32个局部核心集特征，再从不超过66176个候选中选最多1024个最终记忆特征。所有2068张图都参与特征提取，但最终记忆库是压缩后的特征集合，不是2068张原图的副本。该分层近似采样的配置及候选数量写入模型元数据，不等同于对全部原始特征做一次全局采样。在线上传入口的24张限制继续用于控制请求体和服务资源，不限制离线全量任务。
+
+评估状态保存在 `.runtime/quality-research/manta-gear-patchcore-status.json`，全量结果与独立记忆库保存在 `.runtime/quality-research/manta-gear-patchcore-full-v1/`。`metrics_available: false` 表示尚无可报告指标；该流程不会修改在线模型清单或生产统计。
 
 ### 真实齿轮评估与限制
 
@@ -97,8 +118,9 @@ QUALITY_VISION_DATASET_MANIFEST=L:/industry_agent/output/gear-dataset/prepared/m
 | POST | `/api/quality/vision/patchcore/train` | 正常图片建库，返回模型元数据 |
 | POST | `/api/quality/vision/patchcore/calibrate` | 用独立正常/缺陷图片选择阈值，保存三种策略及校准集指标 |
 | POST | `/api/quality/vision/detect` | 执行推理，返回标注、热图、区域与流程 |
+| POST | `/api/quality/vision/sequential/fuse` | 已停用，认证后返回410；请使用单模型检测接口 |
 | GET | `/api/quality/vision/inspections/{inspection_id}` | 按账号读取已保存的视觉检测记录 |
-| POST | `/api/quality/vision/production/verify` | 对已确认模拟产出执行参数比较及三场景双模型合成流程验证；提交 `job_id` 和 UUID `request_id` |
+| POST | `/api/quality/vision/production/verify` | 已停用，认证后返回410；不再新增双模型合成验证 |
 | GET | `/api/quality/vision/production/jobs/{job_id}/latest` | 读取当前账号对该产出的最近一次验证，含已保存图片与部分失败证据 |
 
 图片使用 PNG / JPEG / WebP 的 base64 或 data URL，单张最多 4 MiB、最多 1600 万像素。训练或校准单批最多 24 张，请求 JSON 总量最多 40 MiB（base64 比原文件大约增加三分之一）。CPU 部署建议使用单 worker：单进程一次只执行一个建库/校准/推理任务，忙时返回可重试提示；锁不跨进程。训练逐张解码、提取特征并关闭原图；检测仍以原图尺寸生成热图，1600 万像素图片可能需要数百 MiB 临时内存。不会自动重试 POST；如果请求超时，应核对状态后再操作。
@@ -135,4 +157,4 @@ CAD已经支持渐开线直齿轮的齿数、模数、压力角、齿宽和孔�
 
 外观检测独立于参数比对。在质检的视觉缺陷检测中，选择齿轮测试图片并加载，或上传实际图片，然后运行YOLO11。示例只开放管理员清单中的test图片，按登录会话读取，检查文件摘要及目录边界；缺陷标注不传给推理模型。结果保存和回读仍按账号隔离，不能替代正式质量放行。
 
-旧生产合成纹理验证在gear模式下已停用。`scripts/verify_gear_vision.py` 通过隔离账号、真实模型和现有接口验证图片加载、推理、保存回读及账号隔离，不连接真实相机，也不冒充当前生产零件实拍。
+旧生产合成纹理验证已停用，页面仅保留历史结果读取。`scripts/verify_gear_vision.py` 通过隔离账号、真实模型和现有接口验证图片加载、推理、保存回读及账号隔离，不连接真实相机，也不冒充当前生产零件实拍。

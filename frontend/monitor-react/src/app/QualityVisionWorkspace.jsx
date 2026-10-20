@@ -1,13 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { request } from './apiRequest.mjs';
 import { VISION_LIMITS, DEFAULT_PATCHCORE_PREPROCESSING, CALIBRATION_POLICIES, validateVisionFiles, validateTrainingPayload,
-  validateCalibrationFiles, validateCalibrationPayload, verifiedPatchcorePreprocessing, verifiedPatchcoreModel, verifiedVisionModel, verifiedCalibrationModel, verifiedVisionResult, sequentialVisionResult, verifiedSequentialVisionResult, yoloModelParameters } from './qualityVision.mjs';
+  validateCalibrationFiles, validateCalibrationPayload, verifiedPatchcorePreprocessing, verifiedPatchcoreModel, verifiedVisionModel, verifiedCalibrationModel, verifiedVisionResult, yoloModelParameters } from './qualityVision.mjs';
 import './qualityVision.css';
 
 const prefix = '/api/quality/vision';
 const accept = 'image/png,image/jpeg,image/webp';
-const cascadeStorageKey = userId => `quality-sequential:${userId}`;
-const inspectionIdPattern = /^VI-[a-f0-9]{32}$/;
 const stepNames = { preprocess: '图像预处理', extract_features: '提取局部特征', nearest_neighbors: '最近邻检索', localize: '定位异常区域', detect: '模型推理', filter: '筛选与去重', annotate: '标注缺陷位置' };
 const flows = {
   patchcore: {
@@ -92,29 +90,18 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
   const [calibrationNormal, setCalibrationNormal] = useState([]), [calibrationDefect, setCalibrationDefect] = useState([]), [calibrationPolicy, setCalibrationPolicy] = useState('recall_priority');
   const [threshold, setThreshold] = useState('1'), [confidence, setConfidence] = useState('0.25'), [iou, setIou] = useState('0.45');
   const [savedResult, setSavedResult] = useState(null), [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const [cascadePatchcoreId, setCascadePatchcoreId] = useState(''), [cascadeYoloId, setCascadeYoloId] = useState('');
-  const [savedCascadeResult, setSavedCascadeResult] = useState(null);
-  const [restoredCascade, setRestoredCascade] = useState(null), [pendingFusion, setPendingFusion] = useState(null);
-  const [cascadeHistoryError, setCascadeHistoryError] = useState('');
   const operation = useRef(null), revision = useRef(0), context = useRef('');
   const selectedModelId = useRef(modelId); selectedModelId.current = modelId;
   const selectedAlgorithm = useRef(algorithm); selectedAlgorithm.current = algorithm;
   const modelSelections = useRef({});
   const userId = auth.actor?.user_id, partId = part?.run_id || '';
   const contextKey = JSON.stringify([auth.version, userId, partId, qualityPart?.quality_part_id, algorithm, modelId,
-    threshold, confidence, iou, calibrationPolicy, cascadePatchcoreId, cascadeYoloId]);
+    threshold, confidence, iou, calibrationPolicy]);
   context.current = contextKey;
   const result = savedResult?.context === contextKey ? savedResult.value : null;
-  const currentCascade = savedCascadeResult?.context === contextKey ? savedCascadeResult.value : null;
-  const cascadeResult = currentCascade || (!inputImage && !busy && !pendingFusion
-    && (restoredCascade?.quality_part_id || '') === (qualityPart?.quality_part_id || '') ? restoredCascade : null);
   const available = capabilities?.algorithms?.find(item => item.id === algorithm);
   const models = (capabilities?.models || []).filter(item => item.algorithm === algorithm);
   const model = models.find(item => item.model_id === modelId);
-  const patchcoreModels = (capabilities?.models || []).filter(item => item.algorithm === 'patchcore');
-  const yoloModels = (capabilities?.models || []).filter(item => item.algorithm === 'yolo');
-  const cascadePatchcore = patchcoreModels.find(item => item.model_id === cascadePatchcoreId);
-  const cascadeYolo = yoloModels.find(item => item.model_id === cascadeYoloId);
   if (model) modelSelections.current[algorithm] = { model_id: modelId, threshold, confidence, iou };
   const limits = capabilities?.limits || VISION_LIMITS;
   const positive = value => Number.isFinite(Number(value)) && Number(value) > 0;
@@ -123,17 +110,12 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
   try { if (preprocessing.blur_sigma !== '') trainingConfig = verifiedPatchcorePreprocessing({ ...preprocessing, blur_sigma: Number(preprocessing.blur_sigma) }); } catch { /* The editable form can be temporarily incomplete. */ }
   const referenceBlocked = qualityPart?.scope === 'production' && inputImage?.source === 'public_gear_reference';
   const canDetect = !!userId && checked && !loading && available?.available === true && !!model && !!inputImage && parametersValid && !busy && !referenceBlocked;
-  const patchcoreAvailable = capabilities?.algorithms?.find(item => item.id === 'patchcore')?.available === true;
-  const yoloAvailable = capabilities?.algorithms?.find(item => item.id === 'yolo')?.available === true;
-  const canCascade = !!userId && checked && !loading && patchcoreAvailable && yoloAvailable
-    && !!cascadePatchcore && !!cascadeYolo && positive(cascadePatchcore.suggested_threshold)
-    && !!inputImage && !busy && !referenceBlocked;
   const canCalibrate = !!userId && checked && !loading && algorithm === 'patchcore' && available?.available === true && !!model && !model.read_only && calibrationNormal.length >= 2 && calibrationDefect.length >= 1 && !busy;
 
   function invalidate(keepNotice = false) {
     revision.current++;
     operation.current?.controller.abort(); operation.current = null;
-    setBusy(''); setSavedResult(null); setSavedCascadeResult(null); setError(''); if (!keepNotice) setNotice('');
+    setBusy(''); setSavedResult(null); setError(''); if (!keepNotice) setNotice('');
   }
   function begin(kind) {
     const current = { generation: revision.current, context: context.current, controller: new AbortController(), kind };
@@ -147,27 +129,9 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
   useEffect(() => () => { revision.current++; operation.current?.controller.abort(); }, []);
 
   useEffect(() => {
-    invalidate(); setCapabilities(null); setSamples([]); setInputImage(null); setModelId(''); setCascadePatchcoreId(''); setCascadeYoloId(''); setThreshold('1'); setConfidence('0.25'); setIou('0.45'); setCalibrationNormal([]); setCalibrationDefect([]);
+    invalidate(); setCapabilities(null); setSamples([]); setInputImage(null); setModelId(''); setThreshold('1'); setConfidence('0.25'); setIou('0.45'); setCalibrationNormal([]); setCalibrationDefect([]);
     modelSelections.current = {};
   }, [auth.version]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setRestoredCascade(null); setPendingFusion(null); setCascadeHistoryError('');
-    if (!checked || !userId) return () => controller.abort();
-    let receipt;
-    try { receipt = JSON.parse(sessionStorage.getItem(cascadeStorageKey(userId)) || 'null'); } catch { /* History is optional. */ }
-    if (inspectionIdPattern.test(receipt?.patchcore_inspection_id || '')
-      && inspectionIdPattern.test(receipt?.yolo_inspection_id || '')) setPendingFusion(receipt);
-    else if (inspectionIdPattern.test(receipt?.inspection_id || '')) {
-      request(prefix + '/inspections/' + receipt.inspection_id, { signal: controller.signal }).then(value => {
-        const saved = verifiedSequentialVisionResult(value);
-        if (saved.inspection_id !== receipt.inspection_id) throw new Error('已保存联合检测编号不一致。');
-        if (!controller.signal.aborted) setRestoredCascade(saved);
-      }).catch(failure => { if (!controller.signal.aborted && !failure.sessionChanged) setCascadeHistoryError('上次联合记录暂未恢复：' + failure.message); });
-    }
-    return () => controller.abort();
-  }, [checked, userId, auth.version]);
 
   useEffect(() => { setCalibrationNormal([]); setCalibrationDefect([]); }, [modelId]);
 
@@ -187,10 +151,6 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
         || value.dataset.samples.some(row => !/^[A-Za-z0-9_-]{1,100}$/.test(row?.sample_id || '') || typeof row.filename !== 'string'
           || !Array.isArray(row.defect_labels)))) throw new Error('齿轮测试数据清单无效。');
       setCapabilities(value);
-      setCascadePatchcoreId(previous => value.models.some(item => item.algorithm === 'patchcore' && item.model_id === previous)
-        ? previous : value.models.find(item => item.algorithm === 'patchcore')?.model_id || '');
-      setCascadeYoloId(previous => value.models.some(item => item.algorithm === 'yolo' && item.model_id === previous)
-        ? previous : value.models.find(item => item.algorithm === 'yolo')?.model_id || '');
       setDatasetSampleId(previous => value.dataset?.samples.some(row => row.sample_id === previous) ? previous : value.dataset?.samples[0]?.sample_id || '');
       const readyModels = value.models.filter(item => value.algorithms.some(entry => entry.id === item.algorithm && entry.available === true));
       if (!readyModels.some(item => item.algorithm === selectedAlgorithm.current && item.model_id === selectedModelId.current)) {
@@ -251,7 +211,6 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
       finish(current);
       setCapabilities(previous => ({ ...previous, models: [...(previous?.models || []).filter(item => item.model_id !== value.model_id), value] }));
       setModelId(value.model_id); setThreshold(String(value.suggested_threshold));
-      setCascadePatchcoreId(value.model_id);
       // The model changes the inspection context; show confirmation after that effect.
       setNotice(`记忆库已建立：${value.name} · ${value.sample_count} 张正常样本 · ${value.memory_size} 个特征。`);
     } catch (failure) { if (currentOperation(current) && failure.name !== 'AbortError') setError(failure.message); }
@@ -314,65 +273,6 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
     finally { finish(current); }
   }
 
-  async function detectCascade() {
-    if (!canCascade || operation.current) return;
-    invalidate(); const current = begin('cascade');
-    const imageSource = inputImage.source === 'public_gear_reference' ? 'public_gear_reference' : 'upload';
-    const common = { image: inputImage.data, filename: inputImage.name, image_source: imageSource,
-      ...(partId && imageSource !== 'public_gear_reference' ? { part_id: partId } : {}),
-      ...(qualityPart ? { quality_part_id: qualityPart.quality_part_id } : {}) };
-    const patchcoreBody = { ...common, algorithm: 'patchcore', model_id: cascadePatchcore.model_id,
-      threshold: Number(cascadePatchcore.suggested_threshold), confidence: 0.25, iou: 0.45 };
-    const yoloParameters = yoloModelParameters(cascadeYolo);
-    const yoloBody = { ...common, algorithm: 'yolo', model_id: cascadeYolo.model_id,
-      confidence: Number(yoloParameters.confidence), iou: Number(yoloParameters.iou) };
-    let patchcoreResult;
-    try {
-      patchcoreResult = verifiedVisionResult(await request(prefix + '/detect', {
-        method: 'POST', signal: current.controller.signal, body: JSON.stringify(patchcoreBody),
-      }), patchcoreBody);
-      if (!currentOperation(current)) return;
-      setSavedCascadeResult({ context: current.context, value: { status: 'incomplete', classification: 'incomplete', patchcore: patchcoreResult, yolo: null } });
-      onInspection?.({ ...patchcoreResult, sequential_pending: true });
-      const yoloResult = verifiedVisionResult(await request(prefix + '/detect', {
-        method: 'POST', signal: current.controller.signal, body: JSON.stringify(yoloBody),
-      }), yoloBody);
-      if (!currentOperation(current)) return;
-      sequentialVisionResult(patchcoreResult, yoloResult);
-      onInspection?.({ ...yoloResult, sequential_pending: true });
-      const pair = { patchcore_inspection_id: patchcoreResult.inspection_id, yolo_inspection_id: yoloResult.inspection_id };
-      setPendingFusion(pair);
-      try { sessionStorage.setItem(cascadeStorageKey(userId), JSON.stringify(pair)); } catch { /* Current-page retry remains available. */ }
-      setSavedCascadeResult({ context: current.context, value: { status: 'incomplete', classification: 'incomplete', patchcore: patchcoreResult, yolo: yoloResult } });
-      await saveCascade(pair, current);
-    } catch (failure) {
-      if (currentOperation(current) && failure.name !== 'AbortError') setError(patchcoreResult
-        ? `PatchCore 已完成，但 YOLO 未完成：${failure.message}`
-        : `PatchCore 未完成，已停止后续 YOLO：${failure.message}`);
-    } finally { finish(current); }
-  }
-
-  async function saveCascade(pair, current) {
-    try {
-      const value = verifiedSequentialVisionResult(await request(prefix + '/sequential/fuse', {
-        method: 'POST', signal: current.controller.signal, body: JSON.stringify(pair),
-      }), pair);
-      if (!currentOperation(current)) return;
-      setPendingFusion(null); setRestoredCascade(null);
-      setSavedCascadeResult({ context: current.context, value });
-      try { sessionStorage.setItem(cascadeStorageKey(userId), JSON.stringify({ inspection_id: value.inspection_id })); } catch { /* Evidence remains saved on the server. */ }
-      onInspection?.(value);
-    } catch (failure) {
-      if (currentOperation(current) && failure.name !== 'AbortError') setError('两阶段已完成，联合记录尚未确认保存：' + failure.message + '。可重试保存，无需重新推理。');
-    }
-  }
-
-  async function retryCascadeSave() {
-    if (!pendingFusion || operation.current || !userId) return;
-    const current = begin('cascade-save');
-    try { await saveCascade(pendingFusion, current); } finally { finish(current); }
-  }
-
   function chooseModel(value) {
     invalidate(); setModelId(value);
     const next = models.find(item => item.model_id === value);
@@ -399,7 +299,7 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
 
   return <section className="quality-vision" aria-labelledby="quality-vision-heading" data-vision-busy={busy || undefined}>
     <header className="vision-heading"><div><p className="vision-eyebrow">IMAGE INSPECTION</p><h2 id="quality-vision-heading">视觉缺陷检测</h2>
-      <p>上传产品实拍图片，用 PatchCore 定位未知异常，或用 YOLO 识别已训练的缺陷类别。</p></div>
+      <p>上传产品实拍图片，选择一种算法独立检测：PatchCore 定位未知异常，YOLO11 识别已训练的缺陷类别。</p></div>
       <span className="vision-badge">独立视觉结果</span></header>
     <div className="vision-controls">
       <label>视觉检测算法<select aria-label="视觉检测算法" value={algorithm} onChange={event => chooseAlgorithm(event.target.value)}>
@@ -457,53 +357,11 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
         <label>NMS IoU 阈值<input type="number" aria-label="NMS IoU 阈值" min="0.01" max="1" step="0.05" value={iou} onChange={event => { invalidate(); setIou(event.target.value); }} /></label></>}</div>
     </div>
     {inputImage?.source === 'public_gear_reference' && <p className="vision-note">当前是公开数据集的参考齿轮图片，不代表所选 CAD 零件的实拍，不关联当前工件身份。</p>}
-    <section className="vision-cascade" aria-labelledby="vision-cascade-heading">
-      <h3 id="vision-cascade-heading">PatchCore → YOLO11 顺序联合检测</h3>
-      <p className="vision-note">第一阶段用正常记忆库判断是否偏离正常分布；第一阶段成功后，同一张图片始终继续运行 YOLO11，识别已知缺陷类别。任一模型检出异常，联合结论即为异常。</p>
-      <div className="vision-controls">
-        <label>第一阶段 · 正常记忆库<select aria-label="联合检测PatchCore记忆库" value={cascadePatchcoreId} disabled={loading || !!busy || !patchcoreModels.length} onChange={event => { invalidate(); setCascadePatchcoreId(event.target.value); }}>
-          {!patchcoreModels.length && <option value="">请先使用正常齿轮图片建立记忆库</option>}
-          {patchcoreModels.map(item => <option key={item.model_id} value={item.model_id}>{item.name}</option>)}</select></label>
-        <label>第二阶段 · 缺陷模型<select aria-label="联合检测YOLO模型" value={cascadeYoloId} disabled={loading || !!busy || !yoloModels.length} onChange={event => { invalidate(); setCascadeYoloId(event.target.value); }}>
-          {!yoloModels.length && <option value="">暂无可用YOLO缺陷模型</option>}
-          {yoloModels.map(item => <option key={item.model_id} value={item.model_id}>{item.name}</option>)}</select></label>
-      </div>
-      <p className="vision-note">PatchCore 使用记忆库保存阈值 {cascadePatchcore?.suggested_threshold ?? '—'}；YOLO 使用模型建议置信度 {cascadeYolo ? yoloModelParameters(cascadeYolo).confidence : '—'}、NMS IoU {cascadeYolo ? yoloModelParameters(cascadeYolo).iou : '—'}。</p>
-      {!cascadePatchcore && <p className="vision-note vision-model-warning">当前缺少正常齿轮 PatchCore 记忆库。上传真实合格齿轮图片建库后，联合检测才可运行。</p>}
-      {pendingFusion && <p className="vision-note">两阶段检测已保存，联合记录待确认。<button className="button" type="button" disabled={!!busy || !userId} onClick={retryCascadeSave}>重试保存联合结果</button></p>}
-      {cascadeHistoryError && <p className="vision-error" role="alert">{cascadeHistoryError}</p>}
-      <div className="vision-run"><span className="vision-note">{busy === 'cascade' ? '正在执行 PatchCore；完成后继续 YOLO11…' : inputImage ? `联合检测图片：${inputImage.name}` : '请先选择待检测图片'}</span>
-        <button className="button primary" type="button" disabled={!canCascade || !!pendingFusion} onClick={detectCascade}>{busy === 'cascade' ? '正在顺序检测…' : '运行 PatchCore → YOLO11'}</button></div>
-    </section>
     {algorithm === 'patchcore' && <p className="vision-note">异常分数为原始特征距离，数值越高越异常，不是概率。建议阈值需结合独立正常样本和已知缺陷验证，才能用于生产判定。</p>}
     {algorithm === 'yolo' && model && <p className="vision-note">模型建议：置信度 {yoloModelParameters(model).confidence} · NMS IoU {yoloModelParameters(model).iou}。{model.calibration_scope === 'synthetic_calibration_only' && '建议参数来自独立合成校准集，真实产线需重新校准。'} <button type="button" className="button" disabled={!!busy} onClick={() => { invalidate(); applyYoloParameters(model); }}>应用模型建议参数</button></p>}
     <div className="vision-run"><span className="vision-note">{busy === 'read-image' ? '正在读取待检测图片…' : busy === 'detect' ? '正在对上传图片运行模型推理…' : inputImage ? `待检测：${inputImage.name}` : '等待上传待检测图片'}</span>
       <button className="button primary" type="button" disabled={!canDetect} onClick={detect}>{busy === 'detect' ? '正在检测视觉缺陷…' : '运行缺陷检测'}</button></div>
     {error && <p className="vision-error" role="alert">{error}</p>}{notice && <p className="vision-notice" role="status">{notice}</p>}
-    {cascadeResult && <section className="vision-output vision-cascade-output" aria-labelledby="vision-cascade-output-heading">
-      <header><h3 id="vision-cascade-output-heading">顺序联合检测结果</h3><span className={`vision-status ${cascadeResult.status === 'defect' ? 'defect' : cascadeResult.status === 'clear' ? 'clear' : ''}`}>
-        {cascadeResult.classification === 'known_defect' ? '已知缺陷'
-          : cascadeResult.classification === 'unknown_anomaly' ? '未知异常，待复检'
-            : cascadeResult.classification === 'clear' ? '两阶段均未检出异常' : cascadeResult.yolo ? '等待联合记录确认' : 'PatchCore完成，YOLO未完成'}</span></header>
-      {cascadeResult === restoredCascade && <p className="vision-note">已恢复上次保存的联合记录 · {cascadeResult.filename} · {cascadeResult.created_at}</p>}
-      <p className="vision-note">{cascadeResult.classification === 'known_defect' ? 'YOLO11已定位已训练的缺陷类别，联合判定为异常。'
-        : cascadeResult.classification === 'unknown_anomaly' ? 'PatchCore发现偏离正常分布，但YOLO11未识别已知类别；保留热力图并进入人工复检。'
-          : cascadeResult.classification === 'clear' ? 'PatchCore与YOLO11均未检出异常；该结论只覆盖当前图片和已验证的模型范围。'
-            : cascadeResult.yolo ? '两阶段证据已保存，联合结论需等待服务器确认。' : '第一阶段证据已保存；第二阶段没有形成完整结果，不能给出联合结论。'}</p>
-      <div className="vision-images">
-        {cascadeResult.patchcore?.heatmap_image && <figure><img src={cascadeResult.patchcore.heatmap_image} alt="联合检测PatchCore热力图" /><figcaption>第一阶段 · PatchCore异常热力图</figcaption></figure>}
-        {cascadeResult.yolo?.annotated_image && <figure><img src={cascadeResult.yolo.annotated_image} alt="联合检测YOLO定位图" /><figcaption>第二阶段 · YOLO11缺陷定位</figcaption></figure>}
-      </div>
-      <dl className="vision-metrics">
-        <div><dt>PatchCore结论</dt><dd>{cascadeResult.patchcore.status === 'defect' ? '异常' : '正常'}</dd><small>分数 {cascadeResult.patchcore.score.toFixed(4)} / 阈值 {cascadeResult.patchcore.threshold}</small></div>
-        <div><dt>YOLO11结论</dt><dd>{cascadeResult.yolo ? cascadeResult.yolo.status === 'defect' ? '缺陷' : '未检出' : '未完成'}</dd><small>{cascadeResult.yolo ? `${cascadeResult.yolo.defects.length} 个区域` : '无完整结果'}</small></div>
-        <div><dt>联合判定</dt><dd>{cascadeResult.status === 'defect' ? '异常' : cascadeResult.status === 'clear' ? '未检出' : '待确认'}</dd><small>任一模型检出即为异常</small></div>
-      </dl>
-      <p className="vision-note">检测编号：PatchCore {cascadeResult.patchcore.inspection_id} · YOLO11 {cascadeResult.yolo?.inspection_id || '未生成'}</p>
-      {cascadeResult.inspection_id && <p className="vision-note">联合记录：{cascadeResult.inspection_id} · 已保存两阶段证据
-        {cascadeResult === restoredCascade && qualityPart?.latest_inspection_id === cascadeResult.inspection_id
-          && <button type="button" className="button" onClick={() => onInspection?.(cascadeResult)}>用于本次综合复核</button>}</p>}
-    </section>}
     <section className="vision-output" aria-labelledby="vision-output-heading">
       {referenceBlocked && <p className="vision-error">公开齿轮测试图片只能用于流程验证。请在综合统计中切换至流程验证并选择验证实物，或上传当前生产实物的图片。</p>}
       <p className="vision-note">{qualityPart ? '本次视觉检测关联实物：' + qualityPart.serial_number + ' · 批次 ' + qualityPart.batch_id + ' · 设计版本 ' + qualityPart.design_version

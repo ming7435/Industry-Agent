@@ -24,6 +24,7 @@ const cases=[
 
 async function setup(entry=cases[0], assessmentOverride=undefined) {
   const fixture=await centerFixture({fullApp:true,withStyles:true}),page=await fixture.browser.newPage({viewport:{width:1440,height:1000}});
+  fixture.expertUrl=fixture.base+`/?view=expert&expert_agent=${entry.agent}&expert_skill=${entry.name}`;
   page.setDefaultTimeout(5000);
   const errors=[],writes=[];
   const makeSkill=selected=>({...selected,agent_label:selected.title,optimization:{mode:selected.mode,enabled:true},
@@ -62,7 +63,7 @@ test('机器测试首轮失败后仍读取晚到工单，恢复进度和计时�
     workorders:[],message:'首轮尚未同步关联工单'});
   try {
     await page.clock.install({time:new Date('2026-10-14T02:01:00Z')});
-    await page.goto(fixture.base+'/?view=expert');
+    await page.goto(fixture.expertUrl);
     await page.getByRole('button',{name:'测试修改',exact:true}).click();
     const panel=page.getByRole('region',{name:'本次测试指标',exact:true});
     await panel.getByText('验收未通过',{exact:true}).waitFor();
@@ -87,7 +88,7 @@ test('机器测试首轮失败后仍读取晚到工单，恢复进度和计时�
 test('专家中心默认显示测试，页签切换保留草稿且不发起业务写入',async()=>{
   const {fixture,page,errors,writes}=await setup();
   try {
-    await page.goto(fixture.base+'/?view=expert');
+    await page.goto(fixture.expertUrl);
     const testTab=page.getByRole('tab',{name:'测试与结果',exact:true});
     await testTab.waitFor();
     assert.equal(await testTab.getAttribute('aria-selected'),'true');
@@ -118,7 +119,7 @@ test('专家中心默认显示测试，页签切换保留草稿且不发起业�
 for(const entry of cases) test(`${entry.mode} 展示真实指标和验收项，零值不视为缺失`,async()=>{
   const {fixture,page,errors}=await setup(entry);
   try {
-    await page.goto(fixture.base+'/?view=expert');
+    await page.goto(fixture.expertUrl);
     await page.getByRole('button',{name:'测试修改',exact:true}).click();
     const panel=page.getByRole('region',{name:'本次测试指标',exact:true});
     await panel.getByText('验收通过',{exact:true}).waitFor();
@@ -149,7 +150,7 @@ for(const entry of cases) test(`${entry.mode} 展示真实指标和验收项，�
 test('折叠配置中的必填错误会展开并聚焦，不能无提示地阻止测试',async()=>{
   const {fixture,page,writes,errors}=await setup();
   try {
-    await page.goto(fixture.base+'/?view=expert');
+    await page.goto(fixture.expertUrl);
     const expected=page.getByRole('textbox',{name:'预期结果',exact:true});
     await expected.fill('');
     await page.getByText('测试配置与预期',{exact:true}).click();
@@ -160,18 +161,19 @@ test('折叠配置中的必填错误会展开并聚焦，不能无提示地阻�
   } finally {await fixture.close();}
 });
 
-test('缩小技能范围后清除失效的智能体筛选',async()=>{
+test('返回专家总览再进入其它专家时仅展示新专家绑定的技能',async()=>{
   const {fixture,page,writes}=await setup();
   try {
-    await page.goto(fixture.base+'/?view=expert');
-    const filter=page.getByRole('combobox',{name:'所属智能体',exact:true});
-    await filter.selectOption('router');
+    await page.goto(fixture.expertUrl);
+    await page.getByRole('button',{name:'返回专家总览',exact:true}).click();
+    await page.getByRole('article',{name:'路由核查专家',exact:true}).getByRole('button',{name:'查看技能',exact:true}).click();
     const catalog=page.getByRole('region',{name:'技能目录',exact:true});
     assert.equal(await catalog.getByRole('button').count(),1);
-    await page.getByRole('checkbox',{name:'显示其它智能体技能',exact:true}).uncheck();
+    await catalog.getByRole('button').filter({hasText:'路由核查'}).waitFor();
+    await page.getByRole('button',{name:'返回专家总览',exact:true}).click();
+    await page.getByRole('article',{name:'报警诊断专家',exact:true}).getByRole('button',{name:'查看技能',exact:true}).click();
     await catalog.getByRole('button').filter({hasText:'报警诊断'}).waitFor();
-    assert.equal(await filter.inputValue(),'');
-    assert.equal(await catalog.getByRole('button').count(),3);
+    assert.equal(await catalog.getByRole('button').count(),1);
     assert.deepEqual(writes,[]);
   } finally {await fixture.close();}
 });
@@ -180,7 +182,7 @@ for(const assessment of [null,{schema:1,accepted:false,basis:'machine_flow_recei
 test(`已完成但验收${assessment ? '失败' : '缺失'}不能确认发布`,async()=>{
   const {fixture,page,writes}=await setup(cases[0],assessment);
   try {
-    await page.goto(fixture.base+'/?view=expert');
+    await page.goto(fixture.expertUrl);
     await page.getByRole('button',{name:'测试修改',exact:true}).click();
     await page.getByRole('region',{name:'本次测试指标',exact:true})
       .getByText(assessment ? '验收未通过' : '回执待核实',{exact:true}).waitFor();

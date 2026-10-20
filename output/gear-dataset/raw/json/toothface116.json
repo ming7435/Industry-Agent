@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "overflow",
+      "points": [
+        [
+          436.1773962804006,
+          251.50214592274676
+        ],
+        [
+          473.80257510729615,
+          289.6995708154506
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "toothface116.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

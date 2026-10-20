@@ -1,0 +1,135 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "damage",
+      "points": [
+        [
+          311.9584055459272,
+          130.15597920277295
+        ],
+        [
+          338.12824956672443,
+          158.75216637781628
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "overflow",
+      "points": [
+        [
+          221.1800356506239,
+          405.70409982174687
+        ],
+        [
+          262.3565062388592,
+          449.554367201426
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "damage",
+      "points": [
+        [
+          736.8421052631578,
+          367.61133603238864
+        ],
+        [
+          760.3238866396761,
+          387.4493927125506
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "damage",
+      "points": [
+        [
+          542.5101214574898,
+          84.61538461538461
+        ],
+        [
+          578.5425101214574,
+          112.14574898785425
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "damage",
+      "points": [
+        [
+          574.8820960698689,
+          632.7510917030568
+        ],
+        [
+          600.2096069868995,
+          647.3799126637555
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "damage",
+      "points": [
+        [
+          759.5073313782991,
+          393.2492668621701
+        ],
+        [
+          786.1935483870967,
+          421.9882697947214
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    },
+    {
+      "label": "damage",
+      "points": [
+        [
+          743.1572700296736,
+          474.03560830860533
+        ],
+        [
+          764.6706231454006,
+          491.69139465875367
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface664.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

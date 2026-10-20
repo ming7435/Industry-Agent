@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "hair",
+      "points": [
+        [
+          672.0393700787401,
+          430.5590551181102
+        ],
+        [
+          688.0498687664042,
+          457.46194225721786
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface191.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

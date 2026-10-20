@@ -7,6 +7,7 @@ import SkillNorthStarPanel, {SkillMetricSummary} from './SkillNorthStarPanel.jsx
 import SkillLoopSummary from './SkillLoopSummary.jsx';
 import ExpertTestMetrics, {testTypes,trialPassed} from './ExpertTestMetrics.jsx';
 import SkillTaskSample, {taskSampleFor,taskPayload} from './SkillTaskSample.jsx';
+import ExpertOverview from './ExpertOverview.jsx';
 import {nextSkillVersion,withSkillDraftVersion,skillVersionPlan} from './skillVersion.mjs';
 import {skillUpdateQuota,canPublishWithQuota} from './skillUpdateQuota.mjs';
 import './expert.css';
@@ -42,7 +43,7 @@ const pause = (signal, milliseconds) => new Promise((resolve, reject) => {
 
 export default function ExpertWorkspace({ actor }) {
   const [items, setItems] = useState([]);
-  const [all, setAll] = useState(true);
+  const [overview,setOverview] = useState(true);
   const [query,setQuery] = useState('');
   const [agentFilter,setAgentFilter] = useState('');
   const [tab,setTab] = useState('test');
@@ -82,7 +83,7 @@ export default function ExpertWorkspace({ actor }) {
   const accepted = trialPassed(trial,mode);
   const updateQuota=skillUpdateQuota(current,northStar?.owner===metricsOwner ? northStar : null);
   const quotaBlocked=!canPublishWithQuota(updateQuota);
-  const visibleSkills=items.filter(skill=>(!agentFilter || skill.agent===agentFilter) &&
+  const visibleSkills=items.filter(skill=>skill.agent===agentFilter &&
     [skill.title,skill.name,skill.goal,skill.agent_label].join(' ').toLowerCase().includes(query.trim().toLowerCase()));
   const tabs=[['test','测试与结果'],['content','技能内容'],['metrics','运行效果']];
   function selectTab(event,index) {
@@ -146,15 +147,20 @@ export default function ExpertWorkspace({ actor }) {
     if (!actor?.user_id) return undefined;
     const controller = new AbortController();
     setError('');
-    request(`/api/expert/skills?loop_only=${!all}`, { signal: controller.signal }).then(value => {
+    setItems([]);setSelected(null);setAgentFilter('');setOverview(true);
+    request('/api/expert/skills?loop_only=false', { signal: controller.signal }).then(value => {
+      if(controller.signal.aborted)return;
       setItems(value.items || []);
-      setAgentFilter(previous=>(value.items || []).some(item=>item.agent===previous) ? previous : '');
       let saved = null;
       try { saved = JSON.parse(sessionStorage.getItem(receiptKey) || 'null'); } catch {}
-      setSelected(previous => (value.items || []).find(item => identity(item) === identity(previous || saved?.skill)) || value.items?.[0] || null);
+      const params=new URLSearchParams(window.location.search);
+      const target=params.get('expert_overview')==='1' ? null : params.has('expert_agent') && params.has('expert_skill')
+        ? {agent:params.get('expert_agent'),name:params.get('expert_skill')} : saved?.skill;
+      const restored=(value.items || []).find(item=>identity(item)===identity(target));
+      if(restored){setAgentFilter(restored.agent);setSelected(restored);setOverview(false);}
     }).catch(e => { if (e.name !== 'AbortError') setError(e.message); });
     return () => controller.abort();
-  }, [actor?.user_id, all]);
+  }, [actor?.user_id,actor?.role]);
 
   useEffect(() => {
     const id = ++sequence.current;
@@ -164,7 +170,12 @@ export default function ExpertWorkspace({ actor }) {
     setProposal(null); setApprovedDraft(false); manualMode.current=false;
     setNorthStar(null);
     setTab('test');
+    setLoading(false);
     if (!selected || !actor?.user_id) return undefined;
+    const url=new URL(window.location.href);
+    url.searchParams.delete('expert_overview');
+    url.searchParams.set('expert_agent',selected.agent);url.searchParams.set('expert_skill',selected.name);
+    window.history.replaceState(null,'',url);
     const controller = new AbortController(); action.current = controller;
     setLoading(true);
     request(endpoint(selected), { signal: controller.signal }).then(value => {
@@ -187,6 +198,22 @@ export default function ExpertWorkspace({ actor }) {
 
   function mayDiscard() {
     return !dirty || window.confirm('当前技能有未保存修改，确定离开并放弃草稿吗？');
+  }
+
+  function openExpert(agent) {
+    if(locked || !mayDiscard())return;
+    const first=items.find(item=>item.agent===agent);
+    if(!first)return;
+    setQuery('');setAgentFilter(agent);setSelected(first);setOverview(false);
+  }
+
+  function returnToExperts() {
+    if(locked || !mayDiscard())return;
+    setSelected(null);setOverview(true);setQuery('');
+    const url=new URL(window.location.href);
+    url.searchParams.delete('expert_agent');url.searchParams.delete('expert_skill');
+    url.searchParams.set('expert_overview','1');
+    window.history.replaceState(null,'',url);
   }
 
   function adoptAutomatic(value, force=false) {
@@ -354,17 +381,16 @@ export default function ExpertWorkspace({ actor }) {
     setMessage('已采用新基线，尚未保存；请核对合并后的草稿。');
   }
   return <section className="expert-workspace" aria-label="专家中心">
-    <header className="expert-heading"><div><span className="expert-eyebrow">技能管理</span><h1>专家中心</h1>
-      <p>选择技能，核对测试结果，再决定是否发布。</p></div><span className="expert-heading-count">{items.length} 项技能</span></header>
+    <header className="expert-heading"><div><span className="expert-eyebrow">专家协作 · AGENT & SKILL</span><h1>专家中心</h1>
+      <p>查看专家运行表现，进入专家管理和测试它绑定的技能。</p></div><span className="expert-heading-count">{new Set(items.map(item=>item.agent)).size} 位专家 · {items.length} 项技能</span></header>
     {!actor ? <section className="expert-card"><p>请先登录维修小组账号。</p></section> : <>
+      {overview ? <>{error && <p className="expert-alert" role="alert">{error}</p>}<ExpertOverview items={items} actor={actor} onOpen={openExpert} /></> : <>
+      <nav className="expert-breadcrumb" aria-label="专家导航"><button type="button" onClick={returnToExperts} disabled={locked}>返回专家总览</button>
+        <span>/</span><strong>{items.find(item=>item.agent===agentFilter)?.agent_label}专家</strong><span>仅展示本专家绑定的技能</span></nav>
       <div className="expert-layout"><section className="expert-card expert-sidebar" aria-label="技能目录">
         <div className="expert-section-title"><h2>技能目录</h2><span>{visibleSkills.length} 项</span></div>
         <label className="expert-search">查找技能<input type="search" value={query} onChange={event=>setQuery(event.target.value)} placeholder="名称、作用或标识" /></label>
-        <label className="expert-agent-filter">所属智能体<select value={agentFilter} onChange={event=>setAgentFilter(event.target.value)}>
-          <option value="">全部智能体</option>{[...new Map(items.map(item=>[item.agent,item.agent_label || item.agent])).entries()]
-            .map(([agent,label])=><option key={agent} value={agent}>{label}</option>)}</select></label>
-        <label className="expert-catalog-scope"><input type="checkbox" checked={all} disabled={locked}
-          onChange={event => { if (mayDiscard()) setAll(event.target.checked); }} /> 显示其它智能体技能</label>
+        <p className="expert-binding-note">当前专家可调用以下 {items.filter(item=>item.agent===agentFilter).length} 项 Skill。选择技能后配置样例并运行测试。</p>
         <div className="expert-catalog">{visibleSkills.map(skill => <button type="button" key={identity(skill)} disabled={locked}
           className={identity(skill) === identity(selected) ? 'is-selected' : ''} aria-pressed={identity(skill) === identity(selected)}
           onClick={() => { if (identity(skill) !== identity(selected) && mayDiscard()) setSelected(skill); }}>
@@ -506,7 +532,7 @@ export default function ExpertWorkspace({ actor }) {
           <SkillLoopSummary actor={actor} skill={current} onMetrics={setNorthStar} />
         </div>
       </section>}
-      </div></div>
+      </div></div></>}
     </>}
   </section>;
 }

@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "missing",
+      "points": [
+        [
+          287.92134831460675,
+          197.47191011235955
+        ],
+        [
+          511.51685393258424,
+          299.438202247191
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "toothface494.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}

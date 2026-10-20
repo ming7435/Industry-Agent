@@ -98,6 +98,16 @@ def test_catalog_prioritizes_actual_internal_loops(expert_api):
     assert all(item["internal_loop"] for item in response.json()["items"])
     assert all(datetime.fromisoformat(item["last_modified_at"]).tzinfo == timezone.utc
                for item in response.json()["items"])
+
+
+def test_expert_agent_metrics_require_real_team_session(expert_api):
+    assert expert_api.client.get('/api/expert/agents').status_code == 401
+    expert_api.trace.record(agent='diagnosis', agent_run_id='a', event='agent_completed', output={'status': 'completed'})
+    response = expert_api.client.get('/api/expert/agents', headers=headers())
+    assert response.status_code == 200
+    items = {item['agent']: item for item in response.json()['items']}
+    assert items['diagnosis']['completed'] == 1
+    assert items['maintenance']['total'] == 0
     all_items = expert_api.client.get("/api/expert/skills?loop_only=false", headers=headers("worker")).json()
     assert {item["agent"] for item in all_items["items"]} == {"diagnosis", "knowledge", "cad", "maintenance"}
 

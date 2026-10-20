@@ -7,6 +7,7 @@ from time import monotonic
 from shared.persistence import StorageUnavailable, mysql_session, mysql_configuration
 from .runs import RUN_INDEX_SHAPE, run_index_record
 from .trace_coverage import CoverageTracker
+from .agent_index import AGENT_EVENTS, OUTPUT_FIELDS, FINDING_FIELDS, agent_index_record
 
 
 def _run_index_sql(shape, prefix='$'):
@@ -50,6 +51,33 @@ def _skill_window_projection():
 _SKILL_WINDOW_PROJECTION = _skill_window_projection()
 
 
+def _agent_index_projection():
+    # Test business outcome flags in SQL, keeping full documents out of memory.
+    def present(value):
+        return ("CASE WHEN JSON_TYPE(" + value + ")='ARRAY' THEN JSON_LENGTH(" + value + ")>0 "
+                "WHEN JSON_TYPE(" + value + ")='STRING' THEN JSON_UNQUOTE(" + value + ")<>'' ELSE 0 END")
+    fields=[]
+    for key in ('timestamp','trace_record_id','trace_id','agent_run_id','agent','name','event'):
+        value="JSON_EXTRACT(payload,'$.%s')" % key
+        if key in ('agent','agent_run_id'):
+            value="COALESCE(%s,JSON_EXTRACT(payload,'$.context.%s'))" % (value,key)
+        fields.extend(("'%s'" % key,value))
+    fields.extend(("'error'",present("JSON_EXTRACT(payload,'$.error')")))
+    output="IF(JSON_TYPE(JSON_EXTRACT(payload,'$.output.output'))='OBJECT',JSON_EXTRACT(payload,'$.output.output'),JSON_EXTRACT(payload,'$.output'))"
+    output_fields=[]
+    for key in OUTPUT_FIELDS + FINDING_FIELDS:
+        value="JSON_EXTRACT(%s,'$.%s')" % (output,key)
+        output_fields.extend(("'%s'" % key,present(value) if key in FINDING_FIELDS else value))
+    # Validation uses the same inner-output selection as status and findings.
+    output_fields.extend(("'validation'","JSON_OBJECT(" + ','.join("'%s',JSON_EXTRACT(%s,'$.validation.%s')" % (key,output,key)
+                                                 for key in ('valid','pass','passed')) + ')'))
+    fields.extend(("'output'",'JSON_OBJECT(' + ','.join(output_fields) + ')'))
+    return 'JSON_OBJECT(' + ','.join(fields) + ')'
+
+
+_AGENT_INDEX_PROJECTION = _agent_index_projection()
+
+
 class MySQLTraceStore:
     def __init__(self, config=None):
         self._config = dict(config or mysql_configuration())
@@ -59,6 +87,7 @@ class MySQLTraceStore:
         self._coverage = CoverageTracker()
         self._run_index_lock = Lock()
         self._run_index_cache = {}
+        self._agent_index_cache = {}
         with mysql_session(self._config) as db:
             cursor = db.cursor()
             try:
@@ -189,12 +218,20 @@ class MySQLTraceStore:
             return [run_index_record(record) for record in self._list(limit=limit, projection=_RUN_INDEX_PROJECTION,
                                                                     cache=self._run_index_cache)]
 
-    def _list(self, trace_id=None, task_id=None, limit=5000, projection='payload', cache=None):
+    def list_agent_index(self, limit=5000):
+        with self._run_index_lock:
+            return [agent_index_record(record) for record in self._list(limit=limit, projection=_AGENT_INDEX_PROJECTION,
+                       cache=self._agent_index_cache, events=AGENT_EVENTS)]
+
+    def _list(self, trace_id=None, task_id=None, limit=5000, projection='payload', cache=None, events=()):
         clauses, parameters = [], []
         for name, value in (('trace_id', trace_id), ('task_id', task_id)):
             if value is not None:
                 clauses.append(name + '=%s')
                 parameters.append(str(value))
+        if events:
+            clauses.append("JSON_UNQUOTE(JSON_EXTRACT(payload,'$.event')) IN (" + ','.join(['%s'] * len(events)) + ')')
+            parameters.extend(events)
         limit = max(0, min(5000, int(limit)))
         if not limit:
             return []

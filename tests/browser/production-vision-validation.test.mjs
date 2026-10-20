@@ -73,15 +73,21 @@ function validationRecord(job, requestId = '22222222-2222-4222-8222-222222222222
   };
 }
 
-async function setup({ queryJob = second.job_id, onVerify, onLatest, jobs = [first, second] } = {}) {
+async function setup({ queryJob = second.job_id, onLatest, onCapabilities, pending, jobs = [first, second] } = {}) {
   const fixture = await virtualFixture(entry), page = await fixture.browser.newPage();
   page.setDefaultTimeout(5000);
   const posts = [], reads = [], errors = [], saved = new Map();
   page.on('pageerror', error => errors.push(error.message));
+  if (pending) await page.addInitScript(value => {
+    sessionStorage.setItem(`quality.production-vision.pending:U1:${value.job_id}`, JSON.stringify(value));
+  }, pending);
   await page.route('**/api/**', async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     reads.push({ path, method: request.method() });
     if (path === '/api/team/me') return respond(route, { user: actor });
+    if (path === '/api/quality/vision/capabilities') {
+      return onCapabilities ? onCapabilities(route) : respond(route, { data_mode: 'synthetic' });
+    }
     if (path === '/api/production/virtual/jobs') return respond(route, { items: jobs, next_cursor: null });
     if (path.startsWith('/api/production/virtual/jobs/')) {
       const job = jobs.find(value => path.endsWith(value.job_id));
@@ -90,8 +96,7 @@ async function setup({ queryJob = second.job_id, onVerify, onLatest, jobs = [fir
     if (path === '/api/quality/vision/production/verify') {
       const body = request.postDataJSON();
       posts.push(body);
-      if (onVerify) return onVerify({ route, body, posts, saved });
-      return respond(route, { detail: '测试未配置验证结果' }, 500);
+      return respond(route, { detail: '双模型合成验证已停用' }, 410);
     }
     const latest = path.match(/^\/api\/quality\/vision\/production\/jobs\/(.+)\/latest$/);
     if (latest) {
@@ -129,29 +134,24 @@ test('production URL selects the matching completed output without starting veri
     const selected = panel.getByRole('combobox', { name: '视觉验证生产任务', exact: true });
     await selected.waitFor();
     assert.equal(await selected.inputValue(), second.job_id);
-    await panel.getByRole('button', { name: '验证产线视觉流程（合成）', exact: true }).waitFor();
+    await panel.getByRole('button', { name: '回载已保存结果', exact: true }).waitFor();
+    assert.equal(await panel.getByRole('button', { name: /验证产线视觉流程|重试验证/ }).count(), 0);
+    await panel.getByText('双模型合成验证已停用，仅提供历史记录查看。', { exact: true }).waitFor();
     assert.equal(posts.length, 0);
     assert.ok(reads.some(value => value.path.endsWith('/jobs/' + second.job_id + '/latest')));
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
 
-test('one explicit verification persists both algorithms and reload restores it without another POST', async () => {
+test('saved historical results reload both algorithms as read-only evidence without any POST', async () => {
   const { fixture, page, panel, posts, reads, errors } = await setup({
-    onVerify: async ({ route, body, saved }) => {
-      const record = validationRecord(second, body.request_id);
-      saved.set(body.job_id, record);
-      return respond(route, record);
-    },
+    onLatest: ({ route }) => respond(route, { run: validationRecord(second) }),
   });
   try {
-    await panel.getByRole('button', { name: '验证产线视觉流程（合成）', exact: true }).click();
     const record = panel.getByTestId('production-validation-record');
     await record.getByText(validationRecord(second).run_id, { exact: false }).waitFor();
-    assert.equal(posts.length, 1);
-    assert.equal(posts[0].job_id, second.job_id);
-    assert.match(posts[0].request_id, /^[a-f0-9-]{36}$/i);
-    assert.deepEqual(Object.keys(posts[0]).sort(), ['job_id', 'request_id']);
+    assert.equal(posts.length, 0);
+    assert.equal(await panel.getByRole('button', { name: /验证产线视觉流程|重试验证/ }).count(), 0);
     const comparison = panel.getByTestId('production-validation-comparison');
     assert.match(await comparison.textContent(), /PatchCore/);
     assert.match(await comparison.textContent(), /YOLO/);
@@ -163,28 +163,27 @@ test('one explicit verification persists both algorithms and reload restores it 
     await page.reload();
     await panel.getByTestId('production-validation-record').getByText(validationRecord(second).run_id, { exact: false }).waitFor();
     assert.ok(latestReads() > beforeReload);
-    assert.equal(posts.length, 1);
+    assert.equal(posts.length, 0);
     await panel.getByRole('button', { name: '回载已保存结果', exact: true }).click();
     await panel.getByTestId('production-validation-record').getByText(validationRecord(second).run_id, { exact: false }).waitFor();
-    assert.equal(posts.length, 1);
+    assert.equal(posts.length, 0);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
 
-test('late verification response cannot overwrite a newly selected production task', async () => {
+test('late history response cannot overwrite a newly selected production task', async () => {
   const gate = deferred(), delivered = deferred(), started = deferred();
   const firstResult = validationRecord(first), secondResult = validationRecord(second);
   const { fixture, page, panel, posts, errors } = await setup({ queryJob: first.job_id,
-    onLatest: ({ route, jobId }) => respond(route, { run: jobId === second.job_id ? secondResult : null }),
-    onVerify: async ({ route, body }) => {
+    onLatest: async ({ route, jobId }) => {
+      if (jobId === second.job_id) return respond(route, { run: secondResult });
       started.resolve();
       await gate.promise;
-      try { await respond(route, { ...firstResult, request_id: body.request_id }); }
+      try { await respond(route, { run: firstResult }); }
       finally { delivered.resolve(); }
     },
   });
   try {
-    await panel.getByRole('button', { name: '验证产线视觉流程（合成）', exact: true }).click();
     await started.promise;
     await panel.getByRole('combobox', { name: '视觉验证生产任务', exact: true }).selectOption(second.job_id);
     await panel.getByTestId('production-validation-record').getByText(secondResult.run_id, { exact: false }).waitFor();
@@ -195,39 +194,26 @@ test('late verification response cannot overwrite a newly selected production ta
     const displayed = await panel.getByTestId('production-validation-record').textContent();
     assert.ok(displayed.includes(secondResult.run_id));
     assert.ok(!displayed.includes(firstResult.run_id));
-    assert.equal(posts.length, 1);
-    assert.equal(posts[0].job_id, first.job_id);
+    assert.equal(posts.length, 0);
+    assert.equal(await panel.getByRole('button', { name: /验证产线视觉流程|重试验证/ }).count(), 0);
     assert.deepEqual(errors, []);
   } finally { gate.resolve(); await fixture.close(); }
 });
 
-test('ambiguous POST survives reload and retries the original request until its terminal result', async () => {
+test('old pending verification receipts cannot offer a retry or hide newer saved history', async () => {
+  const pending = { job_id: second.job_id, request_id: '11111111-1111-4111-8111-111111111111' };
   const { fixture, page, panel, posts, errors } = await setup({
-    onVerify: ({ route, body, posts, saved }) => {
-      if (posts.length === 1) return route.abort('failed');
-      const record = validationRecord(second, body.request_id);
-      saved.set(body.job_id, record);
-      return respond(route, record);
-    },
+    pending,
+    onLatest: ({ route }) => respond(route, { run: validationRecord(second) }),
   });
   try {
-    await panel.getByRole('button', { name: '验证产线视觉流程（合成）', exact: true }).click();
-    await panel.getByRole('button', { name: '按原请求重试验证', exact: true }).waitFor();
-    const originalRequest = posts[0].request_id;
-    assert.equal(posts.length, 1);
-    await page.reload();
-    await panel.getByRole('button', { name: '按原请求重试验证', exact: true }).waitFor();
-    assert.equal(posts.length, 1);
-    await panel.getByRole('button', { name: '按原请求重试验证', exact: true }).click();
     await panel.getByTestId('production-validation-record').waitFor();
-    assert.equal(posts.length, 2);
-    assert.equal(posts[1].request_id, originalRequest);
-    assert.equal(posts[1].job_id, posts[0].job_id);
-    const nextResponse = page.waitForResponse(response => response.url().endsWith('/api/quality/vision/production/verify'));
-    await panel.getByRole('button', { name: '验证产线视觉流程（合成）', exact: true }).click();
-    await nextResponse;
-    assert.equal(posts.length, 3);
-    assert.notEqual(posts[2].request_id, originalRequest);
+    assert.equal(await panel.getByRole('button', { name: /验证产线视觉流程|重试验证/ }).count(), 0);
+    await page.reload();
+    await panel.getByTestId('production-validation-record').waitFor();
+    assert.equal(await panel.getByRole('button', { name: /验证产线视觉流程|重试验证/ }).count(), 0);
+    assert.equal(await panel.getByRole('alert').count(), 0);
+    assert.equal(posts.length, 0);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
@@ -250,7 +236,7 @@ test('saved results with a mismatched source or image digest cannot appear as va
   }
 });
 
-test('a newer latest run cannot prevent retrying the original running request', async () => {
+test('historical running records poll with GET and accept a newer latest record without retrying', async () => {
   const originalId = '11111111-1111-4111-8111-111111111111';
   const original = { ...validationRecord(second, originalId), status: 'running',
     parameter_inspection: null, scenarios: [],
@@ -259,23 +245,38 @@ test('a newer latest run cannot prevent retrying the original running request', 
   let latestReads = 0;
   const { fixture, panel, posts, errors } = await setup({
     onLatest: ({ route }) => respond(route, { run: ++latestReads === 1 ? original : newer }),
-    onVerify: ({ route, body }) => respond(route, validationRecord(second, body.request_id)),
   });
   try {
     await panel.getByText('合成流程验证执行中', { exact: true }).waitFor();
-    const retry = panel.getByRole('button', { name: '按原请求重试验证', exact: true });
-    assert.equal(await retry.isDisabled(), true);
-    // Let the running-record poll see the run created by another tab.
-    await panel.getByRole('alert').filter({ hasText: /原请求|请求编号/ }).waitFor();
+    assert.equal(await panel.getByRole('button', { name: /验证产线视觉流程|重试验证/ }).count(), 0);
+    await panel.getByTestId('production-validation-record').getByText(newer.run_id, { exact: false }).waitFor();
     assert.ok(latestReads >= 2);
-    assert.equal(await retry.isEnabled(), true, 'the original request must remain reconcilable after latest points elsewhere');
-    await retry.click();
     await panel.getByText('合成流程验证已保存', { exact: true }).waitFor();
-    assert.equal(posts.length, 1);
-    assert.equal(posts[0].request_id, originalId);
-    assert.equal(posts[0].job_id, second.job_id);
+    assert.equal(posts.length, 0);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
+});
+
+test('unresolved, failed, and gear capabilities never reveal a dual-model run action', async () => {
+  for (const mode of ['pending', 'failed', 'gear']) {
+    const gate = deferred(), arrived = deferred();
+    const { fixture, page, panel, posts, errors } = await setup({
+      onCapabilities: async route => {
+        arrived.resolve();
+        if (mode === 'pending') { await gate.promise; return respond(route, { data_mode: 'synthetic' }); }
+        return respond(route, mode === 'gear' ? { data_mode: 'gear' } : { detail: '能力读取失败' }, mode === 'gear' ? 200 : 503);
+      },
+    });
+    try {
+      await arrived.promise;
+      if (mode === 'gear') await page.getByRole('region', { name: '齿轮质检', exact: true }).waitFor();
+      else await panel.getByRole('button', { name: '回载已保存结果', exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: /验证产线视觉流程|重试验证/ }).count(), 0, mode);
+      gate.resolve();
+      assert.equal(posts.length, 0, mode);
+      assert.deepEqual(errors, [], mode);
+    } finally { gate.resolve(); await fixture.close(); }
+  }
 });
 
 test('failed validation restores saved parameter and partial image evidence with the missing algorithm marked unfinished', async () => {

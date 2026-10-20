@@ -130,6 +130,12 @@ def build_expert_router(runtime, require_auth):
         actor = team_actor(request)
         return {**run(manager.catalog, loop_only), "can_edit": can_edit_skills(actor)}
 
+    @router.get("/agents")
+    def agents(request: Request):
+        team_actor(request)
+        from app.api.expert_agents import expert_agent_metrics
+        return expert_agent_metrics(getattr(container, 'trace', None))
+
     @router.get("/skills/{agent}/{name}")
     def detail(agent: str, name: str, request: Request):
         actor = team_actor(request)

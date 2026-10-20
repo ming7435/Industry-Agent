@@ -1,0 +1,27 @@
+{
+  "version": "5.4.1",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "overflow",
+      "points": [
+        [
+          458.99419729206966,
+          358.75435203094776
+        ],
+        [
+          495.5512572533849,
+          411.36557059961314
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "shape_type": "rectangle",
+      "flags": {},
+      "mask": null
+    }
+  ],
+  "imagePath": "endface265.png",
+  "imageHeight": 856,
+  "imageWidth": 1024
+}
