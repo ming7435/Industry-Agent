@@ -28,24 +28,24 @@ QUALITY_VISION_ROOT=.runtime/quality-vision
 
 ## PatchCore
 
-### 已配置的试用模型
+### 当前数据与模型
 
-本地部署可提供两个可直接选择的模型：
+当前外观检测采用公开塑料齿轮数据的固定240张子集（160张端面、80张齿面），保留16类原始缺陷标签和651个矩形框。来源：[作者仓库](https://github.com/fangandyim/Plastic-Gear-Surface-Defect-Dataset)、[Kaggle数据页](https://www.kaggle.com/datasets/yimingfang1994/plastic-gear-surface-defect-dataset)。完整源数据为1165张，本次未声称使用全集。平台及LICENSE写Apache2，但作者README限定非商业学术研究；本地仅作研究验证，不推定商业授权。
 
-- **NEU-DET 钢材缺陷模型（研究验证）**：公开的 YOLOv8n ONNX 权重，识别龟裂、夹杂、斑块、麻点、氧化皮和划痕。来自 [v1.0.0 发布页](https://github.com/winthegame259/steel-surface-defect-detection/releases/tag/v1.0.0)，SHA256 为 `495ad53dbff99bcbf629ec67f90e1e627800ab8db78177de592648b6e00345b1`。上游 AGPL-3.0 许可证随制品保留；上游将数据集描述为研究用途，正式应用还需核对数据与权重授权、验证目标产品。
-- **PatchCore 合成纹理演示**：用 12 张合成正常纹理建库，用独立合成校准集选择阈值，仅供验证流程和热图。共享记忆库只读；用真实产品图片自建的个人模型仍可校准。
+旧金属纹理合成模型和钢材YOLOv8模型已从运行清单移除，不会出现在页面或参与推理。保留通用ResNet18骨干，用于用户另行上传真实良品建立PatchCore记忆库。当前齿轮子集全部带缺陷，没有已确认正常齿轮，因此不能建立正常记忆库，也不能统计正常图误报率。
 
-准备脚本 `scripts/provision_quality_models.py` 保留下载来源、校验和、建库及校准过程；运行参数以 `--help` 为准。模型制品保存在 `.runtime/quality-models/`，不提交大文件到 Git。配置示例：
+部署配置：
 
 ```dotenv
-QUALITY_YOLO_WEIGHTS=L:/industry_agent/.runtime/quality-models/neu-det-yolov8n-v1.0.0/neu_det_yolov8n_best.onnx
-QUALITY_YOLO_METADATA=L:/industry_agent/.runtime/quality-models/neu-det-yolov8n-v1.0.0/model.json
-QUALITY_PATCHCORE_PRESET_DIR=L:/industry_agent/.runtime/quality-models/patchcore-synthetic-v1
+QUALITY_YOLO_WEIGHTS=L:/industry_agent/.runtime/quality-models/yolo11-gear-v1/best.pt
+QUALITY_YOLO_METADATA=L:/industry_agent/.runtime/quality-models/yolo11-gear-v1/model.json
+QUALITY_PATCHCORE_BACKBONE_WEIGHTS=L:/industry_agent/.runtime/quality-models/backbones/resnet18-f37072fd.pth
+QUALITY_PATCHCORE_PRESET_DIR=
+QUALITY_VISION_DATA_MODE=gear
+QUALITY_VISION_DATASET_MANIFEST=L:/industry_agent/output/gear-dataset/prepared/manifest.json
 ```
 
-服务检查元数据与权重/记忆库文件摘要是否一致；检测记录保留所用模型说明。共享模型可被已登录账号使用，检测记录仍按账号隔离。模型说明错误会显示未就绪或警告，绝不以空模型返回“未检出”。
-
-这次公开 YOLO 模型的实际推理验证确认可以输出缺陷框，但正常合成图片也产生过误报。合成纹理与真实钢材的图像分布不同，不能将这些试用结果当作真实产线准确率。
+服务校验权重摘要，页面展示实际模型名称和原始覆盖类别；模型尚在训练或不可用时，检测按钮不会启用。数据和评估证据保存在 `output/gear-dataset/`。
 
 ### 自建产品记忆库
 
@@ -68,6 +68,22 @@ QUALITY_PATCHCORE_PRESET_DIR=L:/industry_agent/.runtime/quality-models/patchcore
 
 算法链路：缺陷图片与框标注 → 离线训练及验证 → 加载缺陷权重 → 图片预处理 → YOLO 推理 → 置信度筛选 / NMS → 恢复原图坐标 → 标注和检测记录。
 
+## PatchCore → YOLO11 顺序联合检测
+
+页面对同一张待检测图片提供专门的顺序联合按钮。第一阶段使用所选正常齿轮PatchCore记忆库及其已保存阈值；第一阶段成功后，无论结果正常或异常，都继续运行YOLO11齿轮缺陷模型。两阶段结果必须具有相同文件名、图像摘要、尺寸、图片来源和实物关联，否则前端拒绝融合。
+
+联合判定采用召回优先的“任一检出即异常”规则：YOLO11检出时标记为“已知缺陷”；PatchCore异常但YOLO11未检出时标记为“未知异常，待复检”；两者均未检出时仅表示当前图片在两种模型覆盖范围内未检出异常。PatchCore执行失败会停止后续YOLO11；PatchCore成功而YOLO11失败时保留第一阶段证据，但不生成完整联合结论。单模型入口继续保留，用于建库、校准和调试。
+
+联合按钮只有在当前账号已有PatchCore记忆库、YOLO11齿轮权重可用且已经选择图片时才启用。不能用公开缺陷齿轮图片建立“正常”记忆库；必须上传经人工确认的真实合格齿轮图片。
+
+### 真实齿轮评估与限制
+
+`prepare_gear_subset.py` 按固定种子20261025选取真实图片，核对上游ZIP成员CRC及标注尺寸。`train_gear_yolo.py` 将原始矩形框转换为YOLO标签，图片按比例缩至最长边640，标注同步缩放；同数字编号的端面/齿面保守归入同组，再划分train/calibration/test。源数据未提供物理工件编号，因此不能保证不同编号是不同实物，不能将结果当作独立产线验收。
+
+训练只读取train，calibration用于选轮和阈值；训练YAML不含test路径。`finalize_gear_yolo.py` 在校准集选择空间F1，冻结权重、数据摘要及全部参数后评估test。报告逐图框、位置命中/漏检/多余框，以及同时满足位置和类别的统计。`normal_samples_available=false` 时，正常图误报率为null，不能写成零误报。
+
+模型元数据的建议置信度、NMS IoU和输入尺寸用于页面及服务，实际值随检测记录保存。训练样本有限、类别长尾明显，这是一版研究基线；真实产品验收需补充正常图、更多罕见缺陷和明确的工件/批次标识。
+
 ## 接口与边界
 
 尺寸模拟检测要求比对仪处于运行状态。若显示“模拟比对仪未运行”，页面会显示当次设备/监控/控制状态、停机原因及工单入口；需要完成实际核查、维修和已有复机流程后再重试。没有关联工单时先核查停机原因。视觉图片检测独立于该工位，可在设备停机时使用；它不会修改设备状态或提交维修完成回执。
@@ -76,14 +92,47 @@ QUALITY_PATCHCORE_PRESET_DIR=L:/industry_agent/.runtime/quality-models/patchcore
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
+| GET | `/api/quality/vision/dataset/samples/{sample_id}` | 读取清单内的真实齿轮测试图片，需登录 |
 | GET | `/api/quality/vision/capabilities` | 算法依赖、权重就绪状态和当前账号的模型 |
 | POST | `/api/quality/vision/patchcore/train` | 正常图片建库，返回模型元数据 |
 | POST | `/api/quality/vision/patchcore/calibrate` | 用独立正常/缺陷图片选择阈值，保存三种策略及校准集指标 |
 | POST | `/api/quality/vision/detect` | 执行推理，返回标注、热图、区域与流程 |
 | GET | `/api/quality/vision/inspections/{inspection_id}` | 按账号读取已保存的视觉检测记录 |
+| POST | `/api/quality/vision/production/verify` | 对已确认模拟产出执行参数比较及三场景双模型合成流程验证；提交 `job_id` 和 UUID `request_id` |
+| GET | `/api/quality/vision/production/jobs/{job_id}/latest` | 读取当前账号对该产出的最近一次验证，含已保存图片与部分失败证据 |
 
 图片使用 PNG / JPEG / WebP 的 base64 或 data URL，单张最多 4 MiB、最多 1600 万像素。训练或校准单批最多 24 张，请求 JSON 总量最多 40 MiB（base64 比原文件大约增加三分之一）。CPU 部署建议使用单 worker：单进程一次只执行一个建库/校准/推理任务，忙时返回可重试提示；锁不跨进程。训练逐张解码、提取特征并关闭原图；检测仍以原图尺寸生成热图，1600 万像素图片可能需要数百 MiB 临时内存。不会自动重试 POST；如果请求超时，应核对状态后再操作。
 
 代码验证覆盖特征距离/coreset、图片解码、认证和存储隔离、模型缺失、响应契约以及浏览器的建库/检测/切换输入流程。产品上的实际检测准确率仍需使用目标产品的数据集验证。
 
 算法参考：[Anomalib PatchCore 文档](https://anomalib.readthedocs.io/en/stable/markdown/guides/reference/models/image/patchcore.html)、[Ultralytics 推理结果接口](https://docs.ultralytics.com/modes/predict/)。
+
+## 齿轮参数和外观检测
+
+### 综合判定与合格率
+
+质检页新增“综合判定与合格率”，按账号隔离保存实物登记和人工复核。先登记统计范围、批次、唯一实物编号和设计版本，再分别复核参数与外观。两项均确认通过才合格；任一项确认不通过即不合格；其余待复检。合格率为合格件数除以合格与不合格件数之和；同时展示待复检数量和整件判定覆盖率。无可判定件时为null，页面显示“—”，不会显示100%。
+
+“流程验证”和“生产复核”分别统计，默认流程验证。现有模拟参数样本不自动成为生产测量；生产复核需由操作人核对实际测量报告和完整外观检查，填写依据、说明，并确认已完成该项目全部必检内容后才可保存通过。本阶段记录的是人工复核结论，尚未接入量具报告自动校验或自动综合放行。
+
+在综合面板选择实物后运行视觉检测，服务端保存该实物、批次、设计版本的不可变关联。可在复核面板“引用本次视觉检测”保存模型和图像摘要，但模型的clear/defect不会自动转换成人工通过/不通过。公开测试图片和旧模拟流程不能关联生产实物；与其他实物关联的视觉证据不能用于该件复核。单纯上传图片而未选择实物仍可单独检测，不参与综合统计。
+
+同一账号、范围、批次和实物重复登记返回原记录；生产实物唯一编号跨批次重复被拒绝。设计版本不能静默替换。复检以最新项目结论更新同一件统计，保留历史。写入包含期望版本和幂等请求号，过期版本拒绝覆盖，响应丢失可按原请求核对/重试。当前单进程文件锁与原子写入，不支持多worker并发写入；生产部署需要共享事务存储。
+
+同一实物新增视觉检测时，旧外观通过结论退回待复检，需结合新证据再次确认；旧外观不通过结论保留，只有人工复核可修改。检测过程中旧版本的复核请求也会被拒绝，避免新证据被旧通过结论覆盖。
+
+新增接口（均位于已有视觉认证及代理边界内）：
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | /api/quality/vision/combined/parts?scope=validation&batch_id= | 读取登记、复核明细及服务端综合统计 |
+| POST | /api/quality/vision/combined/parts | 登记实物，初始待复检 |
+| POST | /api/quality/vision/combined/parts/{quality_part_id}/reviews | 保存参数/外观人工复核及可选视觉证据 |
+
+检测请求可附加quality_part_id和image_source（upload/public_gear_reference），实物身份由服务端登记记录解析。综合记录存放在QUALITY_VISION_ROOT下的账号摘要目录内combined-quality.json；不会创建或放行正式QMS单据。scripts/verify_combined_quality.py使用隔离账号和真实YOLO权重验证绑定、复核、统计、保存回读及重复请求，不写入当前用户的生产统计。
+
+CAD已经支持渐开线直齿轮的齿数、模数、压力角、齿宽和孔径等建模参数。模拟参数比对比较保存的设计和模拟产出；这不等于从相机图像实测齿形、尺寸或精度，后者需要相机标定、测量算法和量具核验。
+
+外观检测独立于参数比对。在质检的视觉缺陷检测中，选择齿轮测试图片并加载，或上传实际图片，然后运行YOLO11。示例只开放管理员清单中的test图片，按登录会话读取，检查文件摘要及目录边界；缺陷标注不传给推理模型。结果保存和回读仍按账号隔离，不能替代正式质量放行。
+
+旧生产合成纹理验证在gear模式下已停用。`scripts/verify_gear_vision.py` 通过隔离账号、真实模型和现有接口验证图片加载、推理、保存回读及账号隔离，不连接真实相机，也不冒充当前生产零件实拍。

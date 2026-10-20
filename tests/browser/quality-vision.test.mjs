@@ -8,10 +8,11 @@ const file = name => ({ name, mimeType: 'image/png', buffer: Buffer.from(png, 'b
 const model = { model_id: 'PC-normal', algorithm: 'patchcore', name: '正常轴套', sample_count: 2, memory_size: 20, suggested_threshold: 1 };
 const preset = { ...model, model_id: 'patchcore-demo', name: 'PatchCore 合成纹理演示', read_only: true, demo: true,
   description: '用合成纹理展示异常定位流程，不适用于真实产品质量判定。', source_url: 'https://example.org/patchcore', classes: ['anomaly'] };
-const yolo = { model_id: 'yolo-default', algorithm: 'yolo', name: 'NEU-DET 钢材缺陷模型（研究验证）', read_only: true, demo: false,
-  description: '用于钢材表面六类缺陷的研究验证。', source_url: 'https://example.org/neu-det',
-  classes: ['crazing', 'inclusion', 'patches', 'pitted_surface', 'rolled-in_scale', 'scratches'] };
+const yolo = { model_id: 'yolo-default', algorithm: 'yolo', name: 'YOLO11n 合成缺陷检测（研究验证）', read_only: true, demo: false,
+  description: '用于合成划痕和低对比度缺陷验证。', source_url: 'https://github.com/ultralytics/assets/releases/tag/v8.3.0',
+  classes: ['synthetic_scratch', 'synthetic_low_contrast'] };
 const result = body => ({ inspection_id: 'VIS-test', algorithm: body.algorithm, model_id: body.model_id,
+  image_source: body.image_source || 'upload', ...(body.quality_part_id ? {quality_part_id: body.quality_part_id} : {}),
   created_at: '2026-10-19T04:00:00Z', part_id: body.part_id || '', filename: body.filename, status: 'defect', score: body.algorithm === 'patchcore' ? 1.5 : 0.91,
   threshold: body.algorithm === 'patchcore' ? body.threshold : body.confidence, image: { width: 100, height: 80 },
   defects: [{ label: body.algorithm === 'patchcore' ? 'anomaly' : 'scratch', confidence: body.algorithm === 'patchcore' ? null : 0.91, bbox: [2, 3, 40, 60] }],
@@ -26,7 +27,7 @@ const calibrated = body => {
     calibration: { policy: body.policy, normal_count, defect_count, created_at: '2026-10-19T04:00:00Z', strategies } };
 };
 
-async function setup({ models = [model], gate, calibrationGate, malformed = false, malformedCalibration = false, yoloReady = true, modelWarnings = [] } = {}) {
+async function setup({ models = [model], gate, calibrationGate, malformed = false, malformedCalibration = false, cascadePatchcoreFailure = false, yoloReady = true, modelWarnings = [], dataset = null } = {}) {
   const fixture = await centerFixture({ withStyles: true }), page = await fixture.browser.newPage();
   page.setDefaultTimeout(5000);
   const posts = [], errors = [];
@@ -38,7 +39,10 @@ async function setup({ models = [model], gate, calibrationGate, malformed = fals
     if (path === '/api/quality/vision/capabilities') return respond(route, {
       algorithms: [{ id: 'patchcore', name: 'PatchCore', available: true, can_train: true, reason: '' },
         { id: 'yolo', name: 'YOLO', available: yoloReady, can_train: false, reason: yoloReady ? '' : '尚未配置缺陷检测权重' }],
-      models, model_warnings: modelWarnings, limits: { max_image_bytes: 4194304, max_training_images: 24 },
+      models, model_warnings: modelWarnings, dataset, limits: { max_image_bytes: 4194304, max_training_images: 24 },
+    });
+    if (path.startsWith('/api/quality/vision/dataset/samples/')) return respond(route, {
+      sample_id: 'endface123', filename: 'endface123.png', image, defect_labels: ['darkspot'],
     });
     if (path === '/api/quality/vision/patchcore/train') { const body = route.request().postDataJSON(); posts.push({ path, body }); trainedModel = { ...model, preprocessing: body.preprocessing, pipeline_version: 2 }; return respond(route, trainedModel); }
     if (path === '/api/quality/vision/patchcore/calibrate') {
@@ -51,6 +55,7 @@ async function setup({ models = [model], gate, calibrationGate, malformed = fals
     if (path === '/api/quality/vision/detect') {
       const body = route.request().postDataJSON(); posts.push({ path, body });
       if (gate) await gate.promise;
+      if (cascadePatchcoreFailure && body.algorithm === 'patchcore') return respond(route, { detail: 'PatchCore 模型不可用' }, 503);
       return respond(route, malformed ? { ...result(body), status: 'clear', defects: [], annotated_image: '' } : result(body));
     }
     return respond(route, { items: [], devices: [], runs: [], enabled: true });
@@ -58,6 +63,51 @@ async function setup({ models = [model], gate, calibrationGate, malformed = fals
   await page.goto(fixture.base + '/?view=quality');
   return { fixture, page, posts, errors };
 }
+
+test('sequential inspection always runs PatchCore before YOLO11 on the same image', async () => {
+  const recommended = { ...yolo, recommended_confidence: .4, recommended_iou: .55 };
+  const { fixture, page, posts, errors } = await setup({ models: [model, recommended] });
+  try {
+    await page.getByLabel('待检测图片').setInputFiles(file('gear-production.png'));
+    await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).click();
+    const output = page.getByRole('region', { name: '顺序联合检测结果', exact: true });
+    await output.getByText('已知缺陷', { exact: true }).waitFor();
+    assert.equal(posts.length, 2);
+    assert.deepEqual(posts.map(item => item.body.algorithm), ['patchcore', 'yolo']);
+    assert.equal(posts[0].body.image, posts[1].body.image);
+    assert.equal(posts[0].body.filename, posts[1].body.filename);
+    assert.equal(posts[0].body.model_id, model.model_id);
+    assert.equal(posts[0].body.threshold, model.suggested_threshold);
+    assert.equal(posts[1].body.model_id, recommended.model_id);
+    assert.equal(posts[1].body.confidence, .4);
+    assert.equal(posts[1].body.iou, .55);
+    assert.equal(await output.getByAltText('联合检测PatchCore热力图').count(), 1);
+    assert.equal(await output.getByAltText('联合检测YOLO定位图').count(), 1);
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+test('PatchCore failure stops the sequential flow before YOLO11', async () => {
+  const { fixture, page, posts, errors } = await setup({ models: [model, yolo], cascadePatchcoreFailure: true });
+  try {
+    await page.getByLabel('待检测图片').setInputFiles(file('gear-production.png'));
+    await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).click();
+    await page.getByRole('alert').getByText('PatchCore 未完成，已停止后续 YOLO', { exact: false }).waitFor();
+    assert.deepEqual(posts.map(item => item.body.algorithm), ['patchcore']);
+    assert.equal(await page.getByRole('region', { name: '顺序联合检测结果', exact: true }).count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+test('sequential inspection remains disabled until both model stages exist', async () => {
+  const { fixture, page, posts } = await setup({ models: [yolo] });
+  try {
+    await page.getByLabel('待检测图片').setInputFiles(file('gear-production.png'));
+    assert.equal(await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).isDisabled(), true);
+    await page.getByText('当前缺少正常齿轮 PatchCore 记忆库', { exact: false }).waitFor();
+    assert.deepEqual(posts, []);
+  } finally { await fixture.close(); }
+});
 
 test('read-only PatchCore preset can detect and personal models retain calibration', async () => {
   const { fixture, page, posts, errors } = await setup({ models: [preset, model] });
@@ -107,6 +157,48 @@ test('available YOLO catalog model is selected by default with its source and co
     await page.getByText('检出视觉缺陷', { exact: true }).waitFor();
     assert.equal(posts[0].body.algorithm, 'yolo');
     assert.equal(posts[0].body.model_id, 'yolo-default');
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+test('YOLO recommended settings are applied, edits survive algorithm switching, and reset reaches inference', async () => {
+  const recommended = { ...yolo, recommended_confidence: .4, recommended_iou: .55, calibration_scope: 'synthetic_calibration_only' };
+  const { fixture, page, posts, errors } = await setup({ models: [model, recommended] });
+  try {
+    await page.getByLabel('检测记忆库', { exact: true }).selectOption(model.model_id);
+    await page.getByLabel('视觉检测算法').selectOption('yolo');
+    assert.equal(await page.getByLabel('置信度阈值', { exact: true }).inputValue(), '0.4');
+    assert.equal(await page.getByLabel('NMS IoU 阈值', { exact: true }).inputValue(), '0.55');
+    await page.getByLabel('置信度阈值', { exact: true }).fill('0.65');
+    await page.getByLabel('视觉检测算法').selectOption('patchcore');
+    await page.getByLabel('视觉检测算法').selectOption('yolo');
+    assert.equal(await page.getByLabel('置信度阈值', { exact: true }).inputValue(), '0.65');
+    await page.getByRole('button', { name: '应用模型建议参数', exact: true }).click();
+    await page.getByLabel('待检测图片').setInputFiles(file('synthetic-low-contrast.png'));
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await page.getByText('检出视觉缺陷', { exact: true }).waitFor();
+    assert.equal(posts[0].body.confidence, .4);
+    assert.equal(posts[0].body.iou, .55);
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+test('held-out real gear example loads into ordinary detection without sending ground truth', async () => {
+  const dataset = { name: '真实塑料齿轮研究子集', normal_count: 0, samples: [
+    { sample_id: 'endface123', filename: 'endface123.png', defect_labels: ['darkspot'] },
+  ] };
+  const { fixture, page, posts, errors } = await setup({ models: [yolo], dataset });
+  try {
+    await page.getByRole('button', { name: '加载齿轮测试图片', exact: true }).click();
+    await page.getByText('已加载真实齿轮独立测试图片', { exact: false }).waitFor();
+    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
+    await page.getByText('检出视觉缺陷', { exact: true }).waitFor();
+    assert.equal(posts[0].body.filename, 'endface123.png');
+    assert.equal(posts[0].body.image, image);
+    assert.equal(posts[0].body.ground_truth, undefined);
+    assert.equal(posts[0].body.defect_labels, undefined);
+    assert.equal(posts[0].body.part_id, undefined);
+    assert.match(await page.getByText('当前是公开数据集的参考齿轮图片', { exact: false }).textContent(), /不关联当前工件身份/);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });

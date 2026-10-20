@@ -277,6 +277,22 @@ def test_yolo_empty_detections_are_clear(tmp_path, monkeypatch):
     assert result["defects"] == []
 
 
+def test_yolo_uses_saved_input_size_and_rejects_invalid_sizes(tmp_path, monkeypatch):
+    weights = tmp_path / 'sized.pt'
+    weights.write_bytes(b'fixture')
+    for invalid in (0, 321, True, '320'):
+        with pytest.raises(ValueError):
+            YoloDetector(str(weights), input_size=invalid)
+    detector = YoloDetector(str(weights), input_size=320)
+    seen = []
+    def predict(**kwargs):
+        seen.append(kwargs['imgsz'])
+        return [SimpleNamespace(boxes=SimpleNamespace(xyxy=OutputTensor(np.empty((0,4))), conf=OutputTensor([]), cls=OutputTensor([])), names={})]
+    monkeypatch.setattr(detector, '_load_model', lambda: SimpleNamespace(predict=predict))
+    assert detector.predict(Image.new('RGB', (12, 8)))['status'] == 'clear'
+    assert seen == [320]
+
+
 @pytest.mark.parametrize("box,edge_pixel", [([11.8, 1, 12, 5], (11, 3)), ([2, 7.8, 5, 8], (3, 7))])
 def test_yolo_subpixel_edge_boxes_remain_drawable(tmp_path, monkeypatch, box, edge_pixel):
     detector = yolo_adapter(tmp_path, monkeypatch, [box], [.8], [0])

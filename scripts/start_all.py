@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import signal
 import socket
@@ -18,6 +20,38 @@ from urllib.request import urlopen
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _LOCAL_INTERNAL_TOKEN = secrets.token_urlsafe(32)
 _LOCAL_RAG_TOKEN = secrets.token_urlsafe(32)
+
+
+def _project_python() -> Path:
+    return PROJECT_ROOT / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+
+
+def _run_cli(argv: list[str] | None = None) -> int:
+    """Always enter the project environment before starting any application."""
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check-environment', action='store_true', help='检查启动环境，不启动服务')
+    options = parser.parse_args(arguments)
+    python = _project_python()
+    environment = PROJECT_ROOT / '.venv'
+    try:
+        if not python.is_file() or not (environment / 'pyvenv.cfg').is_file():
+            raise RuntimeError('项目 .venv 环境缺失或不完整，请先创建该环境并安装项目依赖。')
+        if Path(sys.prefix).resolve() != environment.resolve():
+            if os.environ.get('_INDUSTRY_VENV_REEXEC') == str(environment):
+                raise RuntimeError('无法进入项目 .venv，请修复该虚拟环境后重新启动。')
+            env = _default_env()
+            env['_INDUSTRY_VENV_REEXEC'] = str(environment)
+            os.execve(str(python), [str(python), '-u', str(Path(__file__).resolve()), *arguments], env)
+        os.environ.pop('_INDUSTRY_VENV_REEXEC', None)
+        if options.check_environment:
+            print(json.dumps({'python': sys.executable, 'environment': sys.prefix,
+                              'cad_python': _default_env()['CADGEN_PYTHON']}, ensure_ascii=False))
+            return 0
+        return main()
+    except (OSError, RuntimeError) as error:
+        print(f'启动失败：{error}', file=sys.stderr)
+        return 1
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -99,9 +133,11 @@ def _default_env() -> dict[str, str]:
         if not env.get(key):
             env[key] = value
     if not env.get('CADGEN_PYTHON', '').strip():
-        # CAD dependencies live in the project venv even when the launcher uses Anaconda.
-        project_python = PROJECT_ROOT / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
-        env['CADGEN_PYTHON'] = str(project_python) if project_python.is_file() else sys.executable
+        env['CADGEN_PYTHON'] = str(_project_python())
+    env['VIRTUAL_ENV'] = str(PROJECT_ROOT / '.venv')
+    env['PATH'] = os.pathsep.join(dict.fromkeys([str(_project_python().parent),
+                                               *env.get('PATH', '').split(os.pathsep)]))
+    env.pop('PYTHONHOME', None)
     return env
 
 
@@ -221,7 +257,7 @@ def _start_optional_freecad(env: dict[str, str]) -> dict[str, object]:
 def cad_document_worker_service(env):
     if env.get('CAD_DOCUMENTS_ENABLED', env.get('FREECAD_DOCUMENTS_ENABLED', '')).lower() != 'true':
         return None
-    return ('cad-document-worker',[sys.executable,str(PROJECT_ROOT/'scripts/text_to_cad_document_worker.py')],PROJECT_ROOT,PROJECT_ROOT)
+    return ('cad-document-worker',[str(_project_python()),str(PROJECT_ROOT/'scripts/text_to_cad_document_worker.py')],PROJECT_ROOT,PROJECT_ROOT)
 
 
 def unexpected_service_exit(processes):
@@ -232,7 +268,7 @@ def unexpected_service_exit(processes):
 
 
 def main() -> int:
-    python = sys.executable
+    python = str(_project_python())
     services = [
         (
             "model-service",
@@ -360,4 +396,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(_run_cli())

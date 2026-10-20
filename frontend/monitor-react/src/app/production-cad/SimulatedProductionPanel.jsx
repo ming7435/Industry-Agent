@@ -114,7 +114,7 @@ export default function SimulatedProductionPanel({run,draftPending=false}){
     {job&&<div className="vp-result"><strong>{formatProductionStatus(job)}</strong><p>批次 {job.batch_id} · 零件 {job.part_name||run.part_name||'未命名'} · {job.part_number||run.part_number}</p>
       <progress aria-label="模拟加工进度" max="1" value={job.progress}/><span>{Math.round(job.progress*100)}%</span>
       {job.error_code&&<p className="vp-error">{job.error_message||`任务需核对：${job.error_code}`}</p>}
-      {job.output&&<p>加工区模拟产出已保存，可前往质量检测进行参数比较。</p>}
+      {job.output&&<p>加工区模拟产出已保存。<a href={`/?view=quality&production_job_id=${encodeURIComponent(job.job_id)}`}>查看生产批次检测与视觉流程验证</a></p>}
       <details><summary>任务追溯</summary><p>设计版本：{job.design_run_id}</p><p>生产任务：{job.job_id}</p><p>程序摘要：{job.program_digest}</p></details>
     </div>}
   </section>;

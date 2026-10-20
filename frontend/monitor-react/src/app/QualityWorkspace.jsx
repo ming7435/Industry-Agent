@@ -8,6 +8,8 @@ import { teamRequest } from '../teamApi.mjs';
 import { detectSimulation, formatSimulationRate, pendingSimulationKey, simulationResult, simulationItemSummary, possibleProblemLocations } from './qualitySimulation.mjs';
 import './qualityPart.css';
 import QualityVisionWorkspace from './QualityVisionWorkspace.jsx';
+import ProductionVisionValidation from './ProductionVisionValidation.jsx';
+import CombinedQualityWorkspace from './CombinedQualityWorkspace.jsx';
 
 const prefix = '/api/quality/simulation';
 const statusLabel = { qualified: '模拟一致性合格', unqualified: '模拟一致性不合格', partial: '存在不一致／待判定样本', review: '待复核' };
@@ -57,6 +59,8 @@ export default function QualityWorkspace() {
   const [capability, setCapability] = useState(null), [basis, setBasis] = useState(null), [result, setResult] = useState(null);
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
   const [stationBlock, setStationBlock] = useState(null);
+  const [combinedPart, setCombinedPart] = useState(null), [latestInspection, setLatestInspection] = useState(null);
+  useEffect(() => { setCombinedPart(null); setLatestInspection(null); }, [auth.version]);
   const [catalogEpoch,setCatalogEpoch] = useState(0),[followCurrent,setFollowCurrent]=useState(true),[newVersionNotice,setNewVersionNotice]=useState(false);
   const [waitingRunIds,setWaitingRunIds] = useState([]);
   const revision = useRef(0), posting = useRef(false);
@@ -255,7 +259,9 @@ export default function QualityWorkspace() {
   const displayedCounts=itemSummary?.counts || counts, displayedRates=itemSummary?.rates || result?.rates;
   return <section className="workspace-view active quality-workspace" aria-label="质检系统">
     <header className="module-hero quality-heading"><h1>质量检测</h1></header>
-    <QualityVisionWorkspace auth={auth} checked={checked} part={part} />
+    <CombinedQualityWorkspace auth={auth} checked={checked} onSelectionChange={setCombinedPart} latestInspection={latestInspection} />
+    <ProductionVisionValidation auth={auth} checked={checked} />
+    <QualityVisionWorkspace auth={auth} checked={checked} part={part} qualityPart={combinedPart} onInspection={setLatestInspection} />
     <section className="quality-part-panel" aria-labelledby="quality-part-heading">
       <h2 id="quality-part-heading">检测零件</h2>
       <dl className="quality-part-fields">

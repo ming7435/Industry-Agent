@@ -21,7 +21,7 @@ uv pip install --python .venv/Scripts/python.exe -r services/agent-service/requi
 uv --cache-dir .runtime/text-to-cad-uv-cache pip install --python .venv/Scripts/python.exe "cadgen[snapshot]==0.7.10"
 ```
 
-`CADGEN_PYTHON` 可指定独立 CAD 环境的解释器绝对路径；通过 `scripts/start_all.py` 启动且留空时，优先使用项目 `.venv`，不存在时才使用启动服务的 Python。单独启动服务时应显式设置该变量或使用已安装 CAD 依赖的解释器。`CADGEN_NODE` 可指定 Node.js 可执行文件绝对路径，留空从 PATH 查找 `node`。修改后重新启动 Agent 与文档工作进程。探测和生成使用同一解释器，不会自动下载依赖。不要再将旧 `FREECAD_MCP_COMMAND` 或 GUI 可执行路径用于 CAD 配置。
+`scripts/start_all.py` 会自动切换到项目 `.venv` 后再启动应用服务及文档工作进程；环境缺失或不完整时明确退出。`CADGEN_PYTHON` 默认也使用项目 `.venv`，可显式指定独立 CAD 环境的解释器绝对路径。单独启动服务时应使用项目 `.venv` 的 Python。`CADGEN_NODE` 可指定 Node.js 可执行文件绝对路径，留空从 PATH 查找 `node`。修改后重新启动 Agent 与文档工作进程。探测和生成使用同一解释器，不会自动下载依赖。不要再将旧 `FREECAD_MCP_COMMAND` 或 GUI 可执行路径用于 CAD 配置。
 
 生成快照还需要为该解释器安装 Chromium，建模与 STEP/STL 导出不依赖浏览器：
 

@@ -14,6 +14,11 @@ function verifiedModelMetadata(value) {
     || (value.demo !== undefined && typeof value.demo !== 'boolean')
     || (value.classes !== undefined && (!Array.isArray(value.classes) || value.classes.some(item => !text(item))))
     || (value.pipeline_version !== undefined && (!Number.isInteger(value.pipeline_version) || value.pipeline_version < 1))) invalid();
+  for (const key of ['recommended_confidence', 'recommended_iou']) {
+    if (value[key] !== undefined && (!finite(value[key]) || value[key] <= 0 || value[key] > 1)) invalid();
+  }
+  if (value.calibration_scope !== undefined && typeof value.calibration_scope !== 'string') invalid();
+  if (value.algorithm === 'yolo' && value.input_size !== undefined && ![320, 640].includes(value.input_size)) invalid();
   if (value.source_url !== undefined) {
     if (typeof value.source_url !== 'string') invalid();
     if (value.source_url) {
@@ -27,6 +32,11 @@ function verifiedModelMetadata(value) {
 
 export function verifiedVisionModel(value) {
   return value?.algorithm === 'patchcore' ? verifiedPatchcoreModel(value) : verifiedModelMetadata(value);
+}
+
+export function yoloModelParameters(model) {
+  if (model) verifiedVisionModel(model);
+  return { confidence: String(model?.recommended_confidence ?? 0.25), iou: String(model?.recommended_iou ?? 0.45) };
 }
 
 export function validateVisionFiles(files, limits = {}, training = false) {
@@ -124,6 +134,8 @@ export function verifiedVisionResult(value, expected) {
   } else if (value.score > 1 || value.threshold !== expected.confidence
     || (value.status === 'clear') !== (value.score < value.threshold)) invalid();
   if ((value.status === 'clear') !== (value.defects.length === 0)) invalid();
+  if (expected.quality_part_id && value.quality_part_id !== expected.quality_part_id) invalid();
+  if (expected.image_source && value.image_source !== expected.image_source) invalid();
   for (const defect of value.defects) {
     const box = defect?.bbox;
     if (!text(defect?.label) || !Array.isArray(box) || box.length !== 4 || !box.every(finite)
@@ -132,5 +144,64 @@ export function verifiedVisionResult(value, expected) {
       || (value.algorithm === 'yolo' ? !finite(defect.confidence) || defect.confidence < expected.confidence || defect.confidence > 1 : defect.confidence !== null)) invalid();
   }
   if (value.algorithm === 'yolo' && value.score !== Math.max(0, ...value.defects.map(defect => defect.confidence))) invalid();
+  return value;
+}
+
+const inspectionId = value => typeof value === 'string' && /^VI-[a-f0-9]{32}$/.test(value);
+const pixelDigest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+const sequentialIdentityFields = ['filename', 'part_id', 'quality_part_id', 'quality_identity',
+  'image_sha256', 'image_digest_format', 'image_source', 'source_context'];
+const invalidSequentialResult = () => { throw new Error('顺序联合检测结果不完整或两阶段并非同一张图片，请重新检测。'); };
+
+// Provenance objects may arrive with a different JSON key order after persistence.
+function sameJsonValue(left, right) {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object'
+    || Array.isArray(left) !== Array.isArray(right)) return false;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length
+    && keys.every(key => Object.hasOwn(right, key) && sameJsonValue(left[key], right[key]));
+}
+
+function sameSequentialImage(left, right) {
+  return sequentialIdentityFields.every(key => sameJsonValue(left[key], right[key]))
+    && left.image?.width === right.image?.width && left.image?.height === right.image?.height;
+}
+
+export function sequentialVisionResult(patchcore, yolo) {
+  if (patchcore?.algorithm !== 'patchcore' || yolo?.algorithm !== 'yolo') invalidSequentialResult();
+  for (const stage of [patchcore, yolo]) {
+    if (!inspectionId(stage.inspection_id) || !pixelDigest(stage.image_sha256)
+      || stage.image_digest_format !== 'rgb-pixels-with-size-v1'
+      || !text(stage.model_id) || !text(stage.filename) || typeof stage.part_id !== 'string'
+      || !text(stage.image_source) || !stage.parameters || stage.parameters.threshold !== stage.threshold
+      || (stage.algorithm === 'yolo' && (!finite(stage.parameters.confidence)
+        || stage.parameters.confidence <= 0 || stage.parameters.confidence > 1))) invalidSequentialResult();
+    try {
+      verifiedVisionResult(stage, {
+        algorithm: stage.algorithm, model_id: stage.model_id, filename: stage.filename, part_id: stage.part_id,
+        quality_part_id: stage.quality_part_id, image_source: stage.image_source,
+        threshold: stage.parameters.threshold, confidence: stage.parameters.confidence,
+      });
+    } catch { invalidSequentialResult(); }
+  }
+  if (patchcore.inspection_id === yolo.inspection_id || !sameSequentialImage(patchcore, yolo)) invalidSequentialResult();
+  const classification = yolo.status === 'defect' ? 'known_defect'
+    : patchcore.status === 'defect' ? 'unknown_anomaly' : 'clear';
+  return { status: classification === 'clear' ? 'clear' : 'defect', classification,
+    patchcore, yolo, inspection_ids: [patchcore.inspection_id, yolo.inspection_id] };
+}
+
+export function verifiedSequentialVisionResult(value, expected) {
+  if (value?.algorithm !== 'patchcore_yolo' || !inspectionId(value.inspection_id)
+    || !text(value.created_at) || !Number.isFinite(Date.parse(value.created_at))) invalidSequentialResult();
+  const computed = sequentialVisionResult(value.patchcore, value.yolo);
+  if (computed.inspection_ids.includes(value.inspection_id)
+    || value.status !== computed.status || value.classification !== computed.classification
+    || !sameJsonValue(value.inspection_ids, computed.inspection_ids)
+    || !sameSequentialImage(value, value.patchcore)
+    || (expected !== undefined && (!expected
+      || expected.patchcore_inspection_id !== computed.inspection_ids[0]
+      || expected.yolo_inspection_id !== computed.inspection_ids[1]))) invalidSequentialResult();
   return value;
 }

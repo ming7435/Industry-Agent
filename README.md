@@ -209,7 +209,7 @@ DEEPSEEK_MODEL=deepseek-chat
 
 ## 启动顺序
 
-以下命令以 Windows PowerShell 和项目使用的 Python 路径为例。先确认模拟工厂已经运行。
+以下命令以 Windows PowerShell 和项目 `.venv` 环境为例。先确认模拟工厂已经运行。
 
 ### 一键启动本地演示服务
 
@@ -217,11 +217,13 @@ DEEPSEEK_MODEL=deepseek-chat
 .venv/Scripts/python.exe scripts/start_all.py
 ~~~
 
-也可以使用 npm 脚本调用当前环境中的 Python：
+也可以直接调用启动器，它会自动切换到项目 `.venv`：
 
 ~~~powershell
-npm run start:all
+python scripts/start_all.py
 ~~~
+
+启动器、应用服务和 CAD 工作进程统一使用项目 `.venv`。环境缺失或不完整时会明确报错；可用 `python scripts/start_all.py --check-environment` 检查解释器选择，该命令不会启动服务。
 
 该脚本会依次启动五个业务服务和监控工作台，并把日志按服务名前缀输出到同一个终端。默认地址如下：
 
@@ -251,7 +253,7 @@ Model、RAG、CAD 和 Monitor；Gateway 只负责入口，不算业务服务。A
 
 ~~~powershell
 Push-Location services/rag-service
-L:/anaconda/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8020
+../../.venv/Scripts/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8020
 Pop-Location
 ~~~
 
@@ -264,7 +266,7 @@ Invoke-RestMethod http://127.0.0.1:8020/health
 ### 2. 启动 CAD Service
 
 ~~~powershell
-L:/anaconda/python.exe -m uvicorn app.main:app --app-dir services/document-cad-service --host 127.0.0.1 --port 8050
+.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir services/document-cad-service --host 127.0.0.1 --port 8050
 ~~~
 
 检查：
@@ -276,7 +278,7 @@ Invoke-RestMethod http://127.0.0.1:8050/health
 ### 3. 启动 Agent Service API
 
 ~~~powershell
-L:/anaconda/python.exe -m uvicorn app.api.server:app --app-dir services/agent-service --host 127.0.0.1 --port 8010
+.venv/Scripts/python.exe -m uvicorn app.api.server:app --app-dir services/agent-service --host 127.0.0.1 --port 8010
 ~~~
 
 检查 Agent API：
@@ -288,7 +290,7 @@ Invoke-RestMethod http://127.0.0.1:8010/api/rag/status
 ### 4. 启动监控工作台
 
 ~~~powershell
-L:/anaconda/python.exe services/agent-service/monitor_web_server.py
+.venv/Scripts/python.exe services/agent-service/monitor_web_server.py
 ~~~
 
 打开 http://127.0.0.1:8001。监控服务会按照 MONITOR_INTERVAL_SECONDS 采样，并异步提交确认后的异常事件，避免页面轮询被诊断模型阻塞。

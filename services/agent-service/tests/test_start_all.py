@@ -7,6 +7,7 @@ import threading
 import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -51,12 +52,91 @@ def test_explicit_cad_python_takes_precedence_over_project_venv(monkeypatch, tmp
     assert start_all._env_for_service(tmp_path / 'services/agent-service')['CADGEN_PYTHON'] == configured_python
 
 
-def test_startup_keeps_current_python_without_project_venv(monkeypatch, tmp_path):
+def test_startup_never_defaults_cad_to_the_calling_python(monkeypatch, tmp_path):
     monkeypatch.setattr(start_all, 'PROJECT_ROOT', tmp_path)
     monkeypatch.delenv('CADGEN_PYTHON', raising=False)
 
-    assert start_all._default_env()['CADGEN_PYTHON'] == sys.executable
-    assert start_all._env_for_service(tmp_path / 'services/agent-service')['CADGEN_PYTHON'] == sys.executable
+    expected = tmp_path / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    assert start_all._default_env()['CADGEN_PYTHON'] == str(expected)
+    assert start_all._env_for_service(tmp_path / 'services/agent-service')['CADGEN_PYTHON'] == str(expected)
+
+
+def project_venv(tmp_path):
+    python = tmp_path / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    python.parent.mkdir(parents=True)
+    python.touch()
+    (tmp_path / '.venv/pyvenv.cfg').write_text('include-system-site-packages = false\n')
+    return python
+
+
+def test_launcher_reexecutes_in_project_venv_with_clean_environment(monkeypatch, tmp_path):
+    python = project_venv(tmp_path)
+    monkeypatch.setattr(start_all, 'PROJECT_ROOT', tmp_path)
+    monkeypatch.setattr(sys, 'prefix', str(tmp_path / 'other-python'))
+    monkeypatch.setenv('PYTHONHOME', str(tmp_path / 'other-python'))
+    monkeypatch.setenv('PATH', 'existing-path')
+    monkeypatch.delenv('_INDUSTRY_VENV_REEXEC', raising=False)
+    executions = []
+
+    def execute(executable, arguments, env):
+        executions.append((executable, arguments, env))
+        raise SystemExit(23)
+
+    monkeypatch.setattr(os, 'execve', execute)
+    with pytest.raises(SystemExit) as exit_info:
+        start_all._run_cli(['--check-environment'])
+    assert exit_info.value.code == 23
+    executable, arguments, env = executions[0]
+    assert executable == str(python)
+    assert arguments == [str(python), '-u', str(Path(start_all.__file__).resolve()), '--check-environment']
+    assert env['VIRTUAL_ENV'] == str(tmp_path / '.venv')
+    assert env['PATH'].split(os.pathsep)[0] == str(python.parent)
+    assert 'PYTHONHOME' not in env
+
+
+def test_correct_environment_check_does_not_start_services_or_reexec(monkeypatch, tmp_path, capsys):
+    python = project_venv(tmp_path)
+    monkeypatch.setattr(start_all, 'PROJECT_ROOT', tmp_path)
+    monkeypatch.setattr(sys, 'prefix', str(tmp_path / '.venv'))
+    monkeypatch.setattr(sys, 'executable', str(python))
+    monkeypatch.setattr(os, 'execve', lambda *args: pytest.fail('Already in the project venv'))
+    monkeypatch.setattr(start_all, 'main', lambda: pytest.fail('Environment check must not start services'))
+    assert start_all._run_cli(['--check-environment']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['python'] == str(python)
+    assert report['environment'] == str(tmp_path / '.venv')
+
+
+@pytest.mark.parametrize('missing', ['python', 'pyvenv.cfg'])
+def test_missing_project_venv_stops_before_starting_services(monkeypatch, tmp_path, capsys, missing):
+    python = project_venv(tmp_path)
+    (python if missing == 'python' else tmp_path / '.venv/pyvenv.cfg').unlink()
+    monkeypatch.setattr(start_all, 'PROJECT_ROOT', tmp_path)
+    monkeypatch.setattr(os, 'execve', lambda *args: pytest.fail('Missing environment must not execute'))
+    monkeypatch.setattr(start_all, 'main', lambda: pytest.fail('Missing environment must not start services'))
+    assert start_all._run_cli([]) == 1
+    assert '.venv' in capsys.readouterr().err
+
+
+def test_broken_venv_cannot_reexec_forever(monkeypatch, tmp_path, capsys):
+    project_venv(tmp_path)
+    monkeypatch.setattr(start_all, 'PROJECT_ROOT', tmp_path)
+    monkeypatch.setattr(sys, 'prefix', str(tmp_path / 'other-python'))
+    monkeypatch.setenv('_INDUSTRY_VENV_REEXEC', str(tmp_path / '.venv'))
+    monkeypatch.setattr(os, 'execve', lambda *args: pytest.fail('No second reexec'))
+    assert start_all._run_cli([]) == 1
+    assert '.venv' in capsys.readouterr().err
+
+
+def test_service_environment_and_worker_use_project_venv(monkeypatch, tmp_path):
+    python = project_venv(tmp_path)
+    monkeypatch.setattr(start_all, 'PROJECT_ROOT', tmp_path)
+    (tmp_path / '.env').write_text('PYTHONHOME=wrong-home\nVIRTUAL_ENV=wrong-venv\n', encoding='utf-8')
+    env = start_all._env_for_service(tmp_path / 'services/agent-service')
+    assert env['VIRTUAL_ENV'] == str(tmp_path / '.venv')
+    assert env['PATH'].split(os.pathsep)[0] == str(python.parent)
+    assert 'PYTHONHOME' not in env
+    assert start_all.cad_document_worker_service({'CAD_DOCUMENTS_ENABLED': 'true'})[1][0] == str(python)
 
 
 @contextmanager

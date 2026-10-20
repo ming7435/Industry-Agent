@@ -408,7 +408,10 @@ class PatchCoreDetector:
 class YoloDetector:
     """Detection-only local Ultralytics adapter; weights must be defect-trained."""
 
-    def __init__(self, weights: str):
+    def __init__(self, weights: str, input_size: int = 640):
+        if type(input_size) is not int or input_size not in (320, 640):
+            raise ValueError('YOLO input size must be 320 or 640')
+        self.input_size = input_size
         self.weights = _local_weights(weights, {".pt", ".onnx"})
         self._model = None
         self._lock = threading.RLock()
@@ -419,6 +422,7 @@ class YoloDetector:
                 return self._model
             # Optional dependencies must be installed explicitly, never by prediction.
             os.environ["YOLO_AUTOINSTALL"] = "false"
+            os.environ["ULTRALYTICS_SAFE_LOAD"] = "1"
             try:
                 if self.weights.suffix.lower() == ".onnx":
                     import onnxruntime  # noqa: F401
@@ -444,7 +448,7 @@ class YoloDetector:
         with self._lock:
             model = self._load_model()
             try:
-                results = model.predict(source=image, conf=float(confidence), iou=float(iou), device="cpu", save=False, verbose=False, imgsz=640, max_det=300)
+                results = model.predict(source=image, conf=float(confidence), iou=float(iou), device="cpu", save=False, verbose=False, imgsz=self.input_size, max_det=300)
                 if len(results) != 1 or results[0].boxes is None:
                     raise ValueError("expected one detection result")
                 boxes = results[0].boxes

@@ -51,6 +51,10 @@
 .vision-parameters label { flex: 1; }
 .vision-run { margin-top: 18px; }
 .vision-run .vision-note { margin: 0; }
+.vision-cascade { margin-top: 20px; padding: 18px; border: 1px solid #a9d4cd; border-radius: 8px; background: #f3faf8; }
+.vision-cascade h3 { margin-bottom: 6px; }
+.vision-cascade .vision-controls { margin-top: 14px; }
+.vision-cascade-output { border: 1px solid var(--line, #d7e3e2); border-radius: 8px; padding: 18px; }
 .vision-error, .vision-notice { padding: 12px 14px; border-radius: 6px; margin: 16px 0 0; line-height: 1.7; font-size: 13px; overflow-wrap: anywhere; }
 .vision-error { background: #fff0ed; color: #a13f30; border: 1px solid #edcdc6; }
 .vision-notice { background: #edf8f4; color: #096b60; }

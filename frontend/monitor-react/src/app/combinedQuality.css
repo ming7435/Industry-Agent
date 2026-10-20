@@ -1,0 +1,11 @@
+.combined-quality .vision-metrics { margin-bottom: 18px; }
+.combined-quality small { display: block; margin-top: 8px; color: var(--muted, #5a7079); font-size: 12px; }
+.combined-quality fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.combined-registration { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
+.combined-review { margin: 14px 0; padding: 16px; border: 1px solid var(--line, #d7e3e2); border-radius: 8px; }
+.combined-review form > fieldset > label { margin-top: 14px; }
+.combined-quality textarea { width: 100%; box-sizing: border-box; min-height: 80px; resize: vertical; font: inherit; padding: 10px; border: 1px solid var(--line, #d7e3e2); border-radius: 6px; background: var(--panel, #fff); color: var(--ink, #172e36); }
+.combined-quality label.combined-check { display: flex; align-items: center; gap: 8px; line-height: 1.8; }
+.combined-quality .combined-check input { width: 18px; min-height: 18px; flex: 0 0 18px; }
+.combined-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+@media(max-width:760px) { .combined-registration { grid-template-columns: 1fr; } }

@@ -7,6 +7,8 @@ from test_monitor_cad_production_proxy import proxy_boundary
 @pytest.mark.parametrize('path', [
     '/api/quality/vision/detect', '/api/quality/vision/patchcore/train', '/api/quality/vision/patchcore/calibrate',
     '/api/quality/vision%2Fpatchcore/train',
+    '/api/quality/vision/production/verify',
+    '/api/quality/vision/sequential/fuse',
 ])
 def test_large_vision_upload_is_rejected_before_forwarding(proxy_boundary, path):
     _, seen, send = proxy_boundary
