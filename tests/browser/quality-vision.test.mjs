@@ -11,10 +11,12 @@ const preset = { ...model, model_id: 'patchcore-demo', name: 'PatchCore 合成�
 const yolo = { model_id: 'yolo-default', algorithm: 'yolo', name: 'YOLO11n 合成缺陷检测（研究验证）', read_only: true, demo: false,
   description: '用于合成划痕和低对比度缺陷验证。', source_url: 'https://github.com/ultralytics/assets/releases/tag/v8.3.0',
   classes: ['synthetic_scratch', 'synthetic_low_contrast'] };
-const result = body => ({ inspection_id: 'VIS-test', algorithm: body.algorithm, model_id: body.model_id,
+const result = (body, inspectionId) => ({ inspection_id: inspectionId, algorithm: body.algorithm, model_id: body.model_id,
   image_source: body.image_source || 'upload', ...(body.quality_part_id ? {quality_part_id: body.quality_part_id} : {}),
+  image_sha256: 'a'.repeat(64), image_digest_format: 'rgb-pixels-with-size-v1',
   created_at: '2026-10-19T04:00:00Z', part_id: body.part_id || '', filename: body.filename, status: 'defect', score: body.algorithm === 'patchcore' ? 1.5 : 0.91,
   threshold: body.algorithm === 'patchcore' ? body.threshold : body.confidence, image: { width: 100, height: 80 },
+  parameters: { threshold: body.algorithm === 'patchcore' ? body.threshold : body.confidence, confidence: body.confidence ?? .25, iou: body.iou ?? .45 },
   defects: [{ label: body.algorithm === 'patchcore' ? 'anomaly' : 'scratch', confidence: body.algorithm === 'patchcore' ? null : 0.91, bbox: [2, 3, 40, 60] }],
   annotated_image: image, ...(body.algorithm === 'patchcore' ? { heatmap_image: image } : {}),
   steps: [{ name: '特征提取', status: 'completed', detail: '完成图像推理' }] });
@@ -27,11 +29,14 @@ const calibrated = body => {
     calibration: { policy: body.policy, normal_count, defect_count, created_at: '2026-10-19T04:00:00Z', strategies } };
 };
 
-async function setup({ models = [model], gate, calibrationGate, malformed = false, malformedCalibration = false, cascadePatchcoreFailure = false, yoloReady = true, modelWarnings = [], dataset = null } = {}) {
+async function setup({ models = [model], gate, calibrationGate, malformed = false, malformedCalibration = false, cascadePatchcoreFailure = false,
+  stagePatches = {}, fusionPatch = {}, restoredFusionPatch = {}, dropFirstFusionResponse = false,
+  yoloReady = true, modelWarnings = [], dataset = null } = {}) {
   const fixture = await centerFixture({ withStyles: true }), page = await fixture.browser.newPage();
   page.setDefaultTimeout(5000);
-  const posts = [], errors = [];
-  let trainedModel;
+  const posts = [], gets = [], errors = [], inspections = new Map(), fusions = new Map();
+  let trainedModel, nextInspection = 0, fusionAttempts = 0;
+  const nextId = () => 'VI-' + (++nextInspection).toString(16).padStart(32, '0');
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
@@ -56,12 +61,39 @@ async function setup({ models = [model], gate, calibrationGate, malformed = fals
       const body = route.request().postDataJSON(); posts.push({ path, body });
       if (gate) await gate.promise;
       if (cascadePatchcoreFailure && body.algorithm === 'patchcore') return respond(route, { detail: 'PatchCore 模型不可用' }, 503);
-      return respond(route, malformed ? { ...result(body), status: 'clear', defects: [], annotated_image: '' } : result(body));
+      const value = { ...result(body, nextId()), ...stagePatches[body.algorithm] };
+      if (malformed) Object.assign(value, { status: 'clear', defects: [], annotated_image: '' });
+      inspections.set(value.inspection_id, value);
+      return respond(route, value);
+    }
+    if (path === '/api/quality/vision/sequential/fuse') {
+      const body = route.request().postDataJSON(); posts.push({ path, body });
+      const pair = JSON.stringify(body);
+      if (!fusions.has(pair)) {
+        const patchcore = inspections.get(body.patchcore_inspection_id), yoloResult = inspections.get(body.yolo_inspection_id);
+        if (!patchcore || !yoloResult) return respond(route, { detail: '检测记录不存在' }, 404);
+        const classification = yoloResult.status === 'defect' ? 'known_defect' : patchcore.status === 'defect' ? 'unknown_anomaly' : 'clear';
+        const common = Object.fromEntries(['filename', 'part_id', 'quality_part_id', 'quality_identity',
+          'image', 'image_source', 'image_sha256', 'image_digest_format', 'source_context']
+          .filter(key => Object.hasOwn(patchcore, key)).map(key => [key, patchcore[key]]));
+        const value = { ...common, algorithm: 'patchcore_yolo', inspection_id: nextId(),
+          created_at: '2026-10-19T04:01:00Z', status: classification === 'clear' ? 'clear' : 'defect',
+          classification, patchcore, yolo: yoloResult, inspection_ids: [patchcore.inspection_id, yoloResult.inspection_id] };
+        fusions.set(pair, value); inspections.set(value.inspection_id, value);
+      }
+      fusionAttempts++;
+      if (dropFirstFusionResponse && fusionAttempts === 1) return route.abort('failed');
+      return respond(route, { ...fusions.get(pair), ...fusionPatch });
+    }
+    if (path.startsWith('/api/quality/vision/inspections/')) {
+      gets.push(path);
+      const value = inspections.get(path.split('/').pop());
+      return value ? respond(route, { ...value, ...restoredFusionPatch }) : respond(route, { detail: '检测记录不存在' }, 404);
     }
     return respond(route, { items: [], devices: [], runs: [], enabled: true });
   });
   await page.goto(fixture.base + '/?view=quality');
-  return { fixture, page, posts, errors };
+  return { fixture, page, posts, gets, errors, inspections };
 }
 
 test('sequential inspection always runs PatchCore before YOLO11 on the same image', async () => {
@@ -72,8 +104,14 @@ test('sequential inspection always runs PatchCore before YOLO11 on the same imag
     await page.getByRole('button', { name: '运行 PatchCore → YOLO11', exact: true }).click();
     const output = page.getByRole('region', { name: '顺序联合检测结果', exact: true });
     await output.getByText('已知缺陷', { exact: true }).waitFor();
-    assert.equal(posts.length, 2);
-    assert.deepEqual(posts.map(item => item.body.algorithm), ['patchcore', 'yolo']);
+    assert.equal(posts.length, 3);
+    assert.deepEqual(posts.map(item => item.path), [
+      '/api/quality/vision/detect', '/api/quality/vision/detect', '/api/quality/vision/sequential/fuse',
+    ]);
+    assert.deepEqual(posts.slice(0, 2).map(item => item.body.algorithm), ['patchcore', 'yolo']);
+    assert.deepEqual(posts[2].body, {
+      patchcore_inspection_id: 'VI-' + '1'.padStart(32, '0'), yolo_inspection_id: 'VI-' + '2'.padStart(32, '0'),
+    });
     assert.equal(posts[0].body.image, posts[1].body.image);
     assert.equal(posts[0].body.filename, posts[1].body.filename);
     assert.equal(posts[0].body.model_id, model.model_id);
