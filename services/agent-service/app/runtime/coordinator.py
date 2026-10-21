@@ -195,7 +195,12 @@ class RuntimeCoordinator:
             router = (getattr(self.container, "agents", {}) or {}).get("router")
             if router is not None and str(source_payload.get("user_text") or "").strip():
                 try:
-                    route = router.run({"user_text": str(source_payload.get("user_text") or ""), "context": dict(goal_event.entities)})
+                    route_task = {"user_text": str(source_payload.get("user_text") or ""),
+                                  "context": dict(goal_event.entities),
+                                  "task_id": initial.get("task_id", ""), "trace_id": initial.get("trace_id", ""),
+                                  "runtime_context": {"routing_stage": "planning"}}
+                    router_harness = (getattr(self.container, "harnesses", {}) or {}).get("router")
+                    route = router_harness.execute_once(route_task) if router_harness is not None else router.run(route_task)
                     route_dict = route.model_dump() if hasattr(route, "model_dump") else dict(route or {})
                     intent = str(route_dict.get("intent") or "")
                     capability_by_intent = {

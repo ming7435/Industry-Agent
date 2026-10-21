@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from shutil import copytree
 
 import pytest
 
@@ -40,7 +41,8 @@ def test_fourth_update_is_rejected_before_file_or_audit_changes(manager):
 
 def test_each_skill_has_its_own_three_updates(manager):
     original = Path(manager.registry.get(AGENT, NAME).path)
-    other = original.with_name('other_alarm.md')
+    other = original.parent.parent / 'other_alarm' / 'SKILL.md'
+    copytree(original.parent, other.parent)
     other.write_text(original.read_text(encoding='utf-8').replace('name: '+NAME, 'name: other_alarm'), encoding='utf-8')
     for _ in range(3):
         update(manager)

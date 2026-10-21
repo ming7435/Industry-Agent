@@ -55,6 +55,7 @@ def _agent_index_projection():
     # Test business outcome flags in SQL, keeping full documents out of memory.
     def present(value):
         return ("CASE WHEN JSON_TYPE(" + value + ")='ARRAY' THEN JSON_LENGTH(" + value + ")>0 "
+                "WHEN JSON_TYPE(" + value + ")='BOOLEAN' THEN JSON_UNQUOTE(" + value + ")='true' "
                 "WHEN JSON_TYPE(" + value + ")='STRING' THEN JSON_UNQUOTE(" + value + ")<>'' ELSE 0 END")
     fields=[]
     for key in ('timestamp','trace_record_id','trace_id','agent_run_id','agent','name','event'):

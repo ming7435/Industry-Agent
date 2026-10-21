@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -36,7 +37,10 @@ sys.path.insert(0, str(ROOT / 'services' / 'agent-service'))
 from app.vision.evaluation import file_sha256, load_rgb, metrics_from_scores, pixel_sha256
 
 
-EXPECTED_INVENTORY = {'train/good': 2068, 'test/good': 162, 'test/fragmentation': 81}
+EXPECTED_INVENTORY = {
+    'train/good': 2068, 'test/good': 162, 'test/fragmentation': 23,
+    'test/multi_anomalies': 24, 'test/scratch': 11, 'test/stain': 23,
+}
 SAMPLE_NAME = re.compile(r'mechanics_gear_\d+\.png\Z')
 SOURCE_URLS = {
     'project': 'https://grainnet.github.io/MANTA',
@@ -50,7 +54,15 @@ ARCHIVE_MD5 = 'bfa0b4e86d28b3ea7e63d628b7a5510c'
 def write_json(path, value):
     temporary = path.with_suffix(path.suffix + '.tmp')
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
-    temporary.replace(path)
+    # Windows readers may briefly hold the destination without delete sharing.
+    for attempt in range(30):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            if attempt == 29:
+                raise
+            time.sleep(.1)
 
 
 def update_status(args, stage, **details):
@@ -115,8 +127,9 @@ def discover(root):
                              official_split=subdir.split('/')[0], scenario=subdir.split('/')[1],
                              label='normal' if subdir.endswith('/good') else 'defect'))
         pools[subdir] = rows
+    expected_test_folders = {key.split('/')[1] for key in EXPECTED_INVENTORY if key.startswith('test/')}
     unexpected = [p.name for p in (root / 'test').iterdir()
-                  if p.is_dir() and p.name not in {'good', 'fragmentation'}]
+                  if p.is_dir() and p.name not in expected_test_folders]
     if unexpected:
         raise ValueError(f'Unexpected defect categories {unexpected}; verify official inventory before evaluation.')
     return pools
@@ -165,10 +178,12 @@ def partition_samples(pools, args):
         raise ValueError('Full training requires the complete 2,311-image official inventory.')
     if not 0 < args.calibration_normal < len(pools['test/good']):
         raise ValueError('Normal calibration count must leave a nonempty independent normal test set.')
-    if not 0 < args.calibration_defect < len(pools['test/fragmentation']):
+    defect_pool = [row for subdir, group in pools.items() if subdir.startswith('test/')
+                   and subdir != 'test/good' for row in group]
+    if not 0 < args.calibration_defect < len(defect_pool):
         raise ValueError('Defect calibration count must leave a nonempty independent defect test set.')
     normals = ordered(pools['train/good'], args.seed, 'train-normal')
-    defects = ordered(pools['test/fragmentation'], args.seed, 'test-defect')
+    defects = ordered(defect_pool, args.seed, 'test-defect')
     tests = ordered(pools['test/good'], args.seed, 'test-normal')
     requests = [
         ('train', normals),
@@ -192,9 +207,10 @@ def select_manifest(pools, args, prepared_entries):
     for position, row in enumerate(rows, 1):
         path = Path(row['path'])
         with load_rgb(path) as image:
-            # Full-resolution gear data uses horizontal, five-view composites.
-            # Reject a different domain/layout instead of silently cropping it.
-            if image.width % 5 or not 0.8 <= (image.width / 5) / image.height <= 1.2:
+            # The official five-view composites are equal-width strips, but a
+            # few defect images crop each view more narrowly than normal ones.
+            # Keep the entire source image and reject implausible layouts.
+            if image.width % 5 or not 0.6 <= (image.width / 5) / image.height <= 1.2:
                 raise ValueError(f'Unexpected five-view composite dimensions {image.size}: {path}')
             digest, pixels = file_sha256(path), pixel_sha256(image)
             relative = path.relative_to(Path(args.dataset).resolve().parent).as_posix()
@@ -275,10 +291,20 @@ def verify_memory_probe(detector, bank, row):
             'note': 'Artifact reload/finite-map check only; no accuracy or pass/fail claim.'}
 
 
-def score_images(detector, bank, samples, output, phase, args):
+def score_images(detector, bank, samples, output, phase, args, *, resume=False):
     import numpy as np
-    rows = []
-    for index, sample in enumerate(samples, 1):
+    path = output / f'{phase}_scores.json'
+    rows = json.loads(path.read_text(encoding='utf-8')) if resume and path.is_file() else []
+    if not isinstance(rows, list) or len(rows) > len(samples):
+        raise ValueError('Saved scores are not a valid prefix of the locked evaluation split.')
+    for saved, sample in zip(rows, samples):
+        if (not isinstance(saved, dict) or any(saved.get(key) != sample.get(key) for key in sample)
+                or type(saved.get('score')) not in (int, float)
+                or not math.isfinite(saved['score']) or saved['score'] < 0
+                or file_sha256(sample['path']) != sample['file_sha256']):
+            raise ValueError('Saved scores differ from the locked evaluation manifest or source images.')
+    for index in range(len(rows) + 1, len(samples) + 1):
+        sample = samples[index - 1]
         # Fail if an image changes after the manifest/selection was locked.
         if file_sha256(sample['path']) != sample['file_sha256']:
             raise ValueError('Source image changed after manifest creation: ' + sample['path'])
@@ -288,7 +314,7 @@ def score_images(detector, bank, samples, output, phase, args):
             if heatmap.shape != (sample['height'], sample['width']) or not np.isfinite(heatmap).all():
                 raise ValueError('Invalid anomaly map for ' + sample['sample_id'])
             rows.append({**sample, 'score': float(heatmap.max()), 'seconds': time.perf_counter() - started})
-        write_json(output / f'{phase}_scores.json', rows)
+        write_json(path, rows)
         update_status(args, phase, completed=index, total=len(samples), metrics_available=False)
         print(f'{phase.upper()} {index}/{len(samples)} {sample["sample_id"]} score={rows[-1]["score"]:.6f}', flush=True)
     return rows
@@ -371,7 +397,7 @@ def run(args):
             'One sample is one five-view composite. Per-view and pixel-localization accuracy are not evaluated.',
             'Physical identity follows official composite filenames; additional cross-session identity is not available.',
             'Letterboxing preserves proportions, but each view has limited resolution after resizing the full composite.',
-            'Official defect scenario is fragmentation; this evaluation cannot establish scratch/low-contrast coverage.',
+            'Official defect scenarios are fragmentation, multi_anomalies, scratch and stain; this evaluation cannot establish production-line coverage.',
             'No production normal model registration, YOLO comparison, application setting change, or production readiness claim.',
         ],
     }
@@ -439,6 +465,81 @@ def run(args):
     return report
 
 
+def resume(args):
+    """Finish an interrupted test using the verified, already-fitted memory."""
+    from app.vision.algorithms import PatchCoreDetector
+    from app.vision.calibration import threshold_strategies
+    import torch
+    import cv2
+
+    output = Path(args.output).resolve(strict=True)
+    if (output / 'summary.json').exists():
+        raise ValueError('This evaluation already has a completed summary; refusing to overwrite it.')
+    plan = json.loads((output / 'plan.json').read_text(encoding='utf-8'))
+    saved_rows = json.loads((output / 'manifest.json').read_text(encoding='utf-8'))
+    metadata = json.loads((output / 'model.json').read_text(encoding='utf-8'))
+    locked = json.loads((output / 'calibration.json').read_text(encoding='utf-8'))
+    weights = Path(args.weights).resolve(strict=True)
+    if (plan['dataset_root'] != str(Path(args.dataset).resolve())
+            or plan['weights_sha256'] != file_sha256(weights)
+            or plan['selection_seed'] != args.seed
+            or plan['selected_policy'] != args.policy
+            or plan['per_image_features'] != args.per_image_features
+            or plan['preprocessing']['input_size'] != args.input_size
+            or metadata['weights_sha256'] != plan['weights_sha256']
+            or metadata['sample_count'] != EXPECTED_INVENTORY['train/good']
+            or metadata['all_images_processed'] is not True
+            or locked['selected_policy'] != args.policy):
+        raise ValueError('Resume configuration does not match the locked full-training artifacts.')
+    pools = discover(Path(args.dataset))
+    entries, _ = verify_preparation(Path(args.dataset), pools)
+    update_status(args, 'validating_resume', metrics_available=False)
+    if select_manifest(pools, args, entries) != saved_rows:
+        raise ValueError('Saved manifest differs from the verified source dataset or locked split.')
+    train_rows = [row for row in saved_rows if row['split'] == 'train']
+    if (metadata['training_group_ids'] != [row['group_id'] for row in train_rows]
+            or metadata['training_original_file_sha256'] != [row['file_sha256'] for row in train_rows]
+            or metadata['training_pixel_sha256'] != [row['pixel_sha256'] for row in train_rows]):
+        raise ValueError('Saved memory metadata differs from its verified normal training rows.')
+    bank = reload_memory_bank(output / 'memory.npz', metadata['memory_bank_sha256'])
+    torch.manual_seed(args.seed)
+    torch.set_num_threads(args.torch_threads)
+    torch.set_num_interop_threads(1)
+    torch.use_deterministic_algorithms(True)
+    cv2.setNumThreads(1)
+    detector = PatchCoreDetector(str(weights), config=metadata['preprocessing'])
+    probe = next(row for row in saved_rows if row['split'] == 'calibration' and row['label'] == 'normal')
+    if verify_memory_probe(detector, bank, probe) != json.loads(
+            (output / 'memory-verification.json').read_text(encoding='utf-8')):
+        raise ValueError('Restored memory bank failed its saved calibration probe.')
+    calibration = score_images(detector, bank, [row for row in saved_rows if row['split'] == 'calibration'],
+                               output, 'calibration', args, resume=True)
+    strategies = threshold_strategies([row['score'] for row in calibration if row['label'] == 'normal'],
+                                      [row['score'] for row in calibration if row['label'] == 'defect'])
+    if strategies != locked['strategies']:
+        raise ValueError('Saved calibration thresholds differ from the locked calibration scores.')
+    test_rows = [row for row in saved_rows if row['split'] == 'test']
+    previous_count = len(json.loads((output / 'test_scores.json').read_text(encoding='utf-8')))
+    update_status(args, 'test', completed=previous_count, total=len(test_rows), metrics_available=False)
+    test = score_images(detector, bank, test_rows, output, 'test', args, resume=True)
+    if file_sha256(weights) != plan['weights_sha256']:
+        raise ValueError('Backbone weights changed during resumed evaluation.')
+    report = {**plan, 'finished_at': datetime.now(timezone.utc).isoformat(),
+              'elapsed_seconds': (datetime.now(timezone.utc) - datetime.fromisoformat(plan['created_at'])).total_seconds(),
+              'memory_size': len(bank), 'calibration': locked,
+              'test': {policy: evaluations(test, strategy['threshold']) for policy, strategy in strategies.items()},
+              'manifest_sha256': file_sha256(output / 'manifest.json'),
+              'memory_bank_sha256': metadata['memory_bank_sha256'],
+              'resume': {'previous_test_images': previous_count,
+                         'resume_source_sha256': file_sha256(Path(__file__))}}
+    write_json(output / 'summary.json', report)
+    chosen = report['test'][args.policy]['overall']
+    update_status(args, 'completed', metrics_available=True, policy=args.policy,
+                  independent_test=chosen, summary=str(output / 'summary.json'))
+    print(json.dumps({'output': str(output), 'policy': args.policy, 'test': chosen}, ensure_ascii=False), flush=True)
+    return report
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     result.add_argument('--dataset', default=str(ROOT / '.runtime/datasets/manta-gear/gear'))
@@ -453,6 +554,7 @@ def parser():
     result.add_argument('--torch-threads', type=int, default=2)
     result.add_argument('--policy', choices=('recall_priority', 'balanced', 'zero_fp'), default='recall_priority')
     result.add_argument('--wait-for-data', action='store_true', help='Wait for verified dataset preparation before inference.')
+    result.add_argument('--resume', action='store_true', help='Resume a verified interrupted test from saved memory and scores.')
     result.add_argument('--preparation-status', default=str(ROOT / '.runtime/datasets/manta-gear/preparation-status.json'))
     result.add_argument('--status-file', default=str(ROOT / '.runtime/quality-research/manta-gear-patchcore-status.json'))
     result.add_argument('--wait-timeout', type=float, default=14400, help='Maximum dataset wait in seconds (default 4 hours).')
@@ -472,7 +574,7 @@ if __name__ == '__main__':
             raise ValueError('Poll interval must be within (0,60] and wait timeout within (0,86400].')
         if arguments.wait_for_data:
             wait_for_data(arguments)
-        run(arguments)
+        (resume if arguments.resume else run)(arguments)
     except Exception as failure:
         update_status(arguments, 'failed', error=str(failure), metrics_available=False)
         print(f'Evaluation not completed: {failure}', file=sys.stderr, flush=True)

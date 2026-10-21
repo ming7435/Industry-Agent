@@ -8,6 +8,8 @@ const file = name => ({ name, mimeType: 'image/png', buffer: Buffer.from(png, 'b
 const model = { model_id: 'PC-normal', algorithm: 'patchcore', name: '正常轴套', sample_count: 2, memory_size: 20, suggested_threshold: 1 };
 const preset = { ...model, model_id: 'patchcore-demo', name: 'PatchCore 合成纹理演示', read_only: true, demo: true,
   description: '用合成纹理展示异常定位流程，不适用于真实产品质量判定。', source_url: 'https://example.org/patchcore', classes: ['anomaly'] };
+const gearPreset = { ...model, model_id: 'patchcore-gear', name: '齿轮正常记忆库', read_only: true,
+  description: '基于 2068 张正常齿轮图像建立的 PatchCore 正常记忆库。' };
 const yolo = { model_id: 'yolo-default', algorithm: 'yolo', name: 'YOLO11n 合成缺陷检测（研究验证）', read_only: true, demo: false,
   description: '用于合成划痕和低对比度缺陷验证。', source_url: 'https://github.com/ultralytics/assets/releases/tag/v8.3.0',
   classes: ['synthetic_scratch', 'synthetic_low_contrast'] };
@@ -146,6 +148,7 @@ for (const receipt of [
   const { fixture, page, posts, gets, errors } = await setup({ models: [model, yolo], legacyReceipt: receipt });
   try {
     await page.getByLabel('待检测图片').setInputFiles(file('current-gear.png'));
+    await page.getByText('待检测：current-gear.png', { exact: true }).waitFor();
     const run = page.getByRole('button', { name: '运行缺陷检测', exact: true });
     assert.equal(await run.isEnabled(), true);
     assert.equal(await page.getByRole('button', { name: '重试保存联合结果', exact: true }).count(), 0);
@@ -180,7 +183,7 @@ test('read-only PatchCore preset can detect and personal models retain calibrati
   try {
     await page.getByText(preset.description, { exact: true }).waitFor();
     assert.equal(await page.getByLabel('检测记忆库', { exact: true }).inputValue(), 'patchcore-demo');
-    assert.match(await page.getByTestId('readonly-model-note').textContent(), /只读.*上传.*正常.*校准/);
+    assert.match(await page.getByTestId('readonly-model-note').textContent(), /只读.*正常图片.*校准/);
     assert.equal(await page.getByRole('button', { name: '校准并应用阈值', exact: true }).count(), 0);
     await page.getByLabel('待检测图片').setInputFiles(file('synthetic.png'));
     await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
@@ -189,6 +192,21 @@ test('read-only PatchCore preset can detect and personal models retain calibrati
     await page.getByLabel('检测记忆库', { exact: true }).selectOption('PC-normal');
     assert.equal(await page.getByText('使用独立图片校准阈值', { exact: true }).count(), 1);
     assert.equal(await page.getByTestId('readonly-model-note').count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await fixture.close(); }
+});
+
+test('gear memory still lets a user create a personal normal-image bank', async () => {
+  const { fixture, page, posts, errors } = await setup({ models: [gearPreset] });
+  try {
+    await page.getByText(gearPreset.description, { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('检测记忆库', { exact: true }).inputValue(), gearPreset.model_id);
+    await page.getByText('新建自己的正常样本记忆库（可选）', { exact: true }).click();
+    await page.getByLabel('正常训练样本').setInputFiles([file('own-normal-a.png'), file('own-normal-b.png')]);
+    await page.getByRole('button', { name: '建立正常样本记忆库', exact: true }).click();
+    await page.getByText('记忆库已建立', { exact: false }).waitFor();
+    assert.equal(posts[0].path, '/api/quality/vision/patchcore/train');
+    assert.equal(await page.getByLabel('检测记忆库', { exact: true }).inputValue(), model.model_id);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
@@ -290,7 +308,9 @@ test('catalog warnings are visible without blocking personal model training', as
   const { fixture, page } = await setup({ models: [], modelWarnings: ['预置模型不可用，请上传正常图片建立自己的模型。'] });
   try {
     await page.getByText('预置模型不可用，请上传正常图片建立自己的模型。', { exact: true }).waitFor();
+    await page.getByText('新建自己的正常样本记忆库（可选）', { exact: true }).click();
     await page.getByLabel('正常训练样本').setInputFiles([file('normal-a.png'), file('normal-b.png')]);
+    await page.getByText(/已读取 2 张正常样本/).waitFor();
     assert.equal(await page.getByRole('button', { name: '建立正常样本记忆库', exact: true }).isEnabled(), true);
   } finally { await fixture.close(); }
 });
@@ -299,6 +319,7 @@ test('normal samples build PatchCore memory and inspect uploaded pixels without 
   const { fixture, page, posts, errors } = await setup({ models: [] });
   try {
     const panel = page.getByRole('region', { name: '视觉缺陷检测', exact: true });
+    await panel.getByText('新建自己的正常样本记忆库（可选）', { exact: true }).click();
     await panel.getByLabel('正常训练样本').setInputFiles([file('normal-a.png'), file('normal-b.png')]);
     await panel.getByLabel('记忆库名称').fill('正常轴套');
     await panel.getByRole('button', { name: '建立正常样本记忆库', exact: true }).click();
@@ -323,6 +344,7 @@ test('normal samples build PatchCore memory and inspect uploaded pixels without 
 test('training saves preprocessing and independent calibration applies a checked threshold', async () => {
   const { fixture, page, posts, errors } = await setup({ models: [] });
   try {
+    await page.getByText('新建自己的正常样本记忆库（可选）', { exact: true }).click();
     await page.getByLabel('特征提取分辨率').selectOption('448');
     await page.getByLabel('缩放方式', { exact: true }).selectOption('letterbox');
     await page.getByLabel('对比度处理').selectOption('clahe');
@@ -375,6 +397,7 @@ test('late calibration cannot replace another model policy or input image contex
   for (const change of ['model', 'policy', 'image']) {
     const calibrationGate = deferred(), { fixture, page } = await setup({ calibrationGate, models: [model, { ...model, model_id: 'PC-next', name: '另一记忆库', suggested_threshold: 2 }] });
     try {
+      await page.getByText('新建自己的正常样本记忆库（可选）', { exact: true }).click();
       await page.getByText('使用独立图片校准阈值', { exact: true }).click();
       await page.getByLabel('正常校准图片').setInputFiles([file('normal-a.png'), file('normal-b.png')]);
       await page.getByLabel('缺陷校准图片').setInputFiles(file('defect.png'));
@@ -395,6 +418,7 @@ test('late calibration cannot replace another model policy or input image contex
 test('contradictory calibration counts cannot change the active threshold', async () => {
   const { fixture, page } = await setup({ malformedCalibration: true });
   try {
+    await page.getByText('新建自己的正常样本记忆库（可选）', { exact: true }).click();
     await page.getByText('使用独立图片校准阈值', { exact: true }).click();
     await page.getByLabel('正常校准图片').setInputFiles([file('normal-a.png'), file('normal-b.png')]);
     await page.getByLabel('缺陷校准图片').setInputFiles(file('defect.png'));

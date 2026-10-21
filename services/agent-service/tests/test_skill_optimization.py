@@ -24,7 +24,7 @@ def test_cad_original_triggers_share_same_scope_without_duplicate_activation(con
     registry = get_skill_registry()
     skills = registry.select('cad', context)
     assert [s.name for s in skills] == ['drawing_lookup_skill']
-    assert set(registry.merge_tools(skills)) == {'query_part', 'query_drawing', 'query_bom', 'query_relation', 'fetch_engineering_record'}
+    assert set(registry.merge_tools(skills)) == {'query_part', 'query_drawing', 'query_bom', 'query_relation', 'fetch_engineering_record', 'read_skill_reference'}
 
 
 @pytest.mark.parametrize('report_type', ['trace', 'closure', 'trace_report', 'closure_report'])
@@ -32,7 +32,7 @@ def test_report_subtypes_share_original_six_tools_without_pdf_privilege(report_t
     registry = get_skill_registry()
     skills = registry.select('report', {'report_type': report_type})
     assert [s.name for s in skills] == ['closure_report_skill']
-    assert set(registry.merge_tools(skills)) == {'get_diagnosis_record', 'get_maintenance_record', 'get_workorder', 'get_quality_record', 'get_trace_summary', 'persist_report'}
+    assert set(registry.merge_tools(skills)) == {'get_diagnosis_record', 'get_maintenance_record', 'get_workorder', 'get_quality_record', 'get_trace_summary', 'persist_report', 'read_skill_reference'}
     assert 'generate_report_file' not in registry.merge_tools(skills)
 
 
@@ -49,14 +49,14 @@ def test_search_action_with_learning_words_cannot_activate_write_skill():
     registry = get_skill_registry()
     skills = registry.select('memory', {'action': 'search', 'query': 'learn 维修经验'})
     assert [s.name for s in skills] == ['experience_retrieval', 'memory_dedup']
-    assert registry.merge_tools(skills) == ['search_semantic_memory']
+    assert registry.merge_tools(skills) == ['search_semantic_memory', 'read_skill_reference']
 
 
 def test_learning_and_old_write_alias_grant_no_unused_workorder_tool():
     registry = get_skill_registry()
     for names in [None, ['memory_write'], ['experience_extraction']]:
         skills = registry.select('memory', {'action': 'learn'}, names=names)
-        assert registry.merge_tools(skills) == []
+        assert registry.merge_tools(skills) == ['read_skill_reference']
         assert ToolRegistry().guard_call('get_workorder', {'workorder_id': 'WO-1'}, context={'allowed_tools': registry.merge_tools(skills)})['allow'] is False
 
 
@@ -133,7 +133,7 @@ def test_actual_full_case_report_selects_closed_loop_scope_in_runtime():
     action = ActionModel.agent('report', {'required_capability': 'case_reporting', 'report_type': 'full_case_report'})
     enriched = coordinator._enrich_action(action, {'event': {}, 'context': {}})
     assert enriched.payload['active_skills'] == ['closure_report_skill']
-    assert set(enriched.payload['allowed_tools']) == {'get_diagnosis_record', 'get_maintenance_record', 'get_workorder', 'get_quality_record', 'get_trace_summary', 'persist_report'}
+    assert set(enriched.payload['allowed_tools']) == {'get_diagnosis_record', 'get_maintenance_record', 'get_workorder', 'get_quality_record', 'get_trace_summary', 'persist_report', 'read_skill_reference'}
 
 
 def test_actual_full_case_report_real_steps_use_merged_skill():

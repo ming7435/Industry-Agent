@@ -11,6 +11,11 @@
 .expert-attention-filter { display: flex; align-items: center; gap: 7px; padding-bottom: 12px; font-size: 13px; color: #526f79; }
 .expert-attention-filter input { accent-color: #087f72; }
 .expert-overview-toolbar > button { margin-left: auto; font-size: 13px; min-height: 42px; }
+.expert-monitor-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: -6px; font-size: 12px; color: #337967; }
+.expert-monitor-status.error { color: #a5442e; }
+.expert-monitor-status.paused, .expert-monitor-status.loading { color: #69808a; }
+.expert-monitor-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.expert-workspace .expert-agent-activity { margin: -6px 0 14px; font-size: 12px; color: #47736b; }
 .expert-workspace .expert-overview-note { margin: -8px 0 0; font-size: 12px; line-height: 1.8; }
 .expert-overview-note > span { display: block; }
 .expert-agent-group { display: grid; gap: 16px; }

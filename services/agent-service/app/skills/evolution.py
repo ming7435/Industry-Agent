@@ -82,14 +82,22 @@ def build_draft(current, source, client):
     planning = ('周窗口优化：' + str(source['planning_reason'])[:100] + '。') if source.get('planning_reason') else ''
     reason = (planning + '优化依据：' + trigger_summary + '。修改内容：' + reason.strip()[:300])[:440]
     heading = re.search(r'^## 业务判断规则[^\n]*\n', original, re.M)
-    if not heading:
+    if heading:
+        end = re.search(r'^## ', original[heading.end():], re.M)
+        offset = heading.end() + end.start() if end else len(original)
+        section = ''
+    elif current.get('references'):
+        # Directory skills keep their original reasoning in references/. Add
+        # verified new rules to the prompt-facing document so later runs see them.
+        index = re.search(r'^## 参考文档[^\n]*\n', original, re.M)
+        offset = index.start() if index else len(original)
+        section = '## 业务判断规则（自动优化补充）\n\n'
+    else:
         raise SkillEditError(422, '当前技能没有业务判断规则章节，不能自动修改')
-    end = re.search(r'^## ', original[heading.end():], re.M)
-    offset = heading.end() + end.start() if end else len(original)
     identity = str(source['trace_id'])
     display_identity = (identity if re.fullmatch(r'[A-Za-z0-9_:.-]{1,120}', identity)
                         else '编号摘要 ' + sha256(identity.encode()).hexdigest()[:16])
-    addition = '\n自动优化候选规则（来源运行：' + display_identity + '）：\n\n' + ''.join('- ' + rule + '\n' for rule in rules) + '\n'
+    addition = '\n' + section + '自动优化候选规则（来源运行：' + display_identity + '）：\n\n' + ''.join('- ' + rule + '\n' for rule in rules) + '\n'
     document = original[:offset] + addition + original[offset:]
     if len(document) > 24000:
         raise SkillEditError(422, '追加后技能说明超过长度上限，未覆盖旧版')

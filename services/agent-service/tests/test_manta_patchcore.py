@@ -36,6 +36,13 @@ def test_full_partition_uses_every_official_training_image_and_all_remaining_tes
     args = manta.parser().parse_args([])
     available = pools()
     rows = manta.partition_samples(available, args)
+    assert {key: len(group) for key, group in available.items()} == {
+        'train/good': 2068, 'test/good': 162, 'test/fragmentation': 23,
+        'test/multi_anomalies': 24, 'test/scratch': 11, 'test/stain': 23,
+    }
+    assert {row['scenario'] for row in rows if row['label'] == 'defect'} == {
+        'fragmentation', 'multi_anomalies', 'scratch', 'stain',
+    }
     counts = {(split, label): sum(r['split'] == split and r['label'] == label for r in rows)
               for split in ('train', 'calibration', 'test') for label in ('normal', 'defect')}
     assert counts == {('train', 'normal'): 2068, ('train', 'defect'): 0,
@@ -193,6 +200,34 @@ def test_content_duplicates_are_retained_only_inside_full_training(monkeypatch, 
             manta.select_manifest(available, args, entries)
 
 
+def test_manifest_accepts_narrow_official_five_view_composite(monkeypatch):
+    args = manta.parser().parse_args([])
+    available = pools()
+    target = available['test/fragmentation'][0]['path']
+
+    class Image:
+        def __init__(self, path):
+            self.path = str(path)
+            self.width, self.height = (1790, 530) if self.path == target else (25, 5)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(manta, 'load_rgb', Image)
+    monkeypatch.setattr(manta, 'file_sha256', lambda path: hashlib.sha256(str(path).encode()).hexdigest())
+    monkeypatch.setattr(manta, 'pixel_sha256', lambda image: hashlib.sha256(image.path.encode()).hexdigest())
+    monkeypatch.setattr(manta, 'update_status', lambda *args, **kwargs: None)
+    rows = manta.partition_samples(available, args)
+    entries = {Path(row['path']).relative_to(Path(args.dataset).parent).as_posix():
+               {'sha256': hashlib.sha256(str(row['path']).encode()).hexdigest()} for row in rows}
+    selected = manta.select_manifest(available, args, entries)
+    narrow = next(row for row in selected if row['path'] == target)
+    assert (narrow['width'], narrow['height'], narrow['view_count']) == (1790, 530, 5)
+
+
 def test_waiting_status_explicitly_exposes_full_training(tmp_path):
     import json
     args = manta.parser().parse_args(['--status-file', str(tmp_path / 'status.json')])
@@ -200,3 +235,33 @@ def test_waiting_status_explicitly_exposes_full_training(tmp_path):
     status = json.loads((tmp_path / 'status.json').read_text(encoding='utf-8'))
     assert status['training_mode'] == 'full' and status['training_images'] == 2068
     assert status['metrics_available'] is False
+
+
+def test_resumed_scores_reuse_only_verified_prefix(monkeypatch, tmp_path):
+    import json
+    from PIL import Image
+
+    samples = [dict(sample_id=name, path=name, file_sha256=name, width=25, height=5,
+                    split='test', label='normal') for name in ('first', 'second')]
+    path = tmp_path / 'test_scores.json'
+    manta.write_json(path, [{**samples[0], 'score': .5, 'seconds': .1}])
+    calls = []
+
+    def anomaly_map(image, bank):
+        calls.append(True)
+        return np.full((5, 25), .8, np.float32)
+
+    monkeypatch.setattr(manta, 'load_rgb', lambda path: Image.new('RGB', (25, 5)))
+    monkeypatch.setattr(manta, 'file_sha256', lambda path: path)
+    monkeypatch.setattr(manta, 'update_status', lambda *args, **kwargs: None)
+    result = manta.score_images(SimpleNamespace(anomaly_map=anomaly_map), None, samples,
+                                tmp_path, 'test', object(), resume=True)
+    assert len(calls) == 1 and len(result) == 2
+    assert result[0]['score'] == .5 and result[1]['score'] == pytest.approx(.8)
+    saved = json.loads(path.read_text(encoding='utf-8'))
+    saved[0]['file_sha256'] = 'changed'
+    manta.write_json(path, saved)
+    with pytest.raises(ValueError, match='Saved scores differ'):
+        manta.score_images(SimpleNamespace(anomaly_map=anomaly_map), None, samples,
+                           tmp_path, 'test', object(), resume=True)
+    assert len(calls) == 1

@@ -1,0 +1,3 @@
+# 专家技能试运行的 OpenSandbox 宿主侧 SDK（可选）。
+# 仅在 SKILL_SANDBOX_ENABLED=true 时需要；runner 镜像不需要安装。
+opensandbox>=1.1,<2.0

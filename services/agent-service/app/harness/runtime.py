@@ -114,6 +114,11 @@ class AgentHarness:
             details.update({"error": str(error), "input": self._trace_payload(task)})
         self.trace.record(event=event, **record, **details)
 
+    def _release_attempt(self, record: dict[str, Any]) -> None:
+        release = getattr(self.trace, 'release_agent_attempt', None)
+        if callable(release):
+            release(record)
+
     def execute_once(self, abnormal_event: Any):
         """执行一次尝试；超时和重试策略由 RuntimeDispatcher 管理。"""
 
@@ -125,6 +130,8 @@ class AgentHarness:
         except Exception as error:
             self._finish_attempt("agent_error", abnormal_event, record, started, error=error)
             raise
+        finally:
+            self._release_attempt(record)
 
     def execute_agent(self, abnormal_event: Any):
         """执行一次 Agent 任务，失败时按配置重试。"""
@@ -138,29 +145,33 @@ class AgentHarness:
             max_retries = 0
         for attempt in range(max_retries + 1):
             record, started = self._begin_attempt(abnormal_event, attempt + 1)
-            # 每次尝试使用独立线程池，使单次超时不会阻塞后续重试。
-            executor = ThreadPoolExecutor(
-                max_workers=1,
-                thread_name_prefix="agent-runtime",
-            )
-            from contextvars import copy_context
-            future = executor.submit(copy_context().run, self._run_bound, abnormal_event, record)
             try:
-                result = future.result(timeout=self.config.timeout_seconds)
-                self._finish_attempt("agent_completed", abnormal_event, record, started, result=result)
-                return result
-            except TimeoutError:
-                last_error = AgentExecutionError(
-                    "Agent 执行超时（%.1f 秒，第 %s 次）"
-                    % (self.config.timeout_seconds, attempt + 1)
+                # 每次尝试使用独立线程池，使单次超时不会阻塞后续重试。
+                executor = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="agent-runtime",
                 )
-                future.cancel()
-                self._finish_attempt("agent_timeout", abnormal_event, record, started, error=last_error)
-            except Exception as error:
-                last_error = error
-                self._finish_attempt("agent_error", abnormal_event, record, started, error=error)
+                try:
+                    from contextvars import copy_context
+                    future = executor.submit(copy_context().run, self._run_bound, abnormal_event, record)
+                    try:
+                        result = future.result(timeout=self.config.timeout_seconds)
+                        self._finish_attempt("agent_completed", abnormal_event, record, started, result=result)
+                        return result
+                    except TimeoutError:
+                        last_error = AgentExecutionError(
+                            "Agent 执行超时（%.1f 秒，第 %s 次）"
+                            % (self.config.timeout_seconds, attempt + 1)
+                        )
+                        future.cancel()
+                        self._finish_attempt("agent_timeout", abnormal_event, record, started, error=last_error)
+                    except Exception as error:
+                        last_error = error
+                        self._finish_attempt("agent_error", abnormal_event, record, started, error=error)
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
             finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+                self._release_attempt(record)
 
         raise AgentExecutionError(
             "Agent 执行失败：%s" % last_error

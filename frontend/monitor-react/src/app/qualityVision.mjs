@@ -1,6 +1,19 @@
-export const VISION_LIMITS = { max_image_bytes: 4 * 1024 * 1024, max_training_images: 24 };
+export const VISION_LIMITS = { max_image_bytes: 4 * 1024 * 1024, max_training_images: 100, max_calibration_images: 24 };
 export const DEFAULT_PATCHCORE_PREPROCESSING = { input_size: 224, resize_mode: 'stretch', contrast: 'none', blur_sigma: 4 };
+export const GEAR_PATCHCORE_PREPROCESSING = { input_size: 448, resize_mode: 'letterbox', contrast: 'none', blur_sigma: 2 };
 export const CALIBRATION_POLICIES = { recall_priority: '召回优先', balanced: '平衡', zero_fp: '校准集零误报' };
+
+export function visionDetectionBlocker({ userId, checked, loading, available, model, inputImage,
+  parametersValid, busy, referenceBlocked }) {
+  if (!userId) return '请先登录，再运行缺陷检测。';
+  if (!checked || loading) return '正在检查检测服务，请稍候。';
+  if (!available || !model) return '请先选择已就绪的检测记忆库或模型。';
+  if (referenceBlocked) return '测试图片不能关联生产实物；请切换到流程验证或上传该实物图片。';
+  if (!inputImage) return '请在“待检测图片”选择 1 张图片；“正常训练样本”仅用于新建记忆库。';
+  if (!parametersValid) return '请填写有效的检测阈值。';
+  if (busy) return '正在处理图片或运行检测，请稍候。';
+  return null;
+}
 const supportedTypes = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const imageData = value => typeof value === 'string' && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
 const text = value => typeof value === 'string' && !!value.trim();
@@ -73,14 +86,14 @@ export function verifiedPatchcorePreprocessing(value) {
 export function validateCalibrationFiles(files, group, limits = {}) {
   const selected = Array.from(files || []), minimum = group === 'normal' ? 2 : 1;
   if (selected.length < minimum) throw new Error(`阈值校准至少需要 ${minimum} 张${group === 'normal' ? '正常' : '缺陷'}图片。`);
-  if (selected.length > VISION_LIMITS.max_training_images) throw new Error('正常与缺陷校准图片合计最多 24 张。');
+  if (selected.length > VISION_LIMITS.max_calibration_images) throw new Error('正常与缺陷校准图片合计最多 24 张。');
   selected.forEach(file => validateVisionFiles([file], limits));
   return selected;
 }
 
 export function validateCalibrationPayload(normalImages, defectImages) {
   if (normalImages.length < 2 || defectImages.length < 1) throw new Error('阈值校准至少需要 2 张正常图片和 1 张已知缺陷图片。');
-  if (normalImages.length + defectImages.length > VISION_LIMITS.max_training_images) throw new Error('正常与缺陷校准图片合计最多 24 张。');
+  if (normalImages.length + defectImages.length > VISION_LIMITS.max_calibration_images) throw new Error('正常与缺陷校准图片合计最多 24 张。');
   if ([...normalImages, ...defectImages].reduce((total, image) => total + image.length, 0) > 40 * 1024 * 1024 - 1024) {
     throw new Error('校准图片编码后的总量不能超过 40 MB，请减少样本数量或压缩图片。');
   }
@@ -145,6 +158,29 @@ export function verifiedVisionResult(value, expected) {
   }
   if (value.algorithm === 'yolo' && value.score !== Math.max(0, ...value.defects.map(defect => defect.confidence))) invalid();
   return value;
+}
+
+export function verifiedAutoVisionStatus(value) {
+  const invalid = () => { throw new Error('自动检测状态返回无效，请刷新页面。'); };
+  if (value?.enabled === false && value.running === false) return value;
+  if (value?.enabled !== true || typeof value.running !== 'boolean' || !text(value.input_dir)
+    || ['pending_count', 'processed_count', 'failed_count'].some(key => !Number.isInteger(value[key]) || value[key] < 0)
+    || typeof value.last_error !== 'string') invalid();
+  if (value.latest !== null) {
+    const latest = value.latest;
+    if (!/^VI-[a-f0-9]{32}$/.test(latest?.inspection_id || '') || !text(latest.filename)
+      || !['clear', 'defect'].includes(latest.status) || !finite(latest.score) || latest.score < 0
+      || !finite(latest.threshold) || latest.threshold <= 0 || !text(latest.created_at)
+      || !Number.isFinite(Date.parse(latest.created_at))) invalid();
+  }
+  return value;
+}
+
+export function verifiedAutoVisionResult(value) {
+  if (value?.model_id !== 'patchcore-gear' || value.image_source !== 'local_inbox'
+    || (value.part_id || '') !== '' || value.quality_part_id) throw new Error('自动检测结果来源或模型无效，请刷新页面。');
+  return verifiedVisionResult(value, { algorithm: 'patchcore', model_id: 'patchcore-gear',
+    filename: value.filename, part_id: '', threshold: value.threshold, image_source: 'local_inbox' });
 }
 
 const inspectionId = value => typeof value === 'string' && /^VI-[a-f0-9]{32}$/.test(value);

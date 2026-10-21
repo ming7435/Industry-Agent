@@ -10,7 +10,9 @@ import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
-from app.api.quality_vision import build_quality_vision_router
+from app.api.quality_vision import CalibrateRequest, build_quality_vision_router
+from app.vision.calibration import threshold_strategies
+from app.vision.combined import CombinedQualityService
 from app.vision.service import VisionService
 
 
@@ -49,6 +51,82 @@ def test_shared_preset_is_read_only_and_inspections_remain_private(connected, mo
     assert client.get('/api/quality/vision/capabilities').json()['models'] == [model]
     assert client.get('/api/quality/vision/inspections/' + record['inspection_id']).status_code == 404
     assert client.post('/api/quality/vision/detect', json=body).status_code == 200
+
+
+def test_auto_inbox_status_requires_session_and_reports_when_not_configured(connected):
+    client, _, _ = connected
+    response = client.get('/api/quality/vision/auto/status')
+    assert response.status_code == 200
+    assert response.json() == {'enabled': False, 'running': False}
+    client.cookies.clear()
+    assert client.get('/api/quality/vision/auto/status').status_code == 401
+
+
+def test_auto_inbox_latest_is_read_only_and_session_bound(connected):
+    _, service, _ = connected
+    class Backend:
+        def resolve_session(self, token):
+            return {'user_id': token, 'role': 'technician'} if token == 'A' else None
+    class Inbox:
+        def __init__(self):
+            self.starts = 0
+        def start(self):
+            self.starts += 1
+        def status(self):
+            return {'enabled': True, 'running': True, 'input_dir': 'test-inbox',
+                    'pending_count': 0, 'processed_count': 1, 'failed_count': 0,
+                    'last_error': '', 'latest': None}
+        def latest(self):
+            return {'inspection_id': 'VI-' + 'a' * 32, 'image_source': 'local_inbox'}
+    inbox = Inbox()
+    app = FastAPI()
+    app.include_router(build_quality_vision_router(lambda request: None, backend_factory=Backend,
+                                                   service=service, auto_inbox=inbox))
+    client = TestClient(app)
+    client.cookies.set('maintenance_session', 'A')
+    assert inbox.starts == 1
+    assert client.get('/api/quality/vision/auto/status').json()['running'] is True
+    assert client.get('/api/quality/vision/auto/latest').json()['image_source'] == 'local_inbox'
+    client.cookies.clear()
+    assert client.get('/api/quality/vision/auto/latest').status_code == 401
+
+
+def test_gear_memory_is_selectable_and_can_qualify_production_parts(connected, monkeypatch):
+    client, service, root = connected
+    folder = root / 'gear-memory'
+    folder.mkdir()
+    bank = folder / 'memory.npz'
+    np.savez_compressed(bank, memory_bank=np.ones((4, 6), dtype=np.float32))
+    strategies = threshold_strategies([.2, .4], [.8])
+    record = {'model_id': 'patchcore-gear', 'name': '齿轮正常记忆库',
+              'algorithm': 'patchcore', 'sample_count': 2068, 'memory_size': 4,
+              'suggested_threshold': strategies['balanced']['threshold'],
+              'threshold_method': 'independent_labeled_calibration',
+              'calibration_required': False,
+              'calibration': {'policy': 'balanced', 'normal_count': 2, 'defect_count': 1,
+                              'created_at': '2026-10-21T00:00:00Z', 'strategies': strategies},
+              'read_only': True,
+              'weights_sha256': service._digest(root / 'trusted-backbone.pt'),
+              'memory_bank_sha256': service._digest(bank)}
+    (folder / 'model.json').write_text(json.dumps(record), encoding='utf-8')
+    monkeypatch.setenv('QUALITY_PATCHCORE_GEAR_PRESET_DIR', str(folder))
+    models = client.get('/api/quality/vision/capabilities').json()['models']
+    assert [model['model_id'] for model in models] == ['patchcore-gear']
+    assert models[0]['read_only'] is True
+    body = {'algorithm': 'patchcore', 'model_id': 'patchcore-gear',
+            'image': picture(), 'threshold': record['suggested_threshold']}
+    assert client.post('/api/quality/vision/detect', json=body).status_code == 200
+    production = CombinedQualityService(service).register('A', {
+        'scope': 'production', 'batch_id': 'batch-1', 'serial_number': 'part-1',
+        'design_version': 'v1'})
+    response = client.post('/api/quality/vision/detect', json={
+        **body, 'quality_part_id': production['quality_part_id']})
+    assert response.status_code == 200, response.text
+    assert len(list((root / 'vision').rglob('VI-*.json'))) == 2
+    record['weights_sha256'] = '0' * 64
+    (folder / 'model.json').write_text(json.dumps(record), encoding='utf-8')
+    caps = client.get('/api/quality/vision/capabilities').json()
+    assert caps['models'] == [] and caps['model_warnings']
 
 
 def test_corrupt_preset_warns_without_disabling_personal_training(connected, monkeypatch):
@@ -154,6 +232,7 @@ class FakePatchCore:
 
 @pytest.fixture
 def connected(tmp_path, monkeypatch):
+    monkeypatch.delenv('QUALITY_VISION_AUTO_INBOX_DIR', raising=False)
     monkeypatch.setenv('QUALITY_PATCHCORE_BACKBONE_WEIGHTS', str(tmp_path / 'trusted-backbone.pt'))
     (tmp_path / 'trusted-backbone.pt').write_bytes(b'test weights; never deserialized')
     monkeypatch.delenv('QUALITY_YOLO_WEIGHTS', raising=False)
@@ -181,6 +260,13 @@ def train(client, **changes):
         'name': '正常件基准', 'images': [picture(), picture()], 'coreset_ratio': 0.1, **changes})
 
 
+def test_unset_calibration_policy_defaults_to_balanced():
+    request = CalibrateRequest(model_id='PC-' + 'a' * 32,
+                               normal_images=[picture(), picture('gray')],
+                               defect_images=[picture('black')])
+    assert request.policy == 'balanced'
+
+
 def test_session_and_write_authorization_and_same_origin_are_required(connected):
     client, _, _ = connected
     client.cookies.clear()
@@ -198,7 +284,7 @@ def test_capability_contract_and_persisted_models_and_inspections_are_owner_isol
     client, service, root = connected
     caps = client.get('/api/quality/vision/capabilities').json()
     assert [a['id'] for a in caps['algorithms']] == ['patchcore', 'yolo']
-    assert caps['limits'] == {'max_image_bytes': 4194304, 'max_training_images': 24}
+    assert caps['limits'] == {'max_image_bytes': 4194304, 'max_training_images': 100}
     response = train(client)
     assert response.status_code == 200, response.text
     model = response.json()
@@ -231,12 +317,32 @@ def test_capability_contract_and_persisted_models_and_inspections_are_owner_isol
 
 @pytest.mark.parametrize('changes', [
     {'images': ['not an image', 'not an image']}, {'images': [picture()]},
-    {'images': [picture()] * 25}, {'coreset_ratio': 0}, {'name': ''}, {'weights': 'arbitrary.pt'},
+    {'images': [picture()] * 101}, {'coreset_ratio': 0}, {'name': ''}, {'weights': 'arbitrary.pt'},
 ])
 def test_invalid_training_input_never_saves_a_model(connected, changes):
     client, _, root = connected
     assert train(client, **changes).status_code == 422
     assert not list((root / 'vision').rglob('*.npz'))
+
+
+def test_hundred_normal_images_use_bounded_streaming_coreset(connected, monkeypatch):
+    client, _, _ = connected
+    from app.vision import offline
+    seen = {}
+
+    def fake_fit(detector, images, expected_count, per_image_features, coreset_ratio):
+        seen.update(expected_count=expected_count, per_image_features=per_image_features,
+                    coreset_ratio=coreset_ratio, processed=sum(1 for _ in images))
+        return {'memory_bank': np.ones((4, 6), dtype=np.float32), 'metadata': {
+            'suggested_threshold': 0.5, 'calibration_required': True,
+            'threshold_method': 'heuristic_training_candidate_patch_p99_times_1.2_floor_0.001'}}
+
+    monkeypatch.setattr(offline, 'fit_full_memory', fake_fit)
+    response = train(client, images=[picture()] * 100)
+    assert response.status_code == 200, response.text
+    assert response.json()['sample_count'] == 100
+    assert seen == {'expected_count': 100, 'per_image_features': 32,
+                    'coreset_ratio': 0.1, 'processed': 100}
 
 
 def test_missing_models_dependencies_and_threshold_do_not_claim_clear(connected):

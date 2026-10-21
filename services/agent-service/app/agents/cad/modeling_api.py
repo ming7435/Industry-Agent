@@ -152,7 +152,12 @@ def build_text_to_cad_router(require_auth, trace=None, *, recovery=None):
 
     def execute_run(storage, record, client_factory, model_factory):
         client = None
+        attempt = {'type': 'agent', 'agent': 'cad', 'task_id': record['run_id'],
+            'trace_id': record['run_id'], 'agent_run_id': record['run_id'], 'run_type': 'cad_modeling'}
+        started = time.perf_counter()
         try:
+            if trace is not None:
+                trace.record(event='agent_started', **attempt)
             client = client_factory()
             agent = CADAgent(ToolRegistry(trace=trace))
             if trace is not None:
@@ -176,15 +181,29 @@ def build_text_to_cad_router(require_auth, trace=None, *, recovery=None):
                 if trace is not None:
                     trace.record(event="text_to_cad_storage_failed", agent="cad", task_id=record["run_id"], error="Text-to-CAD 结果写入 Redis 失败；禁止自动重放。")
             finally:
-                if failure_status in {'failed','error','outcome_unknown','timeout'}:
-                    from app.runtime.service_exceptions import record_service_failure
-                    record_service_failure(recovery,'cad',{
-                        'task_id':record['run_id'],'trace_id':record['run_id'],
-                        'recovery_actor_id':record.get('_owner_id',''),'part_id':record.get('part_number',''),
-                        'subject_summary':(record.get('part_name') or '零件')+' 建模服务异常'},failure_error,
-                        status='outcome_unknown' if failure_status=='outcome_unknown' else 'failed')
-                close(client)
-                slots.release()
+                try:
+                    # A lost result or interrupted execution is never an observed success.
+                    failed = failure_status in {'failed', 'error', 'outcome_unknown', 'timeout', 'running'}
+                    if trace is not None:
+                        trace.record(event='agent_error' if failed else 'agent_completed', **attempt,
+                            elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+                            output={**_text_to_cad_public_record(record), 'status': failure_status},
+                            **({'error': failure_error} if failed else {}))
+                    if failure_status in {'failed','error','outcome_unknown','timeout'}:
+                        from app.runtime.service_exceptions import record_service_failure
+                        record_service_failure(recovery,'cad',{
+                            'task_id':record['run_id'],'trace_id':record['run_id'],
+                            'recovery_actor_id':record.get('_owner_id',''),'part_id':record.get('part_number',''),
+                            'subject_summary':(record.get('part_name') or '零件')+' 建模服务异常'},failure_error,
+                            status='outcome_unknown' if failure_status=='outcome_unknown' else 'failed')
+                finally:
+                    try:
+                        release = getattr(trace, 'release_agent_attempt', None)
+                        if callable(release):
+                            release(attempt)
+                    finally:
+                        close(client)
+                        slots.release()
 
     @router.get("/status")
     def status(request: Request):

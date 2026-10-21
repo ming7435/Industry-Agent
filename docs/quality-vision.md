@@ -41,11 +41,19 @@ QUALITY_YOLO_WEIGHTS=L:/industry_agent/.runtime/quality-models/yolo11-gear-v1/be
 QUALITY_YOLO_METADATA=L:/industry_agent/.runtime/quality-models/yolo11-gear-v1/model.json
 QUALITY_PATCHCORE_BACKBONE_WEIGHTS=L:/industry_agent/.runtime/quality-models/backbones/resnet18-f37072fd.pth
 QUALITY_PATCHCORE_PRESET_DIR=
+QUALITY_PATCHCORE_GEAR_PRESET_DIR=L:/industry_agent/.runtime/quality-models/patchcore-gear-v1
+QUALITY_VISION_AUTO_INBOX_DIR=L:/industry_agent/.runtime/quality-auto-inbox
 QUALITY_VISION_DATA_MODE=gear
 QUALITY_VISION_DATASET_MANIFEST=L:/industry_agent/output/gear-dataset/prepared/manifest.json
 ```
 
 服务校验权重摘要，页面展示实际模型名称和原始覆盖类别；模型尚在训练或不可用时，检测按钮不会启用。数据和评估证据保存在 `output/gear-dataset/`。
+
+### 本地目录自动检测（无工业相机时）
+
+配置 `QUALITY_VISION_AUTO_INBOX_DIR` 并重启 Agent Service 后，服务持续监听其 `incoming` 子目录。采集程序把完整的 PNG/JPEG/WebP 图片放入该目录，服务确认文件大小与修改时间稳定后，自动用现成的 `patchcore-gear` 记忆库检测；页面每 2.5 秒读取状态和最新定位图、热力图。无需在页面逐张上传或点击“运行缺陷检测”。采集程序应先写 `.tmp` 文件，再原子改名为图片扩展名；单张上限 4 MiB。
+
+处理成功的原图移至同级 `processed`，无效图片移至 `failed`，暂时性模型错误保留原图待重试。自动结果标记 `image_source=local_inbox`，保存在独立的本地自动检测账号下，不关联生产实物、不进入综合合格率。当前只验证公开 MANTA 同来源图片；未来接入工业相机时，应由采集程序写入目录，并使用本产线良品重建与校准模型后，再设计正式生产判定和吞吐保障。
 
 ### 自建产品记忆库
 
@@ -74,9 +82,9 @@ QUALITY_VISION_DATASET_MANIFEST=L:/industry_agent/output/gear-dataset/prepared/m
 
 顺序联合入口及联合结论已取消。旧浏览器缓存中的联合记录编号和待保存状态不再恢复，也不会阻止单模型检测。旧的`sequential/fuse`和`production/verify`写接口在认证后返回410停用提示；已经保存的历史记录仍可按原有账号权限读取。
 
-正常记忆库必须使用明确正常标签且与待检产品和拍摄条件相匹配的真实图片。后台2068张正常齿轮图全量建库任务独立于页面算法选择，继续按下文的数据划分执行。参数检测与视觉外观的人工综合复核仍按实物记录，引用的是本次选择的单模型检测证据。
+正常记忆库必须使用明确正常标签且与待检产品和拍摄条件相匹配的真实图片。后台2068张正常齿轮图已完成离线全量建库；它独立于页面算法选择。参数检测与视觉外观的人工综合复核仍按实物记录，引用的是本次选择的单模型检测证据。
 
-### 公开正常齿轮数据
+### 齿轮正常记忆库数据
 
 已核实 [MANTA 官方项目](https://grainnet.github.io/MANTA)提供带正常标签的独立齿轮类别，作者的 [Figshare 存储](https://figshare.com/articles/dataset/27937518)可匿名下载单独的 `gear.tar.gz`（2,692,003,445字节）。[作者补充材料](https://grainnet.github.io/static/pdfs/Manta-supp.pdf)列出2068张正常训练图、162张正常测试图、81张异常测试图。每张为同一物体的五视角拼图，划分和评估应保留整个原图身份，不能将不同视角分配到训练和测试两侧。
 
@@ -91,11 +99,15 @@ MANTA与当前塑料齿轮YOLO11训练数据的产品及拍摄域不同，必须
 .\.venv\Scripts\python.exe scripts/evaluate_manta_patchcore.py --wait-for-data
 ```
 
-准备脚本支持断点续传，校验作者MD5、解压路径、文件数量及文件SHA256。评估脚本只有在准备状态为`complete`且清单校验通过后才运行；缺少或损坏数据时停止，不生成指标。全量方案使用官方`train/good`的2068张正常图全部建库。官方`test/good`中的12张正常图及`test/fragmentation`中的12张缺陷图固定用于阈值校准，其余150张正常图和69张缺陷图用于独立测试。每个原图只进入一个集合，缺陷图不会进入正常记忆库。这是完整正常训练集加自定义校准/测试划分，不能称为官方MANTA基准成绩。阈值在独立测试前锁定，五视角整图不跨集合，输出逐图分数、误报/漏检名单和三种阈值策略的测试结果。
+准备脚本支持断点续传，校验作者MD5、解压路径、文件数量及文件SHA256。评估脚本只有在准备状态为`complete`且清单校验通过后才运行；缺少或损坏数据时停止，不生成指标。全量方案使用官方`train/good`的2068张正常图全部建库。官方`test/good`中的12张正常图，以及`test/fragmentation`（23张）、`test/multi_anomalies`（24张）、`test/scratch`（11张）和`test/stain`（23张）共81张缺陷图中固定选出的12张，用于阈值校准；其余150张正常图和69张缺陷图用于独立测试。每个原图只进入一个集合，缺陷图不会进入正常记忆库。这是完整正常训练集加自定义校准/测试划分，不能称为官方MANTA基准成绩。阈值在独立测试前锁定，五视角整图不跨集合，输出逐图分数、按实际缺陷场景统计的误报/漏检名单和三种阈值策略的测试结果。
 
 全量建库走离线入口，逐张读取并提取特征，每张图先选最多32个局部核心集特征，再从不超过66176个候选中选最多1024个最终记忆特征。所有2068张图都参与特征提取，但最终记忆库是压缩后的特征集合，不是2068张原图的副本。该分层近似采样的配置及候选数量写入模型元数据，不等同于对全部原始特征做一次全局采样。在线上传入口的24张限制继续用于控制请求体和服务资源，不限制离线全量任务。
 
-评估状态保存在 `.runtime/quality-research/manta-gear-patchcore-status.json`，全量结果与独立记忆库保存在 `.runtime/quality-research/manta-gear-patchcore-full-v1/`。`metrics_available: false` 表示尚无可报告指标；该流程不会修改在线模型清单或生产统计。
+评估状态保存在 `.runtime/quality-research/manta-gear-patchcore-status.json`，全量结果与独立记忆库保存在 `.runtime/quality-research/manta-gear-patchcore-full-v1/`。`metrics_available: false` 表示尚无可报告指标。离线评估本身不会修改在线模型清单或生产统计。
+
+2026-10-21 的离线结果：2068张正常图全部完成特征提取，产生66176个候选特征，经分层核心集采样得到1024个记忆特征；记忆库重新加载和留出正常图热图检查通过。12张正常图、12张缺陷图仅用于阈值校准，其余150张正常图、69张缺陷图用于独立测试。召回优先阈值1.7814下漏检0/69、误报115/150（76.7%）；平衡阈值1.8823下漏检12/69（17.4%）、误报26/150（17.3%）。平衡阈值的漏检分别为破碎2/19、多缺陷4/21、划痕1/9、污渍5/20。结果见 `summary.json` 和逐图 `test_scores.json`。这些数字属于MANTA公开数据的自定义划分，不是官方基准，也不是当前生产线的合格率。若离线测试被中断，可执行 `evaluate_manta_patchcore.py --resume`，它会重新核对源文件、样本划分、记忆库和已保存分数后继续，不重建正常库。
+
+执行 `scripts/provision_manta_patchcore.py` 会核对全量建库、记忆库摘要及阈值校准结果，生成只读的 `patchcore-gear` 齿轮正常记忆库。当前本地服务通过 `QUALITY_PATCHCORE_GEAR_PRESET_DIR` 将它展示在质检页面，并默认采用平衡阈值1.8823。预置的实际推理已在正常/缺陷测试图各一张上复核，分数与离线逐图记录一致。该库可直接用于检测和综合复核；若要用于本产线产品，建议采集同产品、同相机与光照的已确认良品重新建库，并用独立缺陷图校准。
 
 ### 真实齿轮评估与限制
 

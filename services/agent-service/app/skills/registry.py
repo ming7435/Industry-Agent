@@ -2,11 +2,13 @@
 
 目录约定::
 
-    app/skills/{agent_name}/*.md
+    app/skills/{agent_name}/{skill_name}/SKILL.md
+    app/skills/{agent_name}/{skill_name}/references/*.md
+    app/skills/{agent_name}/{skill_name}/scripts/run.py
 
-每个 Markdown 文档是一个独立 Skill：YAML Front Matter 保存运行时需要的结构化字段，
-正文保存面向维护人员的说明。运行时通过 ``select`` 选择一个或多个 Skill，再合并工具
-和步骤，避免一个 Agent 被一个 master skill 文件限制。
+目录包是当前布局：``SKILL.md`` 只保留模型每次都要看到的触发、流程、输出和停止条件，
+业务规则、证据边界、输入输出契约放在 ``references/``，由 ``read_skill_reference`` 按需读取。
+兼容旧的扁平 ``app/skills/{agent_name}/*.md``，两种布局可并存，便于逐个迁移。
 """
 
 from __future__ import annotations
@@ -28,6 +30,29 @@ if TYPE_CHECKING:
 
 
 SKILLS_ROOT = Path(__file__).resolve().parent
+SKILL_DOCUMENT_NAME = "SKILL.md"
+REFERENCE_DIRECTORY_NAME = "references"
+REFERENCE_TOOL_NAME = "read_skill_reference"
+
+
+@dataclass(frozen=True)
+class SkillReference:
+    """SKILL.md 之外的按需参考文档。
+
+    正文不进入模型上下文；模型显式调用 ``read_skill_reference`` 时才返回，
+    因此技能保持渐进披露，同时所有规则仍可审计。
+    """
+
+    name: str
+    title: str
+    when: str
+    order: int
+    document: str
+    path: str
+
+    def observation(self) -> dict[str, Any]:
+        return {"name": self.name, "title": self.title, "order": self.order,
+                "fingerprint": sha256(self.document.encode("utf-8")).hexdigest()}
 
 
 @dataclass(frozen=True)
@@ -52,6 +77,16 @@ class SkillDefinition:
     document: str = ""
     path: str = ""
     aliases: tuple[str, ...] = ()
+    references: tuple[SkillReference, ...] = ()
+    layout: str = "flat"
+
+    def reference(self, name: str) -> SkillReference | None:
+        normalized = str(name or "").strip().lower()
+        return next((item for item in self.references if item.name.lower() == normalized), None)
+
+    @property
+    def reference_names(self) -> tuple[str, ...]:
+        return tuple(item.name for item in self.references)
 
     @classmethod
     def from_payload(
@@ -60,6 +95,8 @@ class SkillDefinition:
         payload: Mapping[str, Any],
         path: Path,
         document: str = "",
+        references: Iterable[SkillReference] = (),
+        layout: str = "flat",
     ) -> "SkillDefinition":
         name = str(payload.get("name") or path.stem)
         return cls(
@@ -81,6 +118,8 @@ class SkillDefinition:
             metadata=dict(payload),
             document=document,
             path=str(path),
+            references=tuple(references),
+            layout=layout,
         )
 
     @property
@@ -121,6 +160,7 @@ class SkillDefinition:
     def observation(self) -> dict[str, Any]:
         """从真正加载的对象取语义指纹，不事后读取可能已更新的文件。"""
         canonical = json.dumps({'metadata': dict(self.metadata), 'document': self.document,
+                                'references': [item.observation() for item in self.references],
                                 'version': self.version, 'goal': self.goal},
                                sort_keys=True, ensure_ascii=False, default=str)
         return {'agent': self.agent, 'skill': self.name, 'skill_version': self.version,
@@ -175,8 +215,8 @@ class SkillRegistry:
             raise ValueError("无效的 Agent 技能目录")
         with self._lock:
             directory = self.root / agent
-            paths = sorted(directory.glob("*.md")) if directory.is_dir() else []
-            signature = tuple((str(path), path.stat().st_mtime_ns, path.stat().st_size) for path in paths)
+            paths = _discover_skill_paths(directory)
+            signature = tuple(_source_signature(path) for path in paths)
             if self._signatures.get(agent) == signature:
                 return list(self._cache[agent])
             definitions: List[SkillDefinition] = []
@@ -184,11 +224,39 @@ class SkillRegistry:
                 if not path.resolve().is_relative_to(self.root.resolve()):
                     raise ValueError("技能文档不能位于注册目录外")
                 payload, document = _load_markdown_skill(path)
-                definitions.append(SkillDefinition.from_payload(agent, payload, path, document))
+                references, layout = _load_references(path)
+                definitions.append(
+                    SkillDefinition.from_payload(agent, payload, path, document, references, layout)
+                )
             # 完整加载后才交换缓存，损坏的文件不能发布为部分成功目录。
             self._cache[agent] = tuple(definitions)
             self._signatures[agent] = signature
             return list(self._cache[agent])
+
+    def source_files(self, agent: str) -> list[Path]:
+        """返回构成该 Agent 技能目录的全部文件，供依赖哈希和只读审计使用。"""
+
+        agent = str(agent).strip().lower()
+        paths: list[Path] = []
+        for document in _discover_skill_paths(self.root / agent):
+            paths.append(document)
+            if document.name == SKILL_DOCUMENT_NAME:
+                paths.extend(sorted((document.parent / REFERENCE_DIRECTORY_NAME).glob("*.md")))
+        return paths
+
+    def find(self, name: str) -> SkillDefinition | None:
+        """按技能名在全部 Agent 目录中查找；同名跨 Agent 时返回第一个并保持目录顺序。"""
+
+        target = str(name or "").strip()
+        if not target:
+            return None
+        for directory in sorted(self.root.iterdir()):
+            if not directory.is_dir() or directory.name.startswith((".", "__")):
+                continue
+            for skill in self.list(directory.name):
+                if target == skill.name or target in skill.aliases:
+                    return skill
+        return None
 
     def invalidate(self, agent: str) -> None:
         """更新完成后使本进程在下次读取时重新加载。"""
@@ -314,6 +382,65 @@ def _load_markdown_skill(path: Path) -> tuple[Mapping[str, Any], str]:
     """读取 Skill Markdown，并分离 YAML Front Matter 与说明正文。"""
 
     return _parse_markdown_skill(path.read_bytes().decode("utf-8"), path)
+
+
+def _discover_skill_paths(directory: Path) -> list[Path]:
+    """发现目录包 ``{skill}/SKILL.md`` 与兼容的扁平 ``{skill}.md``。
+
+    两种布局可以并存，便于逐个迁移；返回值是每个技能的唯一文档入口。
+    """
+
+    if not directory.is_dir():
+        return []
+    paths: list[Path] = []
+    for entry in sorted(directory.iterdir()):
+        if entry.is_dir():
+            document = entry / SKILL_DOCUMENT_NAME
+            if document.is_file():
+                paths.append(document)
+        elif entry.suffix.lower() == ".md" and entry.is_file():
+            paths.append(entry)
+    return paths
+
+
+def _source_signature(path: Path) -> tuple[Any, ...]:
+    """目录包的文件指纹包含 references，参考文档变化必须让缓存失效。"""
+
+    if path.name != SKILL_DOCUMENT_NAME:
+        return (str(path), path.stat().st_mtime_ns, path.stat().st_size)
+    files = [path, *sorted((path.parent / REFERENCE_DIRECTORY_NAME).glob("*.md"))]
+    return tuple((str(item), item.stat().st_mtime_ns, item.stat().st_size) for item in files)
+
+
+def _load_references(document_path: Path) -> tuple[tuple["SkillReference", ...], str]:
+    """加载目录包的按需参考文档；扁平文档没有 references。"""
+
+    if document_path.name != SKILL_DOCUMENT_NAME:
+        return (), "flat"
+    directory = document_path.parent / REFERENCE_DIRECTORY_NAME
+    references: list[SkillReference] = []
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.md")):
+            payload, body = _parse_markdown_skill(path.read_bytes().decode("utf-8"), path)
+            references.append(
+                SkillReference(
+                    name=str(payload.get("name") or path.stem).strip().lower(),
+                    title=str(payload.get("title") or _first_heading(body) or path.stem),
+                    when=str(payload.get("when") or payload.get("description") or "").strip(),
+                    order=int(payload.get("order") or 100),
+                    document=body,
+                    path=str(path),
+                )
+            )
+    references.sort(key=lambda item: (item.order, item.name))
+    names = [item.name for item in references]
+    if len(names) != len(set(names)):
+        raise ValueError("参考文档名称重复：%s" % document_path)
+    return tuple(references), "directory"
+
+
+def _first_heading(document: str) -> str:
+    return next((line.lstrip("# ").strip() for line in document.splitlines() if line.startswith("# ")), "")
 
 
 def _parse_markdown_skill(text: str, path: Path) -> tuple[Mapping[str, Any], str]:
@@ -446,4 +573,5 @@ def get_skill_registry() -> SkillRegistry:
     return _TRIAL_REGISTRY.get() or _REGISTRY
 
 
-__all__ = ["SkillDefinition", "SkillRegistry", "get_skill_registry"]
+__all__ = ["SkillDefinition", "SkillReference", "SkillRegistry", "get_skill_registry",
+           "SKILL_DOCUMENT_NAME", "REFERENCE_DIRECTORY_NAME", "REFERENCE_TOOL_NAME"]

@@ -180,6 +180,12 @@ class ToolRegistry:
             ToolDefinition('get_batch_quality', self._formal_quality_action, '读取正式批次优良率、生产追溯及整改建议', 'qms', 'get_batch_quality', generic_parameters, False),
             ToolDefinition('create_quality_check', self._create_quality_check, '保存 Agent 的真实质检证据和数据结果', 'mes', 'create_quality_check', generic_parameters, False),
             ToolDefinition("get_alarm_definition", self._get_alarm_definition, "查询设备所属报警定义", "knowledge", "get_alarm_definition", {"type":"object","properties":{"alarm_code":{"type":"string","description":"报警代码"}},"required":["alarm_code"],"additionalProperties":False}, True),
+            ToolDefinition("read_skill_reference", self._read_skill_reference,
+                           "读取当前技能 references/ 下的参考文档；只读文档，不读写业务数据",
+                           "local", "read_skill_reference",
+                           {"type":"object","properties":{"skill":{"type":"string","description":"当前技能名，例如 alarm_diagnosis_skill"},
+                                                         "reference":{"type":"string","description":"参考文档名，见技能正文的参考文档表"}},
+                            "required":["skill","reference"],"additionalProperties":False}, True, local_only=True),
             ToolDefinition("get_device_status", self.get_device_status, "查询设备状态", "plc", "get_device_status", generic_parameters, True),
             ToolDefinition("get_active_alarms", self.get_active_alarms, "查询设备当前活动报警", "plc", "get_active_alarms", generic_parameters, True),
             ToolDefinition("get_production_status", get_production_status_tool, "查询MES生产状态", "mes", "get_production_status", generic_parameters, True),
@@ -306,6 +312,27 @@ class ToolRegistry:
 
     def _get_alarm_definition(self, alarm_code: str, device_id: str = '') -> Dict[str, Any]:
         return get_alarm_definition(alarm_code, device_id=device_id, base_url=self.base_url)
+
+    def _read_skill_reference(self, skill: str = "", reference: str = "", **_: Any) -> Dict[str, Any]:
+        """按需读取技能参考文档；只读 Markdown，不接受路径参数，越权由 Guard 拦截。"""
+
+        from app.skills.registry import get_skill_registry
+
+        definition = get_skill_registry().find(skill)
+        if definition is None:
+            return {"success": False, "error": "unknown_skill", "skill": str(skill or "")}
+        item = definition.reference(reference)
+        if item is None:
+            return {"success": False, "error": "unknown_reference", "skill": definition.name,
+                    "reference": str(reference or ""), "available": list(definition.reference_names)}
+        limit = 12000
+        content = item.document
+        truncated = len(content) > limit
+        if truncated:
+            content = content[:limit].rsplit("\n", 1)[0]
+        return {"success": True, "skill": definition.name, "reference": item.name,
+                "title": item.title, "content": content, "truncated": truncated,
+                "characters": len(item.document)}
 
     @staticmethod
     def normalize_tool_arguments(name: str, arguments: Mapping[str, Any]) -> Dict[str, Any]:
@@ -720,6 +747,22 @@ class ToolRegistry:
             return "tool_not_registered"
         if "allowed_tools" in context and name not in allowed:
             return "tool_not_allowed_for_step"
+        if name == "read_skill_reference":
+            active = {str(item) for item in (context.get("skills") or []) if str(item).strip()}
+            if context.get("skill"):
+                active.add(str(context["skill"]))
+            target = str(arguments.get("skill") or "").strip()
+            if not target:
+                return "missing_required_argument:skill"
+            if target not in active:
+                return "reference_outside_active_skill"
+            reference = str(arguments.get("reference") or "").strip().lower()
+            if not reference:
+                return "missing_required_argument:reference"
+            from app.skills.registry import get_skill_registry
+            definition = get_skill_registry().find(target)
+            if definition is not None and definition.reference(reference) is None:
+                return "unknown_skill_reference"
         required = {
             "get_alarm_definition": ("alarm_code",),
             "get_device_status": ("device_id",),

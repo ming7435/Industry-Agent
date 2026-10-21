@@ -1,10 +1,11 @@
 [
   {
     "agent": "cad",
-    "file": "services/agent-service/app/skills/cad/drawing_lookup.md",
+    "file": "services/agent-service/app/skills/cad/drawing_lookup_skill/SKILL.md",
     "name": "drawing_lookup_skill",
     "metadata": {
       "name": "drawing_lookup_skill",
+      "description": "当需按设备、部件或零件编号查询工程图、BOM、位置及装配关系时使用。",
       "aliases": [
         "part_search_skill",
         "bom_analysis_skill"
@@ -31,18 +32,20 @@
         "query_drawing",
         "query_bom",
         "query_relation",
-        "fetch_engineering_record"
+        "fetch_engineering_record",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "cad",
-    "file": "services/agent-service/app/skills/cad/production_modeling.md",
+    "file": "services/agent-service/app/skills/cad/production_modeling_skill/SKILL.md",
     "name": "production_modeling_skill",
     "metadata": {
       "name": "production_modeling_skill",
-      "version": 3.3,
-      "goal": "通过同一个本地 FreeCAD MCP 工具生成并校验零件、工程图、约束装配、钣金展开和建筑模型。",
+      "description": "当结构化operation=production_modeling，需依据完整需求创建或修改本地Text-to-CAD设计时使用。",
+      "version": 4.0,
+      "goal": "通过同一个本地 Text-to-CAD 工具生成并校验零件、工程图、约束装配、钣金展开和建筑模型。",
       "trigger": "production_modeling",
       "steps": [
         "normalize_query",
@@ -50,7 +53,7 @@
         {
           "id": "build_model",
           "type": "tool",
-          "tool": "freecad_mcp",
+          "tool": "text_to_cad",
           "required_inputs": [
             "spec"
           ],
@@ -59,19 +62,21 @@
         "build_result"
       ],
       "tools": [
-        "freecad_mcp",
-        "freecad_document_proposal"
+        "text_to_cad",
+        "text_to_cad_document_proposal",
+        "read_skill_reference"
       ],
       "failure_policy": "stop"
     }
   },
   {
     "agent": "cad",
-    "file": "services/agent-service/app/skills/cad/virtual_production.md",
+    "file": "services/agent-service/app/skills/cad/virtual_production_skill/SKILL.md",
     "name": "virtual_production_skill",
     "metadata": {
       "name": "virtual_production_skill",
-      "version": 1,
+      "description": "当已校验的CAD版本需要准备、下发、启动或同步虚拟车削任务时使用。",
+      "version": 1.0,
       "goal": "根据已校验的 CAD 版本生成并执行受限模拟加工任务。",
       "trigger": "virtual_production",
       "steps": [
@@ -121,18 +126,20 @@
         "prepare_virtual_production",
         "submit_virtual_production",
         "start_virtual_production",
-        "sync_virtual_production"
+        "sync_virtual_production",
+        "read_skill_reference"
       ],
       "failure_policy": "stop"
     }
   },
   {
     "agent": "diagnosis",
-    "file": "services/agent-service/app/skills/diagnosis/alarm_diagnosis.md",
+    "file": "services/agent-service/app/skills/diagnosis/alarm_diagnosis_skill/SKILL.md",
     "name": "alarm_diagnosis_skill",
     "metadata": {
       "name": "alarm_diagnosis_skill",
-      "version": 1,
+      "description": "当设备事件包含报警码，需要结合当前运行事实解释报警时使用。",
+      "version": "1.1",
       "goal": "结合报警定义与运行证据诊断带报警码的设备事件。",
       "trigger": "exists(alarm_code)",
       "steps": [
@@ -152,17 +159,19 @@
         "get_alarm_definition",
         "get_device_history",
         "get_device_logs",
-        "search_knowledge"
+        "search_knowledge",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "diagnosis",
-    "file": "services/agent-service/app/skills/diagnosis/multi_metric.md",
+    "file": "services/agent-service/app/skills/diagnosis/multi_metric_diagnosis_skill/SKILL.md",
     "name": "multi_metric_diagnosis_skill",
     "metadata": {
       "name": "multi_metric_diagnosis_skill",
-      "version": 1,
+      "description": "当同一事件有多个异常指标，需要区分共同原因与独立异常时使用。",
+      "version": 1.0,
       "goal": "关联多个异常指标并推断共同故障原因。",
       "trigger": "multiple_abnormal_metrics",
       "steps": [
@@ -174,17 +183,19 @@
       "tools": [
         "get_device_history",
         "get_device_logs",
-        "search_knowledge"
+        "search_knowledge",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "diagnosis",
-    "file": "services/agent-service/app/skills/diagnosis/no_alarm_diagnosis.md",
+    "file": "services/agent-service/app/skills/diagnosis/no_alarm_diagnosis_skill/SKILL.md",
     "name": "no_alarm_diagnosis_skill",
     "metadata": {
       "name": "no_alarm_diagnosis_skill",
-      "version": 1,
+      "description": "当事件无报警且未命中其它专用诊断技能，需要依据指标与快照判断异常时使用。",
+      "version": 1.0,
       "goal": "在没有报警码时依据指标、日志和历史数据诊断异常。",
       "trigger": "no_alarm_code",
       "steps": [
@@ -196,18 +207,20 @@
         "get_device_history",
         "get_device_logs",
         "search_knowledge",
-        "get_device_status"
+        "get_device_status",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "diagnosis",
-    "file": "services/agent-service/app/skills/diagnosis/safety_triage.md",
+    "file": "services/agent-service/app/skills/diagnosis/safety_triage_skill/SKILL.md",
     "name": "safety_triage_skill",
     "metadata": {
       "name": "safety_triage_skill",
-      "version": 1,
-      "goal": "对严重事件进行安全分级并识别必须立即执行的安全控制。",
+      "description": "当严重事件需识别风险并给出受控核查建议时使用。",
+      "version": 1.0,
+      "goal": "对严重事件进行风险识别，并提出需人工或安全系统核查的处置建议。",
       "trigger": "severity == critical",
       "steps": [
         "identify_safety_risk",
@@ -217,17 +230,19 @@
       "tools": [
         "get_alarm_definition",
         "get_device_logs",
-        "search_knowledge"
+        "search_knowledge",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "diagnosis",
-    "file": "services/agent-service/app/skills/diagnosis/trend_diagnosis.md",
+    "file": "services/agent-service/app/skills/diagnosis/trend_diagnosis_skill/SKILL.md",
     "name": "trend_diagnosis_skill",
     "metadata": {
       "name": "trend_diagnosis_skill",
-      "version": 1,
+      "description": "当事件持续或重复出现，需要检查历史窗口和变化趋势时使用。",
+      "version": 1.0,
       "goal": "诊断重复出现或持续发展的趋势性异常。",
       "trigger": "trend_or_repeated_abnormality",
       "steps": [
@@ -239,17 +254,19 @@
       "tools": [
         "get_device_history",
         "get_device_logs",
-        "search_knowledge"
+        "search_knowledge",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "knowledge",
-    "file": "services/agent-service/app/skills/knowledge/alarm_search.md",
+    "file": "services/agent-service/app/skills/knowledge/alarm_search_skill/SKILL.md",
     "name": "alarm_search_skill",
     "metadata": {
       "name": "alarm_search_skill",
-      "version": 1,
+      "description": "当问题提供报警编号或明确询问报警含义及关联资料时使用。",
+      "version": 1.0,
       "goal": "检索报警定义以及与报警相关的技术知识。",
       "trigger": "exists(alarm_code)",
       "steps": [
@@ -262,17 +279,19 @@
         "search_alarm_knowledge",
         "search_knowledge",
         "fetch_document",
-        "fetch_chunk"
+        "fetch_chunk",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "knowledge",
-    "file": "services/agent-service/app/skills/knowledge/fault_case.md",
+    "file": "services/agent-service/app/skills/knowledge/fault_case_skill/SKILL.md",
     "name": "fault_case_skill",
     "metadata": {
       "name": "fault_case_skill",
-      "version": 1,
+      "description": "当问题涉及历史故障、相似案例或重复异常经验时使用。",
+      "version": 1.0,
       "goal": "检索历史故障案例和已验证的维修经验。",
       "trigger": "case_or_history",
       "steps": [
@@ -285,17 +304,19 @@
         "search_fault_cases",
         "search_semantic_memory",
         "fetch_document",
-        "fetch_chunk"
+        "fetch_chunk",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "knowledge",
-    "file": "services/agent-service/app/skills/knowledge/hybrid_search.md",
+    "file": "services/agent-service/app/skills/knowledge/hybrid_search_skill/SKILL.md",
     "name": "hybrid_search_skill",
     "metadata": {
       "name": "hybrid_search_skill",
-      "version": 1,
+      "description": "当问题无专业检索匹配，或结构化 purpose=maintenance 需要互补资料时使用。",
+      "version": 1.0,
       "goal": "为维修依据补充混合资料源，或在没有指定专业知识源时执行混合检索。",
       "trigger": "default",
       "triggers": [
@@ -323,17 +344,19 @@
         "search_fault_cases",
         "search_semantic_memory",
         "fetch_document",
-        "fetch_chunk"
+        "fetch_chunk",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "knowledge",
-    "file": "services/agent-service/app/skills/knowledge/manual_search.md",
+    "file": "services/agent-service/app/skills/knowledge/manual_search_skill/SKILL.md",
     "name": "manual_search_skill",
     "metadata": {
       "name": "manual_search_skill",
-      "version": 1,
+      "description": "当请求设备手册、说明书或明确文档编号时使用。",
+      "version": 1.0,
       "goal": "检索设备手册和操作说明。",
       "trigger": "manual",
       "steps": [
@@ -346,17 +369,19 @@
         "search_manual",
         "search_knowledge",
         "fetch_document",
-        "fetch_chunk"
+        "fetch_chunk",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "knowledge",
-    "file": "services/agent-service/app/skills/knowledge/sop_search.md",
+    "file": "services/agent-service/app/skills/knowledge/sop_search_skill/SKILL.md",
     "name": "sop_search_skill",
     "metadata": {
       "name": "sop_search_skill",
-      "version": 1,
+      "description": "当请求SOP、规程或具体检查维修步骤时使用。",
+      "version": 1.0,
       "goal": "检索标准作业规程和维修步骤。",
       "trigger": "sop_or_repair_steps",
       "steps": [
@@ -369,17 +394,19 @@
         "search_sop",
         "search_manual",
         "fetch_document",
-        "fetch_chunk"
+        "fetch_chunk",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "maintenance",
-    "file": "services/agent-service/app/skills/maintenance/repair_plan.md",
+    "file": "services/agent-service/app/skills/maintenance/repair_plan_skill/SKILL.md",
     "name": "repair_plan_skill",
     "metadata": {
       "name": "repair_plan_skill",
-      "version": 1,
+      "description": "当已有诊断需形成受证据和安全约束的维修方案时使用。",
+      "version": 1.0,
       "goal": "依据诊断结论和证据生成可执行的维修方案。",
       "trigger": "repair_plan",
       "steps": [
@@ -398,17 +425,19 @@
         "query_inventory",
         "query_part_availability",
         "get_workorder_template",
-        "submit_workorder_draft"
+        "submit_workorder_draft",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "maintenance",
-    "file": "services/agent-service/app/skills/maintenance/spare_part.md",
+    "file": "services/agent-service/app/skills/maintenance/spare_part_skill/SKILL.md",
     "name": "spare_part_skill",
     "metadata": {
       "name": "spare_part_skill",
-      "version": 1,
+      "description": "当维修目标涉及零部件或零件号，需要核查实际备件需求与可用性时使用。",
+      "version": 1.0,
       "goal": "确定维修所需备件，并核对库存和可用性。",
       "trigger": "part_or_component",
       "steps": [
@@ -419,17 +448,19 @@
       ],
       "tools": [
         "query_inventory",
-        "query_part_availability"
+        "query_part_availability",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "maintenance",
-    "file": "services/agent-service/app/skills/maintenance/workorder.md",
+    "file": "services/agent-service/app/skills/maintenance/workorder_skill/SKILL.md",
     "name": "workorder_skill",
     "metadata": {
       "name": "workorder_skill",
-      "version": 1,
+      "description": "当维修方案需要附带工单模板与草稿信息时使用。",
+      "version": 1.0,
       "goal": "结合维修方案与工程资料生成工单草稿。",
       "trigger": "workorder",
       "steps": [
@@ -440,16 +471,18 @@
       ],
       "tools": [
         "get_workorder_template",
-        "submit_workorder_draft"
+        "submit_workorder_draft",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "memory",
-    "file": "services/agent-service/app/skills/memory/experience_extraction.md",
+    "file": "services/agent-service/app/skills/memory/experience_extraction/SKILL.md",
     "name": "experience_extraction",
     "metadata": {
       "name": "experience_extraction",
+      "description": "当需要从已关闭且具可信维修验收的工单沉淀经验时使用。",
       "aliases": [
         "memory_write"
       ],
@@ -467,16 +500,19 @@
         "build_result",
         "fallback"
       ],
-      "tools": [],
+      "tools": [
+        "read_skill_reference"
+      ],
       "output": "MemoryResult"
     }
   },
   {
     "agent": "memory",
-    "file": "services/agent-service/app/skills/memory/experience_retrieval.md",
+    "file": "services/agent-service/app/skills/memory/experience_retrieval/SKILL.md",
     "name": "experience_retrieval",
     "metadata": {
       "name": "experience_retrieval",
+      "description": "当需要查询匹配维修经验或列出近期记录时使用。",
       "version": 1.1,
       "goal": "检索或列出已验证的历史维修经验。",
       "trigger": "search",
@@ -496,36 +532,41 @@
         "fallback"
       ],
       "tools": [
-        "search_semantic_memory"
+        "search_semantic_memory",
+        "read_skill_reference"
       ],
       "output": "MemoryResult"
     }
   },
   {
     "agent": "memory",
-    "file": "services/agent-service/app/skills/memory/memory_dedup.md",
+    "file": "services/agent-service/app/skills/memory/memory_dedup/SKILL.md",
     "name": "memory_dedup",
     "metadata": {
       "name": "memory_dedup",
-      "version": 1,
+      "description": "当Memory流程读取或学习经验，需要抑制同源重复并核对部分保存时使用。",
+      "version": 1.0,
       "goal": "避免同一工单的维修经验重复写入。",
       "trigger": "always",
       "steps": [
         "dedup",
         "dedup_experience"
       ],
-      "tools": [],
+      "tools": [
+        "read_skill_reference"
+      ],
       "output": "MemoryResult"
     }
   },
   {
     "agent": "quality",
-    "file": "services/agent-service/app/skills/quality/dimension_inspection.md",
+    "file": "services/agent-service/app/skills/quality/dimension_inspection_skill/SKILL.md",
     "name": "dimension_inspection_skill",
     "metadata": {
       "name": "dimension_inspection_skill",
-      "version": 1,
-      "goal": "对生产零件的关键尺寸执行专项质量检测。",
+      "description": "当生产后零件需与实际设计版本的尺寸或参数进行比较时使用。",
+      "version": 1.0,
+      "goal": "核对生产零件与权威设计规格的尺寸或参数一致性。",
       "trigger": "part_quality",
       "steps": [
         "load_part",
@@ -536,18 +577,20 @@
       "tools": [
         "get_production_part",
         "get_part_specification",
-        "inspect_part_dimensions"
+        "inspect_part_dimensions",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "quality",
-    "file": "services/agent-service/app/skills/quality/part_quality_inspection.md",
+    "file": "services/agent-service/app/skills/quality/part_quality_inspection_skill/SKILL.md",
     "name": "part_quality_inspection_skill",
     "metadata": {
       "name": "part_quality_inspection_skill",
-      "version": 1,
-      "goal": "对生产零件的尺寸、外观、材料、功能和工艺进行综合质量检测。",
+      "description": "当生产零件需要执行实际适用范围的检测，或受授权入口处理质检闭环时使用。",
+      "version": 1.0,
+      "goal": "按权威设计参数或适用检验范围检测生产零件，并支持受控质检闭环。",
       "trigger": "part_quality",
       "steps": [
         "load_part",
@@ -585,17 +628,19 @@
         "resolve_quality_appeal",
         "reinspect_quality_check",
         "release_quality_check",
-        "close_quality_check"
+        "close_quality_check",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "quality",
-    "file": "services/agent-service/app/skills/quality/virtual_size_inspection.md",
+    "file": "services/agent-service/app/skills/quality/virtual_size_inspection_skill/SKILL.md",
     "name": "virtual_size_inspection_skill",
     "metadata": {
       "name": "virtual_size_inspection_skill",
-      "version": 1,
+      "description": "当服务器授权检查已保存的虚拟加工产出及原设计摘要时使用。",
+      "version": 1.0,
       "goal": "对工厂已保存的模拟加工尺寸与原设计版本执行确定性比较。",
       "trigger": "virtual_profile_dimensions_v1",
       "steps": [
@@ -611,17 +656,19 @@
         }
       ],
       "tools": [
-        "inspect_virtual_output"
+        "inspect_virtual_output",
+        "read_skill_reference"
       ],
       "failure_policy": "stop"
     }
   },
   {
     "agent": "report",
-    "file": "services/agent-service/app/skills/report/closure_report.md",
+    "file": "services/agent-service/app/skills/report/closure_report_skill/SKILL.md",
     "name": "closure_report_skill",
     "metadata": {
       "name": "closure_report_skill",
+      "description": "当需要汇总故障闭环或执行链路事实时使用。",
       "aliases": [
         "trace_report_skill"
       ],
@@ -650,17 +697,19 @@
         "get_workorder",
         "get_quality_record",
         "get_trace_summary",
-        "persist_report"
+        "persist_report",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "report",
-    "file": "services/agent-service/app/skills/report/report_generation.md",
+    "file": "services/agent-service/app/skills/report/report_generation_skill/SKILL.md",
     "name": "report_generation_skill",
     "metadata": {
       "name": "report_generation_skill",
-      "version": 1,
+      "description": "当需要依据真实事件资料生成正文报告，或为已保存报告导出文件时使用。",
+      "version": 1.0,
       "goal": "生成完整、可追溯的工业事件或维修报告。",
       "trigger": "default",
       "steps": [
@@ -682,16 +731,18 @@
         "get_quality_record",
         "get_trace_summary",
         "persist_report",
-        "generate_report_file"
+        "generate_report_file",
+        "read_skill_reference"
       ]
     }
   },
   {
     "agent": "router",
-    "file": "services/agent-service/app/skills/router/intent_routing.md",
+    "file": "services/agent-service/app/skills/router/intent_routing_skill/SKILL.md",
     "name": "intent_routing_skill",
     "metadata": {
       "name": "intent_routing_skill",
+      "description": "当接收工业用户问题，需要确定目标能力与业务实体时使用。",
       "aliases": [
         "entity_extraction_skill"
       ],
@@ -706,7 +757,9 @@
         "validate_route",
         "build_runtime_goal"
       ],
-      "tools": [],
+      "tools": [
+        "read_skill_reference"
+      ],
       "required_inputs": [
         "user_text"
       ],
@@ -717,12 +770,13 @@
   },
   {
     "agent": "workorder",
-    "file": "services/agent-service/app/skills/workorder/auto_assignment.md",
+    "file": "services/agent-service/app/skills/workorder/auto_assignment/SKILL.md",
     "name": "auto_assignment",
     "metadata": {
       "name": "auto_assignment",
-      "version": 1,
-      "goal": "基于技能、班次、区域和负载选择维修人员。",
+      "description": "当创建流程需自动选负责人，或现有工单明确指定负责人派发时使用。",
+      "version": 1.0,
+      "goal": "按设备登记负责关系、在线可用状态和负载选择或核验派工人员。",
       "trigger": "assign",
       "steps": [
         "collect_dispatch_context",
@@ -735,18 +789,20 @@
         "query_technician_workload",
         "query_shift",
         "query_team_availability",
-        "assign_workorder"
+        "assign_workorder",
+        "read_skill_reference"
       ],
       "output": "WorkOrderResult"
     }
   },
   {
     "agent": "workorder",
-    "file": "services/agent-service/app/skills/workorder/repair_feedback.md",
+    "file": "services/agent-service/app/skills/workorder/repair_feedback/SKILL.md",
     "name": "repair_feedback",
     "metadata": {
       "name": "repair_feedback",
-      "version": 1,
+      "description": "当维修人员提交处理反馈或申请维修完成时使用。",
+      "version": 1.0,
       "goal": "接收现场维修反馈并标记维修执行结果。",
       "trigger": "feedback",
       "steps": [
@@ -759,18 +815,20 @@
       ],
       "tools": [
         "submit_repair_feedback",
-        "mark_repair_completed"
+        "mark_repair_completed",
+        "read_skill_reference"
       ],
       "output": "WorkOrderResult"
     }
   },
   {
     "agent": "workorder",
-    "file": "services/agent-service/app/skills/workorder/workorder_create.md",
+    "file": "services/agent-service/app/skills/workorder/workorder_create/SKILL.md",
     "name": "workorder_create",
     "metadata": {
       "name": "workorder_create",
-      "version": 1,
+      "description": "当已验证维修方案需形成正式任务，或明确创建维修工单时使用。",
+      "version": 1.0,
       "goal": "根据已验证的维修方案创建并派发维修工单。",
       "trigger": "repair_plan",
       "steps": [
@@ -792,19 +850,21 @@
         "query_technician_workload",
         "query_shift",
         "query_team_availability",
-        "assign_workorder"
+        "assign_workorder",
+        "read_skill_reference"
       ],
       "output": "WorkOrderResult"
     }
   },
   {
     "agent": "workorder",
-    "file": "services/agent-service/app/skills/workorder/workorder_reopen.md",
+    "file": "services/agent-service/app/skills/workorder/workorder_reopen/SKILL.md",
     "name": "workorder_reopen",
     "metadata": {
       "name": "workorder_reopen",
-      "version": 1,
-      "goal": "质检不通过时重新打开工单并返回返工入口。",
+      "description": "当已有工单需恢复为可处理状态且原状态允许重开时使用。",
+      "version": 1.0,
+      "goal": "按实际状态迁移规则重开已有工单，不重复创建任务。",
       "trigger": "reopen",
       "steps": [
         "initialize",
@@ -816,18 +876,20 @@
       ],
       "tools": [
         "reopen_workorder",
-        "get_workorder"
+        "get_workorder",
+        "read_skill_reference"
       ],
       "output": "WorkOrderResult"
     }
   },
   {
     "agent": "workorder",
-    "file": "services/agent-service/app/skills/workorder/workorder_tracking.md",
+    "file": "services/agent-service/app/skills/workorder/workorder_tracking/SKILL.md",
     "name": "workorder_tracking",
     "metadata": {
       "name": "workorder_tracking",
-      "version": 1,
+      "description": "当查询工单状态或明确请求合法状态更新时使用。",
+      "version": 1.0,
       "goal": "查询和更新工单生命周期状态。",
       "trigger": "query",
       "steps": [
@@ -842,7 +904,8 @@
         "get_workorder",
         "query_workorder",
         "update_workorder",
-        "list_workorders"
+        "list_workorders",
+        "read_skill_reference"
       ],
       "output": "WorkOrderResult"
     }

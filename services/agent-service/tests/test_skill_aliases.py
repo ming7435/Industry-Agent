@@ -36,7 +36,7 @@ def test_alias_conflict_reports_both_source_paths(tmp_path):
 def test_alias_cannot_expand_tool_scope():
     registry = get_skill_registry()
     alias_tools = registry.merge_tools(registry.select("cad", names=["part_search_skill"]))
-    assert set(alias_tools) == {"query_part", "query_bom", "query_drawing", "query_relation", "fetch_engineering_record"}
+    assert set(alias_tools) == {"query_part", "query_bom", "query_drawing", "query_relation", "fetch_engineering_record", "read_skill_reference"}
     tools = ToolRegistry()
     assert tools.guard_call("query_drawing", {}, context={"allowed_tools": alias_tools})["allow"] is True
     assert tools.guard_call("create_workorder", {}, context={"allowed_tools": alias_tools})["allow"] is False

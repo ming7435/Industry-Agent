@@ -42,8 +42,11 @@ MODELS = {'diagnosis': (AbnormalEventRequest, DiagnosisResult), 'knowledge': (Kn
           'maintenance': (MaintenanceQuery, MaintenancePlan), 'workorder': (WorkOrderQuery, WorkOrderResult),
           'quality': (QualityQuery, QualityResult), 'cad': (CADQuery, CADResult),
           'memory': (MemoryQuery, MemoryResult), 'report': (ReportQuery, ReportResult), 'router': (AgentTask, RouteResult)}
-HEADINGS = ('技能概述', '触发场景', '输入与前置条件', '执行流程', '业务判断规则', '工具使用规范',
-            '证据与数据真实性', '输出规范', '异常处理', '停止条件', '安全与权限边界', '示例', '参考实现')
+# SKILL.md 只保留模型每次都要看到的章节；其余规则在 references/ 中按需读取。
+CORE_HEADINGS = ('技能概述', '触发场景', '执行流程', '输出规范', '停止条件')
+REFERENCE_HEADINGS = ('业务判断规则', '工具使用规范', '证据与数据真实性', '安全与权限边界', '异常处理',
+                      '输入与前置条件', '示例', '参考实现')
+REQUIRED_REFERENCES = ('reasoning', 'evidence', 'contract', 'source')
 
 
 def validate_example(model, value):
@@ -86,9 +89,18 @@ def audit():
             findings = []
             if not str(skill.metadata.get('description') or '').strip():
                 findings.append('缺少description')
-            for heading in HEADINGS:
+            if skill.layout != 'directory':
+                findings.append('技能仍是扁平文档，未迁移为目录包')
+            for heading in CORE_HEADINGS:
                 if not any(line.startswith('## ' + heading) for line in skill.document.splitlines()):
-                    findings.append('缺少章节：' + heading)
+                    findings.append('SKILL.md缺少章节：' + heading)
+            for name in REQUIRED_REFERENCES:
+                if skill.reference(name) is None:
+                    findings.append('缺少参考文档：' + name)
+            reference_text = "\n".join(item.document for item in skill.references)
+            for heading in REFERENCE_HEADINGS:
+                if not any(line.startswith('## ' + heading) for line in reference_text.splitlines()):
+                    findings.append('参考文档缺少章节：' + heading)
             input_model, output_model = MODELS[agent]
             if skill.name == 'production_modeling_skill':
                 input_model, output_model = FreeCADRunRequest, None
@@ -96,7 +108,8 @@ def audit():
                 input_model, output_model = Plan, None
             elif skill.name == 'virtual_size_inspection_skill':
                 input_model, output_model = QualityRequest, QualityResponse
-            example = skill.document.split('## 示例', 1)[-1].split('## 参考实现', 1)[0]
+            contract = skill.reference('contract')
+            example = (contract.document if contract else '').split('## 示例', 1)[-1].split('## 参考实现', 1)[0]
             blocks = re.findall(r'```json\s*\n(.*?)\n```', example, re.S)
             if len(blocks) != 2:
                 findings.append('示例缺少一组输入输出')
@@ -106,9 +119,12 @@ def audit():
                         validate_example(model, json.loads(block))
                     except (ValueError, TypeError, KeyError):
                         findings.append('示例不符合真实输入/输出契约')
-            for reference in re.findall(r'\]\((L:/[^)]*)\)', skill.document):
+            for reference in re.findall(r'\]\((L:/[^)]*)\)', skill.document + "\n" + reference_text):
                 if not Path(reference).is_file():
                     findings.append('参考实现不存在：' + reference)
+            runner = Path(skill.path).parent / 'scripts' / 'run.py'
+            if not runner.is_file():
+                findings.append('缺少独立入口：scripts/run.py')
             permission = tools.guard_call('delete_workorder', {'workorder_id': 'WO-AUDIT'},
                                          context={'agent': agent, 'skills': [skill.name], 'allowed_tools': list(skill.tools)})
             if permission['allow']:
@@ -123,17 +139,22 @@ def audit():
                         findings.append('结构化步骤超出原工具权限')
                     tool_steps.append({'id': step.id, 'tool': step.tool, 'required_inputs': step.required_inputs})
             item = {'agent': agent, 'name': skill.name, 'file': str(Path(skill.path).relative_to(ROOT)).replace('\\', '/'),
-                    'goal': skill.goal, 'description': skill.metadata.get('description'), 'aliases': list(skill.aliases),
+                    'layout': skill.layout, 'goal': skill.goal, 'description': skill.metadata.get('description'),
+                    'aliases': list(skill.aliases),
                     'triggers': list(skill.conditions), 'steps': list(skill.steps), 'tools': list(skill.tools),
                     'tool_steps': tool_steps, 'input_model': input_model.__name__,
                     'input_schema': input_model.__module__ + '.' + input_model.__name__,
                     'output_model': output_model.__name__ if output_model else 'dict（专属工具/接口返回）',
                     'output_schema': output_model.__module__ + '.' + output_model.__name__ if output_model else '',
                     'document_characters': len(skill.document), 'document_lines': len(skill.document.splitlines()),
+                    'references': [{'name': ref.name, 'title': ref.title, 'when': ref.when,
+                                    'characters': len(ref.document)} for ref in skill.references],
+                    'reference_characters': len(reference_text),
                     'errors': findings}
             skills.append(item)
             errors.extend({'agent': agent, 'name': skill.name, 'error': finding} for finding in findings)
-    return {'schema': 'industry-agent-internal-skills-v1', 'external_skill_package': False,
+    return {'schema': 'industry-agent-internal-skills-v2', 'layout': 'directory-package',
+            'reference_tool': 'read_skill_reference',
             'skill_count': len(skills), 'agent_count': len(agents), 'agents': agents, 'skills': skills, 'errors': errors}
 
 

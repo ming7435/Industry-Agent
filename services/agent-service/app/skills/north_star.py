@@ -169,18 +169,21 @@ def project_metrics(health, alerts, gates, publications, agent, name, as_of, *, 
             'method_note': '成功率依据业务校验；未知与基础设施错误排除。指标辅助审核，不替代审批、测试或人工发布。'}
 
 
-def publication_snapshot(audit, original, updated):
+def publication_snapshot(audit, original, updated, *, path=None):
     """只在受控文件发布边界计算指纹，不读取或存储模型密钥和完整正文。"""
-    from app.skills.registry import _parse_markdown_skill, SkillDefinition
+    from app.skills.registry import _parse_markdown_skill, _load_references, SkillDefinition
+    source_path = Path(path) if path is not None else Path('metric-source.md')
+    references, layout = _load_references(source_path)
     result = {'schema': 1, 'kind': 'file_publication', 'edit_id': audit['edit_id'],
               'agent': audit['agent'], 'name': audit['skill'], 'published_at': audit['timestamp'],
               'old_revision': audit['old_revision'], 'new_revision': audit['new_revision']}
     for side, source in (('old', original), ('new', updated)):
-        payload, document = _parse_markdown_skill(source.decode('utf-8'), Path('metric-source.md'))
-        definition = SkillDefinition.from_payload(audit['agent'], payload, Path('metric-source.md'), document)
+        payload, document = _parse_markdown_skill(source.decode('utf-8'), source_path)
+        definition = SkillDefinition.from_payload(audit['agent'], payload, source_path, document, references, layout)
         metadata = dict(definition.metadata)
         metadata.pop('version', None)
-        behavior = json.dumps({'metadata': metadata, 'document': document, 'goal': definition.goal},
+        behavior = json.dumps({'metadata': metadata, 'document': document,
+                               'references': [item.observation() for item in references], 'goal': definition.goal},
                               sort_keys=True, ensure_ascii=False, default=str)
         result.update({side + '_fingerprint': definition.observation()['skill_fingerprint'],
                        side + '_behavior': sha256(behavior.encode()).hexdigest(), side + '_version': definition.version})

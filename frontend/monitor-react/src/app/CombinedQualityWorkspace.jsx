@@ -89,7 +89,7 @@ export default function CombinedQualityWorkspace({ auth, checked, onSelectionCha
       </select></label>
     </div>
     <p className="vision-note">{scope === 'validation'
-      ? '当前展示流程验证合格率，与生产统计隔离。模拟参数、公开齿轮图片仅用于验证。'
+      ? '当前展示流程验证合格率，与生产统计隔离。模拟参数、测试齿轮图片仅用于验证。'
       : '当前展示人工复核综合合格率。请登记真实生产实物，依据测量报告及完整外观复核填写；现有模拟参数不作为生产测量依据。'}</p>
     <dl className="vision-metrics" data-testid="combined-quality-metrics">
       <div><dt>{scope === 'validation' ? '流程验证合格率' : '综合合格率（人工复核）'}</dt><dd>{qualityRate(summary?.rate_percent)}</dd><small>{summary ? summary.qualified + ' / ' + summary.determinate + ' 件可判定' : '暂无可核对统计'}</small></div>

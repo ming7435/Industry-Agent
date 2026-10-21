@@ -28,8 +28,8 @@ def public_dataset():
     for row in rows:
         key=(row.get('domain'),tuple(sorted({g['label'] for g in row.get('ground_truth',[])})))
         if key not in seen and len(selected)<24: selected.append(row);seen.add(key)
-    return {'name':value.get('name','公开塑料齿轮数据'),'scope':'public_gear_research_subset',
-            'source_url':'https://github.com/fangandyim/Plastic-Gear-Surface-Defect-Dataset',
+    return {'name':'塑料齿轮测试数据','scope':'public_gear_research_subset',
+            'source_url':'',
             'normal_count':sum(r.get('label')=='normal' for r in rows),
             'samples':[{'sample_id':r['sample_id'],'filename':Path(r['path']).name,
                         'defect_labels':sorted({g['label'] for g in r.get('ground_truth',[])})} for r in selected]}

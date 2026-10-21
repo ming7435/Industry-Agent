@@ -33,8 +33,15 @@ MODELS = {'diagnosis': (AbnormalEventRequest, DiagnosisResult), 'knowledge': (Kn
           'memory': (MemoryQuery, MemoryResult), 'report': (None, ReportResult), 'router': (AgentTask, RouteResult)}
 from app.agents.report.schemas import ReportQuery
 MODELS['report'] = (ReportQuery, ReportResult)
-HEADINGS = ('技能概述', '触发场景', '输入与前置条件', '执行流程', '业务判断规则', '工具使用规范',
-            '证据与数据真实性', '输出规范', '异常处理', '停止条件', '安全与权限边界', '示例', '参考实现')
+CORE_HEADINGS = ('技能概述', '触发场景', '执行流程', '输出规范', '停止条件')
+REFERENCE_HEADINGS = ('业务判断规则', '工具使用规范', '证据与数据真实性', '安全与权限边界', '异常处理',
+                      '输入与前置条件', '示例', '参考实现')
+REQUIRED_REFERENCES = ('reasoning', 'evidence', 'contract', 'source')
+
+
+def _full_skill_text(skill):
+    """Check all migrated guidance while keeping references out of the default prompt."""
+    return '\n'.join([skill.document, *(item.document for item in skill.references)])
 
 
 @pytest.fixture(scope='module')
@@ -50,11 +57,14 @@ def test_each_document_loads_without_changing_runtime_contract(registry, entry):
     version = entry['metadata']['version']
     expected_version = str(float(version)) if isinstance(version, (int, float)) else str(version)
     assert skill.version == expected_version
-    expected = {key: value for key, value in entry['metadata'].items() if key not in ('goal', 'version')}
+    expected = {key: value for key, value in entry['metadata'].items() if key not in ('description', 'goal', 'version')}
     actual = {key: value for key, value in skill.metadata.items() if key not in ('description', 'goal', 'version')}
     assert actual == expected
     assert skill.metadata.get('description', '').strip(), '缺少发现用 description'
-    assert all(any(line.startswith('## ' + title) for line in skill.document.splitlines()) for title in HEADINGS)
+    full_text = _full_skill_text(skill)
+    assert all(any(line.startswith('## ' + title) for line in skill.document.splitlines()) for title in CORE_HEADINGS)
+    assert all(any(line.startswith('## ' + title) for line in full_text.splitlines()) for title in REFERENCE_HEADINGS)
+    assert tuple(reference.name for reference in skill.references[:4]) == REQUIRED_REFERENCES
     for alias in skill.aliases:
         assert registry.get(skill.agent, alias).name == skill.name
     assert registry.select(skill.agent, names=[skill.name])[0].name == skill.name
@@ -75,7 +85,9 @@ def _check_model(model, value):
 @pytest.mark.parametrize('entry', BASELINE, ids=lambda entry: entry['agent'] + '-' + entry['name'])
 def test_each_document_example_uses_real_input_and_result_models(registry, entry):
     skill = registry.get(entry['agent'], entry['name'])
-    section = skill.document.split('## 示例', 1)[-1].split('## 参考实现', 1)[0]
+    contract = skill.reference('contract')
+    assert contract is not None
+    section = contract.document.split('## 示例', 1)[-1].split('## 参考实现', 1)[0]
     blocks = re.findall(r'```json\s*\n(.*?)\n```', section, re.S)
     assert len(blocks) == 2, '需一组真实输入/输出契约示例'
     input_model, output_model = MODELS[skill.agent]
@@ -140,7 +152,9 @@ def test_readonly_audit_cli_reports_every_skill_and_real_graph(tmp_path):
 
 
 def _document_example(registry, agent, name):
-    section = registry.get(agent, name).document.split('## 示例', 1)[-1].split('## 参考实现', 1)[0]
+    contract = registry.get(agent, name).reference('contract')
+    assert contract is not None
+    section = contract.document.split('## 示例', 1)[-1].split('## 参考实现', 1)[0]
     return tuple(map(json.loads, re.findall(r'```json\s*\n(.*?)\n```', section, re.S)))
 
 

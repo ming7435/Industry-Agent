@@ -76,6 +76,10 @@ class TraceRecorder:
         self.store = store
         self.storage_error = ''
         self._failed_days = set()
+        # The compact start projection survives ring eviction while the call is active.
+        self._active_agent_attempts = {}
+        self._agent_change_sequence = 0
+        self._agent_changes = deque(maxlen=5000)
 
     def record(self, **payload: Any) -> Dict[str, Any]:
         context = payload.get('context')
@@ -103,6 +107,17 @@ class TraceRecorder:
                     self._failed_days.add(datetime.now(timezone.utc).date().isoformat())
         with self._lock:
             self._records.append(record)
+            from .agent_index import AGENT_EVENTS, agent_attempt_key, agent_index_record
+            if record.get('event') in AGENT_EVENTS:
+                projected = agent_index_record(record)
+                self._agent_change_sequence += 1
+                self._agent_changes.append((self._agent_change_sequence, projected))
+                key = agent_attempt_key(record)
+                if key is not None:
+                    if record['event'] == 'agent_started':
+                        self._active_agent_attempts[key] = projected
+                    else:
+                        self._active_agent_attempts.pop(key, None)
         _emit_otel(record)
         return record
 
@@ -135,6 +150,14 @@ class TraceRecorder:
     def clear(self) -> None:
         with self._lock:
             self._records.clear()
+
+    def release_agent_attempt(self, record) -> None:
+        """Release a call scope even when it exits without a terminal event."""
+        from .agent_index import agent_attempt_key
+        key = agent_attempt_key(record)
+        if key is not None:
+            with self._lock:
+                self._active_agent_attempts.pop(key, None)
 
     def skill_window_page(self, start, end, after=0, upper=None, limit=200):
         """固定上界的窗口页；内存及写失败数据绝不冒充完整持久化窗口。"""
@@ -186,25 +209,45 @@ class TraceRecorder:
         return [run_index_record(item) for item in self.list(limit=limit)]
 
     def list_agent_index(self, limit=5000):
+        return self.agent_index_snapshot(limit=limit)[0]
+
+    def agent_index_snapshot(self, limit=5000):
+        """Read indexed events and local live attempts as one consistent snapshot."""
         from .agent_index import AGENT_EVENTS, agent_index_record
         limit=max(1,min(5000,int(limit)))
         query=getattr(self.store,'list_agent_index',None)
         with self._lock:
-            memory=[dict(item) for item in self._records if item.get('event') in AGENT_EVENTS]
+            checkpoint = self._agent_change_sequence
+        records = None
+        query_failed = False
         if callable(query):
             try:
-                records=query(limit=limit)
+                records = query(limit=limit)
+            except Exception:
+                query_failed = True
+        with self._lock:
+            memory=[dict(item) for item in self._records if item.get('event') in AGENT_EVENTS]
+            changes = [item for sequence, item in self._agent_changes if sequence > checkpoint]
+            overflow = bool(self._agent_changes and self._agent_changes[0][0] > checkpoint + 1)
+            if records is not None:
                 ids={item.get('trace_record_id') for item in records}
                 records.extend(agent_index_record(item) for item in memory if item.get('storage_warning')
                                and item.get('trace_record_id') not in ids)
                 self.storage_error='轨迹持久化不可用，当前含内存样本' if any(item.get('storage_warning') for item in memory) else ''
-                records.sort(key=lambda item:str(item.get('timestamp') or ''))
-                return records[-limit:]
-            except Exception:
-                self.storage_error='专家运行统计存储不可用，当前仅显示内存记录'
-        elif self.store is not None:
-            self.storage_error='专家运行统计索引不可用，当前仅显示内存记录'
-        return [agent_index_record(item) for item in memory[-limit:]]
+            else:
+                if query_failed:
+                    self.storage_error='专家运行统计存储不可用，当前仅显示内存记录'
+                elif self.store is not None:
+                    self.storage_error='专家运行统计索引不可用，当前仅显示内存记录'
+                records=[agent_index_record(item) for item in memory[-limit:]]
+            # A database read may precede a local terminal write. Merge changes
+            # made during the query so that event and live views agree, without
+            # holding the recorder lock during slow database I/O.
+            ids={item.get('trace_record_id') for item in records}
+            records.extend(item for item in changes if item.get('trace_record_id') not in ids)
+            records.sort(key=lambda item:str(item.get('timestamp') or ''))
+            incomplete = self.store is None or not callable(query) or query_failed or overflow
+            return records[-limit:], dict(self._active_agent_attempts), set(self._failed_days), incomplete
 
 
 def safe_trace_value(value: Any) -> Any:

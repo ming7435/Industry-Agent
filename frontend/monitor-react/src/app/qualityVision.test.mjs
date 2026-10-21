@@ -8,6 +8,28 @@ const valid = { ...expected, inspection_id: 'VIS-1', created_at: '2026-10-19T04:
   defects: [], image: { width: 100, height: 80 }, annotated_image: image, heatmap_image: image,
   steps: [{ name: '特征距离', status: 'completed', detail: '完成距离计算' }] };
 
+test('a ready memory bank still needs one inspection image, not normal training samples', () => {
+  const state = { userId: 'operator', checked: true, loading: false, available: true,
+    model: { model_id: 'patchcore-gear' }, inputImage: null, parametersValid: true,
+    busy: '', referenceBlocked: false };
+  assert.match(vision.visionDetectionBlocker(state), /待检测图片/);
+  assert.equal(vision.visionDetectionBlocker({ ...state, inputImage: { name: 'gear.png' } }), null);
+  assert.match(vision.visionDetectionBlocker({ ...state, inputImage: { name: 'gear.png' }, referenceBlocked: true }), /不能关联生产实物/);
+});
+
+test('automatic folder status and result must identify the gear model and local source', () => {
+  const status = { enabled: true, running: true, input_dir: 'L:\\gear-inbox\\incoming',
+    pending_count: 0, processed_count: 1, failed_count: 0, last_error: '',
+    latest: { inspection_id: 'VI-' + 'a'.repeat(32), filename: 'gear.png', status: 'clear',
+      score: 0.2, threshold: 1, created_at: '2026-10-21T04:00:00Z' } };
+  assert.equal(vision.verifiedAutoVisionStatus(status), status);
+  assert.throws(() => vision.verifiedAutoVisionStatus({ ...status, processed_count: -1 }), /自动检测/);
+  const result = { ...valid, model_id: 'patchcore-gear', filename: 'gear.png', part_id: '',
+    image_source: 'local_inbox' };
+  assert.equal(vision.verifiedAutoVisionResult(result), result);
+  assert.throws(() => vision.verifiedAutoVisionResult({ ...result, image_source: 'upload' }), /自动检测/);
+});
+
 test('YOLO defaults use validated model recommendations while legacy models remain usable', () => {
   const model = { algorithm: 'yolo', model_id: 'yolo-default', name: 'Synthetic YOLO' };
   assert.deepEqual(vision.yoloModelParameters(model), { confidence: '0.25', iou: '0.45' });
@@ -209,7 +231,8 @@ test('image selection rejects empty unsupported oversized files and training cou
     assert.throws(() => vision.validateVisionFiles(files, { max_image_bytes: 100 }));
   }
   assert.throws(() => vision.validateVisionFiles([png], {}, true), /至少.*2/);
-  assert.throws(() => vision.validateVisionFiles(Array(25).fill(png), {}, true), /24/);
+  assert.equal(vision.validateVisionFiles(Array(100).fill(png), {}, true).length, 100);
+  assert.throws(() => vision.validateVisionFiles(Array(101).fill(png), {}, true), /100/);
   assert.equal(vision.validateVisionFiles([png, png], {}, true).length, 2);
 });
 
@@ -235,6 +258,15 @@ test('preset and legacy model metadata are accepted while unsafe source links an
   assert.doesNotThrow(() => vision.verifiedPatchcoreModel({ ...preset, source_url: '', classes: [] }));
 });
 
+test('gear normal-bank metadata accepts its sample dimensions without research flags', () => {
+  const model = { model_id: 'patchcore-gear', algorithm: 'patchcore', name: '齿轮正常记忆库',
+    sample_count: 2068, memory_size: 1024, suggested_threshold: 1.8823, read_only: true };
+  assert.equal(vision.verifiedPatchcoreModel(model), model);
+  for (const patch of [{ sample_count: -1 }, { memory_size: 0 }, { suggested_threshold: NaN }]) {
+    assert.throws(() => vision.verifiedPatchcoreModel({ ...model, ...patch }), /模型/);
+  }
+});
+
 test('the catalog validates YOLO metadata without requiring PatchCore memory fields', () => {
   const yolo = { model_id: 'yolo-default', algorithm: 'yolo', name: 'NEU-DET 钢材缺陷模型（研究验证）',
     description: '钢材表面缺陷研究验证。', source_url: 'https://example.org/neu-det',
@@ -254,6 +286,7 @@ test('training JSON budget rejects a large batch even when each file fits the in
 test('preprocessing accepts calibrated resolutions and rejects invalid smoothing or options', () => {
   const defaults = vision.DEFAULT_PATCHCORE_PREPROCESSING;
   assert.equal(vision.verifiedPatchcorePreprocessing(defaults), defaults);
+  assert.deepEqual(vision.GEAR_PATCHCORE_PREPROCESSING, { input_size: 448, resize_mode: 'letterbox', contrast: 'none', blur_sigma: 2 });
   assert.doesNotThrow(() => vision.verifiedPatchcorePreprocessing({ input_size: 448, resize_mode: 'letterbox', contrast: 'clahe', blur_sigma: 0 }));
   for (const patch of [{ input_size: 512 }, { resize_mode: 'crop' }, { contrast: 'equalize' }, { blur_sigma: -1 }, { blur_sigma: 9 }, { blur_sigma: NaN }, { blur_sigma: '4' }]) {
     assert.throws(() => vision.verifiedPatchcorePreprocessing({ ...defaults, ...patch }), /预处理配置/);

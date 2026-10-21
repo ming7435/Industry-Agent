@@ -105,6 +105,7 @@ def _default_env() -> dict[str, str]:
         "RAG_SERVICE_BASE_URL": "http://127.0.0.1:8020",
         "BACKEND_SERVICE_BASE_URL": "http://127.0.0.1:8030",
         "MODEL_SERVICE_BASE_URL": "http://127.0.0.1:8040",
+        "MODEL_SERVICE_BIND_HOST": "127.0.0.1",
         "MCP_MES_URL": "http://127.0.0.1:8030",
         "MCP_INVENTORY_URL": "http://127.0.0.1:8030",
         "MCP_QMS_URL": "http://127.0.0.1:8030",
@@ -269,6 +270,8 @@ def unexpected_service_exit(processes):
 
 def main() -> int:
     python = str(_project_python())
+    # .env 只合并进子进程环境；先解析一次，保证 --host 等启动参数也遵循 .env。
+    launch_env = _default_env()
     services = [
         (
             "model-service",
@@ -280,7 +283,7 @@ def main() -> int:
                 "--app-dir",
                 "services/model-service",
                 "--host",
-                "127.0.0.1",
+                launch_env.get("MODEL_SERVICE_BIND_HOST") or "127.0.0.1",
                 "--port",
                 "8040",
             ],
@@ -321,7 +324,6 @@ def main() -> int:
         ),
     ]
 
-    launch_env = _default_env()
     worker_service = cad_document_worker_service(launch_env)
     if worker_service:
         services.insert(2, worker_service)

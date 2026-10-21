@@ -91,7 +91,7 @@ def test_registry_definitions_drive_handlers_and_schemas(monkeypatch):
     definitions = getattr(tools, "definitions", None)
     assert definitions is not None, "缺少单一工具定义"
     schemas = {item["function"]["name"]: item["function"] for item in tools.tool_schemas()}
-    assert len(definitions) == 84 and len(schemas) == 58
+    assert len(definitions) == 85 and len(schemas) == 59
     virtual_tools = {'prepare_virtual_production', 'submit_virtual_production', 'start_virtual_production', 'sync_virtual_production', 'inspect_virtual_output'}
     assert virtual_tools <= set(definitions)
     assert not virtual_tools & set(schemas)

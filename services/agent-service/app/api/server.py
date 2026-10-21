@@ -307,7 +307,16 @@ def create_app(orchestrator: AgentOrchestrator | None = None) -> FastAPI:
             # 只读范围由顶层执行入口固定，不能被 Router 或后续重规划升级。
             return runtime.run_knowledge(body.user_text, context)
         from app.agents.router.agent import RouterAgent
-        route = RouterAgent().run({'user_text': body.user_text, 'context': body.context})
+        router_harness = (getattr(runtime.container, 'harnesses', {}) or {}).get('router')
+        if router_harness is None:
+            # Compatibility for small injected runtimes; the application uses its shared Harness.
+            from app.harness import AgentHarness
+            router = (getattr(runtime.container, 'agents', {}) or {}).get('router') or RouterAgent()
+            router_harness = AgentHarness(router, max_retries=0, trace=getattr(runtime.container, 'trace', None))
+        identity = 'ROUTER-PREFLIGHT-' + uuid4().hex
+        route = router_harness.execute_once({'user_text': body.user_text, 'context': body.context,
+            'task_id': identity, 'trace_id': identity,
+            'runtime_context': {'run_type': 'routing_preflight', 'routing_stage': 'permission_preflight'}})
         from app.runtime.coordinator import RuntimeInputParser
         capabilities = RuntimeInputParser().parse({**body.context, 'user_text': body.user_text}).required_capabilities
         protected = any(c.startswith('workorder_') for c in capabilities)

@@ -164,7 +164,7 @@ class CombinedQualityService:
                     raise VisionServiceError(409, '视觉证据未关联同一实物、批次和设计版本，请选择该零件重新检测')
                 if part['scope'] == 'production' and (inspection.get('image_source') != 'upload'
                                                         or inspection.get('source_context') is not None):
-                    raise VisionServiceError(409, '公开测试图片或模拟结果不能进入生产复核统计')
+                    raise VisionServiceError(409, '测试图片或模拟结果不能进入生产复核统计')
                 evidence = {k: inspection.get(k) for k in (
                     'inspection_id', 'algorithm', 'model_id', 'model_sha256', 'image_sha256',
                     'image_source', 'status', 'score', 'threshold', 'created_at')}

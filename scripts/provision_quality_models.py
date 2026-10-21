@@ -1,7 +1,8 @@
 """Prepare current real-gear YOLO11 and a generic PatchCore backbone.
 
 Does not regenerate retired synthetic datasets or a synthetic normal memory bank.
-A gear PatchCore bank must be built from confirmed normal product photographs.
+Production PatchCore still requires confirmed normal photographs of the actual product;
+the public MANTA research bank is provisioned separately.
 """
 from pathlib import Path
 import argparse,hashlib,json,shutil,urllib.request
@@ -36,6 +37,6 @@ def main():
  if stable!=backbone:shutil.copy2(backbone,stable)
  print(json.dumps({'QUALITY_YOLO_WEIGHTS':str(target/'best.pt'),'QUALITY_YOLO_METADATA':str(target/'model.json'),
   'QUALITY_PATCHCORE_BACKBONE_WEIGHTS':str(stable),'QUALITY_PATCHCORE_PRESET_DIR':'',
-  'QUALITY_VISION_DATA_MODE':'gear','normal_memory_bank':'not supplied; requires confirmed normal gears',
+  'QUALITY_VISION_DATA_MODE':'gear','production_normal_memory_bank':'not supplied; requires confirmed normal gears',
   'settings_changed':False,'services_restarted':False},ensure_ascii=True,indent=2))
 if __name__=='__main__':main()

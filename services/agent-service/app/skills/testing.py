@@ -12,12 +12,50 @@ from time import monotonic, time
 from uuid import uuid4
 
 from app.skills.management import SkillEditError
-from app.skills.registry import SkillRegistry, SkillDefinition, _parse_markdown_skill
+from app.skills.registry import SkillRegistry
 
 
 def fingerprint(values):
     content = {key: str(values[key]).strip() for key in ('expected_revision', 'version', 'goal', 'document', 'reason')}
     return sha256(json.dumps(content, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _observe_isolated_agent(trace, trial, operation):
+    """Track a real isolated agent operation, without recording the sample or output text."""
+    if trace is None:
+        return operation()
+    identity = 'EXPERT-TRIAL-' + trial['test_id']
+    attempt = {'type': 'agent', 'agent': trial['agent'], 'task_id': identity,
+               'trace_id': identity, 'agent_run_id': identity, 'test_id': trial['test_id'],
+               'run_type': 'expert_trial', 'context': {'run_type': 'expert_trial'}}
+    try:
+        trace.record(event='agent_started', **attempt)
+        try:
+            result = operation()
+        except BaseException:
+            trace.record(event='agent_error', error='隔离测试中的专家执行异常', **attempt)
+            raise
+        output = result[0] if isinstance(result, tuple) else result
+        output = output if isinstance(output, dict) else {}
+        status = output.get('status')
+        allowed = {'completed', 'ready', 'needs_input', 'insufficient_evidence',
+                   'insufficient_data', 'insufficient_engineering_data', 'fallback', 'blocked', 'failed', 'error'}
+        summary = {'status': status if isinstance(status, str) and status in allowed else 'blocked'}
+        for key in ('error', 'validation_errors', 'validation_findings', 'failed_checks'):
+            if output.get(key):
+                summary[key] = True
+        for key in ('success', 'workorder_ready'):
+            if type(output.get(key)) is bool:
+                summary[key] = output[key]
+        if isinstance(output.get('validation'), dict):
+            summary['validation'] = {key: value for key, value in output['validation'].items()
+                                     if key in ('valid', 'pass', 'passed') and type(value) is bool}
+        trace.record(event='agent_completed', output=summary, **attempt)
+        return result
+    finally:
+        release = getattr(trace, 'release_agent_attempt', None)
+        if callable(release):
+            release(attempt)
 
 
 class DraftRegistry(SkillRegistry):
@@ -125,6 +163,7 @@ class SkillTrials:
         self.failures = {}
         self.lock = Lock()
         self.instance = uuid4().hex
+        self._sandbox_executor = None
 
     def _path(self, test_id):
         if not re.fullmatch(r'[a-f0-9]{32}', str(test_id)):
@@ -169,8 +208,9 @@ class SkillTrials:
         return self._public(record)
 
     def _dependencies(self, agent):
-        return {path.name: sha256(path.read_bytes()).hexdigest()
-                for path in sorted((self.manager.registry.root / agent).glob('*.md'))}
+        root = self.manager.registry.root
+        return {str(path.relative_to(root)): sha256(path.read_bytes()).hexdigest()
+                for path in self.manager.registry.source_files(agent)}
 
     def start_task(self, agent, name, values, actor):
         from app.skills.task_testing import validate_task
@@ -193,12 +233,9 @@ class SkillTrials:
                 if set(current['tools']) - self.manager.available_tools:
                     raise SkillEditError(503, '技能引用的工具尚未注册，不能测试发布')
                 definitions = []
-                dependencies = {}
-                for path in sorted((self.manager.registry.root / agent).glob('*.md')):
-                    source = path.read_bytes()
-                    dependencies[path.name] = sha256(source).hexdigest()
-                    payload, document = _parse_markdown_skill(source.decode('utf-8'), path)
-                    definition = SkillDefinition.from_payload(agent, payload, path, document)
+                dependencies = self._dependencies(agent)
+                for skill in self.manager.registry.list(agent):
+                    definition = skill
                     if definition.name == name:
                         definition = replace(definition, document=values['document'].strip(),
                                              goal=values['goal'].strip(), version=values['version'].strip(),
@@ -229,9 +266,81 @@ class SkillTrials:
                 self.slots.release()
             raise
 
+    def _sandbox(self):
+        """按需构造沙箱执行器；默认关闭时不加载 SDK。"""
+        if self._sandbox_executor is None:
+            from app.clients.skill_sandbox import SkillSandbox
+
+            self._sandbox_executor = SkillSandbox.from_env()
+        return self._sandbox_executor
+
+    def _execute_sandboxed(self, record, registry, sandbox):
+        """在一次性沙箱里执行草稿试运行，并复用原有回执与依赖校验。"""
+        definitions = registry.list(record['agent'])
+        payload = {
+            'agent': record['agent'],
+            'name': record['name'],
+            'mode': record['mode'],
+            'test_id': record['test_id'],
+            'definitions': [
+                {'metadata': dict(item.metadata), 'document': item.document}
+                for item in definitions
+            ],
+            # 人工预期只留在宿主回执里，不进入沙箱进程。
+            'sample': {key: value for key, value in record['sample'].items()
+                       if key != 'expected'},
+        }
+        response = {}
+
+        def operation():
+            response.update(sandbox.run(payload))
+            return response.get('result') or {}
+
+        output = (operation() if record['mode'] == 'instruction_preview'
+                  else _observe_isolated_agent(self.manager.trace, record, operation))
+        if not response.get('ok'):
+            raise TrialFailure(str(response.get('message') or '沙箱试运行未通过'))
+        if not isinstance(output, dict):
+            raise TrialFailure('沙箱未返回有效结果，请检查镜像和模型服务。')
+
+        keys = (('summary', 'diagnosis', 'recommendation', 'confidence')
+                if record['mode'] == 'diagnosis' else
+                ('summary', 'diagnosis', 'recommendation'))
+        result = {key: output.get(key) for key in keys}
+        if not all(isinstance(result.get(key), str) and result[key].strip()
+                   for key in ('summary', 'diagnosis', 'recommendation')):
+            raise TrialFailure('模型未返回完整的诊断内容，请核对样例后重新测试。')
+
+        with self.manager._transaction():
+            if self._dependencies(record['agent']) != record['dependencies']:
+                raise TrialFailure('试运行期间线上技能已更新，请刷新并核对草稿后重新测试。')
+            record.update(status='completed', result=result,
+                          message='试运行已完成，请对照预期结果人工核对后发布')
+            self._write(record)
+
     def _execute(self, record, registry):
         record = dict(record)
         try:
+            sandbox = self._sandbox()
+            if sandbox.supports(record['mode']):
+                try:
+                    self._execute_sandboxed(record, registry, sandbox)
+                    return
+                except Exception as error:
+                    # 默认失败关闭；只有显式允许回退时才继续走原有进程内路径。
+                    if not sandbox.fallback:
+                        from app.clients.skill_sandbox import SkillSandboxError
+                        if isinstance(error, SkillSandboxError):
+                            raise TrialFailure(str(error)) from error
+                        raise
+                    trace = getattr(self.manager, 'trace', None)
+                    if trace is not None:
+                        try:
+                            trace.record(type='skill_trial', event='sandbox_fallback',
+                                         agent=record['agent'], skill=record['name'],
+                                         test_id=record['test_id'])
+                        except Exception:
+                            pass
             from app.agents.diagnosis.agent import DiagnosisAgent
             from app.agents.diagnosis.parsing import assistant_message, parse_final_json
             sample = record['sample']
@@ -240,7 +349,10 @@ class SkillTrials:
                 raise TrialFailure('尚未配置模型服务，无法试运行，请联系管理员。')
             if record['mode'] in {'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
                 from app.skills.task_testing import execute_task
-                output, criteria = execute_task(record, registry, client)
+                operation = lambda: execute_task(record, registry, client)
+                # Review-only samples inspect supplied inputs/outputs and never run the Agent.
+                output, criteria = (operation() if record['mode'] == 'review_flow' else
+                    _observe_isolated_agent(self.manager.trace, record, operation))
                 with self.manager._transaction():
                     criteria.update(baseline_unchanged=self.manager._detail(record['agent'], record['name'])['revision'] == record['baseline_revision'],
                                     dependencies_unchanged=self._dependencies(record['agent']) == record['dependencies'])
@@ -259,7 +371,8 @@ class SkillTrials:
                          'summary': sample['scenario'], 'description': sample['scenario'],
                          'realtime_snapshot': {'现场记录': sample['scenario']},
                          'abnormal_metrics': sample['abnormal_metrics'], 'occurrence_count': sample['occurrence_count']}
-                result = DiagnosisAgent(client=client, tools=tools, skill_registry=registry).run(event).to_dict()
+                agent = DiagnosisAgent(client=client, tools=tools, skill_registry=registry)
+                result = _observe_isolated_agent(self.manager.trace, record, lambda: agent.run(event).to_dict())
                 if record['name'] not in result.get('active_skills', []):
                     raise TrialFailure('此样例未触发当前技能，请调整报警编号、异常指标或严重程度后重新测试。')
                 if (result.get('status') != 'completed' or result.get('stop_reason') != 'validator_pass'

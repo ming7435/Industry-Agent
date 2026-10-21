@@ -156,7 +156,7 @@ def test_advanced_api_executes_graph_skill_and_tool_and_rejects_changed_dimensio
     assert result['spec'] == EXAMPLES['sphere']
     assert result['validation']['bounds_mm'] == [40, 40, 40]
     assert {key: result['execution'][key] for key in ('agent', 'node', 'skill', 'tool')} == {'agent': 'cad', 'node': 'model_3d',
-        'skill': 'production_modeling_skill', 'tool': 'freecad_mcp'}
+        'skill': 'production_modeling_skill', 'tool': 'text_to_cad'}
     for artifact in result['artifacts']:
         assert client.get(artifact['url']).status_code == 200
     changed = deepcopy(EXAMPLES['sphere'])

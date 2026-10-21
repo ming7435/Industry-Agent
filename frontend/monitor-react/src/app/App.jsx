@@ -796,7 +796,7 @@ function App() {
         {teamActor && (workorderVisited || activeView === "workorder") && <WorkorderView key={`${teamActor.user_id}:${teamActor.role}`} active={!bigScreen && activeView === "workorder"} actor={teamActor} snapshot={snapshot} sample={sample}
           onClosed={() => { showToast("工单已关闭"); setActiveView("monitor"); }} />}
         {!bigScreen && activeView === "rag" && <RagWorkspace snapshot={snapshot} sample={sample} messages={ragMessages} setMessages={setRagMessages} />}
-        {(expertVisited || activeView === "expert") && <div hidden={bigScreen || activeView !== "expert"}><ExpertWorkspace key={`${teamActor?.user_id || 'guest'}:${teamActor?.role || ''}`} actor={teamActor} /></div>}
+        {(expertVisited || activeView === "expert") && <div hidden={bigScreen || activeView !== "expert"}><ExpertWorkspace key={`${teamActor?.user_id || 'guest'}:${teamActor?.role || ''}`} actor={teamActor} active={!bigScreen && activeView === "expert"} /></div>}
         {(logsVisited || activeView === "logs") && <LogsWorkspace active={!bigScreen && activeView === "logs"} snapshot={snapshot} />}
         {!bigScreen && activeView === "quality" && <QualityWorkspace />}
         {(reportVisited || activeView === "report") && <ReportWorkspace active={!bigScreen && activeView === "report"} snapshot={snapshot} />}

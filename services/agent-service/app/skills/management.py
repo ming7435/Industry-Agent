@@ -16,7 +16,15 @@ from uuid import uuid4
 
 import yaml
 
-from app.skills.registry import SKILLS_ROOT, SkillRegistry, _load_markdown_skill, _parse_markdown_skill
+from app.skills.registry import (
+    REFERENCE_DIRECTORY_NAME,
+    SKILL_DOCUMENT_NAME,
+    SKILLS_ROOT,
+    SkillRegistry,
+    _load_markdown_skill,
+    _load_references,
+    _parse_markdown_skill,
+)
 
 
 AGENTS = {
@@ -36,6 +44,19 @@ class SkillEditError(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
+
+
+def _skill_revision(path: Path, content: bytes | None = None) -> str:
+    """版本号覆盖 SKILL.md 与 references，参考文档变化也必须触发刷新和重测。"""
+
+    digest = sha256()
+    digest.update(content if content is not None else path.read_bytes())
+    references = path.parent / REFERENCE_DIRECTORY_NAME
+    if path.name == SKILL_DOCUMENT_NAME and references.is_dir():
+        for item in sorted(references.glob("*.md")):
+            digest.update(b"\0")
+            digest.update(item.read_bytes())
+    return digest.hexdigest()
 
 
 class SkillManager:
@@ -112,12 +133,15 @@ class SkillManager:
         payload, document = _parse_markdown_skill(source.decode("utf-8"), path)
         # 从同一文件版本构造正文和摘要，不把旧注册表内容配上新文件的修订号。
         from app.skills.registry import SkillDefinition
-        current = SkillDefinition.from_payload(agent, payload, path, document)
-        return {**self._summary(current), "document": document, "revision": sha256(source).hexdigest(),
+        references, layout = _load_references(path)
+        current = SkillDefinition.from_payload(agent, payload, path, document, references, layout)
+        return {**self._summary(current), "document": document, "revision": _skill_revision(path, source),
                 "content_fingerprint": current.observation()['skill_fingerprint'],
                 "update_quota": self._update_quota(agent, name),
                 "tools": list(current.tools), "steps": [step.id for step in current.normalized_steps()],
-                "stop_conditions": list(current.stop_conditions)}
+                "stop_conditions": list(current.stop_conditions),
+                "references": [{"name": item.name, "title": item.title, "when": item.when}
+                               for item in current.references]}
 
     def _update_quota(self, agent, name, now=None):
         from app.skills.update_quota import read_update_quota
@@ -131,7 +155,7 @@ class SkillManager:
         with self._transaction():
             skill, path = self._find(agent, name)
             original = path.read_bytes()
-            old_revision = sha256(original).hexdigest()
+            old_revision = _skill_revision(path, original)
             if old_revision != values["expected_revision"]:
                 raise SkillEditError(409, "技能已被其它修改更新，请先刷新，再核对并保存你的草稿")
             payload, _ = _parse_markdown_skill(original.decode("utf-8"), path)
@@ -150,12 +174,13 @@ class SkillManager:
             document = values["document"].strip()
             content = ("---\n" + yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
                        + "---\n\n" + document + "\n").encode("utf-8")
-            revision = sha256(content).hexdigest()
+            revision = _skill_revision(path, content)
             from app.skills.north_star import publication_snapshot
             from app.skills.update_quota import is_update
             moment = datetime.now(timezone.utc)
             preview = publication_snapshot({'edit_id': '', 'agent': agent, 'skill': name,
-                'timestamp': moment.isoformat(), 'old_revision': old_revision, 'new_revision': revision}, original, content)
+                'timestamp': moment.isoformat(), 'old_revision': old_revision, 'new_revision': revision},
+                original, content, path=path)
             if is_update(preview):
                 quota = self._update_quota(agent, name, moment)
                 if not quota['complete']:

@@ -23,6 +23,8 @@
 .vision-flow li span { flex: 0 0 21px; width: 21px; height: 21px; line-height: 21px; text-align: center; border-radius: 50%; background: #dfeeed; color: #0b6965; font-size: 10px; }
 .quality-vision h3 { margin: 0 0 12px; font-size: 15px; }
 .vision-training { padding: 20px; border: 1px solid var(--line, #d7e3e2); border-radius: 8px; }
+.vision-new-bank { margin-top: 18px; }
+.vision-new-bank summary { cursor: pointer; font-size: 14px; font-weight: 600; }
 .vision-training-fields { margin: 16px 0 10px; }
 .vision-preprocessing-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0 0; }
 .vision-explanation, .vision-calibration { font-size: 12px; line-height: 1.8; border: 1px solid var(--line, #d7e3e2); border-radius: 6px; padding: 14px 16px; }
@@ -46,11 +48,17 @@
 .vision-model-classes li { padding: 2px 7px; border-radius: 4px; border: 1px solid var(--line, #d7e3e2); background: var(--panel, #fff); }
 .vision-readonly-note, .vision-model-warning { padding: 10px 12px; border-left: 3px solid #c58a43; background: #fff7eb; color: #81511b; }
 .vision-yolo-note { padding: 16px; border-left: 3px solid #5e9b97; background: #f0f7f6; }
+.vision-auto { margin-top: 24px; padding: 18px; border: 1px solid var(--line, #d7e3e2); border-radius: 8px; background: var(--canvas, #f4f8f8); }
+.vision-auto .vision-heading { margin-bottom: 12px; }
+.vision-auto .vision-heading p { font-size: 12px; }
+.vision-auto .vision-metrics { margin-top: 12px; }
+.vision-auto-result { margin-top: 18px; }
 .vision-query { margin-top: 24px; }
 .vision-parameters { display: flex; gap: 16px; }
 .vision-parameters label { flex: 1; }
 .vision-run { margin-top: 18px; }
 .vision-run .vision-note { margin: 0; }
+.vision-run-hint { color: #81511b; }
 .vision-error, .vision-notice { padding: 12px 14px; border-radius: 6px; margin: 16px 0 0; line-height: 1.7; font-size: 13px; overflow-wrap: anywhere; }
 .vision-error { background: #fff0ed; color: #a13f30; border: 1px solid #edcdc6; }
 .vision-notice { background: #edf8f4; color: #096b60; }

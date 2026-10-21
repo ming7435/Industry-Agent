@@ -2,6 +2,7 @@
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
+from app.harness.agent_index import agent_attempt_key
 from app.skills.management import AGENTS
 
 
@@ -41,6 +42,7 @@ def _outcome(record):
 
 
 def expert_agent_metrics(trace, *, now=None):
+    live_clock = now is None
     now = now or datetime.now(timezone.utc)
     start = now - timedelta(hours=24)
     base = {'source': 'agent_trace', 'window_start': start.isoformat(), 'window_end': now.isoformat(),
@@ -48,9 +50,19 @@ def expert_agent_metrics(trace, *, now=None):
     if trace is None:
         return {**base, 'available': False, 'partial': False, 'items': []}
     try:
-        records = trace.list_agent_index(limit=5000)
+        snapshot = getattr(trace, 'agent_index_snapshot', None)
+        if callable(snapshot):
+            records, live, failed_days, incomplete = snapshot(limit=5000)
+        else:
+            records, live, failed_days, incomplete = trace.list_agent_index(limit=5000), {}, set(), False
     except Exception:
         return {**base, 'available': False, 'partial': False, 'items': []}
+    if live_clock:
+        # The snapshot includes lifecycle events that arrive during a database
+        # read, so its window must end after that read rather than before it.
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(hours=24)
+        base.update(window_start=start.isoformat(), window_end=now.isoformat())
     attempts = {}
     lifecycle = {'agent_started', 'agent_completed', 'agent_error', 'agent_failed', 'agent_timeout'}
     for record in records:
@@ -67,17 +79,21 @@ def expert_agent_metrics(trace, *, now=None):
             identity = record.get('trace_record_id')
         if not identity:
             continue
-        key = (agent, record.get('trace_id', ''), identity)
+        key = agent_attempt_key(record) or (agent, str(record.get('trace_id') or ''), str(identity))
         previous = attempts.get(key)
         if previous is None or (_stamp(record.get('timestamp')), record.get('event') != 'agent_started') >= (
                 _stamp(previous.get('timestamp')), previous.get('event') != 'agent_started'):
             attempts[key] = record
+    for key, record in live.items():
+        if key[0] in AGENTS and key not in attempts and start <= _stamp(record.get('timestamp')) <= now:
+            attempts[key] = record
     items = {agent: {'agent': agent, 'total': 0, 'completed': 0, 'failed': 0, 'blocked': 0,
-                     'running': 0, 'pending': 0, 'completion_rate': None, 'last_failure_at': None}
+                     'running': 0, 'pending': 0, 'unconfirmed': 0, 'completion_rate': None, 'last_failure_at': None}
              for agent in AGENTS}
-    for (agent, _, _), record in attempts.items():
+    for key, record in attempts.items():
+        agent = key[0]
         item = items[agent]
-        outcome = _outcome(record)
+        outcome = ('running' if key in live else 'unconfirmed') if record.get('event') == 'agent_started' else _outcome(record)
         item['total'] += 1
         item[outcome] += 1
         if outcome in {'failed', 'blocked'} and _stamp(record.get('timestamp')) >= _stamp(item['last_failure_at']):
@@ -85,5 +101,6 @@ def expert_agent_metrics(trace, *, now=None):
     for item in items.values():
         finished = item['completed'] + item['failed'] + item['blocked']
         item['completion_rate'] = round(item['completed'] / finished * 100, 1) if finished else None
-    return {**base, 'available': True, 'partial': len(records) >= 5000 or bool(getattr(trace, 'storage_error', '')),
+    gap = any(start.date().isoformat() <= day <= now.date().isoformat() for day in failed_days)
+    return {**base, 'available': True, 'partial': incomplete or gap or len(records) >= 5000 or bool(getattr(trace, 'storage_error', '')),
             'items': list(items.values())}

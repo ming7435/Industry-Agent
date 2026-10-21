@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -12,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from app.api.team_auth import team_actor
 from app.clients.backend import BackendServiceClient, BackendServiceError
 from app.vision.service import VisionService, VisionServiceError
+from app.vision.auto_inbox import VisionAutoInbox
 from app.vision.combined import CombinedQualityService
 from app.vision.preprocessing import parse_patchcore_config
 from app.vision.production import ProductionVisionService, JOB_PATTERN, REQUEST_PATTERN
@@ -26,7 +28,7 @@ MAX_ENCODED_IMAGE = ((4 * 1024 * 1024 + 2) // 3) * 4 + 64
 class TrainRequest(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     name: str = Field(min_length=1, max_length=100)
-    images: list[str] = Field(min_length=2, max_length=24)
+    images: list[str] = Field(min_length=2, max_length=100)
     coreset_ratio: float = Field(default=0.1, gt=0, le=1)
     preprocessing: dict | None = None
 
@@ -55,7 +57,7 @@ class CalibrateRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=64)
     normal_images: list[str] = Field(min_length=2, max_length=23)
     defect_images: list[str] = Field(min_length=1, max_length=22)
-    policy: Literal['recall_priority', 'balanced', 'zero_fp'] = 'recall_priority'
+    policy: Literal['recall_priority', 'balanced', 'zero_fp'] = 'balanced'
 
     @model_validator(mode='after')
     def bounded_images(self):
@@ -152,11 +154,16 @@ async def _body(request, schema):
         raise HTTPException(422, '请求参数无效，请检查图片、模型、训练数量和检测阈值') from None
 
 
-def build_quality_vision_router(require_write_auth, *, backend_factory=BackendServiceClient, service=None):
+def build_quality_vision_router(require_write_auth, *, backend_factory=BackendServiceClient, service=None, auto_inbox=None):
     router = APIRouter(prefix='/api/quality/vision', tags=['quality-vision'])
     vision = service or VisionService()
     combined = CombinedQualityService(vision)
     production = ProductionVisionService(vision)
+    inbox_dir = os.getenv('QUALITY_VISION_AUTO_INBOX_DIR', '').strip()
+    if auto_inbox is None:
+        auto_inbox = VisionAutoInbox(vision, inbox_dir) if inbox_dir else None
+    if auto_inbox is not None:
+        auto_inbox.start()
 
     def context(request):
         if not request.cookies.get('maintenance_session'):
@@ -183,6 +190,19 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
     @router.get('/capabilities')
     def capabilities(request: Request):
         return call(vision.capabilities, actor(request))
+
+    @router.get('/auto/status')
+    def auto_status(request: Request):
+        actor(request)
+        return auto_inbox.status() if auto_inbox is not None else {'enabled': False, 'running': False}
+
+    @router.get('/auto/latest')
+    def auto_latest(request: Request):
+        actor(request)
+        result = auto_inbox.latest() if auto_inbox is not None else None
+        if result is None:
+            raise HTTPException(404, '尚无自动检测结果')
+        return result
 
     @router.get('/dataset/samples/{sample_id}')
     def gear_sample(sample_id: str, request: Request):

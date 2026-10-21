@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { request } from './apiRequest.mjs';
-import { VISION_LIMITS, DEFAULT_PATCHCORE_PREPROCESSING, CALIBRATION_POLICIES, validateVisionFiles, validateTrainingPayload,
-  validateCalibrationFiles, validateCalibrationPayload, verifiedPatchcorePreprocessing, verifiedPatchcoreModel, verifiedVisionModel, verifiedCalibrationModel, verifiedVisionResult, yoloModelParameters } from './qualityVision.mjs';
+import AutoVisionInbox from './AutoVisionInbox.jsx';
+import { VISION_LIMITS, DEFAULT_PATCHCORE_PREPROCESSING, GEAR_PATCHCORE_PREPROCESSING, CALIBRATION_POLICIES, validateVisionFiles, validateTrainingPayload,
+  validateCalibrationFiles, validateCalibrationPayload, verifiedPatchcorePreprocessing, verifiedPatchcoreModel, verifiedVisionModel, verifiedCalibrationModel, verifiedVisionResult, yoloModelParameters, visionDetectionBlocker } from './qualityVision.mjs';
 import './qualityVision.css';
 
 const prefix = '/api/quality/vision';
@@ -54,14 +55,13 @@ function preprocessingLabel(value) {
 function ModelDetails({ model }) {
   if (!model) return null;
   return <div className="vision-model-details">
-    <div className="vision-model-title"><strong>{model.name}</strong>{model.demo && <span className="vision-model-tag">演示模型</span>}{model.read_only && <span className="vision-model-tag">只读预置</span>}</div>
+    <div className="vision-model-title"><strong>{model.name}</strong>{model.demo && <span className="vision-model-tag">演示模型</span>}</div>
     {model.description && <p className="vision-note">{model.description}</p>}
     {model.source_url && <p className="vision-note"><a href={model.source_url} target="_blank" rel="noopener noreferrer">模型来源</a></p>}
     {!!model.classes?.length && <div className="vision-model-classes" data-testid="model-classes"><span>覆盖类别</span><ul>{model.classes.map((label, index) => <li key={`${index}-${label}`}>{label}</li>)}</ul></div>}
-    <p className="vision-note">当前模型：{model.model_id}{model.sample_count != null ? ` · ${model.sample_count} 张正常样本` : ''}{model.memory_size != null ? ` · ${model.memory_size} 个记忆特征` : ''}</p>
+    <p className="vision-note">当前模型：{model.name}{model.sample_count != null ? ` · ${model.sample_count} 张正常样本` : ''}{model.memory_size != null ? ` · ${model.memory_size} 个记忆特征` : ''}</p>
     {model.algorithm === 'patchcore' && <p className="vision-note" data-testid="saved-preprocessing">已保存配置：{preprocessingLabel(model.preprocessing)}{!model.preprocessing ? '（旧版默认配置）' : ''}</p>}
     {model.algorithm === 'yolo' && <p className="vision-note">固定推理输入：{model.input_size || 640} × {model.input_size || 640}，保留原始对比度。</p>}
-    {model.algorithm === 'patchcore' && model.read_only && <p className="vision-note vision-readonly-note" data-testid="readonly-model-note">此预置模型为只读，不能校准。请上传自己的正常图片建立记忆库，再使用独立正常和缺陷图片校准阈值。</p>}
   </div>;
 }
 
@@ -86,8 +86,8 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
   const [modelId, setModelId] = useState(''), [modelName, setModelName] = useState('正常样本记忆库');
   const [samples, setSamples] = useState([]), [inputImage, setInputImage] = useState(null);
   const [datasetSampleId, setDatasetSampleId] = useState('');
-  const [preprocessing, setPreprocessing] = useState({ ...DEFAULT_PATCHCORE_PREPROCESSING });
-  const [calibrationNormal, setCalibrationNormal] = useState([]), [calibrationDefect, setCalibrationDefect] = useState([]), [calibrationPolicy, setCalibrationPolicy] = useState('recall_priority');
+  const [preprocessing, setPreprocessing] = useState({ ...GEAR_PATCHCORE_PREPROCESSING });
+  const [calibrationNormal, setCalibrationNormal] = useState([]), [calibrationDefect, setCalibrationDefect] = useState([]), [calibrationPolicy, setCalibrationPolicy] = useState('balanced');
   const [threshold, setThreshold] = useState('1'), [confidence, setConfidence] = useState('0.25'), [iou, setIou] = useState('0.45');
   const [savedResult, setSavedResult] = useState(null), [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const operation = useRef(null), revision = useRef(0), context = useRef('');
@@ -109,7 +109,9 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
   let trainingConfig = null;
   try { if (preprocessing.blur_sigma !== '') trainingConfig = verifiedPatchcorePreprocessing({ ...preprocessing, blur_sigma: Number(preprocessing.blur_sigma) }); } catch { /* The editable form can be temporarily incomplete. */ }
   const referenceBlocked = qualityPart?.scope === 'production' && inputImage?.source === 'public_gear_reference';
-  const canDetect = !!userId && checked && !loading && available?.available === true && !!model && !!inputImage && parametersValid && !busy && !referenceBlocked;
+  const detectBlocker = visionDetectionBlocker({ userId, checked, loading, available: available?.available === true,
+    model, inputImage, parametersValid, busy, referenceBlocked });
+  const canDetect = detectBlocker === null;
   const canCalibrate = !!userId && checked && !loading && algorithm === 'patchcore' && available?.available === true && !!model && !model.read_only && calibrationNormal.length >= 2 && calibrationDefect.length >= 1 && !busy;
 
   function invalidate(keepNotice = false) {
@@ -154,7 +156,8 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
       setDatasetSampleId(previous => value.dataset?.samples.some(row => row.sample_id === previous) ? previous : value.dataset?.samples[0]?.sample_id || '');
       const readyModels = value.models.filter(item => value.algorithms.some(entry => entry.id === item.algorithm && entry.available === true));
       if (!readyModels.some(item => item.algorithm === selectedAlgorithm.current && item.model_id === selectedModelId.current)) {
-        const next = readyModels.find(item => item.algorithm === selectedAlgorithm.current) || readyModels[0]
+        const next = (selectedAlgorithm.current === 'patchcore' && readyModels.find(item => item.model_id === 'patchcore-gear'))
+          || readyModels.find(item => item.algorithm === selectedAlgorithm.current) || readyModels[0]
           || value.models.find(item => item.algorithm === selectedAlgorithm.current);
         if (next) setAlgorithm(next.algorithm);
         setModelId(next?.model_id || '');
@@ -317,7 +320,7 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
     <ModelDetails model={model} />
     {capabilities?.dataset && <div className="vision-training" data-testid="gear-dataset">
       <h3>{capabilities.dataset.name}</h3>
-      <p className="vision-note">真实塑料齿轮研究数据，独立测试图片仅用于检测核验。{capabilities.dataset.normal_count === 0 && '当前没有已确认正常齿轮测试图，不能据此统计正常图误报率。'}</p>
+      <p className="vision-note">真实塑料齿轮测试数据，测试图片仅用于检测核验。{capabilities.dataset.normal_count === 0 && '当前没有已确认正常齿轮测试图，不能据此统计正常图误报率。'}</p>
       <label>齿轮测试图片<select aria-label="齿轮测试图片" value={datasetSampleId || capabilities.dataset.samples[0]?.sample_id || ''} onChange={event => { invalidate(); setDatasetSampleId(event.target.value); }}>
         {capabilities.dataset.samples.map(row => <option key={row.sample_id} value={row.sample_id}>{row.filename} · {row.defect_labels.join(' / ') || '无缺陷标注'}</option>)}
       </select></label>
@@ -326,8 +329,9 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
     <div className="vision-flows"><Flow title={algorithm === 'patchcore' ? '正常样本建库流程' : '缺陷模型训练流程（离线）'} items={flows[algorithm].training} />
       <Flow title="图像检测流程" items={flows[algorithm].inference} /></div>
     {algorithm === 'patchcore' && <PatchcoreExplanation />}
-    {algorithm === 'patchcore' ? <div className="vision-training">
-      <h3>正常样本记忆库</h3><p className="vision-note">仅使用同一产品、同一机位和光照条件下的正常样本，无需缺陷标注。至少 2 张，最多 {limits.max_training_images || 24} 张；每张不超过 4 MB，整批编码后不超过 40 MB。</p>
+    {algorithm === 'patchcore' ? <details className="vision-training vision-new-bank">
+      <summary>新建自己的正常样本记忆库（可选）</summary>
+      <p className="vision-note">{model ? `当前已选择“${model.name}”，可直接在下方上传待检测图片。新建库仅用于你自己的产品。` : '当前没有可用记忆库，若要检测自己的产品，请先建立。'}仅使用同一产品、同一机位和光照条件下的正常样本，无需缺陷标注。至少 2 张，最多 {limits.max_training_images || 100} 张；每张不超过 4 MB，整批编码后不超过 40 MB。超过 24 张时逐张提取特征并分层采样，建库可能需要数分钟。桌面上的 100 张独立测试图不能用于建库。</p>
       <div className="vision-training-fields"><label>记忆库名称<input aria-label="记忆库名称" maxLength={100} value={modelName} onChange={event => { if (busy === 'train') invalidate(); setModelName(event.target.value); }} /></label>
         <label>正常训练样本<input key={`training-${auth.version}`} type="file" accept={accept} multiple aria-label="正常训练样本" disabled={!userId || loading} onChange={event => selectFiles(event, true)} /></label></div>
       <div className="vision-preprocessing-fields">
@@ -336,8 +340,8 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
         <label>对比度处理<select aria-label="对比度处理" value={preprocessing.contrast} onChange={event => { invalidate(); setPreprocessing(previous => ({ ...previous, contrast: event.target.value })); }}><option value="none">保留原始对比度</option><option value="clahe">CLAHE · 局部对比度增强</option></select></label>
         <label>热力图平滑 σ<input aria-label="热力图平滑 σ" type="number" min="0" max="8" step="0.5" value={preprocessing.blur_sigma} onChange={event => { invalidate(); setPreprocessing(previous => ({ ...previous, blur_sigma: event.target.value })); }} /></label>
       </div>
-      <p className="vision-note">以上配置用于新建记忆库，并固定用于后续推理。更改配置后需重新建库和校准阈值；提高分辨率或增强对比度的效果须通过独立测试确认。</p>
-      <div className="vision-training-footer"><p className="vision-note">{busy === 'read-training' ? '正在读取正常样本…' : samples.length ? `已读取 ${samples.length} 张正常样本：${samples.map(item => item.name).join('、')}` : '尚未选择正常样本'}</p>
+      <p className="vision-note">齿轮建库默认使用 448 × 448 等比缩放、保留原始对比度、平滑 σ=2；这是齿轮建库的默认配置，不保证适合所有齿轮。以上配置固定用于后续推理；更改后需重新建库并校准阈值。</p>
+      <div className="vision-training-footer"><p className="vision-note">{busy === 'read-training' ? '正在读取正常样本…' : samples.length ? `已读取 ${samples.length} 张正常样本：${samples.slice(0, 3).map(item => item.name).join('、')}${samples.length > 3 ? ' 等' : ''}` : '尚未选择正常样本'}</p>
         <button type="button" className="button" disabled={!userId || available?.can_train !== true || samples.length < 2 || !modelName.trim() || !trainingConfig || !!busy} onClick={train}>{busy === 'train' ? '正在提取特征并建库…' : '建立正常样本记忆库'}</button></div>
       {model && !model.read_only && <details className="vision-calibration"><summary>使用独立图片校准阈值</summary>
         <p className="vision-note">上传未参与建库的已知正常图片和已知缺陷图片。至少 2 张正常图片、1 张缺陷图片，合计最多 24 张，编码后不超过 40 MB。请另留测试集，服务端会检查校准图片与建库样本是否重复。</p>
@@ -345,10 +349,12 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
           <label>缺陷校准图片<input key={`calibration-defect-${auth.version}-${modelId}`} type="file" multiple accept={accept} aria-label="缺陷校准图片" disabled={!userId || loading} onChange={event => selectCalibrationFiles(event, 'defect')} /><span>已读取 {calibrationDefect.length} 张</span></label></div>
         <div className="vision-calibration-actions"><label>阈值策略<select aria-label="阈值策略" value={calibrationPolicy} onChange={event => { invalidate(); setCalibrationPolicy(event.target.value); }}>{Object.entries(CALIBRATION_POLICIES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <button type="button" className="button" disabled={!canCalibrate} onClick={calibrate}>{busy === 'calibrate' ? '正在计算独立样本分数…' : '校准并应用阈值'}</button></div>
-        <p className="vision-note">召回优先：漏检率权重为误检率的 5 倍；平衡：两者等权；校准集零误报：先确保这些正常图片没有误报，再尽量减少漏检。</p>
+        <p className="vision-note">默认选平衡策略。召回优先：漏检率权重为误检率的 5 倍；平衡：两者等权；校准集零误报：先确保这些正常图片没有误报，再尽量减少漏检。请用本产品独立测试集决定策略。</p>
       </details>}
-      {model?.calibration && <CalibrationSummary calibration={model.calibration} threshold={threshold} synthetic={model.threshold_method === 'independent_labeled_synthetic_calibration'} />}
-    </div> : <p className="vision-note vision-yolo-note">YOLO 仅识别所选模型覆盖的缺陷类别。请使用与训练数据相近的产品、机位和光照，并用本产线独立样本验证效果后用于质量判定。</p>}
+    </details> : algorithm === 'yolo' ? <p className="vision-note vision-yolo-note">YOLO 仅识别所选模型覆盖的缺陷类别。请使用与训练数据相近的产品、机位和光照，并用本产线独立样本验证效果后用于质量判定。</p> : null}
+    {algorithm === 'patchcore' && model?.calibration && <CalibrationSummary calibration={model.calibration} threshold={threshold} synthetic={model.threshold_method === 'independent_labeled_synthetic_calibration'} />}
+    {algorithm === 'patchcore' && model?.model_id === 'patchcore-gear' && <AutoVisionInbox checked={checked} userId={userId} />}
+    {algorithm === 'patchcore' && model?.model_id === 'patchcore-gear' && <p className="vision-note">手动单张检测（可选）：如需临时测试另一张图片，可在下方选择并运行。自动检测无需操作此处。</p>}
     <div className="vision-query">
       <div><label>待检测图片<input key={`query-${auth.version}`} type="file" accept={accept} aria-label="待检测图片" disabled={!userId || loading} onChange={event => selectFiles(event, false)} /></label>
         <p className="vision-note">PNG / JPEG / WebP，单张不超过 4 MB。{part ? `关联零件：${part.name}（${part.number}）` : '可直接检测图片，无需先选择 CAD 零件。'}</p></div>
@@ -356,14 +362,15 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
         <label>置信度阈值<input type="number" aria-label="置信度阈值" min="0.01" max="1" step="0.05" value={confidence} onChange={event => { invalidate(); setConfidence(event.target.value); }} /></label>
         <label>NMS IoU 阈值<input type="number" aria-label="NMS IoU 阈值" min="0.01" max="1" step="0.05" value={iou} onChange={event => { invalidate(); setIou(event.target.value); }} /></label></>}</div>
     </div>
-    {inputImage?.source === 'public_gear_reference' && <p className="vision-note">当前是公开数据集的参考齿轮图片，不代表所选 CAD 零件的实拍，不关联当前工件身份。</p>}
+    {inputImage?.source === 'public_gear_reference' && <p className="vision-note">当前是测试数据集的参考齿轮图片，不代表所选 CAD 零件的实拍，不关联当前工件身份。</p>}
     {algorithm === 'patchcore' && <p className="vision-note">异常分数为原始特征距离，数值越高越异常，不是概率。建议阈值需结合独立正常样本和已知缺陷验证，才能用于生产判定。</p>}
     {algorithm === 'yolo' && model && <p className="vision-note">模型建议：置信度 {yoloModelParameters(model).confidence} · NMS IoU {yoloModelParameters(model).iou}。{model.calibration_scope === 'synthetic_calibration_only' && '建议参数来自独立合成校准集，真实产线需重新校准。'} <button type="button" className="button" disabled={!!busy} onClick={() => { invalidate(); applyYoloParameters(model); }}>应用模型建议参数</button></p>}
     <div className="vision-run"><span className="vision-note">{busy === 'read-image' ? '正在读取待检测图片…' : busy === 'detect' ? '正在对上传图片运行模型推理…' : inputImage ? `待检测：${inputImage.name}` : '等待上传待检测图片'}</span>
-      <button className="button primary" type="button" disabled={!canDetect} onClick={detect}>{busy === 'detect' ? '正在检测视觉缺陷…' : '运行缺陷检测'}</button></div>
+      <button className="button primary" type="button" disabled={!canDetect} title={detectBlocker || undefined} onClick={detect}>{busy === 'detect' ? '正在检测视觉缺陷…' : '运行缺陷检测'}</button></div>
+    {detectBlocker && !loading && <p className="vision-note vision-run-hint" role="status">{detectBlocker}</p>}
     {error && <p className="vision-error" role="alert">{error}</p>}{notice && <p className="vision-notice" role="status">{notice}</p>}
     <section className="vision-output" aria-labelledby="vision-output-heading">
-      {referenceBlocked && <p className="vision-error">公开齿轮测试图片只能用于流程验证。请在综合统计中切换至流程验证并选择验证实物，或上传当前生产实物的图片。</p>}
+      {referenceBlocked && <p className="vision-error">测试齿轮图片只能用于流程验证。请在综合统计中切换至流程验证并选择验证实物，或上传当前生产实物的图片。</p>}
       <p className="vision-note">{qualityPart ? '本次视觉检测关联实物：' + qualityPart.serial_number + ' · 批次 ' + qualityPart.batch_id + ' · 设计版本 ' + qualityPart.design_version
         : '未选择综合复核实物，本次视觉结果单独保存，不计入综合合格率。'}</p>
       <header><h3 id="vision-output-heading">视觉检测结果</h3><span className={`vision-status ${result?.status || ''}`}>{result ? result.status === 'defect' ? '检出视觉缺陷' : '未检出视觉缺陷' : '等待单模型检测'}</span></header>

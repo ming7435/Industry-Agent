@@ -41,7 +41,7 @@ const pause = (signal, milliseconds) => new Promise((resolve, reject) => {
   if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
 });
 
-export default function ExpertWorkspace({ actor }) {
+export default function ExpertWorkspace({ actor, active = true }) {
   const [items, setItems] = useState([]);
   const [overview,setOverview] = useState(true);
   const [query,setQuery] = useState('');
@@ -384,7 +384,7 @@ export default function ExpertWorkspace({ actor }) {
     <header className="expert-heading"><div><span className="expert-eyebrow">专家协作 · AGENT & SKILL</span><h1>专家中心</h1>
       <p>查看专家运行表现，进入专家管理和测试它绑定的技能。</p></div><span className="expert-heading-count">{new Set(items.map(item=>item.agent)).size} 位专家 · {items.length} 项技能</span></header>
     {!actor ? <section className="expert-card"><p>请先登录维修小组账号。</p></section> : <>
-      {overview ? <>{error && <p className="expert-alert" role="alert">{error}</p>}<ExpertOverview items={items} actor={actor} onOpen={openExpert} /></> : <>
+      {overview ? <>{error && <p className="expert-alert" role="alert">{error}</p>}<ExpertOverview items={items} actor={actor} active={active} onOpen={openExpert} /></> : <>
       <nav className="expert-breadcrumb" aria-label="专家导航"><button type="button" onClick={returnToExperts} disabled={locked}>返回专家总览</button>
         <span>/</span><strong>{items.find(item=>item.agent===agentFilter)?.agent_label}专家</strong><span>仅展示本专家绑定的技能</span></nav>
       <div className="expert-layout"><section className="expert-card expert-sidebar" aria-label="技能目录">

@@ -10,7 +10,7 @@ from time import time
 from uuid import uuid4
 
 from app.skills.management import AGENTS, SkillEditError
-from app.skills.registry import SkillDefinition, _parse_markdown_skill, skill_registry_scope
+from app.skills.registry import skill_registry_scope
 from app.skills.testing import DraftRegistry, SkillTrials, fingerprint
 from app.runtime.event_store import scoped_event_key
 
@@ -87,8 +87,9 @@ class MachineTrials(SkillTrials):
     def _dependencies(self, agent=None):
         if agent is not None:
             return super()._dependencies(agent)
-        return {str(path.relative_to(self.manager.registry.root)): sha256(path.read_bytes()).hexdigest()
-                for folder in AGENTS for path in sorted((self.manager.registry.root / folder).glob('*.md'))}
+        root = self.manager.registry.root
+        return {str(path.relative_to(root)): sha256(path.read_bytes()).hexdigest()
+                for folder in AGENTS for path in self.manager.registry.source_files(folder)}
 
     def _active(self):
         pointer = self.manager.backup_root / 'machine-test.json'
@@ -162,9 +163,7 @@ class MachineTrials(SkillTrials):
             definitions = {}
             for folder in AGENTS:
                 definitions[folder] = []
-                for path in sorted((self.manager.registry.root / folder).glob('*.md')):
-                    payload, document = _parse_markdown_skill(path.read_text(encoding='utf-8'), path)
-                    skill = SkillDefinition.from_payload(folder, payload, path, document)
+                for skill in self.manager.registry.list(folder):
                     if folder == agent and skill.name == name:
                         skill = replace(skill, document=values['document'].strip(), goal=values['goal'].strip(),
                                         version=values['version'].strip(), metadata={**skill.metadata,

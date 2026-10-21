@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from shutil import copytree
 from types import SimpleNamespace
 
 import pytest
@@ -135,11 +136,14 @@ def test_failed_generation_consumes_reservation_across_restart(system):
 
 
 def add_four_skills(system):
-    template = Path(system.manager.registry.get('diagnosis', 'alarm_diagnosis_skill').path).read_text(encoding='utf-8')
+    source = Path(system.manager.registry.get('diagnosis', 'alarm_diagnosis_skill').path).parent
     for i in range(1, 5):
         name = 'alarm_' + str(i)
-        (system.manager.registry.root / 'diagnosis' / (name + '.md')).write_text(
-            template.replace('name: alarm_diagnosis_skill', 'name: ' + name), encoding='utf-8')
+        target = system.manager.registry.root / 'diagnosis' / name
+        copytree(source, target)
+        document = target / 'SKILL.md'
+        document.write_text(document.read_text(encoding='utf-8').replace(
+            'name: alarm_diagnosis_skill', 'name: ' + name), encoding='utf-8')
         add_run(system.manager, name)
 
 

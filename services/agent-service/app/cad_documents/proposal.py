@@ -14,20 +14,28 @@ def observed_cad_call(operation, *args, trace=None):
         if trace is not None:
             trace.record(type='agent', event='skill_observed', trace_id=identity,
                 task_id=identity, agent_run_id=identity, run_type='cad_specification', **snapshot)
-    with skill_observation_scope(observed):
-        try:
-            result = operation(*args)
-        except Exception:
-            if trace is not None:
-                trace.record(type='agent', event='agent_error', agent='cad', trace_id=identity,
-                    task_id=identity, agent_run_id=identity, error='CAD 模型或规格解析错误，结果未确认')
-            raise
     if trace is not None:
-        trace.record(type='agent', event='agent_completed', agent='cad', trace_id=identity,
-            task_id=identity, agent_run_id=identity, run_type='cad_specification',
-            output={**result, 'validation': {'valid': result.get('status') == 'ready'},
-                    'validation_scope': 'specification_only'})
-    return result
+        trace.record(type='agent', event='agent_started', agent='cad', trace_id=identity,
+            task_id=identity, agent_run_id=identity, run_type='cad_specification')
+    try:
+        with skill_observation_scope(observed):
+            try:
+                result = operation(*args)
+            except Exception:
+                if trace is not None:
+                    trace.record(type='agent', event='agent_error', agent='cad', trace_id=identity,
+                        task_id=identity, agent_run_id=identity, error='CAD 模型或规格解析错误，结果未确认')
+                raise
+        if trace is not None:
+            trace.record(type='agent', event='agent_completed', agent='cad', trace_id=identity,
+                task_id=identity, agent_run_id=identity, run_type='cad_specification',
+                output={**result, 'validation': {'valid': result.get('status') == 'ready'},
+                        'validation_scope': 'specification_only'})
+        return result
+    finally:
+        release = getattr(trace, 'release_agent_attempt', None)
+        if callable(release):
+            release({'agent': 'cad', 'trace_id': identity, 'agent_run_id': identity})
 
 
 def resolve_text_to_cad_spec(prompt,model,explicit_spec=None):

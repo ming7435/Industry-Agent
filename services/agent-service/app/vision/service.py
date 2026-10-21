@@ -22,14 +22,19 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from app.vision.calibration import threshold_strategies
+from app.vision.algorithms import MAX_TRAINING_SAMPLES
 from app.vision.preprocessing import parse_patchcore_config
 
 
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
-MAX_TRAINING_IMAGES = 24
+MAX_TRAINING_IMAGES = 100
 _TASK_LOCK = Lock()
 _MODEL_ID = re.compile(r'PC-[a-f0-9]{32}\Z')
 _INSPECTION_ID = re.compile(r'VI-[a-f0-9]{32}\Z')
+_PRESET_ENV = {
+    'patchcore-demo': 'QUALITY_PATCHCORE_PRESET_DIR',
+    'patchcore-gear': 'QUALITY_PATCHCORE_GEAR_PRESET_DIR',
+}
 
 
 class VisionServiceError(RuntimeError):
@@ -170,15 +175,15 @@ class VisionService:
         except (OSError, ValueError, TypeError):
             raise VisionServiceError(503, 'YOLO 模型说明与权重不匹配或损坏，请检查部署配置') from None
 
-    def _preset_model(self):
-        configured = os.getenv('QUALITY_PATCHCORE_PRESET_DIR', '').strip()
+    def _preset_model(self, model_id='patchcore-demo'):
+        configured = os.getenv(_PRESET_ENV[model_id], '').strip()
         if not configured:
             raise VisionServiceError(404, '尚未配置预置 PatchCore 记忆库')
         try:
             folder = Path(configured)
             value = self._deployment_metadata(folder / 'model.json')
             bank_path = folder / 'memory.npz'
-            if (value.get('model_id') != 'patchcore-demo' or value.get('algorithm') != 'patchcore'
+            if (value.get('model_id') != model_id or value.get('algorithm') != 'patchcore'
                     or value.get('weights_sha256') != self._digest(self._weights('patchcore'))
                     or value.get('memory_bank_sha256') != self._digest(bank_path)):
                 raise ValueError('preset artifacts differ')
@@ -192,7 +197,7 @@ class VisionService:
                 raise ValueError('invalid pipeline version')
             self._validate_preset_calibration(value)
             value['preprocessing'] = parse_patchcore_config(value.get('preprocessing'))
-            value.update(read_only=True, demo=True)
+            value.update(read_only=True)
             return value, bank_path
         except (OSError, ValueError, TypeError, KeyError):
             raise VisionServiceError(503, '预置 PatchCore 记忆库损坏或与当前骨干权重不匹配，请检查部署配置') from None
@@ -214,11 +219,13 @@ class VisionService:
             except (OSError, ValueError, TypeError, AttributeError):
                 continue
         warnings = []
-        if algorithms[0]['available'] and os.getenv('QUALITY_PATCHCORE_PRESET_DIR', '').strip():
-            try:
-                models.append(self._public_model(self._preset_model()[0]))
-            except VisionServiceError as error:
-                warnings.append(error.detail)
+        if algorithms[0]['available']:
+            for preset_id, key in _PRESET_ENV.items():
+                if os.getenv(key, '').strip():
+                    try:
+                        models.append(self._public_model(self._preset_model(preset_id)[0]))
+                    except VisionServiceError as error:
+                        warnings.append(f'{preset_id}: {error.detail}')
         if algorithms[1]['available']:
             try:
                 models.append(self._public_model(self._yolo_model()))
@@ -228,8 +235,9 @@ class VisionService:
         dataset = public_dataset()
         if os.getenv('QUALITY_VISION_DATA_MODE') == 'gear' and not Path(os.getenv('QUALITY_YOLO_WEIGHTS', '')).is_file():
             algorithms[1].update(available=False, reason='齿轮版 YOLO11 尚在训练或未完成部署；完成后请刷新模型状态。')
-        if os.getenv('QUALITY_VISION_DATA_MODE') == 'gear' and not os.getenv('QUALITY_PATCHCORE_PRESET_DIR', '').strip():
-            warnings.append('当前齿轮数据没有已确认正常样本；PatchCore 需使用真实良品图片单独建立记忆库。')
+        if os.getenv('QUALITY_VISION_DATA_MODE') == 'gear' and not any(
+                os.getenv(key, '').strip() for key in _PRESET_ENV.values()):
+            warnings.append('当前塑料齿轮训练数据没有已确认正常样本；PatchCore 需使用匹配产品的真实良品图片建库。')
         return {'algorithms': algorithms, 'models': models, 'dataset': dataset,
                 'data_mode': 'gear' if os.getenv('QUALITY_VISION_DATA_MODE') == 'gear' else 'synthetic',
                 'model_warnings': warnings,
@@ -309,7 +317,15 @@ class VisionService:
                 import numpy as np
                 weights = self._weights('patchcore')
                 before = self._digest(weights)
-                fitted = module.PatchCoreDetector(weights, config=config).fit(images, coreset_ratio=values['coreset_ratio'])
+                detector = module.PatchCoreDetector(weights, config=config)
+                if len(values['images']) > MAX_TRAINING_SAMPLES:
+                    # Bound feature memory for large browser batches. Every image is
+                    # extracted before the hierarchical coreset is selected.
+                    from app.vision.offline import fit_full_memory
+                    fitted = fit_full_memory(detector, images, expected_count=len(values['images']),
+                                             per_image_features=32, coreset_ratio=values['coreset_ratio'])
+                else:
+                    fitted = detector.fit(images, coreset_ratio=values['coreset_ratio'])
                 if before != self._digest(weights):
                     raise VisionServiceError(409, '训练过程中权重发生变化，请重新训练')
                 bank = np.asarray(fitted['memory_bank'])
@@ -350,8 +366,8 @@ class VisionService:
 
     def _model(self, actor, model_id):
         self._owner_root(actor)
-        if model_id == 'patchcore-demo':
-            return self._preset_model()
+        if model_id in _PRESET_ENV:
+            return self._preset_model(model_id)
         if not _MODEL_ID.fullmatch(model_id):
             raise VisionServiceError(404, '未找到当前账号的模型')
         folder = self._owner_root(actor) / 'models'
@@ -374,7 +390,7 @@ class VisionService:
                 quality_part = CombinedQualityService(self).get_part(actor, values['quality_part_id'])
                 if quality_part['scope'] == 'production' and (
                         values.get('image_source', 'upload') != 'upload' or source_context is not None):
-                    raise VisionServiceError(409, '公开测试图片或模拟结果不能关联生产实物，请切换到流程验证')
+                    raise VisionServiceError(409, '测试图片或模拟结果不能关联生产实物，请切换到流程验证')
             algorithm = values['algorithm']
             model = self._model(actor, values['model_id']) if algorithm == 'patchcore' else None
             if algorithm == 'yolo' and values['model_id'] != 'yolo-default':
@@ -444,7 +460,7 @@ class VisionService:
         with self._task():
             record, bank_path = self._model(actor, values['model_id'])
             if record.get('read_only'):
-                raise VisionServiceError(403, '预置演示记忆库为只读；请用本产品正常图片建立个人模型后校准')
+                raise VisionServiceError(403, '预置记忆库为只读；如需调整阈值，请用本产品正常图片建立个人记忆库后校准')
             self._require_available('patchcore')
             training = record.get('training_image_sha256')
             if not isinstance(training, list) or not training:

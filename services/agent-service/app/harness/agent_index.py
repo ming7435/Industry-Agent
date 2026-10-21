@@ -6,6 +6,15 @@ OUTPUT_FIELDS = ('status', 'intent', 'success', 'workorder_ready')
 FINDING_FIELDS = ('error', 'validation_errors', 'validation_findings', 'failed_checks')
 
 
+def agent_attempt_key(record):
+    context = record.get('context') if isinstance(record.get('context'), Mapping) else {}
+    agent = str(record.get('agent') or context.get('agent') or record.get('name') or '').lower()
+    identity = record.get('agent_run_id') or context.get('agent_run_id')
+    if not agent or not identity:
+        return None
+    return agent, str(record.get('trace_id') or ''), str(identity)
+
+
 def agent_index_record(record):
     context = record.get('context') if isinstance(record.get('context'), Mapping) else {}
     output = record.get('output') if isinstance(record.get('output'), Mapping) else {}

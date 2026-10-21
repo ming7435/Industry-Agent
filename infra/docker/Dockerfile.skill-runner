@@ -1,0 +1,32 @@
+# 专家技能试运行的隔离执行镜像。
+#
+# 只安装试运行所需的最小运行时，不安装 cadgen/OCP、视觉模型或数据库驱动。
+# 构建上下文是仓库根目录：
+#   docker build -f infra/docker/Dockerfile.skill-runner -t industry-skill-runner:0.1 .
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# 诊断试运行只依赖 LangGraph、Pydantic 和 YAML 解析。
+RUN pip install --no-cache-dir \
+    "langgraph>=1.2,<2.0" \
+    "pydantic>=2.7" \
+    "PyYAML>=6.0"
+
+COPY services/agent-service /app/services/agent-service
+COPY shared /app/shared
+
+ENV PYTHONPATH=/app/services/agent-service:/app
+
+# 非 root 运行；/work 由宿主通过 execd 写入技能包和结果。
+RUN useradd --create-home --uid 10001 runner \
+    && mkdir -p /work \
+    && chown -R runner:runner /work /app
+
+USER runner
+
+CMD ["python", "-m", "app.skills.sandbox_runner", "--help"]
