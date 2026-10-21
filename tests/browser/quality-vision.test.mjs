@@ -268,7 +268,7 @@ test('YOLO recommended settings are applied, edits survive algorithm switching, 
 });
 
 test('held-out real gear example loads into ordinary detection without sending ground truth', async () => {
-  const dataset = { name: '真实塑料齿轮研究子集', normal_count: 0, samples: [
+  const dataset = { name: '塑料齿轮测试数据', normal_count: 0, samples: [
     { sample_id: 'endface123', filename: 'endface123.png', defect_labels: ['darkspot'] },
   ] };
   const { fixture, page, posts, errors } = await setup({ models: [yolo], dataset });
@@ -282,7 +282,7 @@ test('held-out real gear example loads into ordinary detection without sending g
     assert.equal(posts[0].body.ground_truth, undefined);
     assert.equal(posts[0].body.defect_labels, undefined);
     assert.equal(posts[0].body.part_id, undefined);
-    assert.match(await page.getByText('当前是公开数据集的参考齿轮图片', { exact: false }).textContent(), /不关联当前工件身份/);
+    assert.match(await page.getByText('当前是测试数据集的参考齿轮图片', { exact: false }).textContent(), /不关联当前工件身份/);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });
