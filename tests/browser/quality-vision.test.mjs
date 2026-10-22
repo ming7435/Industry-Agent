@@ -183,7 +183,7 @@ test('read-only PatchCore preset can detect and personal models retain calibrati
   try {
     await page.getByText(preset.description, { exact: true }).waitFor();
     assert.equal(await page.getByLabel('检测记忆库', { exact: true }).inputValue(), 'patchcore-demo');
-    assert.match(await page.getByTestId('readonly-model-note').textContent(), /只读.*正常图片.*校准/);
+    assert.equal(await page.getByText('新建自己的正常样本记忆库（可选）', { exact: true }).count(), 1);
     assert.equal(await page.getByRole('button', { name: '校准并应用阈值', exact: true }).count(), 0);
     await page.getByLabel('待检测图片').setInputFiles(file('synthetic.png'));
     await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
@@ -191,7 +191,6 @@ test('read-only PatchCore preset can detect and personal models retain calibrati
     assert.equal(posts[0].body.model_id, 'patchcore-demo');
     await page.getByLabel('检测记忆库', { exact: true }).selectOption('PC-normal');
     assert.equal(await page.getByText('使用独立图片校准阈值', { exact: true }).count(), 1);
-    assert.equal(await page.getByTestId('readonly-model-note').count(), 0);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });

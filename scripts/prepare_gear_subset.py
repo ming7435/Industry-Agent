@@ -1,23 +1,30 @@
 """Fetch a deterministic real-gear subset using ZIP HTTP ranges and original LabelMe labels."""
 from pathlib import Path
-import base64, concurrent.futures, hashlib, io, json, random, re, struct, time, urllib.request, zlib
+import argparse, base64, concurrent.futures, hashlib, io, json, random, re, struct, time, urllib.request, zlib
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'output/gear-dataset'
 URL='https://www.kaggle.com/api/v1/datasets/download/yimingfang1994/plastic-gear-surface-defect-dataset?datasetVersionNumber=1'
 def save(path,value):path.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
-def main():
+def main(full=False):
+    out=ROOT/'output/gear-full-dataset' if full else OUT
     rows=json.loads((OUT/'archive-index.json').read_text(encoding='utf-8'))
     members={r['name']:r for r in rows}
     rows=[r for r in rows if r['name'].endswith('.json')]
-    rng=random.Random(20261025)
-    chosen=[]
-    for view,count in [('endface',160),('toothface',80)]:
-        population=sorted([r for r in rows if Path(r['name']).stem.startswith(view)],key=lambda r:r['name'])
-        chosen+=rng.sample(population,count)
-    save(OUT/'subset-selection.json',{'seed':20261025,'selected':chosen,'policy':'160 endface and 80 toothface randomly selected before reading labels; not the full1165-image dataset'})
+    if full:
+        chosen=sorted(rows,key=lambda r:r['name'])
+        if len(chosen)!=1165:raise ValueError('expected all 1165 source annotations')
+        out.mkdir(parents=True,exist_ok=True)
+        save(out/'source-selection.json',{'selected':chosen,'policy':'all 1165 original annotations; no label-based filtering'})
+    else:
+        rng=random.Random(20261025)
+        chosen=[]
+        for view,count in [('endface',160),('toothface',80)]:
+            population=sorted([r for r in rows if Path(r['name']).stem.startswith(view)],key=lambda r:r['name'])
+            chosen+=rng.sample(population,count)
+        save(out/'subset-selection.json',{'seed':20261025,'selected':chosen,'policy':'160 endface and 80 toothface randomly selected before reading labels; not the full1165-image dataset'})
     with urllib.request.urlopen(urllib.request.Request(URL,headers={'Range':'bytes=0-0'}),timeout=45) as response:
         signed=response.url
-    raw=OUT/'raw';(raw/'images').mkdir(parents=True,exist_ok=True);(raw/'json').mkdir(exist_ok=True)
+    raw=out/'raw';(raw/'images').mkdir(parents=True,exist_ok=True);(raw/'json').mkdir(exist_ok=True)
     def fetch(row):
         name=Path(row['name']).name;image_name=Path(name).with_suffix('.png').name
         annotation_path=raw/'json'/name;image_path=raw/'images'/image_name
@@ -56,8 +63,8 @@ def main():
                     if attempt==3:raise
                     time.sleep(2)
         annotation=json.loads(annotation_path.read_text(encoding='utf-8'))
-        return {'sample_id':Path(name).stem,'image_path':str(image_path.relative_to(OUT)),
-                'annotation_path':str(annotation_path.relative_to(OUT)),
+        return {'sample_id':Path(name).stem,'image_path':str(image_path.relative_to(out)),
+                'annotation_path':str(annotation_path.relative_to(out)),
                 'labels':[s['label'] for s in annotation['shapes']],
                 'shape_types':[s.get('shape_type') for s in annotation['shapes']],
                 'width':annotation['imageWidth'],'height':annotation['imageHeight'],
@@ -67,14 +74,17 @@ def main():
         futures=[pool.submit(fetch,row) for row in chosen]
         for future in concurrent.futures.as_completed(futures):
             completed.append(future.result())
-            save(OUT/'subset-progress.json',{'images_ready':len(completed),'total':len(chosen)})
+            save(out/'download-progress.json' if full else out/'subset-progress.json',{'images_ready':len(completed),'total':len(chosen)})
             print(f'gear images {len(completed)}/{len(chosen)}',flush=True)
     completed.sort(key=lambda r:r['sample_id'])
-    save(OUT/'annotation-index.json',completed)
+    save(out/'annotation-index.json',completed)
     from collections import Counter
-    save(OUT/'inventory.json',{'images':len(completed),'annotations':len(completed),
+    save(out/'inventory.json',{'images':len(completed),'annotations':len(completed),
          'empty_annotations':sum(not r['labels'] for r in completed),'source_total_images':1165,
          'label_counts':dict(Counter(x for row in completed for x in row['labels'])),
          'shape_types':dict(Counter(x for row in completed for x in row['shape_types'])),
-         'scope':'deterministic240-image research subset; all labels from upstream original annotations'})
-if __name__=='__main__':main()
+         'scope':'all source images' if full else 'deterministic240-image research subset; all labels from upstream original annotations'})
+if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--full',action='store_true',help='Download all 1165 annotated images into a separate directory')
+    main(full=parser.parse_args().full)

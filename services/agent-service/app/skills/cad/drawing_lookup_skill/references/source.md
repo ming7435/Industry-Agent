@@ -7,11 +7,11 @@ order: 4
 
 ## 参考实现（References）
 
-- [app/agents/cad/agent.py](L:/industry_agent/services/agent-service/app/agents/cad/agent.py)
-- [app/agents/cad/graph.py](L:/industry_agent/services/agent-service/app/agents/cad/graph.py)
-- [app/agents/cad/schemas.py](L:/industry_agent/services/agent-service/app/agents/cad/schemas.py)
-- [app/agents/cad/validator.py](L:/industry_agent/services/agent-service/app/agents/cad/validator.py)
-- [app/contracts.py](L:/industry_agent/services/agent-service/app/contracts.py)
-- [app/tools/query_contracts.py](L:/industry_agent/services/agent-service/app/tools/query_contracts.py)
-- [app/skills/registry.py](L:/industry_agent/services/agent-service/app/skills/registry.py)
-- [app/tools/registry.py](L:/industry_agent/services/agent-service/app/tools/registry.py)
+- [app/agents/cad/agent.py](../../../../agents/cad/agent.py)
+- [app/agents/cad/graph.py](../../../../agents/cad/graph.py)
+- [app/agents/cad/schemas.py](../../../../agents/cad/schemas.py)
+- [app/agents/cad/validator.py](../../../../agents/cad/validator.py)
+- [app/contracts.py](../../../../contracts.py)
+- [app/tools/query_contracts.py](../../../../tools/query_contracts.py)
+- [app/skills/registry.py](../../../../skills/registry.py)
+- [app/tools/registry.py](../../../../tools/registry.py)

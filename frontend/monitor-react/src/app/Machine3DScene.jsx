@@ -4,13 +4,15 @@ import {OrbitControls} from "three/examples/jsm/controls/OrbitControls.js";
 import {createEquator300} from "./equator300.js";
 import {createMotionClock, getMachineMotionState, machineStatus, machineStatusLabel} from "./workshopMotion.mjs";
 
-// 世界坐标中的工位；三个机器人交接目标都保持在其 2.22 单位的工作范围内。
+const ROBOT_CYCLE_SECONDS = 8;
+
+// 世界坐标中的工位；分拣箱位于检测侧辅助机械臂的工作范围内。
 const workshopLayout = Object.freeze({
   robot: [5.8, -.15],
   pickup: [4.7, 1.12],
   inspection: [7.6, 1],
-  qualified: [7.65, -1.3],
-  rework: [6.65, -2.1],
+  qualified: [8.45, 3.25],
+  rework: [6.75, 3.1],
   robotReach: 2.22,
 });
 
@@ -292,6 +294,161 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
     // 原料进入送料机；加工件沿出料线到机械臂，再送 Equator300 检测。
     addConveyorSegment([-5.68, 2.45], [-5.68, .72], .55, 0);
     addConveyorSegment([2.45, 1.12], [4.85, 1.12], .55, 0);
+
+    // 出料滚筒上的视觉检测点：立柱在输送线后侧，镜头正对工件经过的中心线。
+    const industrialCamera = new THREE.Group();
+    industrialCamera.name = "industrial-camera";
+    industrialCamera.position.set(3.75, 0, 0);
+    scene.add(industrialCamera);
+    const cameraFrameMat = new THREE.MeshStandardMaterial({ color: 0x849399, roughness: .38, metalness: .65 });
+    const cameraMountMat = new THREE.MeshStandardMaterial({ color: 0x303b41, roughness: .43, metalness: .52 });
+    const cameraBodyMat = new THREE.MeshStandardMaterial({ color: 0x222a30, roughness: .35, metalness: .38 });
+    const cameraLensMat = new THREE.MeshStandardMaterial({ color: 0x142b39, roughness: .1, metalness: .45, emissive: 0x0b3b50, emissiveIntensity: .18 });
+    const cameraIndicatorMat = new THREE.MeshStandardMaterial({ color: 0x20b986, emissive: 0x20b986, emissiveIntensity: .65 });
+    const cameraLightMat = new THREE.MeshStandardMaterial({ color: 0xe6eee9, emissive: 0xd1f0df, emissiveIntensity: .48 });
+    const addCameraBox = (name, size, position, material) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+      mesh.name = name;
+      mesh.position.set(...position);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      industrialCamera.add(mesh);
+      return mesh;
+    };
+    addCameraBox("camera-foot", [.34, .06, .34], [0, -.29, .5], cameraMountMat);
+    addCameraBox("camera-post", [.085, 1.62, .085], [0, .51, .5], cameraFrameMat);
+    addCameraBox("camera-crossbar", [.085, .085, .64], [0, 1.28, .86], cameraMountMat);
+    addCameraBox("camera-mount", [.18, .08, .18], [0, 1.23, 1.12], cameraMountMat);
+    addCameraBox("camera-housing", [.36, .27, .32], [0, 1.05, 1.12], cameraBodyMat);
+    addCameraBox("camera-status", [.12, .025, .025], [0, 1.11, 1.293], cameraIndicatorMat);
+    const lensBarrel = new THREE.Mesh(new THREE.CylinderGeometry(.105, .115, .17, 24), cameraMountMat);
+    lensBarrel.name = "camera-lens-barrel";
+    lensBarrel.position.set(0, .83, 1.12);
+    lensBarrel.castShadow = true;
+    industrialCamera.add(lensBarrel);
+    const lensGlass = new THREE.Mesh(new THREE.CylinderGeometry(.078, .078, .012, 24), cameraLensMat);
+    lensGlass.name = "camera-lens-glass";
+    lensGlass.position.set(0, .738, 1.12);
+    industrialCamera.add(lensGlass);
+    const ringLight = new THREE.Mesh(new THREE.TorusGeometry(.17, .034, 10, 32), cameraMountMat);
+    ringLight.name = "camera-ring-light";
+    ringLight.rotation.x = Math.PI / 2;
+    ringLight.position.set(0, .7, 1.12);
+    ringLight.castShadow = true;
+    industrialCamera.add(ringLight);
+    const ringDiffuser = new THREE.Mesh(new THREE.TorusGeometry(.17, .013, 8, 32), cameraLightMat);
+    ringDiffuser.name = "camera-ring-diffuser";
+    ringDiffuser.rotation.x = Math.PI / 2;
+    ringDiffuser.position.set(0, .685, 1.12);
+    industrialCamera.add(ringDiffuser);
+
+    // 照片中的台式视觉检测架：显示屏、立柱相机、环形光和棋盘格标定板。
+    const tabletopVision = new THREE.Group();
+    tabletopVision.name = "tabletop-vision-station";
+    tabletopVision.userData.visualOnly = true;
+    tabletopVision.position.set(-2.2, -.35, 4.75);
+    tabletopVision.rotation.y = .12;
+    scene.add(tabletopVision);
+    const visionTableMat = new THREE.MeshStandardMaterial({ color: 0x68767b, roughness: .54, metalness: .32 });
+    const visionBaseMat = new THREE.MeshStandardMaterial({ color: 0x20262b, roughness: .68, metalness: .19 });
+    const visionBodyMat = new THREE.MeshStandardMaterial({ color: 0x11171c, roughness: .36, metalness: .3 });
+    const visionPostMat = new THREE.MeshStandardMaterial({ color: 0xbac4c8, roughness: .27, metalness: .7 });
+    const visionLightMat = new THREE.MeshStandardMaterial({ color: 0xe8eee7, emissive: 0xcfe6d5, emissiveIntensity: .65 });
+    const visionLensMat = new THREE.MeshStandardMaterial({ color: 0x172f3a, roughness: .1, metalness: .38, emissive: 0x0d3645, emissiveIntensity: .18 });
+    const addVisionPart = (name, geometry, material, position, parent = tabletopVision) => {
+      const part = new THREE.Mesh(geometry, material);
+      part.name = name;
+      part.position.set(...position);
+      part.castShadow = true;
+      part.receiveShadow = true;
+      parent.add(part);
+      return part;
+    };
+    const visionBox = (name, size, position, material, parent) =>
+      addVisionPart(name, new THREE.BoxGeometry(...size), material, position, parent);
+    visionBox("vision-workbench-top", [2.35, .1, 1.25], [0, .75, 0], visionTableMat);
+    for (const x of [-1.02, 1.02]) {
+      for (const z of [-.47, .47]) visionBox("vision-workbench-leg", [.11, .69, .11], [x, .36, z], visionTableMat);
+    }
+    visionBox("vision-workbench-brace", [2.1, .08, .08], [0, .2, -.43], visionBaseMat);
+    visionBox("vision-optical-base", [1.13, .055, .9], [-.23, .835, .2], visionBaseMat);
+
+    const checkerCanvas = document.createElement("canvas");
+    checkerCanvas.width = 256;
+    checkerCanvas.height = 256;
+    const checkerContext = checkerCanvas.getContext("2d");
+    checkerContext.fillStyle = "#e9eeed";
+    checkerContext.fillRect(0, 0, 256, 256);
+    for (let row = 0; row < 16; row += 1) {
+      for (let column = 0; column < 16; column += 1) {
+        if ((row + column) % 2 === 0) {
+          checkerContext.fillStyle = "#182026";
+          checkerContext.fillRect(column * 14 + 16, row * 14 + 16, 14, 14);
+        }
+      }
+    }
+    const checkerTexture = new THREE.CanvasTexture(checkerCanvas);
+    checkerTexture.colorSpace = THREE.SRGBColorSpace;
+    visionBox("vision-calibration-plate", [.75, .022, .75], [-.48, .876, .25], visionPostMat);
+    const checkerboard = addVisionPart("vision-checkerboard", new THREE.PlaneGeometry(.69, .69),
+      new THREE.MeshBasicMaterial({ map: checkerTexture, side: THREE.DoubleSide }), [-.48, .891, .25]);
+    checkerboard.rotation.x = -Math.PI / 2;
+
+    const monitorCanvas = document.createElement("canvas");
+    monitorCanvas.width = 512;
+    monitorCanvas.height = 300;
+    const monitorContext = monitorCanvas.getContext("2d");
+    monitorContext.fillStyle = "#e7eeef";
+    monitorContext.fillRect(0, 0, 512, 300);
+    monitorContext.fillStyle = "#20343d";
+    monitorContext.fillRect(0, 0, 512, 33);
+    monitorContext.fillStyle = "#e5f4ee";
+    monitorContext.font = "bold 17px sans-serif";
+    monitorContext.fillText("VISION INSPECTION  ·  4 CAMERAS", 17, 23);
+    for (let index = 0; index < 4; index += 1) {
+      const x = 17 + (index % 2) * 247;
+      const y = 45 + Math.floor(index / 2) * 120;
+      monitorContext.fillStyle = "#9da9aa";
+      monitorContext.fillRect(x, y, 230, 108);
+      monitorContext.fillStyle = "#35434a";
+      for (let piece = 0; piece < 7; piece += 1) {
+        const px = x + 28 + (piece % 4) * 51 + (index % 2) * 5;
+        const py = y + 28 + Math.floor(piece / 4) * 49;
+        monitorContext.beginPath();
+        monitorContext.arc(px, py, 13, 0, Math.PI * 2);
+        monitorContext.fill();
+        monitorContext.fillStyle = "#9da9aa";
+        monitorContext.fillRect(px - 5, py - 5, 10, 10);
+        monitorContext.fillStyle = "#35434a";
+      }
+      monitorContext.fillStyle = "#d9892b";
+      monitorContext.fillRect(x + 175, y + 82, 42, 17);
+    }
+    const monitorTexture = new THREE.CanvasTexture(monitorCanvas);
+    monitorTexture.colorSpace = THREE.SRGBColorSpace;
+    visionBox("vision-monitor-frame", [1.42, .9, .085], [-.4, 1.43, -.42], visionBodyMat);
+    addVisionPart("vision-monitor-screen", new THREE.PlaneGeometry(1.31, .79),
+      new THREE.MeshBasicMaterial({ map: monitorTexture }), [-.4, 1.43, -.371]);
+    visionBox("vision-monitor-neck", [.1, .33, .1], [-.4, .85, -.44], visionPostMat);
+    visionBox("vision-monitor-foot", [.48, .035, .3], [-.4, .822, -.44], visionBaseMat);
+
+    addVisionPart("vision-column-foot", new THREE.CylinderGeometry(.18, .2, .08, 32), visionBaseMat, [.55, .91, .24]);
+    addVisionPart("vision-column", new THREE.CylinderGeometry(.075, .075, 1.14, 32), visionPostMat, [.55, 1.47, .24]);
+    visionBox("vision-column-clamp", [.27, .28, .25], [.55, 1.58, .24], visionBodyMat);
+    visionBox("vision-camera-crossarm", [.88, .1, .13], [.13, 1.6, .24], visionBodyMat);
+    visionBox("vision-camera-body", [.57, .3, .37], [-.38, 1.51, .24], visionBodyMat);
+    addVisionPart("vision-lens-barrel", new THREE.CylinderGeometry(.105, .13, .22, 28), visionBodyMat, [-.43, 1.26, .24]);
+    addVisionPart("vision-lens-glass", new THREE.CylinderGeometry(.085, .085, .016, 28), visionLensMat, [-.43, 1.14, .24]);
+    const benchRing = addVisionPart("vision-ring-light", new THREE.TorusGeometry(.22, .058, 12, 36), visionBaseMat, [-.43, 1.13, .24]);
+    benchRing.rotation.x = Math.PI / 2;
+    const benchDiffuser = addVisionPart("vision-ring-diffuser", new THREE.TorusGeometry(.2, .014, 8, 36), visionLightMat, [-.43, 1.118, .24]);
+    benchDiffuser.rotation.x = Math.PI / 2;
+    visionBox("vision-camera-indicator", [.08, .03, .012], [-.58, 1.57, .431], cameraIndicatorMat);
+    const cableCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-.17, 1.67, .21), new THREE.Vector3(.04, 2.02, .21),
+      new THREE.Vector3(.48, 2.05, .22), new THREE.Vector3(.57, 1.82, .24),
+    ]);
+    addVisionPart("vision-camera-cable", new THREE.TubeGeometry(cableCurve, 24, .026, 8, false), visionBaseMat, [0, 0, 0]);
 
     addSceneBox([1.45, .42, .75], [-6.15, -.08, -6.15], blockMat);
     addSceneBox([1.55, .13, .85], [-6.15, .22, -6.15], roofMat);
@@ -606,9 +763,73 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
       };
     };
 
+    // 辅助机械臂参与场景中的取放工件；未接入独立设备数据。
+    const addAuxiliaryRobot = (name, position, bandColor) => {
+      const shellMat = new THREE.MeshStandardMaterial({ color: 0xe5eaed, roughness: .38, metalness: .2 });
+      const linkMat = new THREE.MeshStandardMaterial({ color: 0xbec8cd, roughness: .3, metalness: .48 });
+      const bandMat = new THREE.MeshStandardMaterial({ color: bandColor, roughness: .32, metalness: .18 });
+      const jointMat = new THREE.MeshStandardMaterial({ color: 0x26333a, roughness: .48, metalness: .35 });
+      const root = new THREE.Group();
+      root.name = name;
+      root.userData.visualOnly = true;
+      root.position.set(position[0], -.35, position[1]);
+      scene.add(root);
+
+      const addPart = (parent, geometry, material, position, partName) => {
+        const part = new THREE.Mesh(geometry, material);
+        part.name = partName;
+        part.position.set(...position);
+        part.castShadow = true;
+        part.receiveShadow = true;
+        parent.add(part);
+        return part;
+      };
+      addPart(root, new THREE.CylinderGeometry(.4, .43, .09, 32), jointMat, [0, .045, 0], "base");
+      addPart(root, new THREE.CylinderGeometry(.29, .34, .37, 32), shellMat, [0, .27, 0], "pedestal");
+      addPart(root, new THREE.CylinderGeometry(.3, .3, .06, 32), bandMat, [0, .48, 0], "base-band");
+
+      const yaw = new THREE.Group();
+      yaw.name = "base-yaw";
+      yaw.position.y = .51;
+      root.add(yaw);
+      const shoulder = new THREE.Group();
+      shoulder.name = "shoulder-pivot";
+      shoulder.position.y = .18;
+      yaw.add(shoulder);
+      const jointGeometry = new THREE.CylinderGeometry(.23, .23, .3, 32);
+      const shoulderJoint = addPart(shoulder, jointGeometry, shellMat, [0, 0, 0], "shoulder-joint");
+      shoulderJoint.rotation.x = Math.PI / 2;
+      addPart(shoulder, new THREE.CylinderGeometry(.14, .17, .79, 24), linkMat, [0, .395, 0], "upper-arm");
+      addPart(shoulder, new THREE.CylinderGeometry(.14, .14, .09, 24), bandMat, [0, .65, 0], "upper-band");
+
+      const elbow = new THREE.Group();
+      elbow.name = "elbow-pivot";
+      elbow.position.y = .79;
+      shoulder.add(elbow);
+      const elbowJoint = addPart(elbow, new THREE.CylinderGeometry(.2, .2, .28, 32), shellMat, [0, 0, 0], "elbow-joint");
+      elbowJoint.rotation.x = Math.PI / 2;
+      addPart(elbow, new THREE.CylinderGeometry(.105, .13, .73, 24), linkMat, [0, .365, 0], "forearm");
+      const wrist = new THREE.Group();
+      wrist.name = "wrist-pivot";
+      wrist.position.y = .73;
+      elbow.add(wrist);
+      const wristJoint = addPart(wrist, new THREE.CylinderGeometry(.15, .15, .22, 24), shellMat, [0, 0, 0], "wrist-joint");
+      wristJoint.rotation.x = Math.PI / 2;
+      addPart(wrist, new THREE.CylinderGeometry(.1, .1, .12, 24), jointMat, [0, .14, 0], "tool-flange");
+      addPart(wrist, new THREE.BoxGeometry(.27, .1, .21), jointMat, [0, .24, 0], "gripper");
+      const fingerA = addPart(wrist, new THREE.BoxGeometry(.05, .2, .05), linkMat, [0, .37, -.11], "gripper-finger-left");
+      const fingerB = addPart(wrist, new THREE.BoxGeometry(.05, .2, .05), linkMat, [0, .37, .11], "gripper-finger-right");
+      return { root, yaw, shoulder, elbow, wrist, fingerA, fingerB };
+    };
+
     const feederCell = addBarFeeder();
     const robotCell = addRobotCell();
+    const auxiliaryRobots = [
+      addAuxiliaryRobot("infeed-assist-robot", [-6.35, 1], 0xd48720),
+      addAuxiliaryRobot("inspection-assist-robot", [7.8, 2.25], 0x1d7183),
+    ];
     const inspection = createEquator300();
+    inspection.workpiece.name = "inspectionWorkpiece";
     inspection.root.position.set(workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]);
     scene.add(inspection.root);
     addMachineHalo("RENISHAW-EQUATOR300-001", [workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]], .95);
@@ -809,9 +1030,13 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
       return part;
     };
 
-    const rawParts = [createRawPart(0), createRawPart(.48)];
+    const rawParts = [createRawPart(0)];
     const finishedParts = [createFinishedPart(.05), createFinishedPart(.34), createFinishedPart(.68)];
     const carriedScrew = createScrewPart(0, cutMetalMat);
+    const inspectionTransferPart = createScrewPart(0, cutMetalMat);
+    inspectionTransferPart.name = "inspectionTransferPart";
+    inspectionTransferPart.scale.setScalar(.72);
+    inspectionTransferPart.visible = false;
     if (robotCell?.toolCarrier) {
       robotCell.toolCarrier.add(carriedScrew);
       carriedScrew.position.set(0, -.35, 0);
@@ -855,17 +1080,19 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
     addBin(boxPosition, boxMat, "合格品");
     addBin(rejectPosition, rejectMat, "待处理");
 
-    const boxedScrews = Array.from({ length: 9 }, (_, index) => {
-      const screw = createScrewPart(index / 9, cutMetalMat);
-      screw.position.set(
-        boxPosition.x - .28 + (index % 3) * .22,
-        boxPosition.y + .16 + Math.floor(index / 3) * .035,
-        boxPosition.z - .2 + Math.floor(index / 3) * .18,
-      );
-      screw.rotation.set(0, 0, 0);
-      screw.scale.setScalar(.72);
-      return screw;
-    });
+    const boxedScrews = [boxPosition, rejectPosition].map((bin, binIndex) =>
+      Array.from({ length: 9 }, (_, index) => {
+        const screw = createScrewPart(index / 9, cutMetalMat);
+        screw.name = binIndex === 0 ? "qualifiedBoxPart" : "reworkBoxPart";
+        screw.position.set(
+          bin.x - .28 + (index % 3) * .22,
+          bin.y + .16 + Math.floor(index / 3) * .035,
+          bin.z - .2 + Math.floor(index / 3) * .18,
+        );
+        screw.scale.setScalar(.72);
+        screw.visible = false;
+        return screw;
+      }));
     const chips = Array.from({ length: 18 }, (_, index) => {
       const spark = index < 3;
       const material = spark ? new THREE.MeshBasicMaterial({ color: 0xffba63 }) : chipMat;
@@ -900,10 +1127,6 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
     const toolLiftPosition = new THREE.Vector3(.1, 1.42, 1.12);
     const toolInspectHoverPosition = toRobotLocal(workshopLayout.inspection, 1.13);
     const toolInspectDropPosition = toRobotLocal(workshopLayout.inspection, .58);
-    const toolQualifiedHoverPosition = toRobotLocal(workshopLayout.qualified, 1.25);
-    const toolQualifiedDropPosition = toRobotLocal(workshopLayout.qualified, .95);
-    const toolReworkHoverPosition = toRobotLocal(workshopLayout.rework, 1.25);
-    const toolReworkDropPosition = toRobotLocal(workshopLayout.rework, .95);
     const handoffScrew = finishedParts[0];
     const tempA = new THREE.Vector3();
     const tempB = new THREE.Vector3();
@@ -948,6 +1171,18 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
       return tempA.copy(tempB).lerp(tempC, progress);
     };
     const easeInOut = (value) => value * value * (3 - 2 * value);
+    const progressBetween = (cycle, start, end) => easeInOut(Math.max(0, Math.min(1, (cycle - start) / (end - start))));
+    const infeedHome = new THREE.Vector3(-6.35, 1.4, 1);
+    const infeedPickHover = new THREE.Vector3(-5.68, .9, .72);
+    const infeedPickTool = new THREE.Vector3(-5.68, .46, .72);
+    const infeedPlaceHover = new THREE.Vector3(-5.63, 1.53, .5);
+    const infeedPlaceTool = new THREE.Vector3(-5.63, 1.38, .5);
+    const infeedPlacedPart = new THREE.Vector3(-5.63, 1, .5);
+    const outputHome = new THREE.Vector3(7.8, 1.4, 2.25);
+    const outputPickHover = new THREE.Vector3(7.6, .85, 1);
+    const outputPickTool = new THREE.Vector3(7.6, .4, 1);
+    const outputBinHover = [boxPosition, rejectPosition].map((bin) => new THREE.Vector3(bin.x, .85, bin.z));
+    const outputBinTool = [boxPosition, rejectPosition].map((bin) => new THREE.Vector3(bin.x, .45, bin.z));
     const handoffPickWorld = new THREE.Vector3(workshopLayout.pickup[0], .08, workshopLayout.pickup[1]);
     const armUp = new THREE.Vector3(0, 1, 0);
     const shoulderPoint = new THREE.Vector3(0, .7, 0);
@@ -975,6 +1210,24 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
       robotCell.wristBand.position.copy(target).addScaledVector(armUp, -.12);
       robotCell.toolCarrier.position.copy(target);
     };
+    const poseAuxiliaryRobot = (cell, target, gripping) => {
+      const dx = target.x - cell.root.position.x;
+      const dz = target.z - cell.root.position.z;
+      const radial = Math.hypot(dx, dz);
+      const vertical = target.y - (cell.root.position.y + .69);
+      const reach = Math.max(.061, Math.min(1.519, Math.hypot(radial, vertical)));
+      const upper = .79;
+      const fore = .73;
+      const shoulderAngle = Math.atan2(radial, vertical)
+        - Math.acos(Math.max(-1, Math.min(1, (upper * upper + reach * reach - fore * fore) / (2 * upper * reach))));
+      const elbowAngle = Math.atan2(radial - upper * Math.sin(shoulderAngle), vertical - upper * Math.cos(shoulderAngle));
+      cell.yaw.rotation.y = Math.atan2(-dz, dx);
+      cell.shoulder.rotation.z = -shoulderAngle;
+      cell.elbow.rotation.z = shoulderAngle - elbowAngle;
+      cell.wrist.rotation.z = Math.PI + elbowAngle;
+      cell.fingerA.position.z = gripping ? -.07 : -.11;
+      cell.fingerB.position.z = gripping ? .07 : .11;
+    };
 
     let frameId = 0;
     const animate = () => {
@@ -985,7 +1238,7 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
       const alertTime = now * .001;
       const cutCycle = (Math.sin(time * 1.05) + 1) / 2;
       const lineCycle = (time * .18) % 1;
-      const robotCycle = (time % 12) / 12;
+      const robotCycle = (time % ROBOT_CYCLE_SECONDS) / ROBOT_CYCLE_SECONDS;
 
       const machining = robotCycle < .38;
       spindleChuck.rotation.x = machining ? time * 8.6 : 0;
@@ -1010,15 +1263,58 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
         feederCell.feederRollers.forEach((roller) => {
           roller.rotateY(-10.8 * delta);
         });
-        feederCell.pusher.position.x = -1.72 + ((time * .32) % 1) * 3.18;
+        const feedStroke = robotCycle < .78 ? progressBetween(robotCycle, .52, .78)
+          : 1 - progressBetween(robotCycle, .9, 1);
+        feederCell.pusher.position.x = -1.72 + feedStroke * 3.18;
       }
+      const infeedRobot = auxiliaryRobots[0];
+      let infeedTarget = infeedHome;
+      if (robotCycle >= .12 && robotCycle < .18) {
+        infeedTarget = moveBetween(infeedHome, infeedPickHover, progressBetween(robotCycle, .12, .18));
+      } else if (robotCycle >= .18 && robotCycle < .22) {
+        infeedTarget = moveBetween(infeedPickHover, infeedPickTool, progressBetween(robotCycle, .18, .22));
+      } else if (robotCycle >= .22 && robotCycle < .26) {
+        infeedTarget = infeedPickTool;
+      } else if (robotCycle >= .26 && robotCycle < .32) {
+        infeedTarget = moveBetween(infeedPickTool, infeedPickHover, progressBetween(robotCycle, .26, .32));
+      } else if (robotCycle >= .32 && robotCycle < .42) {
+        infeedTarget = moveBetween(infeedPickHover, infeedPlaceHover, progressBetween(robotCycle, .32, .42));
+      } else if (robotCycle >= .42 && robotCycle < .48) {
+        infeedTarget = moveBetween(infeedPlaceHover, infeedPlaceTool, progressBetween(robotCycle, .42, .48));
+      } else if (robotCycle >= .48 && robotCycle < .52) {
+        infeedTarget = infeedPlaceTool;
+      } else if (robotCycle >= .52 && robotCycle < .62) {
+        infeedTarget = moveBetween(infeedPlaceTool, infeedHome, progressBetween(robotCycle, .52, .62));
+      }
+      poseAuxiliaryRobot(infeedRobot, infeedTarget, robotCycle >= .22 && robotCycle < .5);
+
+      // 检测后交接到两个示意分拣箱；交替路径不代表真实测量结论。
+      const outputToRework = Math.floor(time / ROBOT_CYCLE_SECONDS) % 2 === 1;
+      const outputBinIndex = outputToRework ? 1 : 0;
+      const outputRobot = auxiliaryRobots[1];
+      let outputTarget = outputHome;
+      if (robotCycle >= .66 && robotCycle < .72) {
+        outputTarget = moveBetween(outputHome, outputPickHover, progressBetween(robotCycle, .66, .72));
+      } else if (robotCycle >= .72 && robotCycle < .76) {
+        outputTarget = moveBetween(outputPickHover, outputPickTool, progressBetween(robotCycle, .72, .76));
+      } else if (robotCycle >= .76 && robotCycle < .78) {
+        outputTarget = outputPickTool;
+      } else if (robotCycle >= .78 && robotCycle < .82) {
+        outputTarget = moveBetween(outputPickTool, outputPickHover, progressBetween(robotCycle, .78, .82));
+      } else if (robotCycle >= .82 && robotCycle < .9) {
+        outputTarget = moveBetween(outputPickHover, outputBinHover[outputBinIndex], progressBetween(robotCycle, .82, .9));
+      } else if (robotCycle >= .9 && robotCycle < .94) {
+        outputTarget = moveBetween(outputBinHover[outputBinIndex], outputBinTool[outputBinIndex], progressBetween(robotCycle, .9, .94));
+      } else if (robotCycle >= .94 && robotCycle < .96) {
+        outputTarget = outputBinTool[outputBinIndex];
+      } else if (robotCycle >= .96) {
+        outputTarget = moveBetween(outputBinTool[outputBinIndex], outputHome, progressBetween(robotCycle, .96, 1));
+      }
+      poseAuxiliaryRobot(outputRobot, outputTarget, robotCycle >= .76 && robotCycle < .96);
       if (robotCell) {
-        // 一个周期包含两次机器人交接：输送线 → 检测台，检测台 → 一个示意性出料箱。
-        const outputToRework = Math.floor(time / 12) % 2 === 1;
-        const binHover = outputToRework ? toolReworkHoverPosition : toolQualifiedHoverPosition;
-        const binDrop = outputToRework ? toolReworkDropPosition : toolQualifiedDropPosition;
-        const carrying = (robotCycle >= .25 && robotCycle < .56) || (robotCycle >= .83 && robotCycle < .96);
-        const gripping = (robotCycle >= .22 && robotCycle < .6) || (robotCycle >= .78 && robotCycle < .97);
+        // 原有机械臂只负责出料线 → 检测台，给检测侧机械臂留出取件时间。
+        const carrying = robotCycle >= .25 && robotCycle < .56;
+        const gripping = robotCycle >= .22 && robotCycle < .6;
         let toolPosition = toolHomePosition;
         if (robotCycle < .1) {
           toolPosition = toolHomePosition;
@@ -1038,22 +1334,8 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
           toolPosition = toolInspectDropPosition;
         } else if (robotCycle < .66) {
           toolPosition = moveBetween(toolInspectDropPosition, toolInspectHoverPosition, easeInOut((robotCycle - .6) / .06));
-        } else if (robotCycle < .72) {
-          toolPosition = toolInspectHoverPosition;
-        } else if (robotCycle < .78) {
-          toolPosition = moveBetween(toolInspectHoverPosition, toolInspectDropPosition, easeInOut((robotCycle - .72) / .06));
-        } else if (robotCycle < .83) {
-          toolPosition = toolInspectDropPosition;
-        } else if (robotCycle < .87) {
-          toolPosition = moveBetween(toolInspectDropPosition, toolInspectHoverPosition, easeInOut((robotCycle - .83) / .04));
-        } else if (robotCycle < .93) {
-          toolPosition = moveOverArc(toolInspectHoverPosition, toolHomePosition, binHover, easeInOut((robotCycle - .87) / .06));
-        } else if (robotCycle < .96) {
-          toolPosition = moveBetween(binHover, binDrop, easeInOut((robotCycle - .93) / .03));
-        } else if (robotCycle < .975) {
-          toolPosition = binDrop;
-        } else {
-          toolPosition = moveOverArc(binDrop, binHover, toolHomePosition, easeInOut((robotCycle - .975) / .025));
+        } else if (robotCycle < .74) {
+          toolPosition = moveBetween(toolInspectHoverPosition, toolHomePosition, progressBetween(robotCycle, .66, .74));
         }
 
         poseRobot(toolPosition);
@@ -1061,13 +1343,19 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
         robotCell.fingerB.position.z = gripping ? -.07 : -.14;
         carriedScrew.visible = carrying;
       }
-      rawParts.forEach((part) => {
-        const progress = (time * .2 + part.userData.offset) % 1;
-        const stagedProgress = progress > .78 ? .78 + (progress - .78) * .18 : progress;
-        pointOnMotionPath(rawMotionPath, stagedProgress, tempB);
-        part.position.copy(tempB);
-        part.rotation.x = time * 2.5;
-      });
+      const rawPart = rawParts[0];
+      rawPart.visible = robotCycle < .78;
+      if (robotCycle < .22) {
+        pointOnMotionPath(rawMotionPath, Math.min(1, robotCycle / .18), tempB);
+        rawPart.position.copy(tempB);
+      } else if (robotCycle < .48) {
+        infeedRobot.wrist.getWorldPosition(rawPart.position);
+        rawPart.position.y -= .38;
+      } else if (robotCycle < .78) {
+        rawPart.position.copy(infeedPlacedPart);
+        rawPart.position.x += progressBetween(robotCycle, .52, .78) * 2.74;
+      }
+      rawPart.rotation.x = time * 2.5;
 
       if (handoffScrew) {
         if (robotCycle < .25) {
@@ -1077,8 +1365,12 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
           handoffScrew.visible = false;
         }
       }
-      // 交替路径仅用于展示流程，不代表实际测量的合格/不合格结论。
-      inspection.workpiece.visible = robotCycle >= .56 && robotCycle < .83;
+      inspection.workpiece.visible = robotCycle >= .56 && robotCycle < .78;
+      inspectionTransferPart.visible = robotCycle >= .78 && robotCycle < .96;
+      if (inspectionTransferPart.visible) {
+        outputRobot.wrist.getWorldPosition(inspectionTransferPart.position);
+        inspectionTransferPart.position.y -= .38;
+      }
 
       finishedParts.slice(1).forEach((part) => {
         const progress = (time * .17 + part.userData.offset) % 1;
@@ -1089,7 +1381,9 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
         part.rotation.y = Math.sin(time * 1.6 + part.userData.offset) * .08;
       });
 
-      boxedScrews.forEach((screw, index) => { screw.visible = index < 3 + Math.floor(time / 12) % 7; });
+      const completedTransfers = Math.floor(time / ROBOT_CYCLE_SECONDS) + (robotCycle >= .96 ? 1 : 0);
+      boxedScrews[0].forEach((screw, index) => { screw.visible = index < Math.min(9, Math.ceil(completedTransfers / 2)); });
+      boxedScrews[1].forEach((screw, index) => { screw.visible = index < Math.min(9, Math.floor(completedTransfers / 2)); });
 
       chips.forEach((chip) => {
         const progress = (time * 1.4 + chip.userData.offset) % 1;

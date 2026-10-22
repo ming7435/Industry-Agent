@@ -8,7 +8,7 @@ import pytest
 
 from app.vision.evaluation import file_sha256, pixel_sha256
 from app.vision.yolo_evaluation import (
-    aggregate_results, bbox_iou, generate_yolo_dataset, load_yolo_manifest, match_detections,
+    aggregate_results, bbox_iou, class_aware_localization, generate_yolo_dataset, load_yolo_manifest, match_detections,
     build_evaluation_freeze, verify_evaluation_freeze, rescore_report, compare_evaluation_reports,
     evaluate_detector,
 )
@@ -46,6 +46,21 @@ def test_label_agnostic_spatial_metric_preserves_category_labels():
     result = match_detections([gt()], [prediction(label='pitted_surface')])
     assert result['tp'] == 1
     assert result['predictions'][0]['label'] == 'pitted_surface'
+
+
+def test_class_aware_localization_requires_both_correct_label_and_position():
+    row = {'ground_truth': [gt()], 'predictions': [
+        prediction(label='wrong', confidence=.9),
+        prediction(label='low_contrast', confidence=.8),
+        prediction(label='low_contrast', confidence=.7),
+        prediction((40, 40, 50, 50), confidence=.6, label='low_contrast'),
+    ]}
+    assert match_detections(row['ground_truth'], row['predictions'])['tp'] == 1
+    report = class_aware_localization([row], confidence=.65)
+    assert (report['tp'], report['fn'], report['fp']) == (1, 0, 2)
+    assert report['by_class']['wrong']['fp'] == 1
+    assert report['by_class']['low_contrast']['tp'] == 1
+    assert report['f1'] == pytest.approx(.5)
 
 
 def test_exact_iou_boundary_matches_without_rounding_or_category_equivalence():

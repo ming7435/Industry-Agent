@@ -30,26 +30,28 @@ QUALITY_VISION_ROOT=.runtime/quality-vision
 
 ### 当前数据与模型
 
-当前外观检测采用公开塑料齿轮数据的固定240张子集（160张端面、80张齿面），保留16类原始缺陷标签和651个矩形框。来源：[作者仓库](https://github.com/fangandyim/Plastic-Gear-Surface-Defect-Dataset)、[Kaggle数据页](https://www.kaggle.com/datasets/yimingfang1994/plastic-gear-surface-defect-dataset)。完整源数据为1165张，本次未声称使用全集。平台及LICENSE写Apache2，但作者README限定非商业学术研究；本地仅作研究验证，不推定商业授权。
+当前 v3 外观模型采用公开塑料齿轮数据的1165张源图，排除6张重复冲突图并隔离原测试组74张后，使用1085张做分组训练、校准与全新测试，保留16类原始缺陷标签。v1/v2 使用的是固定240张子集（160张端面、80张齿面，651个矩形框）。来源：[作者仓库](https://github.com/fangandyim/Plastic-Gear-Surface-Defect-Dataset)、[Kaggle数据页](https://www.kaggle.com/datasets/yimingfang1994/plastic-gear-surface-defect-dataset)。平台及LICENSE写Apache2，但作者README限定非商业学术研究；本地仅作研究验证，不推定商业授权。
 
 旧金属纹理合成模型和钢材YOLOv8模型已从运行清单移除，不会出现在页面或参与推理。保留通用ResNet18骨干，用于用户另行上传真实良品建立PatchCore记忆库。当前齿轮子集全部带缺陷，没有已确认正常齿轮，因此不能建立正常记忆库，也不能统计正常图误报率。
 
 部署配置：
 
 ```dotenv
-QUALITY_YOLO_WEIGHTS=L:/industry_agent/.runtime/quality-models/yolo11-gear-v1/best.pt
-QUALITY_YOLO_METADATA=L:/industry_agent/.runtime/quality-models/yolo11-gear-v1/model.json
+QUALITY_YOLO_WEIGHTS=L:/industry_agent/.runtime/quality-models/yolo11-gear-v3/best.pt
+QUALITY_YOLO_METADATA=L:/industry_agent/.runtime/quality-models/yolo11-gear-v3/model.json
 QUALITY_PATCHCORE_BACKBONE_WEIGHTS=L:/industry_agent/.runtime/quality-models/backbones/resnet18-f37072fd.pth
 QUALITY_PATCHCORE_PRESET_DIR=
 QUALITY_PATCHCORE_GEAR_PRESET_DIR=L:/industry_agent/.runtime/quality-models/patchcore-gear-v1
 QUALITY_VISION_AUTO_INBOX_DIR=L:/industry_agent/.runtime/quality-auto-inbox
 QUALITY_VISION_DATA_MODE=gear
-QUALITY_VISION_DATASET_MANIFEST=L:/industry_agent/output/gear-dataset/prepared/manifest.json
+QUALITY_VISION_DATASET_MANIFEST=L:/industry_agent/output/gear-full-dataset/prepared/manifest.json
 ```
 
-服务校验权重摘要，页面展示实际模型名称和原始覆盖类别；模型尚在训练或不可用时，检测按钮不会启用。数据和评估证据保存在 `output/gear-dataset/`。
+服务校验权重摘要，页面展示实际模型名称和原始覆盖类别；模型尚在训练或不可用时，检测按钮不会启用。初始子集证据保存在 `output/gear-dataset/`，扩充模型的划分和评估证据保存在 `output/gear-full-dataset/` 与 `output/gear-yolo-full-v1/`。
 
-### 本地目录自动检测（无工业相机时）
+### 本地目录自动检测（尚未接入实体相机）
+
+车间三维视图已在机床出料滚筒上方展示工业相机、立柱支架和环形补光灯，镜头对准输送线中心。当前它是工位示意模型，不会从浏览器场景生成检测图片；实际取图仍需上传图片，或由采集程序写入下述本地目录。
 
 配置 `QUALITY_VISION_AUTO_INBOX_DIR` 并重启 Agent Service 后，服务持续监听其 `incoming` 子目录。采集程序把完整的 PNG/JPEG/WebP 图片放入该目录，服务确认文件大小与修改时间稳定后，自动用现成的 `patchcore-gear` 记忆库检测；页面每 2.5 秒读取状态和最新定位图、热力图。无需在页面逐张上传或点击“运行缺陷检测”。采集程序应先写 `.tmp` 文件，再原子改名为图片扩展名；单张上限 4 MiB。
 
@@ -115,7 +117,9 @@ MANTA与当前塑料齿轮YOLO11训练数据的产品及拍摄域不同，必须
 
 训练只读取train，calibration用于选轮和阈值；训练YAML不含test路径。`finalize_gear_yolo.py` 在校准集选择空间F1，冻结权重、数据摘要及全部参数后评估test。报告逐图框、位置命中/漏检/多余框，以及同时满足位置和类别的统计。`normal_samples_available=false` 时，正常图误报率为null，不能写成零误报。
 
-模型元数据的建议置信度、NMS IoU和输入尺寸用于页面及服务，实际值随检测记录保存。训练样本有限、类别长尾明显，这是一版研究基线；真实产品验收需补充正常图、更多罕见缺陷和明确的工件/批次标识。
+模型元数据的建议置信度、NMS IoU和输入尺寸用于页面及服务，实际值随检测记录保存。当前 v3 在全新118张测试图的318个标注缺陷中正确定位155个，其中类别和位置均正确136个，另有86个多余框；同图 v2 分别为100、95、58。v3 对 `burn` 仅命中1/19、`hair` 仅命中1/18，稀有类别仍明显漏检。详细选择过程见 `output/gear-yolo-full-v1/report.md`；原子集 v2 结果见 `output/gear-yolo-refinement-v1/report.md`。这仍是研究模型；真实产品验收需补充正常图、更多罕见缺陷和明确的工件/批次标识。
+
+扩充数据实验使用同一公开来源的1165张图，排除6张内容重复且标注冲突的图片，并隔离原测试组的74张图；其余1085张按数字编号分组为训练779张、校准188张、全新测试118张。三个集合的组和像素摘要均不重叠，新测试组没有出现在原240张子集中。`output/gear-full-dataset/prepared/manifest.json` 保存逐图来源与划分，`output/gear-yolo-full-v1/` 保存训练参数、冻结阈值和评估。校准集的类别与位置联合F1由 v2 的0.413升至 v3 的0.520，空间定位F1由0.440升至0.556；全新测试集的两项F1分别由0.399升至0.487、0.420升至0.555。提升只针对公开数据，不是产线准确率或正常齿轮误报率。
 
 ## 接口与边界
 

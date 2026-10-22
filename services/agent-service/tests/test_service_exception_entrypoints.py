@@ -171,10 +171,10 @@ def test_simulation_final_write_error_keeps_unknown_source_record_and_real_error
     from test_service_exception_cases import CaseTestStore
     client,app,_,_=connected
     app.state.service_exception_recovery=RecoveryManager(CaseTestStore())
-    import app.api.quality_simulation as module
-    original=module.build_simulation_router
     # 保留真实 Agent 路由；只在测试传输适配器的最终写入返回处模拟响应丢失。
-    endpoint=next(route.endpoint for route in app.routes if getattr(route,'path','')=='/api/quality/simulation/detect')
+    routes=(nested for wrapper in app.routes
+            for nested in getattr(getattr(wrapper,'original_router',None),'routes',[wrapper]))
+    endpoint=next(route.endpoint for route in routes if getattr(route,'path','')=='/api/quality/simulation/detect')
     context=next(cell.cell_contents for cell in endpoint.__closure__ if callable(cell.cell_contents) and getattr(cell.cell_contents,'__name__','')=='context')
     factory=next(cell.cell_contents for cell in context.__closure__ if isinstance(cell.cell_contents,type))
     request=factory.request

@@ -144,6 +144,7 @@ Linux Docker 默认没有 `host.docker.internal` 时，可把 `SKILL_SANDBOX_MOD
 
 - 环境：Windows + Docker Desktop，OpenSandbox Server 1.1.x，Docker runtime
 - `instruction_preview` 与 `diagnosis` 两种模式均通过真实沙箱执行，返回 `ok: true`
+- 专家中心 API 的 `/skills/{agent}/{name}/test` → `/tests/{test_id}` 完整链路也已在临时技能目录、临时回执目录下验证：诊断和说明试读均返回 `completed`，未发布技能或写入生产记录。可用 `RUN_LIVE_SKILL_SANDBOX=1` 运行 `services/agent-service/tests/test_skill_sandbox_live.py` 复核。
 - 沙箱内可连通 `host.docker.internal:8041`；`example.com:80` 被 egress 策略拒绝
 - 沙箱销毁后无残留容器
 - 首次创建因拉取 execd/egress 镜像约 2~5 分钟；镜像预热后约 2 秒

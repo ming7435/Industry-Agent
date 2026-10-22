@@ -87,3 +87,7 @@ part_quality与尺寸技能共选；闭环operation仅受私有QUALITY_CLOSURE_A
 | `evidence` | 证据、异常与安全边界 | 需要确认证据来源、处理缺失与冲突、或核对权限与安全边界时读取。 |
 | `contract` | 输入契约与真实示例 | 需要构造请求、核对字段、验证返回结构或确认前置条件时读取。 |
 | `source` | 参考实现索引 | 需要定位真实代码实现、测试或数据模型时读取。 |
+
+## 独立运行
+
+复制本目录后，可运行 `python scripts/run.py --check`，或使用 `python scripts/run.py --input task.json --model-url http://127.0.0.1:8040 --tool-script scripts/mcp_adapter.py` 执行业务任务。输入字段见 `references/contract.md`；真实工具连接与限制见 `references/standalone.md`。

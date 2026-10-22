@@ -169,13 +169,32 @@ test('匿名监控的四个工位、输送滚轮及工件在整线停机时冻�
   const view = await open();
   try {
     const first = await read(view.page);
-    await view.page.clock.runFor(7300);
+    await view.page.clock.runFor(5000);
     const moving = await read(view.page);
     for (const id of [definitions[0][0], definitions[1][0], definitions[2][0], 'EQUATOR300-VISUAL']) {
       assert.ok(selected(first, device(id)).length > 0, `${id} must be present in the real scene`);
       assert.notDeepEqual(selected(moving, device(id)), selected(first, device(id)), `${id} must change while the line runs`);
     }
+    for (const [name, x] of [['infeed-assist-robot', -6.35], ['inspection-assist-robot', 7.8]]) {
+      const descendants = object => object.ancestors.includes(name);
+      const base = first.objects.find(object => object.name === 'base' && descendants(object));
+      assert.ok(base, `${name} has a visible base`);
+      assert.ok(Math.abs(base.world[12] - x) < .01, `${name} stays at its assigned station`);
+      assert.ok(first.objects.filter(descendants).every(object => !object.machine),
+        `${name} is only a visual station and cannot impersonate a connected device`);
+    }
     assert.ok(selected(first, rollers).length >= 8, 'Both conveyor and feeder rollers are observed');
+    const cameraPost = first.objects.find(object => object.name === 'camera-post');
+    const cameraLens = first.objects.find(object => object.name === 'camera-lens-glass');
+    const cameraRing = first.objects.find(object => object.name === 'camera-ring-light');
+    assert.ok(cameraPost && cameraLens && cameraRing, 'Industrial camera and ring light are mounted beside the outgoing conveyor');
+    assert.ok(cameraPost.world[14] < .845, 'Camera stand stays outside the roller path');
+    assert.ok(Math.abs(cameraLens.world[12] - 3.75) < .01 && Math.abs(cameraLens.world[14] - 1.12) < .01,
+      'Camera lens is centered over the outgoing roller path');
+    assert.ok(cameraLens.world[13] > .03, 'Camera lens is above the workpiece path');
+    assert.ok(Math.abs(cameraRing.world[12] - cameraLens.world[12]) < .01
+      && Math.abs(cameraRing.world[14] - cameraLens.world[14]) < .01,
+      'Ring light surrounds the downward camera lens');
     assert.notDeepEqual(selected(moving, rollers), selected(first, rollers));
     assert.notDeepEqual(selected(moving, parts), selected(first, parts));
     await view.page.locator('.factory-map').screenshot({ path: resolve(evidence, 'running.png') });
@@ -207,6 +226,61 @@ test('匿名监控的四个工位、输送滚轮及工件在整线停机时冻�
     assert.ok(phase(resumed) >= phase(stopped) && phase(resumed) - phase(stopped) < 8,
       'Resume continues the held phase instead of skipping through the 15 seconds spent stopped');
     await view.page.locator('.factory-map').screenshot({ path: resolve(evidence, 'resumed.png') });
+    assert.deepEqual(view.writes, []); assert.deepEqual(view.errors, []);
+  } finally { await view.context.close(); }
+});
+
+test('辅助机械臂把原料送入送料机，并把检测件转运到分拣箱', async () => {
+  const view = await open();
+  const named = (snapshot, name) => snapshot.objects.find(object => object.name === name);
+  const wrist = (snapshot, arm) => snapshot.objects.find(object => object.name === 'wrist-pivot' && object.ancestors.includes(arm));
+  const nearGripper = (part, joint) => Math.hypot(part.world[12] - joint.world[12],
+    part.world[13] - (joint.world[13] - .38), part.world[14] - joint.world[14]);
+  try {
+    const start = await read(view.page);
+    assert.equal(named(start, 'inspectionWorkpiece').pose.at(-1), false);
+    const advanceToCycle = async phase => {
+      const current = named(await read(view.page), 'rawBarStock').rotation[0] / 2.5;
+      const robotCycleSeconds = 8;
+      let target = Math.floor(current / robotCycleSeconds) * robotCycleSeconds + phase * robotCycleSeconds;
+      if (target <= current + .05) target += robotCycleSeconds;
+      await view.page.clock.runFor(Math.round((target - current) * 1000));
+      return read(view.page);
+    };
+    const loading = await advanceToCycle(.24);
+    const raw = named(loading, 'rawBarStock');
+    assert.equal(raw.pose.at(-1), true, 'Raw stock remains visible while the infeed arm carries it');
+    assert.ok(nearGripper(raw, wrist(loading, 'infeed-assist-robot')) < .08,
+      'The raw stock follows the infeed gripper instead of moving independently');
+    assert.ok(Math.hypot(raw.world[12] + 5.68, raw.world[14] - .72) < .08,
+      'The infeed gripper picks the stock from the end of the incoming conveyor');
+
+    const measuring = await advanceToCycle(.6);
+    assert.equal(named(measuring, 'inspectionWorkpiece').pose.at(-1), true,
+      'The primary arm leaves a part on the inspection table');
+    assert.equal(named(measuring, 'inspectionTransferPart').pose.at(-1), false);
+    const fedStock = named(measuring, 'rawBarStock');
+    assert.ok(fedStock.world[12] > -5.63 && Math.abs(fedStock.world[13] - 1) < .05
+      && Math.abs(fedStock.world[14] - .5) < .05,
+    'The stock has been placed on the feeder and advances with its pusher');
+
+    const unloading = await advanceToCycle(.84);
+    const transferred = named(unloading, 'inspectionTransferPart');
+    assert.equal(named(unloading, 'inspectionWorkpiece').pose.at(-1), false);
+    assert.equal(transferred.pose.at(-1), true, 'The inspection-side arm is carrying the measured part');
+    assert.ok(nearGripper(transferred, wrist(unloading, 'inspection-assist-robot')) < .08,
+      'The inspected part follows the inspection-side gripper');
+
+    const dropping = await advanceToCycle(.92);
+    const outputWrist = wrist(dropping, 'inspection-assist-robot');
+    assert.ok(Math.hypot(outputWrist.world[12] - 8.45, outputWrist.world[14] - 3.25) < .12,
+      `The inspection-side gripper reaches the destination bin: ${outputWrist.world[12]}, ${outputWrist.world[14]}, raw phase ${named(dropping, 'rawBarStock').rotation[0]}`);
+    await view.page.locator('.factory-map').screenshot({ path: resolve(evidence, 'robot-arms-transfer.png') });
+    await view.page.clock.runFor(1400);
+    const sorted = await read(view.page);
+    assert.equal(named(sorted, 'inspectionTransferPart').pose.at(-1), false);
+    assert.equal(named(sorted, 'qualifiedBoxPart').pose.at(-1), true,
+      'The finished transfer is represented in the destination bin');
     assert.deepEqual(view.writes, []); assert.deepEqual(view.errors, []);
   } finally { await view.context.close(); }
 });

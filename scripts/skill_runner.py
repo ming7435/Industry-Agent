@@ -102,13 +102,17 @@ def check(package: Path) -> dict:
             findings.append("contract 参考文档缺少一组成对 JSON 示例")
 
     for item in [{"path": package / SKILL_DOCUMENT, "document": document}, *references]:
-        for link in re.findall(r"\]\((L:/[^)]*)\)", item["document"]):
-            if not Path(link).is_file():
+        for link in re.findall(r"\]\(([^)#]+)\)", item["document"]):
+            if link.startswith(("http://", "https://")):
+                continue
+            if not (Path(item["path"]).parent / link).is_file():
                 findings.append("参考实现不存在：%s" % link)
 
     runner = package / "scripts" / "run.py"
     if not runner.is_file():
         findings.append("缺少 scripts/run.py")
+    if not (package / "scripts" / "mcp_adapter.py").is_file():
+        findings.append("缺少 scripts/mcp_adapter.py")
 
     return {"schema": "skill-package-check-v1", "skill": str(package.relative_to(SKILLS_ROOT)).replace("\\", "/"),
             "layout": "directory", "references": [item["name"] for item in references],

@@ -7,11 +7,11 @@ order: 4
 
 ## 参考实现（References）
 
-- [app/agents/diagnosis/agent.py](L:/industry_agent/services/agent-service/app/agents/diagnosis/agent.py)
-- [app/agents/diagnosis/graph.py](L:/industry_agent/services/agent-service/app/agents/diagnosis/graph.py)
-- [app/agents/diagnosis/tool_policy.py](L:/industry_agent/services/agent-service/app/agents/diagnosis/tool_policy.py)
-- [app/agents/diagnosis/schemas.py](L:/industry_agent/services/agent-service/app/agents/diagnosis/schemas.py)
-- [app/agents/diagnosis/validator.py](L:/industry_agent/services/agent-service/app/agents/diagnosis/validator.py)
-- [app/api/schemas/agent.py](L:/industry_agent/services/agent-service/app/api/schemas/agent.py)
-- [app/skills/registry.py](L:/industry_agent/services/agent-service/app/skills/registry.py)
-- [app/tools/registry.py](L:/industry_agent/services/agent-service/app/tools/registry.py)
+- [app/agents/diagnosis/agent.py](../../../../agents/diagnosis/agent.py)
+- [app/agents/diagnosis/graph.py](../../../../agents/diagnosis/graph.py)
+- [app/agents/diagnosis/tool_policy.py](../../../../agents/diagnosis/tool_policy.py)
+- [app/agents/diagnosis/schemas.py](../../../../agents/diagnosis/schemas.py)
+- [app/agents/diagnosis/validator.py](../../../../agents/diagnosis/validator.py)
+- [app/api/schemas/agent.py](../../../../api/schemas/agent.py)
+- [app/skills/registry.py](../../../../skills/registry.py)
+- [app/tools/registry.py](../../../../tools/registry.py)

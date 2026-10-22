@@ -47,13 +47,19 @@ class SkillEditError(Exception):
 
 
 def _skill_revision(path: Path, content: bytes | None = None) -> str:
-    """版本号覆盖 SKILL.md 与 references，参考文档变化也必须触发刷新和重测。"""
+    """版本号覆盖 SKILL.md、references 和可执行业务脚本。"""
 
     digest = sha256()
     digest.update(content if content is not None else path.read_bytes())
     references = path.parent / REFERENCE_DIRECTORY_NAME
     if path.name == SKILL_DOCUMENT_NAME and references.is_dir():
         for item in sorted(references.glob("*.md")):
+            digest.update(b"\0")
+            digest.update(item.read_bytes())
+    if path.name == SKILL_DOCUMENT_NAME:
+        for item in sorted((path.parent / "scripts").glob("*.py")):
+            digest.update(b"\0")
+            digest.update(item.name.encode("utf-8"))
             digest.update(b"\0")
             digest.update(item.read_bytes())
     return digest.hexdigest()

@@ -79,6 +79,7 @@ class SkillDefinition:
     aliases: tuple[str, ...] = ()
     references: tuple[SkillReference, ...] = ()
     layout: str = "flat"
+    script_fingerprint: str = ""
 
     def reference(self, name: str) -> SkillReference | None:
         normalized = str(name or "").strip().lower()
@@ -99,9 +100,17 @@ class SkillDefinition:
         layout: str = "flat",
     ) -> "SkillDefinition":
         name = str(payload.get("name") or path.stem)
+        scripts = (sorted((path.parent / "scripts").glob("*.py"))
+                   if path.name == SKILL_DOCUMENT_NAME else [])
+        script_digest = sha256()
+        for script in scripts:
+            script_digest.update(script.name.encode("utf-8"))
+            script_digest.update(b"\0")
+            script_digest.update(script.read_bytes())
         return cls(
             agent=agent,
             name=name,
+            script_fingerprint=script_digest.hexdigest() if scripts else "",
             aliases=_as_strings(payload.get("aliases")),
             version=str(payload.get("version") or "1.0"),
             goal=str(payload.get("goal") or ""),
@@ -161,7 +170,8 @@ class SkillDefinition:
         """从真正加载的对象取语义指纹，不事后读取可能已更新的文件。"""
         canonical = json.dumps({'metadata': dict(self.metadata), 'document': self.document,
                                 'references': [item.observation() for item in self.references],
-                                'version': self.version, 'goal': self.goal},
+                                'version': self.version, 'goal': self.goal,
+                                'script_fingerprint': self.script_fingerprint},
                                sort_keys=True, ensure_ascii=False, default=str)
         return {'agent': self.agent, 'skill': self.name, 'skill_version': self.version,
                 'skill_fingerprint': sha256(canonical.encode('utf-8')).hexdigest(),
@@ -242,6 +252,7 @@ class SkillRegistry:
             paths.append(document)
             if document.name == SKILL_DOCUMENT_NAME:
                 paths.extend(sorted((document.parent / REFERENCE_DIRECTORY_NAME).glob("*.md")))
+                paths.extend(sorted((document.parent / "scripts").glob("*.py")))
         return paths
 
     def find(self, name: str) -> SkillDefinition | None:
@@ -404,11 +415,12 @@ def _discover_skill_paths(directory: Path) -> list[Path]:
 
 
 def _source_signature(path: Path) -> tuple[Any, ...]:
-    """目录包的文件指纹包含 references，参考文档变化必须让缓存失效。"""
+    """目录包的参考文档和脚本变化都必须让缓存失效。"""
 
     if path.name != SKILL_DOCUMENT_NAME:
         return (str(path), path.stat().st_mtime_ns, path.stat().st_size)
-    files = [path, *sorted((path.parent / REFERENCE_DIRECTORY_NAME).glob("*.md"))]
+    files = [path, *sorted((path.parent / REFERENCE_DIRECTORY_NAME).glob("*.md")),
+             *sorted((path.parent / "scripts").glob("*.py"))]
     return tuple((str(item), item.stat().st_mtime_ns, item.stat().st_size) for item in files)
 
 

@@ -1,15 +1,21 @@
 """Exercise actual configured gear YOLO weights through isolated authenticated API/storage."""
 from pathlib import Path
 from contextlib import ExitStack,contextmanager
-import base64,json,os,secrets,sys
+import argparse,base64,json,os,secrets,sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'services/agent-service'),str(ROOT/'services/agent-service/tests')]
-def main():
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--weights',type=Path,default=ROOT/'.runtime/quality-models/yolo11-gear-v1/best.pt')
+    parser.add_argument('--metadata',type=Path,default=ROOT/'.runtime/quality-models/yolo11-gear-v1/model.json')
+    parser.add_argument('--manifest',type=Path,default=ROOT/'output/gear-dataset/prepared/manifest.json')
+    parser.add_argument('--out',type=Path,default=ROOT/'output/gear-dataset/api-verification')
+    args=parser.parse_args(argv)
     os.environ.update(APP_ENV='testing',PYTHON_DOTENV_DISABLED='1',ULTRALYTICS_SAFE_LOAD='1',YOLO_AUTOINSTALL='false',
-        QUALITY_YOLO_WEIGHTS=str(ROOT/'.runtime/quality-models/yolo11-gear-v1/best.pt'),
-        QUALITY_YOLO_METADATA=str(ROOT/'.runtime/quality-models/yolo11-gear-v1/model.json'),
+        QUALITY_YOLO_WEIGHTS=str(args.weights.resolve(strict=True)),
+        QUALITY_YOLO_METADATA=str(args.metadata.resolve(strict=True)),
         QUALITY_PATCHCORE_PRESET_DIR='',QUALITY_VISION_DATA_MODE='gear',
-        QUALITY_VISION_DATASET_MANIFEST=str(ROOT/'output/gear-dataset/prepared/manifest.json'))
+        QUALITY_VISION_DATASET_MANIFEST=str(args.manifest.resolve(strict=True)))
     from scripts.evaluate_yolo import configure_inference_runtime
     configure_inference_runtime(Path(os.environ['QUALITY_YOLO_WEIGHTS']))
     import pytest
@@ -18,7 +24,7 @@ def main():
     from virtual_production_test_support import production_backend
     from app.api.quality_vision import build_quality_vision_router
     from app.vision.service import VisionService
-    out=ROOT/'output/gear-dataset/api-verification';out.mkdir(exist_ok=False)
+    out=args.out.resolve();out.mkdir(exist_ok=False)
     with ExitStack() as stack:
         mp=stack.enter_context(pytest.MonkeyPatch.context())
         backend_dir=out/'backend';backend_dir.mkdir()

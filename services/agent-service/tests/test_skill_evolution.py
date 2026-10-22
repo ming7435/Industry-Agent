@@ -31,7 +31,7 @@ def manager(tmp_path):
 
 def test_directory_skill_detail_lists_on_demand_references(manager):
     detail = manager.detail('diagnosis', 'alarm_diagnosis_skill')
-    assert {item['name'] for item in detail['references']} == {'reasoning', 'evidence', 'contract', 'source'}
+    assert {item['name'] for item in detail['references']} == {'reasoning', 'evidence', 'contract', 'source', 'standalone'}
 
 
 def model_reply(payload):

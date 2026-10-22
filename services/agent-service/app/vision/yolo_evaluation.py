@@ -80,6 +80,45 @@ def match_detections(ground_truth, predictions, confidence=.25, match_iou=.5):
             'unmatched_gt_indices': sorted(unmatched_gt), 'unmatched_prediction_indices': unmatched_predictions}
 
 
+def class_aware_localization(rows, confidence=.25, match_iou=.5):
+    """Count boxes whose class *and* IoU match on a shared-label dataset.
+
+    Use this only when prediction and ground-truth labels have the same taxonomy.
+    Each prediction and GT instance can be matched at most once.
+    """
+    totals = Counter()
+    per_class = {}
+    for row in rows:
+        truth, predictions = row['ground_truth'], row['predictions']
+        selected = match_detections(truth, predictions, confidence, match_iou)['selected_prediction_indices']
+        unmatched = set(range(len(truth)))
+        totals['gt'] += len(truth)
+        totals['predicted'] += len(selected)
+        for item in truth:
+            per_class.setdefault(item['label'], Counter())['gt'] += 1
+        for index in selected:
+            prediction = predictions[index]
+            label = prediction['label']
+            per_class.setdefault(label, Counter())['predicted'] += 1
+            candidates = [(bbox_iou(truth[target]['bbox'], prediction['bbox']), target)
+                          for target in unmatched if truth[target]['label'] == label]
+            overlap, target = max(candidates, key=lambda pair: (pair[0], -pair[1])) if candidates else (0, None)
+            if target is not None and overlap >= match_iou:
+                unmatched.remove(target)
+                totals['tp'] += 1
+                per_class[label]['tp'] += 1
+    totals['fn'] = totals['gt'] - totals['tp']
+    totals['fp'] = totals['predicted'] - totals['tp']
+    denominator = 2 * totals['tp'] + totals['fn'] + totals['fp']
+    return {'tp': totals['tp'], 'fn': totals['fn'], 'fp': totals['fp'],
+            'gt_instances': totals['gt'], 'predicted_boxes': totals['predicted'],
+            'f1': 2 * totals['tp'] / denominator if denominator else None,
+            'by_class': {label: {'gt': counts['gt'], 'predicted': counts['predicted'],
+                                 'tp': counts['tp'], 'fn': counts['gt'] - counts['tp'],
+                                 'fp': counts['predicted'] - counts['tp']}
+                         for label, counts in sorted(per_class.items())}}
+
+
 def _summary(rows):
     normals = [row for row in rows if row['label'] == 'normal']
     tp = sum(row['matching']['tp'] for row in rows)

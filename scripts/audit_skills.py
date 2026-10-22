@@ -119,12 +119,18 @@ def audit():
                         validate_example(model, json.loads(block))
                     except (ValueError, TypeError, KeyError):
                         findings.append('示例不符合真实输入/输出契约')
-            for reference in re.findall(r'\]\((L:/[^)]*)\)', skill.document + "\n" + reference_text):
-                if not Path(reference).is_file():
-                    findings.append('参考实现不存在：' + reference)
+            for source_path, source_text in [(Path(skill.path), skill.document),
+                                             *((Path(ref.path), ref.document) for ref in skill.references)]:
+                for reference in re.findall(r'\]\(([^)#]+)\)', source_text):
+                    if reference.startswith(('http://', 'https://')):
+                        continue
+                    if not (source_path.parent / reference).is_file():
+                        findings.append('参考实现不存在：' + reference)
             runner = Path(skill.path).parent / 'scripts' / 'run.py'
             if not runner.is_file():
                 findings.append('缺少独立入口：scripts/run.py')
+            if skill.layout == 'directory' and not (runner.parent / 'mcp_adapter.py').is_file():
+                findings.append('缺少业务工具适配器：scripts/mcp_adapter.py')
             permission = tools.guard_call('delete_workorder', {'workorder_id': 'WO-AUDIT'},
                                          context={'agent': agent, 'skills': [skill.name], 'allowed_tools': list(skill.tools)})
             if permission['allow']:
