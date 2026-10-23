@@ -75,7 +75,28 @@ def batch(entries, torch):
     return features,labels,teacher
 
 
-def train(epochs, smoke=False, threads=6):
+def preservation_mask(features, labels, target_indices, torch):
+    """Allow correction of teacher errors at annotated target locations.
+
+    A one-stride halo includes nearby anchors whose boxes overlap the defect.
+    Other classes, unannotated regions and negative images retain preservation.
+    """
+    from ultralytics.utils.tal import make_anchors
+    anchors,strides=make_anchors(features,torch.tensor([8,16,32]),.5)
+    anchors=anchors*strides
+    allowed=torch.ones((features[0].shape[0],1,len(anchors)),dtype=torch.float32)
+    for index,cls,box in zip(labels['batch_idx'],labels['cls'].flatten(),labels['bboxes']):
+        if int(cls) not in target_indices:
+            continue
+        x,y,w,h=box*640
+        halo=strides[:,0]
+        inside=((anchors[:,0]>=x-w/2-halo)&(anchors[:,0]<=x+w/2+halo)&
+                (anchors[:,1]>=y-h/2-halo)&(anchors[:,1]<=y+h/2+halo))
+        allowed[int(index),0,inside]=0
+    return allowed
+
+
+def train(epochs, smoke=False, threads=6, initial=None, run_name=None, exclude_targets=False):
     torch=runtime()
     torch.set_num_threads(threads)
     from ultralytics import YOLO
@@ -84,7 +105,13 @@ def train(epochs, smoke=False, threads=6):
     assert document['initial_sha256']==digest(ACTIVE/'best.pt')
     assert document['dataset_sha256']==digest(DATA/'manifest.json')
     samples=list(document['samples']);assert all(s['source_split']=='train' for s in samples)
-    yolo=YOLO(str(ACTIVE/'best.pt'),task='detect');model=yolo.model.float().eval();head=model.model[-1]
+    initial=Path(initial) if initial else ACTIVE/'best.pt'
+    yolo=YOLO(str(initial),task='detect');model=yolo.model.float().eval();head=model.model[-1]
+    if initial.resolve()!=(ACTIVE/'best.pt').resolve():
+        original=YOLO(str(ACTIVE/'best.pt'),task='detect').model.float().state_dict()
+        assert all(torch.equal(value,original[name]) for name,value in model.state_dict().items()
+                   if not name.startswith(('model.23.cv2.','model.23.cv3.'))), 'Feature cache requires identical frozen backbone'
+        del original
     original_args=model.args
     model.args=SimpleNamespace(box=7.5,cls=.5,dfl=1.5)
     criterion=v8DetectionLoss(model)
@@ -101,14 +128,16 @@ def train(epochs, smoke=False, threads=6):
         negatives=[s for s in samples if s['kind']=='mined_texture_edge_negative'][:2]
         positives=[s for s in samples if s['kind']=='native_target_crop'][:2]
         samples=negatives+positives;epochs=1
-    folder=OUT/('smoke' if smoke else 'training');folder.mkdir(exist_ok=False)
+    folder=OUT/(run_name or ('smoke' if smoke else 'training'));folder.mkdir(exist_ok=False)
     provenance={'created_at':datetime.now(timezone.utc).isoformat(),'epochs':epochs,
-        'initial_sha256':digest(ACTIVE/'best.pt'),'feature_manifest_sha256':digest(OUT/'feature-manifest.json'),
+        'initial_sha256':digest(initial),'initial_weights':str(initial),'teacher_sha256':digest(ACTIVE/'best.pt'),
+        'feature_manifest_sha256':digest(OUT/'feature-manifest.json'),
         'dataset_sha256':digest(DATA/'manifest.json'),'script_sha256':digest(Path(__file__)),
         'trainable':'YOLO box and classification head; frozen backbone/neck and BN running statistics',
         'loss':'Ultralytics task-aligned quality BCE + CIoU/DFL + 0.25 weighted non-target logit preservation',
         'lr_box':.00003,'lr_class':.00015,'batch':2,'seed':SEED,'target_class_weight':2,'cpu_threads':threads,
-        'calibration_used_for_training':False,'test_used_for_training':False,'smoke':smoke}
+        'calibration_used_for_training':False,'test_used_for_training':False,'smoke':smoke,
+        'exclude_target_regions_from_preservation':exclude_targets}
     save(folder/'provenance.json',provenance)
     started=monotonic();history=[]
     for epoch in range(epochs):
@@ -125,6 +154,8 @@ def train(epochs, smoke=False, threads=6):
             detection,items=criterion(predictions,labels)
             student=predictions['scores'][:,keep];teacher=teacher[:,keep]
             weight=teacher.sigmoid()+.0003
+            if exclude_targets:
+                weight=weight*preservation_mask(features,labels,targets,torch)
             preserve=(weight*(student-teacher).square()).sum()/weight.sum().clamp(min=1)
             loss=detection.sum()/len(entries)+.25*preserve
             assert torch.isfinite(loss)
@@ -158,5 +189,11 @@ if __name__=='__main__':
     parser.add_argument('command',choices=('cache','smoke','train'))
     parser.add_argument('--epochs',type=int,default=8)
     parser.add_argument('--threads',type=int,choices=(1,2,4,6),default=6)
+    parser.add_argument('--initial',type=Path)
+    parser.add_argument('--run-name')
+    parser.add_argument('--exclude-target-preservation',action='store_true')
     args=parser.parse_args()
-    cache() if args.command=='cache' else train(args.epochs,args.command=='smoke',args.threads)
+    if args.run_name:
+        assert args.run_name.replace('-','').isalnum()
+    cache() if args.command=='cache' else train(args.epochs,args.command=='smoke',args.threads,
+         args.initial,args.run_name,args.exclude_target_preservation)

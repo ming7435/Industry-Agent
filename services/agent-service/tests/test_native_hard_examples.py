@@ -36,3 +36,18 @@ def test_negative_crop_rejects_partial_defects_and_halo():
     expanded=[{'label':'dirt','bbox':[12,22,48,58]}]
     assert crop_truth(truth,[0,0,17,60])==[]
     assert crop_truth(expanded,[0,0,17,60]) is None
+
+
+def test_preservation_excludes_targets_but_keeps_other_labels_and_negative_images():
+    import torch
+    from scripts.train_yolo_native_hard_examples import preservation_mask
+    features=[torch.empty(3,1,n,n) for n in (80,40,20)]
+    labels={'batch_idx':torch.tensor([0.,1.]),'cls':torch.tensor([[5.],[4.]]),
+            'bboxes':torch.tensor([[.5,.5,.1,.1],[.5,.5,.1,.1]])}
+    weights=preservation_mask(features,labels,[5,8],torch)
+    # Annotation is [288,288,352,352]; P3 anchor (316,316) is inside.
+    inside=39*80+39
+    assert weights[0,0,inside]==0
+    assert weights[0,0,0]==1
+    assert torch.all(weights[1:]==1)
+    assert 0<weights[0].sum()<weights.shape[-1]
