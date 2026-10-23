@@ -4,7 +4,8 @@ import {OrbitControls} from "three/examples/jsm/controls/OrbitControls.js";
 import {createEquator300} from "./equator300.js";
 import {createMotionClock, getMachineMotionState, machineStatus, machineStatusLabel} from "./workshopMotion.mjs";
 
-const ROBOT_CYCLE_SECONDS = 8;
+const ROBOT_CYCLE_SECONDS = 4;
+const VISION_CAMERA_ID = "HIKROBOT-MV-CU060-10GM-001";
 
 // 世界坐标中的工位；分拣箱位于检测侧辅助机械臂的工作范围内。
 const workshopLayout = Object.freeze({
@@ -298,6 +299,7 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
     // 出料滚筒上的视觉检测点：立柱在输送线后侧，镜头正对工件经过的中心线。
     const industrialCamera = new THREE.Group();
     industrialCamera.name = "industrial-camera";
+    industrialCamera.userData.visualOnly = true;
     industrialCamera.position.set(3.75, 0, 0);
     scene.add(industrialCamera);
     const cameraFrameMat = new THREE.MeshStandardMaterial({ color: 0x849399, roughness: .38, metalness: .65 });
@@ -345,7 +347,6 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
     // 照片中的台式视觉检测架：显示屏、立柱相机、环形光和棋盘格标定板。
     const tabletopVision = new THREE.Group();
     tabletopVision.name = "tabletop-vision-station";
-    tabletopVision.userData.visualOnly = true;
     tabletopVision.position.set(-2.2, -.35, 4.75);
     tabletopVision.rotation.y = .12;
     scene.add(tabletopVision);
@@ -398,32 +399,34 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
     monitorCanvas.width = 512;
     monitorCanvas.height = 300;
     const monitorContext = monitorCanvas.getContext("2d");
-    monitorContext.fillStyle = "#e7eeef";
-    monitorContext.fillRect(0, 0, 512, 300);
-    monitorContext.fillStyle = "#20343d";
-    monitorContext.fillRect(0, 0, 512, 33);
-    monitorContext.fillStyle = "#e5f4ee";
-    monitorContext.font = "bold 17px sans-serif";
-    monitorContext.fillText("VISION INSPECTION  ·  4 CAMERAS", 17, 23);
-    for (let index = 0; index < 4; index += 1) {
-      const x = 17 + (index % 2) * 247;
-      const y = 45 + Math.floor(index / 2) * 120;
-      monitorContext.fillStyle = "#9da9aa";
-      monitorContext.fillRect(x, y, 230, 108);
-      monitorContext.fillStyle = "#35434a";
-      for (let piece = 0; piece < 7; piece += 1) {
-        const px = x + 28 + (piece % 4) * 51 + (index % 2) * 5;
-        const py = y + 28 + Math.floor(piece / 4) * 49;
-        monitorContext.beginPath();
-        monitorContext.arc(px, py, 13, 0, Math.PI * 2);
-        monitorContext.fill();
-        monitorContext.fillStyle = "#9da9aa";
-        monitorContext.fillRect(px - 5, py - 5, 10, 10);
-        monitorContext.fillStyle = "#35434a";
-      }
-      monitorContext.fillStyle = "#d9892b";
-      monitorContext.fillRect(x + 175, y + 82, 42, 17);
-    }
+    const drawVisionMonitor = (cameraReady, fps, samplePresent, scanning) => {
+      monitorContext.fillStyle = "#e7eeef";
+      monitorContext.fillRect(0, 0, 512, 300);
+      monitorContext.fillStyle = "#20343d";
+      monitorContext.fillRect(0, 0, 512, 38);
+      monitorContext.fillStyle = "#e5f4ee";
+      monitorContext.font = "bold 17px sans-serif";
+      monitorContext.fillText("VISION SAMPLE STATION", 17, 26);
+      const rows = [
+        ["CAMERA", cameraReady ? "ACQUIRING" : "NO LIVE IMAGE"],
+        ["FRAME RATE", cameraReady && Number.isFinite(fps) ? `${fps.toFixed(1)} fps` : "--"],
+        ["SAMPLE", scanning ? "CAPTURE DEMO" : samplePresent ? "ON STAGE" : "WAITING"],
+        ["QUALITY RESULT", "REQUIRES IMAGE REVIEW"],
+      ];
+      rows.forEach(([label, value], index) => {
+        const y = 58 + index * 57;
+        monitorContext.fillStyle = index % 2 ? "#d6e2e2" : "#f6f9f8";
+        monitorContext.fillRect(14, y, 484, 50);
+        monitorContext.fillStyle = "#4a5e64";
+        monitorContext.font = "bold 15px sans-serif";
+        monitorContext.fillText(label, 29, y + 20);
+        monitorContext.fillStyle = scanning && index === 2 ? "#087f75" : "#1c3037";
+        monitorContext.font = "bold 17px sans-serif";
+        monitorContext.fillText(value, 205, y + 31);
+      });
+    };
+    drawVisionMonitor(false, NaN, false, false);
+    let lastVisionMonitorState = "";
     const monitorTexture = new THREE.CanvasTexture(monitorCanvas);
     monitorTexture.colorSpace = THREE.SRGBColorSpace;
     visionBox("vision-monitor-frame", [1.42, .9, .085], [-.4, 1.43, -.42], visionBodyMat);
@@ -443,12 +446,18 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
     benchRing.rotation.x = Math.PI / 2;
     const benchDiffuser = addVisionPart("vision-ring-diffuser", new THREE.TorusGeometry(.2, .014, 8, 36), visionLightMat, [-.43, 1.118, .24]);
     benchDiffuser.rotation.x = Math.PI / 2;
+    const visionCaptureBeam = addVisionPart("vision-capture-beam", new THREE.CylinderGeometry(.16, .13, .2, 24, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x57e0b1, transparent: true, opacity: .2, depthWrite: false, side: THREE.DoubleSide }), [-.43, 1.01, .24]);
+    visionCaptureBeam.visible = false;
     visionBox("vision-camera-indicator", [.08, .03, .012], [-.58, 1.57, .431], cameraIndicatorMat);
     const cableCurve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(-.17, 1.67, .21), new THREE.Vector3(.04, 2.02, .21),
       new THREE.Vector3(.48, 2.05, .22), new THREE.Vector3(.57, 1.82, .24),
     ]);
     addVisionPart("vision-camera-cable", new THREE.TubeGeometry(cableCurve, 24, .026, 8, false), visionBaseMat, [0, 0, 0]);
+    const visionHitBox = visionBox("vision-station-hitbox", [2.45, 2.15, 1.36], [0, 1.05, 0], hitMat);
+    registerMachineObject(tabletopVision, VISION_CAMERA_ID, visionHitBox);
+    statusMaterials.push({ machineId: VISION_CAMERA_ID, material: cameraIndicatorMat });
 
     addSceneBox([1.45, .42, .75], [-6.15, -.08, -6.15], blockMat);
     addSceneBox([1.55, .13, .85], [-6.15, .22, -6.15], roofMat);
@@ -829,6 +838,8 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
       addAuxiliaryRobot("inspection-assist-robot", [7.8, 2.25], 0x1d7183),
     ];
     const inspection = createEquator300();
+    addMachineHalo(VISION_CAMERA_ID, [tabletopVision.position.x, tabletopVision.position.y, tabletopVision.position.z], 1.3);
+    addMachineAlert(VISION_CAMERA_ID, [tabletopVision.position.x, tabletopVision.position.y, tabletopVision.position.z]);
     inspection.workpiece.name = "inspectionWorkpiece";
     inspection.root.position.set(workshopLayout.inspection[0], -.3, workshopLayout.inspection[1]);
     scene.add(inspection.root);
@@ -1032,6 +1043,13 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
 
     const rawParts = [createRawPart(0)];
     const finishedParts = [createFinishedPart(.05), createFinishedPart(.34), createFinishedPart(.68)];
+    const visionSample = createScrewPart(0, cutMetalMat);
+    visionSample.name = "visionSample";
+    visionSample.userData.visualOnly = true;
+    tabletopVision.add(visionSample);
+    visionSample.position.set(.7, .97, .25);
+    visionSample.scale.setScalar(.75);
+    visionSample.visible = false;
     const carriedScrew = createScrewPart(0, cutMetalMat);
     const inspectionTransferPart = createScrewPart(0, cutMetalMat);
     inspectionTransferPart.name = "inspectionTransferPart";
@@ -1172,6 +1190,14 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
     };
     const easeInOut = (value) => value * value * (3 - 2 * value);
     const progressBetween = (cycle, start, end) => easeInOut(Math.max(0, Math.min(1, (cycle - start) / (end - start))));
+    const sweepDuringIdle = (home, progress, range) => {
+      const angle = progress * Math.PI * 2;
+      return tempA.set(
+        home.x + Math.sin(angle) * range,
+        home.y + (1 - Math.cos(angle)) * range * .45,
+        home.z + Math.sin(angle * 2) * range * .45,
+      );
+    };
     const infeedHome = new THREE.Vector3(-6.35, 1.4, 1);
     const infeedPickHover = new THREE.Vector3(-5.68, .9, .72);
     const infeedPickTool = new THREE.Vector3(-5.68, .46, .72);
@@ -1239,6 +1265,28 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
       const cutCycle = (Math.sin(time * 1.05) + 1) / 2;
       const lineCycle = (time * .18) % 1;
       const robotCycle = (time % ROBOT_CYCLE_SECONDS) / ROBOT_CYCLE_SECONDS;
+      const cameraDevice = getCurrentMachine(VISION_CAMERA_ID);
+      const cameraMetrics = cameraDevice?.result?.current_sample?.metrics || cameraDevice?.sample?.metrics || {};
+      const cameraReady = getMachineMotionState(cameraDevice) === "running"
+        && cameraMetrics.camera_online === 1 && cameraMetrics.camera_acquiring === 1;
+      const cameraFps = Number(cameraMetrics.camera_frame_rate_fps);
+      visionSample.visible = robotCycle >= .4 && robotCycle < .72;
+      if (visionSample.visible) {
+        visionSample.position.x = robotCycle < .5
+          ? .7 - 1.13 * progressBetween(robotCycle, .4, .5)
+          : robotCycle < .64 ? -.43 : -.43 + 1.13 * progressBetween(robotCycle, .64, .72);
+      }
+      const sampleUnderCamera = visionSample.visible && robotCycle >= .5 && robotCycle < .64;
+      const captureActive = cameraReady && sampleUnderCamera && Boolean(liveMotion?.running);
+      visionCaptureBeam.visible = captureActive;
+      visionLightMat.emissiveIntensity = captureActive ? 1.6 + Math.sin(time * 46) * .28 : cameraReady ? .34 : .05;
+      const visionMonitorState = JSON.stringify([cameraReady, Number.isFinite(cameraFps) ? cameraFps : null,
+        visionSample.visible, captureActive]);
+      if (visionMonitorState !== lastVisionMonitorState) {
+        drawVisionMonitor(cameraReady, cameraFps, visionSample.visible, captureActive);
+        monitorTexture.needsUpdate = true;
+        lastVisionMonitorState = visionMonitorState;
+      }
 
       const machining = robotCycle < .38;
       spindleChuck.rotation.x = machining ? time * 8.6 : 0;
@@ -1268,7 +1316,8 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
         feederCell.pusher.position.x = -1.72 + feedStroke * 3.18;
       }
       const infeedRobot = auxiliaryRobots[0];
-      let infeedTarget = infeedHome;
+      const infeedIdlePhase = robotCycle >= .62 ? (robotCycle - .62) / .5 : (robotCycle + .38) / .5;
+      let infeedTarget = sweepDuringIdle(infeedHome, infeedIdlePhase, .34);
       if (robotCycle >= .12 && robotCycle < .18) {
         infeedTarget = moveBetween(infeedHome, infeedPickHover, progressBetween(robotCycle, .12, .18));
       } else if (robotCycle >= .18 && robotCycle < .22) {
@@ -1287,12 +1336,13 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
         infeedTarget = moveBetween(infeedPlaceTool, infeedHome, progressBetween(robotCycle, .52, .62));
       }
       poseAuxiliaryRobot(infeedRobot, infeedTarget, robotCycle >= .22 && robotCycle < .5);
+      infeedRobot.wrist.rotation.y = Math.sin(time * 24) * .16;
 
       // 检测后交接到两个示意分拣箱；交替路径不代表真实测量结论。
       const outputToRework = Math.floor(time / ROBOT_CYCLE_SECONDS) % 2 === 1;
       const outputBinIndex = outputToRework ? 1 : 0;
       const outputRobot = auxiliaryRobots[1];
-      let outputTarget = outputHome;
+      let outputTarget = sweepDuringIdle(outputHome, robotCycle / .66, .38);
       if (robotCycle >= .66 && robotCycle < .72) {
         outputTarget = moveBetween(outputHome, outputPickHover, progressBetween(robotCycle, .66, .72));
       } else if (robotCycle >= .72 && robotCycle < .76) {
@@ -1311,14 +1361,14 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
         outputTarget = moveBetween(outputBinTool[outputBinIndex], outputHome, progressBetween(robotCycle, .96, 1));
       }
       poseAuxiliaryRobot(outputRobot, outputTarget, robotCycle >= .76 && robotCycle < .96);
+      outputRobot.wrist.rotation.y = Math.sin(time * 24 + 1.3) * .16;
       if (robotCell) {
         // 原有机械臂只负责出料线 → 检测台，给检测侧机械臂留出取件时间。
         const carrying = robotCycle >= .25 && robotCycle < .56;
         const gripping = robotCycle >= .22 && robotCycle < .6;
-        let toolPosition = toolHomePosition;
-        if (robotCycle < .1) {
-          toolPosition = toolHomePosition;
-        } else if (robotCycle < .2) {
+        const primaryIdlePhase = robotCycle >= .74 ? (robotCycle - .74) / .36 : (robotCycle + .26) / .36;
+        let toolPosition = sweepDuringIdle(toolHomePosition, primaryIdlePhase, .27);
+        if (robotCycle >= .1 && robotCycle < .2) {
           toolPosition = moveBetween(toolHomePosition, toolPickHoverPosition, easeInOut((robotCycle - .1) / .1));
         } else if (robotCycle < .25) {
           toolPosition = moveBetween(toolPickHoverPosition, toolPickPosition, easeInOut((robotCycle - .2) / .05));
@@ -1339,6 +1389,7 @@ export default function Machine3DScene({ machines = [], motion, selectedMachineI
         }
 
         poseRobot(toolPosition);
+        robotCell.toolCarrier.rotation.y = Math.sin(time * 24 + .65) * .12;
         robotCell.fingerA.position.z = gripping ? .07 : .14;
         robotCell.fingerB.position.z = gripping ? -.07 : -.14;
         carriedScrew.visible = carrying;

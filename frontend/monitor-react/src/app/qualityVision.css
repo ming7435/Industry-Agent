@@ -49,6 +49,8 @@
 .vision-readonly-note, .vision-model-warning { padding: 10px 12px; border-left: 3px solid #c58a43; background: #fff7eb; color: #81511b; }
 .vision-yolo-note { padding: 16px; border-left: 3px solid #5e9b97; background: #f0f7f6; }
 .vision-auto { margin-top: 24px; padding: 18px; border: 1px solid var(--line, #d7e3e2); border-radius: 8px; background: var(--canvas, #f4f8f8); }
+.vision-part-seg { margin-top: 28px; padding: 20px; border: 1px solid var(--line, #d7e3e2); border-radius: 8px; background: var(--canvas, #f4f8f8); }
+.vision-part-seg .vision-heading { margin-bottom: 14px; }
 .vision-auto .vision-heading { margin-bottom: 12px; }
 .vision-auto .vision-heading p { font-size: 12px; }
 .vision-auto .vision-metrics { margin-top: 12px; }

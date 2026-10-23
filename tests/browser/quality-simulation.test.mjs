@@ -56,7 +56,7 @@ async function setup({ gate, failure, loggedIn=true, pendingWithCadError=false, 
 test('actual start click displays saved rates deviations machine line and reloads results',async()=>{
   const {fixture,page,posts,errors}=await setup();
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     const start=page.getByRole('button',{name:'开始检测',exact:true});
     await start.click();
     const results=page.getByRole('region',{name:'检测结果',exact:true});
@@ -85,7 +85,7 @@ test('actual start click displays saved rates deviations machine line and reload
 test('in-flight detection locks name selection and does not send duplicate clicks',async()=>{
   const gate=deferred(); const {fixture,page,posts}=await setup({gate});
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByRole('button',{name:'开始检测',exact:true}).click();
     const working=page.getByRole('button',{name:'正在模拟检测…',exact:true});
     await working.waitFor();
@@ -99,7 +99,7 @@ test('in-flight detection locks name selection and does not send duplicate click
 test('offline meter yields the actual reason and no invented rates',async()=>{
   const {fixture,page,posts}=await setup({failure:true});
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByRole('button',{name:'开始检测',exact:true}).click();
     await page.getByText('比对仪离线，未生成检测样本',{exact:false}).waitFor();
     assert.deepEqual(await page.locator('.quality-rate-fields dd').allTextContents(),['—','—','—']);
@@ -116,7 +116,7 @@ for (const [state,label,reason] of [
     station:{device_id:'RENISHAW-EQUATOR300-001',device_status:state,monitor_status:state,control_state:state,control_reason:reason}};
   const {fixture,page,posts,errors}=await setup({failure});
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByRole('button',{name:'开始检测',exact:true}).click();
     const recovery=page.getByRole('region',{name:'检测工位未就绪',exact:true});
     await recovery.waitFor();
@@ -138,7 +138,7 @@ for (const [state,label,reason] of [
 test('not logged in still shows selected part but cannot run a simulation',async()=>{
   const {fixture,page,posts}=await setup({loggedIn:false});
   try {
-    await page.goto(fixture.base+'/?view=quality'); await page.getByText('92531',{exact:true}).waitFor();
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions'); await page.getByText('92531',{exact:true}).waitFor();
     assert.equal(await page.getByRole('button',{name:'开始检测',exact:true}).isDisabled(),true);
     assert.match(await page.locator('.quality-workspace').textContent(),/登录/);
     assert.deepEqual(posts,[]);
@@ -148,7 +148,7 @@ test('not logged in still shows selected part but cannot run a simulation',async
 test('unknown submission is reconciled independently when CAD source fails after reload',async()=>{
   const {fixture,page,posts}=await setup({pendingWithCadError:true});
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByText('77.78%',{exact:true}).waitFor();
     assert.equal(await page.getByRole('button',{name:'开始检测',exact:true}).isDisabled(),true);
     assert.match(await page.locator('.quality-workspace').textContent(),/Redis/);
@@ -159,7 +159,7 @@ test('unknown submission is reconciled independently when CAD source fails after
 test('successful saved batch remains readable when CAD fails without any pending request',async()=>{
   const {fixture,page,posts}=await setup({savedWithCadError:true});
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByText('77.78%',{exact:true}).waitFor();
     assert.equal(await page.getByRole('button',{name:'开始检测',exact:true}).isDisabled(),true);
     assert.match(await page.locator('.quality-workspace').textContent(),/Redis/);
@@ -170,7 +170,7 @@ test('successful saved batch remains readable when CAD fails without any pending
 test('possible machine locations connect deviations and missing records to different devices and survive reload',async()=>{
   const {fixture,page,posts,errors}=await setup();
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByRole('button',{name:'开始检测',exact:true}).click();
     const locations=page.getByRole('region',{name:'可能的问题机器／位置',exact:true});
     await locations.waitFor();
@@ -198,7 +198,7 @@ test('possible machine locations connect deviations and missing records to diffe
 test('unknown production trace displays unknown machine without guessing a factory machine',async()=>{
   const {fixture,page}=await setup({resultOverrides:{traceability:{traceability_source:'unknown',measurement_device_id:'RENISHAW-EQUATOR300-001',root_cause_status:'unconfirmed'}}});
   try {
-    await page.goto(fixture.base+'/?view=quality'); await page.getByRole('button',{name:'开始检测',exact:true}).click();
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions'); await page.getByRole('button',{name:'开始检测',exact:true}).click();
     const size=page.getByRole('region',{name:'可能的问题机器／位置',exact:true}).locator('[data-location-category="size"]');
     await size.waitFor();
     assert.match(await size.textContent(),/未知机器.*未知编号/s);
@@ -213,7 +213,7 @@ test('without mismatches or missing records the page does not label any machine 
     counts:{total:10,determinate:10,qualified:10,unqualified:0,pending:0,review:0},rates:{qualified:100,defect:0,coverage:100},
     samples:Array.from({length:10},(_,i)=>({part_id:'SIM-PART-'+i,simulation:true,synthetic:true,observations:{'operations.0.length':{value:'100',unit:'mm'}}}))}});
   try {
-    await page.goto(fixture.base+'/?view=quality'); await page.getByRole('button',{name:'开始检测',exact:true}).click();
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions'); await page.getByRole('button',{name:'开始检测',exact:true}).click();
     await page.getByText('0.00%',{exact:true}).waitFor();
     const locations=page.getByRole('region',{name:'可能的问题机器／位置',exact:true});
     assert.equal(await locations.locator('.quality-location-card').count(),0);
@@ -234,7 +234,7 @@ test('completed multi-body production models remain selectable and display uncov
       samples:[{part_id:'SIM-PART-1',simulation:true,synthetic:true,observations:{'model.bounds_mm.2':{value:'42.1',unit:'mm'}}}],
       issues:[{key:'model.bounds_mm.2',name:'成品外形 · Z尺寸',expected:'42',actual:'42.1',difference:'0.1',unit:'mm',status:'unqualified',part_id:'SIM-PART-1'}]}});
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByText('92531',{exact:true}).waitFor();
     const start=page.getByRole('button',{name:'开始检测',exact:true});
     await page.locator('.quality-standard-summary summary').click();
@@ -260,7 +260,7 @@ test('read-only production parameters remain visible for complex shapes before l
   const {fixture,page,posts}=await setup({loggedIn:false,runOverrides:{
     spec:{units:'mm',operations:[{type:'gear',module:2,teeth:20,width:10,pressure_angle:20}]}}});
   try {
-    await page.goto(fixture.base+'/?view=quality');
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByText('92531',{exact:true}).waitFor();
     await page.locator('.quality-standard-summary summary').click();
     assert.match(await page.locator('.quality-standard-summary').textContent(),/gear.*module.*2.*teeth.*20/s);
@@ -284,7 +284,7 @@ test('partially covered designs display item rates while keeping whole parts pen
     issues:[{part_id:'2',key:'model.bounds_mm.2',name:'成品外形 · Z尺寸',expected:'42',actual:'42.1',difference:'.1',unit:'mm',kind:'number',status:'unqualified'}],
   }});
   try{
-    await page.goto(fixture.base+'/?view=quality');await page.getByRole('button',{name:'开始检测',exact:true}).click();
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');await page.getByRole('button',{name:'开始检测',exact:true}).click();
     const results=page.getByRole('region',{name:'检测结果',exact:true});await results.getByText('33.33%',{exact:true}).waitFor();
     assert.deepEqual(await results.locator('.quality-rate-fields dd').allTextContents(),['50.00%','50.00%','33.33%']);
     assert.deepEqual(await results.locator('.quality-rate-fields dt').allTextContents(),['已检测项通过率','已检测项不通过率','参数检测覆盖率']);

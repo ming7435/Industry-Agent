@@ -1,3 +1,4 @@
+import { pipelineMessages } from './VisionPipelineResult.jsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { request } from './apiRequest.mjs';
 import { qualityDecision, combinedStatus, qualityRate, verifiedCombinedPart, verifiedCombinedReport } from './combinedQuality.mjs';
@@ -74,7 +75,7 @@ export default function CombinedQualityWorkspace({ auth, checked, onSelectionCha
   const useInspection = () => {
     setReview(v => ({ ...v, kind: 'visual', decision: 'pending', all_required_checked: false,
       inspection_id: latestInspection.inspection_id, evidence_reference: latestInspection.inspection_id,
-      notes: latestInspection.algorithm === 'patchcore_yolo'
+      notes: latestInspection.algorithm === 'patchcore_yolo_pipeline' ? pipelineMessages[latestInspection.classification] + ' 请填写人工复核依据。' : latestInspection.algorithm === 'patchcore_yolo'
         ? `联合检测：PatchCore ${latestInspection.patchcore.status === 'defect' ? '异常' : '未检出'}；YOLO11 ${latestInspection.yolo.status === 'defect' ? '检出缺陷' : '未检出'}。请填写人工复核依据。` : '' }));
   };
   return <section className="quality-vision combined-quality" aria-labelledby="combined-quality-heading">

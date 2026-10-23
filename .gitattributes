@@ -1,0 +1,5 @@
+# Keep deployed model artifacts byte-identical across Git checkouts.
+.runtime/quality-models/**/*.pt binary
+.runtime/quality-models/**/*.pth binary
+.runtime/quality-models/**/*.npz binary
+.runtime/quality-models/**/model.json -text

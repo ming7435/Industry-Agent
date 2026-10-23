@@ -74,6 +74,7 @@ const deviceTypeLabels = {
   bar_feeder: "棒料送料机",
   industrial_robot: "工业机器人",
   equator_gauge: "尺寸检测设备",
+  industrial_camera: "工业视觉相机",
 };
 
 const deviceProfiles = {
@@ -128,6 +129,16 @@ const deviceProfiles = {
     focus: "测头、控制器、环境与检测过程",
     metrics: [],
   },
+  industrial_camera: {
+    area: "A05 视觉抽检工位",
+    flow: "产线抽检示意 → 相机采集状态 → 使用实际图像进行视觉质检复核",
+    focus: "相机在线、采集使能、帧率与曝光",
+    metrics: [
+      ["camera_online", "相机在线", "连接", ""],
+      ["camera_frame_rate_fps", "图像帧率", "采集", "fps"],
+      ["camera_exposure_us", "曝光时间", "曝光", "μs"],
+    ],
+  },
 };
 
 const defaultMachinePositions = [
@@ -135,6 +146,7 @@ const defaultMachinePositions = [
   { x: 23, y: 46 },
   { x: 68, y: 42 },
   { x: 78, y: 62 },
+  { x: 35, y: 78 },
 ];
 
 const knownMachineDefinitions = [
@@ -787,6 +799,7 @@ function App() {
             metricHistory={metricHistory}
             selectedMachineId={selectedMachineId}
             onSelectMachine={setSelectedMachineId}
+            onOpenQuality={() => setActiveView("quality")}
           />
         )}
         {!bigScreen && activeView === "cad" && <ProductionCadWorkspace />}
@@ -844,6 +857,7 @@ function MonitorCenter({
   metricHistory,
   selectedMachineId,
   onSelectMachine,
+  onOpenQuality,
 }) {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0] || workshopMachines[0];
   const [detailOpen, setDetailOpen] = useState(false);
@@ -861,7 +875,7 @@ function MonitorCenter({
         result={result}
         onSelectMachine={selectFromMap}
       />
-      {detailOpen && <MachineDetailDrawer machine={selectedMachine} result={result} sample={sample} dataSource={dataSource} history={metricHistory[selectedMachine.id] || []} onClose={() => setDetailOpen(false)} />}
+      {detailOpen && <MachineDetailDrawer machine={selectedMachine} result={result} sample={sample} dataSource={dataSource} history={metricHistory[selectedMachine.id] || []} onOpenQuality={onOpenQuality} onClose={() => setDetailOpen(false)} />}
     </section>
   );
 }
@@ -992,7 +1006,7 @@ function MiniTrend({ item }) {
   );
 }
 
-function MachineDetailDrawer({ machine, result, sample, dataSource, history, onClose }) {
+function MachineDetailDrawer({ machine, result, sample, dataSource, history, onOpenQuality, onClose }) {
   const status = machineStatus(machine, result);
   useEffect(() => {
     const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
@@ -1020,6 +1034,10 @@ function MachineDetailDrawer({ machine, result, sample, dataSource, history, onC
           <span className="eyebrow">工位与数据</span>
           <p>{machine.flow || "设备工艺信息暂未提供"}</p>
           {machine.live && sample && <p>最近采样：{formatTime(sample.timestamp)} · 运行阶段：{displayCycleState(sample)}</p>}
+          {machine.deviceType === "industrial_camera" && <>
+            <p>相机指标来自设备监控；台式工位的工件移动与扫描灯为流程示意。视觉缺陷判定须使用实际图像并在质量检测页运行、复核。</p>
+            <button className="button primary" type="button" onClick={onOpenQuality}>进入视觉质检</button>
+          </>}
         </div>
         {!machine.live ? (
           <div className="drawer-no-data"><strong>该工位尚未接入实时采集</strong><p>三维模型可查看；健康度、测量值和报警状态暂不提供。</p></div>

@@ -10,17 +10,21 @@ import { respond } from './helpers/center-fixture.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const evidence = resolve(root, '.runtime/verification/frontend-line-motion-20261008');
+const robotCycleSeconds = 4;
 const definitions = [
   ['TRAK-TC820LTYSI-001', 'cnc_lathe'],
   ['LNS-QL-SERVO-80-S2-001', 'bar_feeder'],
   ['ELITE-CS612-ROBOT-001', 'industrial_robot'],
   ['RENISHAW-EQUATOR300-001', 'equator_gauge'],
+  ['HIKROBOT-MV-CU060-10GM-001', 'industrial_camera'],
 ];
 function snapshot(status = 'running', resultStatus = 'normal', enabled = true) {
   return { runner: { enabled }, data_source: 'isolated-fixture', devices: definitions.map(([device_id, device_type]) => ({
     device_id, device_type, name: device_id, live: true,
     latest_result: { status: resultStatus, current_sample: { device_id, status, control_state: status,
-      timestamp: new Date().toISOString(), metrics: {}, equipment_states: {}, alarm_code: null } },
+      timestamp: new Date().toISOString(), metrics: device_type === 'industrial_camera'
+        ? { camera_online: 1, camera_acquiring: 1, camera_frame_rate_fps: 18.3 } : {},
+      equipment_states: {}, alarm_code: null } },
   })) };
 }
 
@@ -101,10 +105,11 @@ const selected = (value, predicate) => value.objects.filter(predicate).map(({ pa
 const device = id => object => object.machine === id;
 const rollers = object => (object.radius === .045 && object.height === .65) || (object.radius === .055 && object.height === .78);
 const parts = object => object.ancestors.some(name => ['rawBarStock', 'finishedParts', 'screwPart'].includes(name));
-async function open({ bigScreen = false, initialStatus = 'running', line = 'running' } = {}) {
+async function open({ bigScreen = false, initialStatus = 'running', line = 'running', pauseClock = false } = {}) {
   const context = await fixture.browser.newContext({ viewport: { width: 1200, height: 1050 } });
   const page = await context.newPage(); page.setDefaultTimeout(7000);
   await page.clock.install();
+  if (pauseClock) await page.clock.pauseAt(await page.evaluate(() => Date.now() + 10000));
   let current = snapshot(initialStatus), currentLine = { state: line }, failing = false;
   const heldEndpoints = new Set(), pending = [];
   const requests = [], writes = [], errors = [];
@@ -165,15 +170,25 @@ async function open({ bigScreen = false, initialStatus = 'running', line = 'runn
   };
 }
 
-test('匿名监控的四个工位、输送滚轮及工件在整线停机时冻结，复机后继续且相机保持可用', async () => {
-  const view = await open();
+test('匿名监控的五个工位、输送滚轮及工件在整线停机时冻结，复机后继续且相机保持可用', async () => {
+  const view = await open({ pauseClock: true });
   try {
     const first = await read(view.page);
-    await view.page.clock.runFor(5000);
-    const moving = await read(view.page);
-    for (const id of [definitions[0][0], definitions[1][0], definitions[2][0], 'EQUATOR300-VISUAL']) {
+    const advanceToCycle = async phase => {
+      const current = (await read(view.page)).objects.find(object => object.name === 'rawBarStock').rotation[0] / 2.5;
+      let target = Math.floor(current / robotCycleSeconds) * robotCycleSeconds + phase * robotCycleSeconds;
+      if (target <= current + .02) target += robotCycleSeconds;
+      await view.page.clock.runFor(Math.round((target - current) * 1000));
+      return read(view.page);
+    };
+    const moving = await advanceToCycle(.2);
+    const visionCapture = await advanceToCycle(.55);
+    const measuring = await advanceToCycle(.65);
+    for (const id of [definitions[0][0], definitions[1][0], definitions[2][0], definitions[4][0], 'EQUATOR300-VISUAL']) {
       assert.ok(selected(first, device(id)).length > 0, `${id} must be present in the real scene`);
-      assert.notDeepEqual(selected(moving, device(id)), selected(first, device(id)), `${id} must change while the line runs`);
+      assert.ok([moving, visionCapture, measuring].some(sample =>
+        JSON.stringify(selected(sample, device(id))) !== JSON.stringify(selected(first, device(id)))),
+      `${id} must change while the line runs`);
     }
     for (const [name, x] of [['infeed-assist-robot', -6.35], ['inspection-assist-robot', 7.8]]) {
       const descendants = object => object.ancestors.includes(name);
@@ -231,7 +246,7 @@ test('匿名监控的四个工位、输送滚轮及工件在整线停机时冻�
 });
 
 test('辅助机械臂把原料送入送料机，并把检测件转运到分拣箱', async () => {
-  const view = await open();
+  const view = await open({ pauseClock: true });
   const named = (snapshot, name) => snapshot.objects.find(object => object.name === name);
   const wrist = (snapshot, arm) => snapshot.objects.find(object => object.name === 'wrist-pivot' && object.ancestors.includes(arm));
   const nearGripper = (part, joint) => Math.hypot(part.world[12] - joint.world[12],
@@ -241,12 +256,17 @@ test('辅助机械臂把原料送入送料机，并把检测件转运到分拣�
     assert.equal(named(start, 'inspectionWorkpiece').pose.at(-1), false);
     const advanceToCycle = async phase => {
       const current = named(await read(view.page), 'rawBarStock').rotation[0] / 2.5;
-      const robotCycleSeconds = 8;
       let target = Math.floor(current / robotCycleSeconds) * robotCycleSeconds + phase * robotCycleSeconds;
       if (target <= current + .05) target += robotCycleSeconds;
       await view.page.clock.runFor(Math.round((target - current) * 1000));
       return read(view.page);
     };
+    const idleStart = await advanceToCycle(.02);
+    const idleEnd = await advanceToCycle(.1);
+    assert.notDeepEqual(wrist(idleStart, 'infeed-assist-robot').world,
+      wrist(idleEnd, 'infeed-assist-robot').world, 'The infeed arm moves between loading cycles');
+    assert.notDeepEqual(selected(idleStart, device('ELITE-CS612-ROBOT-001')),
+      selected(idleEnd, device('ELITE-CS612-ROBOT-001')), 'The main arm moves between transfers');
     const loading = await advanceToCycle(.24);
     const raw = named(loading, 'rawBarStock');
     assert.equal(raw.pose.at(-1), true, 'Raw stock remains visible while the infeed arm carries it');
@@ -254,6 +274,21 @@ test('辅助机械臂把原料送入送料机，并把检测件转运到分拣�
       'The raw stock follows the infeed gripper instead of moving independently');
     assert.ok(Math.hypot(raw.world[12] + 5.68, raw.world[14] - .72) < .08,
       'The infeed gripper picks the stock from the end of the incoming conveyor');
+
+    const outputIdleStart = await advanceToCycle(.3);
+    const outputIdleEnd = await advanceToCycle(.45);
+    assert.notDeepEqual(wrist(outputIdleStart, 'inspection-assist-robot').world,
+      wrist(outputIdleEnd, 'inspection-assist-robot').world, 'The sorting arm moves while waiting for inspection');
+
+    const visionCapture = await advanceToCycle(.55);
+    const visionSample = named(visionCapture, 'visionSample');
+    const visionBeam = named(visionCapture, 'vision-capture-beam');
+    assert.equal(visionSample.pose.at(-1), true, 'A sample reaches the tabletop camera during the line cycle');
+    assert.equal(visionBeam.pose.at(-1), true, 'The camera capture indicator follows acquisition and sample position');
+    assert.ok(Math.abs(visionSample.world[12] - named(visionCapture, 'vision-lens-glass').world[12]) < .08,
+      'The sampled part sits under the tabletop camera lens');
+    assert.ok(visionCapture.objects.some(object => object.name === 'tabletop-vision-station'
+      && object.machine === 'HIKROBOT-MV-CU060-10GM-001'), 'The tabletop station is bound to the live camera device');
 
     const measuring = await advanceToCycle(.6);
     assert.equal(named(measuring, 'inspectionWorkpiece').pose.at(-1), true,
@@ -273,15 +308,32 @@ test('辅助机械臂把原料送入送料机，并把检测件转运到分拣�
 
     const dropping = await advanceToCycle(.92);
     const outputWrist = wrist(dropping, 'inspection-assist-robot');
-    assert.ok(Math.hypot(outputWrist.world[12] - 8.45, outputWrist.world[14] - 3.25) < .12,
+    const destinationIsRework = Math.floor((named(dropping, 'rawBarStock').rotation[0] / 2.5) / robotCycleSeconds) % 2 === 1;
+    const destination = destinationIsRework ? [6.75, 3.1] : [8.45, 3.25];
+    assert.ok(Math.hypot(outputWrist.world[12] - destination[0], outputWrist.world[14] - destination[1]) < .12,
       `The inspection-side gripper reaches the destination bin: ${outputWrist.world[12]}, ${outputWrist.world[14]}, raw phase ${named(dropping, 'rawBarStock').rotation[0]}`);
     await view.page.locator('.factory-map').screenshot({ path: resolve(evidence, 'robot-arms-transfer.png') });
     await view.page.clock.runFor(1400);
     const sorted = await read(view.page);
     assert.equal(named(sorted, 'inspectionTransferPart').pose.at(-1), false);
-    assert.equal(named(sorted, 'qualifiedBoxPart').pose.at(-1), true,
+    assert.equal(named(sorted, destinationIsRework ? 'reworkBoxPart' : 'qualifiedBoxPart').pose.at(-1), true,
       'The finished transfer is represented in the destination bin');
     assert.deepEqual(view.writes, []); assert.deepEqual(view.errors, []);
+  } finally { await view.context.close(); }
+});
+
+test('台式视觉工位关联工业相机监控并可进入视觉质检', async () => {
+  const view = await open();
+  try {
+    await view.page.getByRole('button', { name: /HIKROBOT-MV-CU060-10GM-001/ }).click();
+    const drawer = view.page.getByRole('dialog', { name: /HIKROBOT-MV-CU060-10GM-001/ });
+    await drawer.waitFor();
+    assert.match(await drawer.innerText(), /A05 视觉抽检工位/);
+    assert.match(await drawer.innerText(), /相机指标来自设备监控/);
+    await drawer.getByRole('button', { name: '进入视觉质检' }).click();
+    await view.page.getByRole('heading', { name: '质量检测' }).waitFor();
+    assert.deepEqual(view.writes, []);
+    assert.deepEqual(view.errors, []);
   } finally { await view.context.close(); }
 });
 

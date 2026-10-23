@@ -8,7 +8,7 @@ from test_monitor_cad_production_proxy import proxy_boundary
     '/api/quality/vision/detect', '/api/quality/vision/patchcore/train', '/api/quality/vision/patchcore/calibrate',
     '/api/quality/vision%2Fpatchcore/train',
     '/api/quality/vision/production/verify',
-    '/api/quality/vision/sequential/fuse',
+    '/api/quality/vision/sequential/fuse', '/api/quality/vision/pipeline/detect',
 ])
 def test_large_vision_upload_is_rejected_before_forwarding(proxy_boundary, path):
     _, seen, send = proxy_boundary

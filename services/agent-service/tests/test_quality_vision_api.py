@@ -91,6 +91,36 @@ def test_auto_inbox_latest_is_read_only_and_session_bound(connected):
     assert client.get('/api/quality/vision/auto/latest').status_code == 401
 
 
+def test_part_segmentation_is_authenticated_and_never_creates_defect_inspection(connected, monkeypatch):
+    client, _, root = connected
+    weights = root / 'part-seg.pt'
+    weights.write_bytes(b'test weights; model load is stubbed')
+    monkeypatch.setenv('QUALITY_PART_SEG_WEIGHTS', str(weights))
+
+    class FakeSegmenter:
+        def __init__(self, path):
+            assert path == weights
+
+        def predict(self, image, confidence):
+            assert image.size == (24, 20) and confidence == .4
+            return {'image': {'width': 24, 'height': 20}, 'detections': [
+                {'class': 'endface', 'conf': .95, 'box': [1, 2, 20, 18], 'mask_area': 200}],
+                'annotated_image': picture(), 'inference_ms': 2.0}
+
+    monkeypatch.setattr('app.vision.part_segmentation.PartSegmenter', FakeSegmenter)
+    assert client.get('/api/quality/vision/capabilities').json()['part_segmentation']['available'] is True
+    endpoint = '/api/quality/vision/part-segmentation/predict'
+    result = client.post(endpoint, json={'image': picture(), 'confidence': .4})
+    assert result.status_code == 200, result.text
+    assert result.json()['purpose'] == 'part_segmentation'
+    assert result.json()['detections'][0]['class'] == 'endface'
+    assert 'status' not in result.json() and 'inspection_id' not in result.json()
+    assert not list((root / 'vision').rglob('VI-*.json'))
+    assert client.post(endpoint, json={'image': picture(), 'confidence': 0}).status_code == 422
+    client.cookies.clear()
+    assert client.post(endpoint, json={'image': picture(), 'confidence': .4}).status_code == 401
+
+
 def test_gear_memory_is_selectable_and_can_qualify_production_parts(connected, monkeypatch):
     client, service, root = connected
     folder = root / 'gear-memory'

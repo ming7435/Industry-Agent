@@ -64,7 +64,7 @@ async function setup({oldDetectionGate, newDetectionGate, modelGate, runningMode
     if(path.includes('/simulation/requests/'))return saved.has(path.split('/').at(-1))?respond(route,saved.get(path.split('/').at(-1))):respond(route,{detail:'未找到'},404);
     return respond(route,{items:[]});
   });
-  const page=await context.newPage();await page.goto(fixture.base+'/?view=quality');
+  const page=await context.newPage();await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
   await page.getByText('04898',{exact:true}).waitFor();
   return {fixture,context,page,posts,records,errors};
 }
@@ -185,7 +185,7 @@ test('two quality tabs read a completed revision without automatic writes; expli
   try{
     const cad=await context.newPage();await cad.goto(fixture.base+'/?view=cad');await generate(cad);
     await page.waitForFunction(id=>document.querySelector('#quality-part-name')?.value!==id,oldId);
-    const other=await context.newPage();await other.goto(fixture.base+'/?view=quality');
+    const other=await context.newPage();await other.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await other.getByRole('button',{name:'开始检测',exact:true}).waitFor();assert.equal(posts.length,0);
     await page.getByRole('button',{name:'开始检测',exact:true}).click();await other.getByRole('button',{name:'开始检测',exact:true}).click();
     await other.getByRole('button',{name:'正在模拟检测…',exact:true}).waitFor();

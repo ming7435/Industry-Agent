@@ -24,6 +24,7 @@ from uuid import uuid4
 from app.vision.calibration import threshold_strategies
 from app.vision.algorithms import MAX_TRAINING_SAMPLES
 from app.vision.preprocessing import parse_patchcore_config
+from app.vision.yolo_multiview import MultiViewYoloDetector, parse_yolo_inference
 
 
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -51,6 +52,45 @@ class VisionService:
         self.algorithms = algorithms
         self.readiness = readiness or self._readiness
         self.task_lock = _TASK_LOCK
+        self._part_segmenter = None
+        self._part_segmenter_path = None
+
+    @staticmethod
+    def _part_seg_weights():
+        default = Path(__file__).resolve().parents[4] / '.runtime' / 'quality-models' / 'part-seg-v1' / 'best.pt'
+        return Path(os.getenv('QUALITY_PART_SEG_WEIGHTS') or default)
+
+    def part_segmentation_status(self):
+        weights = self._part_seg_weights()
+        packages = ('numpy', 'PIL', 'torch', 'ultralytics', 'cv2')
+        available = weights.is_file() and all(importlib.util.find_spec(name) is not None for name in packages)
+        return {'available': available, 'model_id': 'part-seg-v1', 'name': 'YOLO11s 工件分割',
+                'classes': ['endface', 'toothface'], 'input_size': 640,
+                'reason': '' if available else '工件分割权重或运行依赖未安装'}
+
+    def segment_part(self, actor, values):
+        self._owner_root(actor)
+        with self._task():
+            if not self.part_segmentation_status()['available']:
+                raise VisionServiceError(503, '工件分割模型尚未就绪')
+            weights = self._part_seg_weights()
+            before = self._digest(weights)
+            image = self._decode(values['image'])
+            try:
+                from app.vision.part_segmentation import PartSegmenter
+                path = weights.resolve(strict=True)
+                if self._part_segmenter is None or self._part_segmenter_path != (path, before):
+                    self._part_segmenter = PartSegmenter(path)
+                    self._part_segmenter_path = (path, before)
+                result = self._part_segmenter.predict(image, values['confidence'])
+                if before != self._digest(weights):
+                    raise VisionServiceError(409, '分割过程中权重发生变化，请重新运行')
+                return {**result, 'model_id': 'part-seg-v1', 'model_sha256': before,
+                        'purpose': 'part_segmentation', 'classes': ['endface', 'toothface']}
+            except VisionServiceError:
+                raise
+            except Exception:
+                raise VisionServiceError(503, '工件分割推理失败，请检查权重和运行环境') from None
 
     @staticmethod
     def _weights(algorithm):
@@ -95,7 +135,7 @@ class VisionService:
         fields = ('model_id', 'name', 'algorithm', 'sample_count', 'memory_size', 'suggested_threshold',
                   'calibration_required', 'threshold_method', 'preprocessing', 'pipeline_version', 'calibration',
                   'description', 'source_url', 'classes', 'read_only', 'demo',
-                  'recommended_confidence', 'recommended_iou', 'calibration_scope', 'input_size')
+                  'recommended_confidence', 'recommended_iou', 'calibration_scope', 'input_size', 'inference')
         return {key: record[key] for key in fields if key in record}
 
     @staticmethod
@@ -171,6 +211,14 @@ class VisionService:
                 raise ValueError('invalid calibration scope')
             if 'input_size' in value and (type(value['input_size']) is not int or value['input_size'] not in (320, 640)):
                 raise ValueError('invalid YOLO input size')
+            value['inference'] = parse_yolo_inference(value.get('inference'))
+            if value['inference']['mode'] == 'fine_defects_v1':
+                classes = value.get('classes', [])
+                floors = value['inference']['class_confidences']
+                if len(classes) != len(set(classes)) or set(classes) != set(floors):
+                    raise ValueError('class thresholds must match the deployed model classes')
+                if value['recommended_confidence'] > min(floors.values()):
+                    raise ValueError('default confidence masks calibrated class thresholds')
             return {**value, 'model_id': 'yolo-default', 'algorithm': 'yolo', 'read_only': True}
         except (OSError, ValueError, TypeError):
             raise VisionServiceError(503, 'YOLO 模型说明与权重不匹配或损坏，请检查部署配置') from None
@@ -384,77 +432,88 @@ class VisionService:
 
     def detect(self, actor, values, *, source_context=None):
         with self._task():
-            quality_part = None
-            if values.get('quality_part_id'):
-                from app.vision.combined import CombinedQualityService
-                quality_part = CombinedQualityService(self).get_part(actor, values['quality_part_id'])
-                if quality_part['scope'] == 'production' and (
-                        values.get('image_source', 'upload') != 'upload' or source_context is not None):
-                    raise VisionServiceError(409, '测试图片或模拟结果不能关联生产实物，请切换到流程验证')
-            algorithm = values['algorithm']
-            model = self._model(actor, values['model_id']) if algorithm == 'patchcore' else None
-            if algorithm == 'yolo' and values['model_id'] != 'yolo-default':
-                raise VisionServiceError(404, '未找到 YOLO 模型')
-            self._require_available(algorithm)
-            image = self._decode(values['image'])
-            try:
-                module = self._module()
-                weights = self._weights(algorithm)
-                digest = self._digest(weights)
-                if model is not None:
-                    if model[0].get('weights_sha256') != digest:
-                        raise VisionServiceError(409, 'PatchCore 特征权重已改变，请使用当前权重重新训练基准')
-                    bank_bytes = model[1].read_bytes()
-                    bank_digest = sha256(bank_bytes).hexdigest()
-                    if model[0].get('memory_bank_sha256', bank_digest) != bank_digest:
-                        raise VisionServiceError(409, 'PatchCore 记忆库发生变化，请刷新模型后重试')
-                    bank = self._load_bank(BytesIO(bank_bytes))
-                    config = parse_patchcore_config(model[0].get('preprocessing'))
-                    result = module.PatchCoreDetector(weights, config=config).predict(image, bank, values['threshold'])
+            return self._detect_unlocked(actor, values, source_context=source_context)
+
+    def _detect_unlocked(self, actor, values, *, source_context=None):
+        """Caller must hold _task for the entire operation, including persistence."""
+        quality_part = None
+        if values.get('quality_part_id'):
+            from app.vision.combined import CombinedQualityService
+            quality_part = CombinedQualityService(self).get_part(actor, values['quality_part_id'])
+            if quality_part['scope'] == 'production' and (
+                    values.get('image_source', 'upload') != 'upload' or source_context is not None):
+                raise VisionServiceError(409, '测试图片或模拟结果不能关联生产实物，请切换到流程验证')
+        algorithm = values['algorithm']
+        model = self._model(actor, values['model_id']) if algorithm == 'patchcore' else None
+        if algorithm == 'yolo' and values['model_id'] != 'yolo-default':
+            raise VisionServiceError(404, '未找到 YOLO 模型')
+        self._require_available(algorithm)
+        image = self._decode(values['image'])
+        try:
+            module = self._module()
+            weights = self._weights(algorithm)
+            digest = self._digest(weights)
+            if model is not None:
+                if model[0].get('weights_sha256') != digest:
+                    raise VisionServiceError(409, 'PatchCore 特征权重已改变，请使用当前权重重新训练基准')
+                bank_bytes = model[1].read_bytes()
+                bank_digest = sha256(bank_bytes).hexdigest()
+                if model[0].get('memory_bank_sha256', bank_digest) != bank_digest:
+                    raise VisionServiceError(409, 'PatchCore 记忆库发生变化，请刷新模型后重试')
+                bank = self._load_bank(BytesIO(bank_bytes))
+                config = parse_patchcore_config(model[0].get('preprocessing'))
+                result = module.PatchCoreDetector(weights, config=config).predict(image, bank, values['threshold'])
+            else:
+                deployment = self._yolo_model()
+                inference = parse_yolo_inference(deployment.get('inference'))
+                if inference['mode'] != 'full':
+                    detector = MultiViewYoloDetector(weights, input_size=deployment.get('input_size', 640), config=inference)
                 else:
-                    deployment = self._yolo_model()
                     detector = module.YoloDetector(weights, input_size=deployment['input_size']) if 'input_size' in deployment else module.YoloDetector(weights)
-                    result = detector.predict(image, values['confidence'], values['iou'])
-                if digest != self._digest(weights):
-                    raise VisionServiceError(409, '检测过程中权重发生变化，请重新检测')
-                if model is not None and bank_digest != self._digest(model[1]):
-                    raise VisionServiceError(409, '检测过程中记忆库发生变化，请重新检测')
-                self._validate_result(result, algorithm, image.size)
-                inspection_id = 'VI-' + uuid4().hex
-                record = {**result, 'algorithm': algorithm, 'inspection_id': inspection_id,
-                          'model_id': values['model_id'], 'created_at': datetime.now(timezone.utc).isoformat(),
-                          'part_id': values['part_id'], 'filename': values['filename'],
-                          'model_sha256': digest,
-                          'image_sha256': self._image_digest(image),
-                          'image_digest_format': 'rgb-pixels-with-size-v1',
-                          'image_source': values.get('image_source', 'upload'),
-                          'parameters': {'threshold': result['threshold'], 'confidence': values['confidence'], 'iou': values['iou']}}
-                if quality_part is not None:
-                    record['quality_part_id'] = quality_part['quality_part_id']
-                    record['quality_identity'] = {k: quality_part[k] for k in (
-                        'scope', 'batch_id', 'serial_number', 'design_version')}
-                if model is not None:
-                    record['parameters']['preprocessing'] = config
-                    record['memory_bank_sha256'] = bank_digest
-                record['model'] = self._public_model(model[0] if model is not None else deployment)
-                if algorithm == 'yolo':
-                    record['parameters']['input_size'] = deployment.get('input_size', 640)
-                # Linked workflow supplies this only after resolving server-owned facts.
-                # The image-only HTTP schema deliberately has no source_context field.
-                if source_context is not None:
-                    record['source_context'] = deepcopy(source_context)
-                if quality_part is not None:
-                    # Invalidate a prior pass before publishing the new inspection file.
-                    # A failed artifact write may leave pending review, never stale qualification.
-                    CombinedQualityService(self).record_inspection(actor, record)
-                self._atomic_json(self._owner_root(actor) / 'inspections' / (inspection_id + '.json'), record)
-                return record
-            except VisionServiceError:
-                raise
-            except Exception:
-                raise VisionServiceError(503, '视觉检测未完成，请检查依赖、本地模型和存储配置') from None
-            finally:
-                image.close()
+                result = detector.predict(image, values['confidence'], values['iou'])
+            if digest != self._digest(weights):
+                raise VisionServiceError(409, '检测过程中权重发生变化，请重新检测')
+            if model is not None and bank_digest != self._digest(model[1]):
+                raise VisionServiceError(409, '检测过程中记忆库发生变化，请重新检测')
+            if model is None and deployment != self._yolo_model():
+                raise VisionServiceError(409, '检测过程中 YOLO 配置发生变化，请重新检测')
+            self._validate_result(result, algorithm, image.size)
+            inspection_id = 'VI-' + uuid4().hex
+            record = {**result, 'algorithm': algorithm, 'inspection_id': inspection_id,
+                      'model_id': values['model_id'], 'created_at': datetime.now(timezone.utc).isoformat(),
+                      'part_id': values['part_id'], 'filename': values['filename'],
+                      'model_sha256': digest,
+                      'image_sha256': self._image_digest(image),
+                      'image_digest_format': 'rgb-pixels-with-size-v1',
+                      'image_source': values.get('image_source', 'upload'),
+                      'parameters': {'threshold': result['threshold'], 'confidence': values['confidence'], 'iou': values['iou']}}
+            if quality_part is not None:
+                record['quality_part_id'] = quality_part['quality_part_id']
+                record['quality_identity'] = {k: quality_part[k] for k in (
+                    'scope', 'batch_id', 'serial_number', 'design_version')}
+            if model is not None:
+                record['parameters']['preprocessing'] = config
+                record['memory_bank_sha256'] = bank_digest
+            record['model'] = self._public_model(model[0] if model is not None else deployment)
+            if algorithm == 'yolo':
+                record['parameters']['input_size'] = deployment.get('input_size', 640)
+                record['parameters']['inference'] = inference
+            # Linked workflow supplies this only after resolving server-owned facts.
+            # The image-only HTTP schema deliberately has no source_context field.
+            if source_context is not None:
+                record['source_context'] = deepcopy(source_context)
+            if quality_part is not None:
+                # Invalidate a prior pass before publishing the new inspection file.
+                # A failed artifact write may leave pending review, never stale qualification.
+                CombinedQualityService(self).record_inspection(actor, record)
+            self._atomic_json(self._owner_root(actor) / 'inspections' / (inspection_id + '.json'), record)
+            return record
+        except VisionServiceError:
+            raise
+        except Exception:
+            raise VisionServiceError(503, '视觉检测未完成，请检查依赖、本地模型和存储配置') from None
+        finally:
+            image.close()
 
     def calibrate(self, actor, values):
         with self._task():

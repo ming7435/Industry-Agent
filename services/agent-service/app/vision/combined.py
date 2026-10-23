@@ -168,14 +168,16 @@ class CombinedQualityService:
                 evidence = {k: inspection.get(k) for k in (
                     'inspection_id', 'algorithm', 'model_id', 'model_sha256', 'image_sha256',
                     'image_source', 'status', 'score', 'threshold', 'created_at')}
-                if inspection.get('algorithm') == 'patchcore_yolo':
+                if inspection.get('algorithm') in {'patchcore_yolo', 'patchcore_yolo_pipeline'}:
                     evidence.update(classification=inspection['classification'],
                                     inspection_ids=deepcopy(inspection['inspection_ids']),
+                                    yolo_state=inspection.get('yolo_state', 'completed'),
+                                    localization_error=deepcopy(inspection.get('localization_error')),
                                     stages={name: {k: inspection[name].get(k) for k in (
                                         'inspection_id', 'algorithm', 'model_id', 'model_sha256',
                                         'memory_bank_sha256', 'image_sha256', 'image_digest_format',
                                         'status', 'score', 'threshold', 'created_at')}
-                                        for name in ('patchcore', 'yolo')})
+                                        for name in ('patchcore', 'yolo') if inspection.get(name) is not None})
             if len(part['history']) >= 1000:
                 raise VisionServiceError(409, '该零件复核记录已达上限')
             now = datetime.now(timezone.utc).isoformat()

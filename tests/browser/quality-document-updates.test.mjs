@@ -18,7 +18,7 @@ test('published-only refresh follows new standards without detecting; a delibera
     return respond(route,{items:[]});
   });
   try {
-    await page.goto(fixture.base);await page.getByText('00123',{exact:true}).waitFor();assert.equal(posts.length,0);
+    await page.goto(fixture.base+'/?quality_panel=dimensions');await page.getByText('00123',{exact:true}).waitFor();assert.equal(posts.length,0);
     records.push(record(second,2,30));await page.evaluate(()=>window.dispatchEvent(new CustomEvent('freecad:completed-design',{detail:{published:true}})));
     await page.waitForFunction(id=>document.querySelector('#quality-part-name')?.value===id,second);assert.equal(posts.length,0);
     await page.getByRole('button',{name:'开始检测',exact:true}).click();await page.getByText('100.00%',{exact:true}).first().waitFor();assert.equal(posts.length,1);assert.equal(posts[0].design_run_id,second);

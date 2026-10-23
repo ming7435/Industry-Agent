@@ -7,9 +7,9 @@ export function visionDetectionBlocker({ userId, checked, loading, available, mo
   parametersValid, busy, referenceBlocked }) {
   if (!userId) return '请先登录，再运行缺陷检测。';
   if (!checked || loading) return '正在检查检测服务，请稍候。';
-  if (!available || !model) return '请先选择已就绪的检测记忆库或模型。';
+  if (!available || !model) return '已有检测记忆库暂不可用，请刷新模型状态或联系维护人员。';
   if (referenceBlocked) return '测试图片不能关联生产实物；请切换到流程验证或上传该实物图片。';
-  if (!inputImage) return '请在“待检测图片”选择 1 张图片；“正常训练样本”仅用于新建记忆库。';
+  if (!inputImage) return '请上传 1 张待检测图片，系统会使用已有记忆库自动检测。';
   if (!parametersValid) return '请填写有效的检测阈值。';
   if (busy) return '正在处理图片或运行检测，请稍候。';
   return null;
@@ -177,6 +177,12 @@ export function verifiedAutoVisionStatus(value) {
 }
 
 export function verifiedAutoVisionResult(value) {
+  if (value?.algorithm === 'patchcore_yolo_pipeline') {
+    if (value.patchcore?.model_id !== 'patchcore-gear' || value.image_source !== 'local_inbox'
+      || value.part_id || value.quality_part_id) throw new Error('自动检测结果来源或模型无效，请刷新页面。');
+    return verifiedPipelineVisionResult(value, { ...value.parameters, patchcore_model_id: 'patchcore-gear',
+      filename: value.filename, part_id: '', image_source: 'local_inbox' });
+  }
   if (value?.model_id !== 'patchcore-gear' || value.image_source !== 'local_inbox'
     || (value.part_id || '') !== '' || value.quality_part_id) throw new Error('自动检测结果来源或模型无效，请刷新页面。');
   return verifiedVisionResult(value, { algorithm: 'patchcore', model_id: 'patchcore-gear',
@@ -239,5 +245,39 @@ export function verifiedSequentialVisionResult(value, expected) {
     || (expected !== undefined && (!expected
       || expected.patchcore_inspection_id !== computed.inspection_ids[0]
       || expected.yolo_inspection_id !== computed.inspection_ids[1]))) invalidSequentialResult();
+  return value;
+}
+
+export function verifiedPipelineVisionResult(value, expected) {
+  const invalid = () => { throw new Error('串联检测结果不完整、顺序错误或图片不一致，请重新检测。'); };
+  if (value?.algorithm !== 'patchcore_yolo_pipeline' || value.pipeline_version !== 1
+    || !inspectionId(value.inspection_id) || !Number.isFinite(Date.parse(value.created_at))) invalid();
+  const pc = verifiedVisionResult(value.patchcore, { ...expected, algorithm: 'patchcore', model_id: expected.patchcore_model_id });
+  if (!inspectionId(pc.inspection_id) || !pixelDigest(pc.image_sha256)
+    || pc.image_digest_format !== 'rgb-pixels-with-size-v1' || !sameSequentialImage(value, pc)
+    || value.status !== pc.status || value.score !== pc.score || value.threshold !== pc.threshold
+    || !sameJsonValue(value.parameters, { threshold: expected.threshold, confidence: expected.confidence, iou: expected.iou })) invalid();
+  let classification = 'clear', localized = pc;
+  const ids = [pc.inspection_id];
+  if (pc.status === 'clear') {
+    if (value.yolo_state !== 'skipped' || value.yolo !== null || value.localization_error !== null) invalid();
+  } else if (value.yolo_state === 'completed') {
+    const yolo = verifiedVisionResult(value.yolo, { ...expected, algorithm: 'yolo', model_id: 'yolo-default' });
+    if (!sameSequentialImage(pc, yolo) || !inspectionId(yolo.inspection_id)
+      || yolo.inspection_id === pc.inspection_id || Date.parse(yolo.created_at) < Date.parse(pc.created_at)
+      || yolo.parameters?.confidence !== expected.confidence || yolo.parameters?.iou !== expected.iou
+      || value.localization_error !== null) invalid();
+    ids.push(yolo.inspection_id);
+    classification = yolo.status === 'defect' ? 'known_defect' : 'unknown_anomaly';
+    if (yolo.status === 'defect') localized = yolo;
+  } else if (value.yolo_state === 'failed') {
+    if (value.yolo !== null || !text(value.localization_error?.detail)
+      || !Number.isInteger(value.localization_error?.status_code) || value.localization_error.status_code < 400) invalid();
+    classification = 'localization_failed';
+  } else invalid();
+  if (value.classification !== classification || !sameJsonValue(value.inspection_ids, ids)
+    || ids.includes(value.inspection_id) || Date.parse(value.created_at) < Date.parse((value.yolo || pc).created_at)
+    || !sameJsonValue(value.defects, localized.defects) || value.annotated_image !== localized.annotated_image
+    || value.heatmap_image !== pc.heatmap_image) invalid();
   return value;
 }

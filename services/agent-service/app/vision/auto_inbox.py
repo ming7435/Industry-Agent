@@ -9,6 +9,7 @@ from time import time_ns
 from uuid import uuid4
 
 from app.vision.service import MAX_IMAGE_BYTES, VisionServiceError
+from app.vision.pipeline import VisionPipelineService
 
 
 _MIME = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp'}
@@ -97,18 +98,25 @@ class VisionAutoInbox:
             if (check.st_size, check.st_mtime_ns) != signature or len(image_bytes) != signature[0]:
                 return False
             model, _ = self.vision._model(self.owner, self.model_id)
+            try:
+                yolo = self.vision._yolo_model()
+            except VisionServiceError:
+                # PatchCore can still run; the gated YOLO stage records a deployment failure.
+                yolo = {}
             encoded = 'data:' + _MIME[source.suffix.lower()] + ';base64,' + base64.b64encode(image_bytes).decode('ascii')
-            result = self.vision.detect(self.owner, {
-                'algorithm': 'patchcore', 'model_id': self.model_id, 'image': encoded,
+            result = VisionPipelineService(self.vision).detect(self.owner, {
+                'patchcore_model_id': self.model_id, 'image': encoded,
                 'filename': source.name, 'part_id': '', 'quality_part_id': '',
                 'image_source': 'local_inbox', 'threshold': model['suggested_threshold'],
-                'confidence': .25, 'iou': .45,
+                'confidence': yolo.get('recommended_confidence', .25),
+                'iou': yolo.get('recommended_iou', .45),
             })
             self._archive(source, 'processed')
             with self._lock:
                 self._latest = result
                 self._processed += 1
-                self._last_error = ''
+                self._last_error = (result['localization_error']['detail']
+                                    if result['yolo_state'] == 'failed' else '')
             return True
         except VisionServiceError as error:
             if error.status_code in (413, 422):

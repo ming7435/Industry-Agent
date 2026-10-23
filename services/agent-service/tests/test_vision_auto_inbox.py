@@ -1,5 +1,7 @@
 """A local capture folder drives the existing detector without browser uploads."""
 import base64
+from contextlib import nullcontext
+from pathlib import Path
 
 from app.vision.auto_inbox import VisionAutoInbox
 from app.vision.service import VisionServiceError
@@ -10,19 +12,31 @@ class FakeVision:
         self.calls = []
         self.error = None
 
+    def _yolo_model(self):
+        return {'recommended_confidence': .35, 'recommended_iou': .4}
+
     def _model(self, owner, model_id):
         assert owner == 'local-auto-inbox'
         assert model_id == 'patchcore-gear'
         return {'suggested_threshold': 1.8823}, None
 
-    def detect(self, owner, values):
+    def _task(self):
+        return nullcontext()
+
+    def _owner_root(self, owner):
+        return Path("unused-test-root")
+
+    def _atomic_json(self, path, value):
+        pass
+
+    def _detect_unlocked(self, owner, values, **kwargs):
         if self.error:
             raise self.error
         self.calls.append((owner, values))
         return {'inspection_id': f'VI-{len(self.calls):032x}', 'model_id': values['model_id'],
                 'algorithm': 'patchcore', 'filename': values['filename'], 'image_source': values['image_source'],
                 'status': 'clear', 'score': 1.2, 'threshold': values['threshold'],
-                'annotated_image': values['image'], 'heatmap_image': values['image']}
+                'annotated_image': values['image'], 'heatmap_image': values['image'], 'defects': []}
 
 
 def test_stable_new_image_is_detected_once_and_archived(tmp_path):
@@ -40,6 +54,7 @@ def test_stable_new_image_is_detected_once_and_archived(tmp_path):
     assert owner == 'local-auto-inbox'
     assert values['model_id'] == 'patchcore-gear'
     assert values['threshold'] == 1.8823
+    assert values['confidence'] == .35 and values['iou'] == .4
     assert values['image_source'] == 'local_inbox'
     assert base64.b64decode(values['image'].split(',', 1)[1]) == b'gear pixels'
     assert not source.exists()
@@ -75,3 +90,18 @@ def test_oversized_image_never_reaches_detector(tmp_path):
     assert inbox.scan_once() == 0
     assert not vision.calls
     assert (tmp_path / 'failed' / 'large.png').exists()
+
+
+def test_missing_yolo_does_not_prevent_patchcore_normal_gate(tmp_path, monkeypatch):
+    vision = FakeVision()
+    def unavailable():
+        raise VisionServiceError(503, 'YOLO unavailable')
+    monkeypatch.setattr(vision, '_yolo_model', unavailable)
+    inbox = VisionAutoInbox(vision, tmp_path, settle_seconds=0)
+    source = tmp_path / 'incoming' / 'normal.png'
+    source.parent.mkdir()
+    source.write_bytes(b'normal image')
+    inbox.scan_once()
+    assert inbox.scan_once() == 1
+    assert inbox.latest()['yolo_state'] == 'skipped'
+    assert inbox.latest()['classification'] == 'clear'

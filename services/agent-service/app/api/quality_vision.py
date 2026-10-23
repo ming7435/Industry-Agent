@@ -14,6 +14,7 @@ from app.api.team_auth import team_actor
 from app.clients.backend import BackendServiceClient, BackendServiceError
 from app.vision.service import VisionService, VisionServiceError
 from app.vision.auto_inbox import VisionAutoInbox
+from app.vision.pipeline import VisionPipelineService
 from app.vision.combined import CombinedQualityService
 from app.vision.preprocessing import parse_patchcore_config
 from app.vision.production import ProductionVisionService, JOB_PATTERN, REQUEST_PATTERN
@@ -85,6 +86,25 @@ class DetectRequest(BaseModel):
         if self.algorithm == 'patchcore' and self.threshold is None:
             raise ValueError('PatchCore requires a calibrated positive threshold')
         return self
+
+
+class PipelineDetectRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    patchcore_model_id: str = Field(min_length=1, max_length=64)
+    image: str = Field(min_length=1, max_length=MAX_ENCODED_IMAGE)
+    filename: str = Field(default='', max_length=256)
+    part_id: str = Field(default='', max_length=256)
+    quality_part_id: str = Field(default='', pattern=r'^(CQ-[a-f0-9]{32})?$')
+    image_source: Literal['upload', 'public_gear_reference'] = 'upload'
+    threshold: float = Field(gt=0)
+    confidence: float = Field(default=0.25, gt=0, le=1)
+    iou: float = Field(default=0.45, gt=0, le=1)
+
+
+class PartSegmentationRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    image: str = Field(min_length=1, max_length=MAX_ENCODED_IMAGE)
+    confidence: float = Field(default=0.25, gt=0, le=1)
 
 
 class ProductionVerifyRequest(BaseModel):
@@ -189,7 +209,14 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
 
     @router.get('/capabilities')
     def capabilities(request: Request):
-        return call(vision.capabilities, actor(request))
+        result = call(vision.capabilities, actor(request))
+        return {**result, 'part_segmentation': call(vision.part_segmentation_status)}
+
+    @router.post('/part-segmentation/predict', dependencies=[Depends(require_write_auth)])
+    async def segment_part(request: Request):
+        owner = await run_in_threadpool(actor, request)
+        values = await _body(request, PartSegmentationRequest)
+        return await run_in_threadpool(call, vision.segment_part, owner, values)
 
     @router.get('/auto/status')
     def auto_status(request: Request):
@@ -215,6 +242,12 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
         owner = await run_in_threadpool(actor, request)
         values = await _body(request, TrainRequest)
         return await run_in_threadpool(call, vision.train, owner, values)
+
+    @router.post('/pipeline/detect', dependencies=[Depends(require_write_auth)])
+    async def detect_pipeline(request: Request):
+        owner = await run_in_threadpool(actor, request)
+        values = await _body(request, PipelineDetectRequest)
+        return await run_in_threadpool(call, VisionPipelineService(vision).detect, owner, values)
 
     @router.post('/detect', dependencies=[Depends(require_write_auth)])
     async def detect(request: Request):
