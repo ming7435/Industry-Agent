@@ -26,6 +26,8 @@ def main():
     result=read(args.result);data=read(OUT/'data-summary.json');audit=read(OUT/'data-audit.json')
     api=read(args.api/'report.json');proof=read(OUT/'verification.json')
     history=read(OUT/'training/history.json')
+    if (OUT/'masked-training/history.json').exists():
+        history+=read(OUT/'masked-training/history.json')
     a=baseline['metrics']['class_and_position'];b=result['metrics']['class_and_position']
     lines=[]
     for label,title in [('dirt','污渍'),('hair','细丝')]:
@@ -48,7 +50,7 @@ def main():
                 scores.append(class_aware_localization([{'ground_truth':gt,'predictions':[p for p in version['predictions'] if p['label']==label]}],.01,.5))
             ranked.append((scores[1]['tp']-scores[0]['tp'],-scores[1]['fp'],identity))
         if ranked:
-            picked.append(max(ranked)[2])
+            picked.append((max(ranked) if max(ranked)[0]>0 else min(ranked))[2])
     regressions=sorted(new,key=lambda identity:(target_metrics(new[identity])['fp']-target_metrics(old[identity])['fp'],
                          target_metrics(old[identity])['tp']-target_metrics(new[identity])['tp']),reverse=True)
     picked=list(dict.fromkeys(picked+regressions[:1]))
@@ -61,7 +63,7 @@ def main():
         canvas=Image.new('RGB',(original.width*3,original.height+42),'#172b38');draw=ImageDraw.Draw(canvas)
         for panel,(title,boxes,color) in enumerate([
             ('Ground truth',row['ground_truth'],'#00a879'),
-            ('Current model',old[identity]['predictions'],'#f39532'),
+            ('Baseline',old[identity]['predictions'],'#f39532'),
             ('Candidate',row['predictions'],'#e85674')]):
             pic=original.copy();paint=ImageDraw.Draw(pic)
             for box in boxes:
@@ -97,6 +99,7 @@ def main():
 - 正式训练完整完成{len(history)}轮；候选轮次与停止原因见训练记录和校准选择记录。
 - 使用标准YOLO检测损失，同时微调分类及检测框预测；共享骨干冻结，缓存仅用于加速本机CPU训练。
 - 对其他类别增加原模型输出约束，保留标准YOLO权重格式及单一YOLO入口。
+- 训练集抽查167处目标标注，有37处旧模型把其他类别打得更高；修正了约束冲突：已标注污渍/细丝区域及一格邻域不再强制模仿旧分类，其他区域和负样本继续约束。该检查只使用训练集。
 - 污渍、细丝必须分别减少漏检，总误框必须下降；污渍误框保持0，细丝误框不得超过基线。校准门槛和测试门槛分别记录。
 - 本轮部署状态：{deployed}。详细检查见verification.json及校准选择记录。
 
@@ -105,6 +108,12 @@ def main():
 - {api['metrics']['images']}张包含污渍/细丝的真实图经过实际PatchCore → YOLO接口。
 - PatchCore判断异常后进入YOLO的图片：{api['metrics']['yolo_completed_images']}张。保留全部成功、漏检、误框记录与图片。
 - 程序回归测试通过数：{proof['tests_passed']}。
+
+## 校准结果与替换决定
+
+最后候选在完整188张校准图上，总正确定位212→227、误框87→72；细丝检出3/10→4/10，污渍2/10→1/10。
+校准未通过后，固定候选仅作诊断性真实回归，未降低上线门槛。118张回归图中，污渍检出进一步降至0/17，细丝仍为2/18且误框增至3。
+整体误框下降不能抵消两类重点缺陷没有改善的事实，因此保持现用模型。
 
 ## 结果适用范围
 

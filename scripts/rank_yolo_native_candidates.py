@@ -1,19 +1,24 @@
 """Rank native-crop checkpoints using calibration only; never authorize deployment."""
 from copy import deepcopy
+import argparse
 from pathlib import Path
 import sys
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'services/agent-service')]
 from scripts.prepare_yolo_native_hard_examples import OUT
-from scripts.train_yolo_fine_defects import read,save
+from scripts.train_yolo_fine_defects import read,save,SOURCE
 from scripts.evaluate_yolo_fine_defects import raw_config,merge_variant
 from app.vision.yolo_evaluation import class_aware_localization
 
 
 def main():
+    global OUT
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--experiment-root',type=Path,default=OUT)
+    args=parser.parse_args();OUT=args.experiment_root.resolve(strict=True)
     protocol=read(OUT/'protocol.json')
-    classes=read(OUT/'dataset/manifest.json')['classes']
+    classes=read(SOURCE/'manifest.json')['classes']
     candidates=[]
     for path in sorted((OUT/'evaluation').glob('*/calibration-triage-raw.json')):
         raw=read(path)

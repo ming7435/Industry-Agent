@@ -157,7 +157,9 @@ def main():
                'class_and_position': class_aware_localization(evaluated, settings['confidence'], .5)}
     report = {'created_at': datetime.now(timezone.utc).isoformat(), 'parameters': settings,
               'selection_seed': args.seed, 'focus_labels': args.focus_labels,
-              'scope': 'real held-out defect images, fixed deployed settings; no production records',
+              'scope': ('real held-out defect images, frozen staged candidate settings; no active deployment changes or production records'
+                        if args.yolo_deployment else 'real held-out defect images, fixed deployed settings; no production records'),
+              'deployment_source': 'staged_override' if args.yolo_deployment else 'active_environment',
               'limitations': ['reused held-out test images; regression evidence, not a new independent test',
                              'no normal images in this batch; cannot measure normal false positives',
                              'PatchCore MANTA memory and YOLO plastic gear data are different domains',
@@ -176,6 +178,8 @@ def main():
         cards.append(f'<section><h2>{identity} · {headings[row["classification"]]}</h2><p>异常距离 {row["patchcore_score"]:.4f} / 阈值 {settings["threshold"]:.4f} · 标注 {len(row["ground_truth"])} 处 · 预测 {len(row["predictions"])} 框 · 正确定位 {row["matching"]["tp"]} · 漏检 {row["matching"]["fn"]} · 多余框 {row["matching"]["fp"]}</p><div>{figures}</div></section>')
     page = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>真实图片串联质检实测</title><style>body{font:15px/1.6 system-ui;background:#edf3f5;color:#173c45;margin:32px}h1{font-size:28px}section{background:white;border-radius:14px;padding:24px;margin:24px 0}section>div{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}figure{margin:0;background:#f6f8f9;padding:12px;border-radius:8px}img{width:100%;height:330px;object-fit:contain}figcaption{text-align:center;margin-top:10px}p{color:#506871}</style>'
     sample_note = '包含污渍/细丝的全部留出图片' if args.focus_labels else '固定随机抽样'
+    if args.yolo_deployment:
+        page += '<p style="background:#fff1d6;padding:16px;border-radius:10px"><strong>临时候选模型验证</strong>：本次接口运行使用单独的候选权重，未修改现用环境配置；是否达到替换条件请查看对应训练报告。</p>'
     page += f'<h1>真实图片 · PatchCore → YOLO</h1><p>{sample_note}，共 {len(evaluated)} 张真实缺陷测试图；阈值 {settings["threshold"]:.4f}，置信度 {settings["confidence"]}。原始推理输出，未调整参数。位置匹配标准为 IoU ≥ 0.5。</p>' + ''.join(cards)
     (out / 'index.html').write_text(page, encoding='utf-8')
     print(json.dumps({'output': str(out), 'metrics': metrics, 'classifications': dict(states)}, ensure_ascii=False, indent=2), flush=True)

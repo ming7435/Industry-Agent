@@ -14,8 +14,9 @@ def main():
     parser.add_argument('--all-calibration',action='store_true')
     parser.add_argument('--weights',type=Path)
     parser.add_argument('--name')
+    parser.add_argument('--experiment-root',type=Path,default=ROOT/'output/gear-yolo-fine-defects-v2')
     args=parser.parse_args()
-    out=ROOT/'output/gear-yolo-fine-defects-v2'
+    out=args.experiment_root.resolve(strict=True)
     weights=args.weights.resolve(strict=True) if args.weights else ROOT/'.runtime/quality-models/yolo11-gear-fine-defects-v2/best.pt'
     baseline=read(ROOT/'output/gear-yolo-fine-defects-v1/evaluation/packed-classifier-epoch4-contained/calibration-raw.json')
     assert args.variant=='native' or digest(weights)==baseline['weights_sha256']
