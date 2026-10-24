@@ -10,7 +10,8 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     && rm -rf /var/lib/apt/lists/*
 
 COPY services/agent-service/requirements.txt /tmp/agent-requirements.txt
-RUN pip install --no-cache-dir -r /tmp/agent-requirements.txt
+COPY services/agent-service/requirements-sandbox.txt /tmp/agent-sandbox-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/agent-requirements.txt -r /tmp/agent-sandbox-requirements.txt
 
 COPY services/agent-service /app/services/agent-service
 COPY shared /app/shared

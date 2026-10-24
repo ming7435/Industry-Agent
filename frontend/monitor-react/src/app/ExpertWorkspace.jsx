@@ -29,8 +29,8 @@ const modifiedTime = (value, empty = '暂无修改记录') => {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(date).replace(/\//g, '-');
 };
 const sampleFor = skill => skill.optimization?.mode && skill.optimization.mode !== 'machine_flow' ? taskSampleFor(skill) : ({
-  device_id: '', scenario_id: '',
-  expected: '监控发现故障并暂停整线，使用本次草稿完成诊断、生成方案和工单；维修确认后整线复机并生成汇总报告。',
+  device_id: '', scenario_id: '', sop_document: '',
+  expected: '在沙箱内完成模拟诊断、维修方案、虚拟工单、维修确认、复机校验和报告。',
 });
 const activeTrial = trial => ['awaiting_fault', 'running', 'awaiting_repair', 'awaiting_report'].includes(trial?.status);
 const pollTrial = trial => activeTrial(trial) || (trial?.mode === 'machine_flow' && trial.status === 'failed'
@@ -480,37 +480,40 @@ export default function ExpertWorkspace({ actor, active = true }) {
             <details className="expert-sample-config" open={!trial || activeTrial(trial)}><summary>测试配置与预期</summary><div className="expert-sample-fields">
               <h3>{taskMode ? '技能任务验证' : '模拟机器全流程测试'}</h3>
               {taskMode ? <SkillTaskSample skill={current} sample={sample} change={changeSample} disabled={locked || autoFrozen}/> : <>
-              <p>使用监控中心现有模拟机器。触发故障后按正常规则暂停整线、诊断并派工；维修确认后复机并保存汇总报告。</p>
+              <p>选取监控中心现有故障场景作为输入，在一次性沙箱中运行完整模拟闭环。不会触发设备故障、暂停整线或生成实际工单及报告。</p>
               <label>测试设备<select value={sample.device_id} onChange={changeSample('device_id')} disabled={locked || autoFrozen} required>
                 <option value="">请选择本人负责的设备</option>
                 {machines.map(item => <option key={item.device_id} value={item.device_id}>{item.name}</option>)}</select></label>
               <label>模拟故障<select value={sample.scenario_id} onChange={changeSample('scenario_id')} disabled={locked || autoFrozen} required>
                 <option value="">请选择故障场景</option>
-                {machine?.scenarios.map(item => <option key={item.scenario_id} value={item.scenario_id}>{item.name} · {item.alarm_code ? `报警 ${item.alarm_code}` : '无报警码'}</option>)}</select></label></>}
+                {machine?.scenarios.map(item => <option key={item.scenario_id} value={item.scenario_id}>{item.name} · {item.alarm_code ? `报警 ${item.alarm_code}` : '无报警码'}</option>)}</select></label>
+              <label>测试用 SOP 或知识库依据<textarea value={sample.sop_document || ''} onChange={changeSample('sop_document')}
+                disabled={locked || autoFrozen} required maxLength={6000} rows={4} placeholder="粘贴与本故障相关的维修依据；仅作为沙箱测试数据" /></label></>}
               <label htmlFor="expert-expected-result">预期结果</label><textarea id="expert-expected-result" value={sample.expected}
                 onChange={changeSample('expected')} disabled={locked || autoFrozen} required maxLength={2000} rows={3} />
               </div></details>
               {proposal?.status === 'awaiting_confirmation' && <label className="expert-review"><input type="checkbox"
                 checked={approvedDraft} disabled={locked} onChange={event=>setApprovedDraft(event.target.checked)} /> 我已审核自动修改稿及预期结果，允许开始测试</label>}
-              <button className="expert-primary" type="button" onClick={testDraft} disabled={locked || Boolean(remote) || (!taskMode && !sample.scenario_id) ||
+              <button className="expert-primary" type="button" onClick={testDraft} disabled={locked || Boolean(remote) || (!taskMode && (!sample.scenario_id || !sample.sop_document?.trim())) ||
                 (Boolean(proposal) && (!approvedDraft || autoFrozen))}>{testing ? '测试进行中…' : '测试修改'}</button>
               {trial && !taskMode && <section className="expert-machine-progress" aria-label="全流程进度">
+                {trial.simulation && <p>沙箱模拟结果：虚拟工单、维修确认、复机状态和报告仅在本次测试中存在。</p>}
                 <p role="status">{trial.message}</p>
                 {!!trial.details?.blockers?.length && <section className="expert-alert" aria-label="本轮阻断原因">
                   <strong>需要先解决的问题</strong><ul>{trial.details.blockers.map((reason,index)=><li key={index}>{reason}</li>)}</ul>
                 </section>}
                 <ol>{trial.progress?.map(item => <li key={item.label} className={item.completed ? 'is-completed' : ''}>{item.label}：{item.completed ? '已完成' :
                   item.status==='blocked' ? '受阻' : item.status==='not_started' || trial.status==='failed' ? '未开始' : '等待完成'}</li>)}</ol>
-                {trial.workorders?.map(order => <p key={order.workorder_id}>测试工单：
+                {!trial.simulation && trial.workorders?.map(order => <p key={order.workorder_id}>测试工单：
                   <a href={`/?view=workorder&workorder_id=${encodeURIComponent(order.workorder_id)}`}>{order.workorder_id}</a>
                   {order.status === 'completed' || order.status === 'closed' ? ' · 已完成' : ' · 待维修确认'}</p>)}
-                {trial.status === 'awaiting_repair' && trial.workorders?.some(order => order.assignee === actor.user_id && !['completed', 'closed'].includes(order.status)) && <>
+                {!trial.simulation && trial.status === 'awaiting_repair' && trial.workorders?.some(order => order.assignee === actor.user_id && !['completed', 'closed'].includes(order.status)) && <>
                   <label>处理说明<textarea value={feedback} onChange={event => setFeedback(event.target.value)} disabled={busy} rows={3}
                     maxLength={6000} placeholder="填写本次模拟维修的处理结果" /></label>
                   {trial.workorders.filter(order => order.assignee === actor.user_id && !['completed', 'closed'].includes(order.status)).map(order =>
                     <button key={order.workorder_id} type="button" disabled={busy || !feedback.trim()} onClick={() => finishTrial(order.workorder_id)}>
                       {busy ? '正在确认…' : '确认维修完成并复机'}</button>)}</>}
-                {trial.report_id && <p>汇总报告：{trial.report_id} · <a href="/?view=report">查看报告中心</a></p>}
+                {!trial.simulation && trial.report_id && <p>汇总报告：{trial.report_id} · <a href="/?view=report">查看报告中心</a></p>}
                 <details><summary>查看机器流程详情</summary>
                   <ExpertTrialDetails trial={trial} actor={actor} formatTime={value => modifiedTime(value, '暂无记录')} /></details>
               </section>}

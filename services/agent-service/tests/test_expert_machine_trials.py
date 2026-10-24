@@ -1,4 +1,4 @@
-"""机器试验只在完成真实业务阶段后授权发布，预览与旧记录不能冒充闭环。"""
+"""Historical machine-trial receipt and recovery tests for the retained internal helper."""
 from copy import deepcopy
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -70,6 +70,9 @@ class Business:
 def machine_trial(expert_api, monkeypatch):
     monkeypatch.setenv('FACTORY_CONTROL_MODE', 'virtual')
     manager = expert_api.client.app.state.expert_skills
+    # Historical real-machine recovery cases exercise the retained internal
+    # helper; the public endpoint now requires OpenSandbox simulation.
+    manager.trials.start_machine = manager.trials._legacy_start_machine
     factory, backend = Machines(), Business()
     manager.trials.factory, manager.trials.backend = factory, backend
     draft = update_body(expert_api)
@@ -416,6 +419,7 @@ def test_machine_trial_real_backend_four_device_restart_and_cycle_report(expert_
         controller = LineController(factory, backend)
         manager = expert_api.client.app.state.expert_skills
         trials = manager.trials
+        trials.start_machine = trials._legacy_start_machine
         trials.factory, trials.backend = factory, backend
         operations = RuntimeOperations(None, None, factory_client=factory, repair_controller=controller)
         operations.expert_trials = trials

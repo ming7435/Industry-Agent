@@ -10,11 +10,12 @@ import socket
 import subprocess
 import sys
 import secrets
+import shutil
 import threading
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -165,6 +166,8 @@ def service_port(name: str, command: list[str], monitor_port: int = 8001) -> int
 
     if name == "monitor-web":
         return int(monitor_port)
+    if name == "skill-sandbox":
+        return 18080
     try:
         index = command.index("--port")
         return int(command[index + 1])
@@ -208,6 +211,56 @@ def _wait_for_service_startup(
         remaining = deadline - time.monotonic()
         if remaining > 0:
             time.sleep(min(poll_seconds, remaining))
+
+
+class _SandboxNoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # A service on the expected port must never forward the local API key elsewhere.
+        return None
+
+
+def _authenticated_sandbox_available(port: int, env: dict[str, str]) -> bool:
+    """Recognize this project's protected OpenSandbox, not just any open TCP port."""
+    key = env.get('SKILL_SANDBOX_API_KEY', '').strip()
+    if not key:
+        return False
+    base = f'http://127.0.0.1:{port}'
+    opener = build_opener(ProxyHandler({}), _SandboxNoRedirect())
+    endpoint = base + '/v1/sandboxes?page=1&pageSize=1'
+    try:
+        with opener.open(base + '/health', timeout=1) as response:
+            if response.status != 200:
+                return False
+        # Refuse an unprotected or unrelated server that ignores the supplied credential.
+        try:
+            with opener.open(endpoint, timeout=1):
+                return False
+        except HTTPError as error:
+            error.close()
+            if error.code != 401:
+                return False
+        request = Request(endpoint, headers={'OPEN-SANDBOX-API-KEY': key,
+                                             'Accept': 'application/json'})
+        with opener.open(request, timeout=1) as response:
+            payload = json.loads(response.read(65537))
+            return (response.status == 200 and isinstance(payload, dict)
+                    and isinstance(payload.get('items'), list)
+                    and isinstance(payload.get('pagination'), dict))
+    except (HTTPError, URLError, OSError, ValueError):
+        return False
+
+
+def _wait_for_sandbox_startup(process, port: int, env: dict[str, str], *, timeout_seconds=60):
+    """A concurrent authenticated winner is usable even when our bind attempt exits."""
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if _authenticated_sandbox_available(port, env):
+            return process.poll() is None
+        if (code := process.poll()) is not None:
+            raise RuntimeError(f'技能沙箱启动退出（{code}），且端口上的服务未通过身份校验')
+        if time.monotonic() >= deadline:
+            raise TimeoutError('技能沙箱未在启动期限内通过健康及身份校验')
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
 
 
 def _stream_logs(name: str, process: subprocess.Popen[str]) -> None:
@@ -272,6 +325,18 @@ def main() -> int:
     python = str(_project_python())
     # .env 只合并进子进程环境；先解析一次，保证 --host 等启动参数也遵循 .env。
     launch_env = _default_env()
+    if launch_env.get("SKILL_SANDBOX_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+        try:
+            from scripts.skill_sandbox_environment import ensure_configuration, server_environment
+        except ModuleNotFoundError:
+            from skill_sandbox_environment import ensure_configuration, server_environment
+
+        # Generate the shared API key before child environments are finalized.
+        sandbox_config = ensure_configuration()
+        launch_env = _default_env()
+        uvx = shutil.which("uvx")
+        if not uvx:
+            raise RuntimeError("已启用技能沙箱，但未找到 uvx。")
     services = [
         (
             "model-service",
@@ -324,6 +389,14 @@ def main() -> int:
         ),
     ]
 
+    if launch_env.get("SKILL_SANDBOX_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+        services.insert(1, (
+            "skill-sandbox",
+            [uvx, "opensandbox-server", "--config", str(sandbox_config)],
+            PROJECT_ROOT,
+            PROJECT_ROOT,
+        ))
+
     worker_service = cad_document_worker_service(launch_env)
     if worker_service:
         services.insert(2, worker_service)
@@ -333,9 +406,17 @@ def main() -> int:
         or not launch_env.get('RAG_INTERNAL_TOKEN', '').strip()
     ):
         # 一次性身份无法证明旧服务的身份一致，必须在启动任何子进程前拒绝混用。
-        occupied = [name for name, command, _, _ in services if (port := service_port(name, command, monitor_port)) is not None and _port_in_use("127.0.0.1", port)]
+        # The sandbox has its own persistent API key, independently checked below.
+        occupied = [name for name, command, _, _ in services if name != 'skill-sandbox' and (port := service_port(name, command, monitor_port)) is not None and _port_in_use("127.0.0.1", port)]
         if occupied:
             raise RuntimeError("已有服务的内部身份无法核对，请先统一停止本地应用再重新启动；不会停止工厂或基础设施。")
+
+    for name, command, _, _ in services:
+        if name == 'skill-sandbox':
+            sandbox_port = service_port(name, command, monitor_port)
+            if (_port_in_use('127.0.0.1', sandbox_port)
+                    and not _authenticated_sandbox_available(sandbox_port, launch_env)):
+                raise RuntimeError('技能沙箱端口已被占用，但服务未通过本项目身份校验，拒绝复用')
 
     processes: list[tuple[str, subprocess.Popen[str]]] = []
     original_sigint = signal.getsignal(signal.SIGINT)
@@ -358,15 +439,21 @@ def main() -> int:
         for name, command, cwd, env_root in services:
             port = service_port(name, command, monitor_port=monitor_port)
             if port is not None and _port_in_use("127.0.0.1", port):
-                if name != "monitor-web":
+                if name == 'skill-sandbox':
+                    if not _authenticated_sandbox_available(port, launch_env):
+                        raise RuntimeError('技能沙箱端口上的服务未通过本项目身份校验，拒绝复用')
+                elif name != "monitor-web":
                     _wait_for_service_startup(name, None, port)
                 print(f"{name} 已在 127.0.0.1:{port} 运行，复用现有服务。")
                 continue
             print(f"启动 {name} ...")
+            child_env = _env_for_service(env_root)
+            if name == "skill-sandbox":
+                child_env = server_environment(child_env)
             process = subprocess.Popen(
                 command,
                 cwd=cwd,
-                env=_env_for_service(env_root),
+                env=child_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -376,7 +463,11 @@ def main() -> int:
             )
             processes.append((name, process))
             threading.Thread(target=_stream_logs, args=(name, process), daemon=True).start()
-            if port is not None and name != "monitor-web":
+            if name == 'skill-sandbox':
+                if not _wait_for_sandbox_startup(process, port, launch_env):
+                    processes.remove((name, process))
+                    print('技能沙箱端口已由通过身份校验的并发实例接管，复用现有服务。')
+            elif port is not None and name != "monitor-web":
                 _wait_for_service_startup(name, process, port)
                 print(f"{name} 健康接口已可用。")
 
@@ -384,6 +475,11 @@ def main() -> int:
             exited=unexpected_service_exit(processes)
             if exited:
                 name,return_code=exited
+                if name == 'skill-sandbox' and _authenticated_sandbox_available(sandbox_port, launch_env):
+                    processes[:] = [(child_name, child) for child_name, child in processes
+                                    if child_name != 'skill-sandbox']
+                    print('技能沙箱重复启动进程已退出，继续使用通过身份校验的现有实例。')
+                    continue
                 print(f"{name} 已退出，退出码：{return_code}")
                 _terminate(processes)
                 return return_code

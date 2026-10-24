@@ -131,12 +131,14 @@ Model Service 的聊天请求只转发到 DeepSeek 官方 OpenAI 兼容地址 `h
 需要联调 MySQL、Redis、Milvus 或 MinIO 时，可启动以下 Compose 栈；服务关系见[总体架构](docs/项目说明书.md)：
 
 ```powershell
-docker compose -f infra/docker/docker-compose.yml up -d
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
 ```
 
 ## 环境配置
 
-复制 .env.example 为根目录 .env。密钥只放在本地 .env，不要提交到 Git。
+复制 .env.example 为根目录 .env。密钥只放在本地 .env，不要提交到 Git。使用 `infra/docker/docker-compose.yml` 时显式传入 `--env-file .env`，确保 Compose 从仓库根目录读取配置。
+
+启用专家技能测试沙箱时，先运行 `python scripts/skill_sandbox_environment.py prepare`，再用 `docker compose --env-file .env -f infra/docker/docker-compose.yml --profile sandbox up -d --build skill-sandbox` 启动 OpenSandbox Server；测试时创建的沙箱容器会在结束后销毁。详见[沙箱部署说明](docs/skill-sandbox.md)。
 
 配置优先级为：进程环境变量 > 根目录 `.env` > 代码默认值。所有本地服务共用根目录这一份配置，不再读取服务目录下的重复 `.env`。`APP_ENV=production` 时默认禁止本地 RAG、Memory、CAD、Closure 和 Report 回退；只有显式设置降级开关才会启用降级。`LEARNING_RESULT_STORE_PATH` 保存关闭工单后的 Memory/RAG/Report 结果，`REPORT_STORE_PATH` 保存结构化报告，避免服务重启后重复学习或丢失报告。
 

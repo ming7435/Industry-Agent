@@ -1,6 +1,25 @@
 name: industry-agent-infra
 
 services:
+  skill-sandbox:
+    profiles: ["sandbox"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.skill-sandbox-server
+    restart: unless-stopped
+    network_mode: bridge
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ../../.runtime/skill-sandbox/server-container.toml:/etc/opensandbox/server.toml:ro
+      - skill-sandbox-data:/data
+    ports:
+      - "127.0.0.1:18080:18080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   mysql:
     image: mysql:8.4
     restart: unless-stopped
@@ -198,6 +217,19 @@ services:
       MCP_INVENTORY_URL: http://backend-service:8030
       MCP_QMS_URL: http://backend-service:8030
       MODEL_SERVICE_BASE_URL: http://model-service:8040
+      SKILL_SANDBOX_ENABLED: ${SKILL_SANDBOX_ENABLED:-false}
+      SKILL_SANDBOX_DOMAIN: ${SKILL_SANDBOX_CONTAINER_DOMAIN:-host.docker.internal:18080}
+      SKILL_SANDBOX_PROTOCOL: ${SKILL_SANDBOX_PROTOCOL:-http}
+      SKILL_SANDBOX_API_KEY: ${SKILL_SANDBOX_API_KEY:-}
+      SKILL_SANDBOX_IMAGE: ${SKILL_SANDBOX_IMAGE:-industry-skill-runner:0.1}
+      SKILL_SANDBOX_MODEL_BASE_URL: ${SKILL_SANDBOX_MODEL_BASE_URL:-http://host.docker.internal:8040}
+      SKILL_SANDBOX_ALLOWED_HOSTS: ${SKILL_SANDBOX_ALLOWED_HOSTS:-host.docker.internal}
+      SKILL_SANDBOX_TIMEOUT_SECONDS: ${SKILL_SANDBOX_TIMEOUT_SECONDS:-180}
+      SKILL_SANDBOX_READY_TIMEOUT_SECONDS: ${SKILL_SANDBOX_READY_TIMEOUT_SECONDS:-300}
+      SKILL_SANDBOX_CPU: ${SKILL_SANDBOX_CPU:-1}
+      SKILL_SANDBOX_MEMORY: ${SKILL_SANDBOX_MEMORY:-1Gi}
+      SKILL_SANDBOX_FALLBACK: ${SKILL_SANDBOX_FALLBACK:-false}
+      SKILL_SANDBOX_USE_SERVER_PROXY: "true"
       PENDING_TASK_STORE_PATH: runtime_pending_task
       REDIS_URL: redis://redis:6379/0
       WORKORDER_BACKEND: mysql
@@ -382,6 +414,7 @@ services:
       - "127.0.0.1:${MODEL_PORT:-8040}:8040"
 
 volumes:
+  skill-sandbox-data:
   agent-runtime-data:
   agent-output-data:
   mysql-data:

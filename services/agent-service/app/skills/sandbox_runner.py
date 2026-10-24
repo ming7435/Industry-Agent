@@ -25,7 +25,7 @@ from app.skills.registry import SkillDefinition
 from app.skills.testing import SampleTools, TrialClient, TrialFailure
 
 
-SUPPORTED_MODES = frozenset({"diagnosis", "instruction_preview"})
+SUPPORTED_MODES = frozenset({"diagnosis", "instruction_preview", "knowledge_flow", "cad_spec_flow", "review_flow", "machine_flow"})
 
 
 class StaticRegistry:
@@ -90,7 +90,7 @@ def _definitions(agent: str, payloads: Iterable[Mapping[str, Any]]) -> list[Skil
         document = str(item.get("document") or "")
         name = str(metadata.get("name") or "skill-%s" % index)
         path = Path("/work/skills") / (name + ".md")
-        definitions.append(SkillDefinition.from_payload(agent, metadata, path, document))
+        definitions.append(SkillDefinition.from_payload(str(item.get("agent") or agent), metadata, path, document))
     return definitions
 
 
@@ -232,6 +232,17 @@ def execute(payload: Mapping[str, Any], client: Any = None) -> dict[str, Any]:
     try:
         if mode == "diagnosis":
             return _run_diagnosis(payload, registry, client)
+        if mode == "machine_flow":
+            from app.skills.sandbox_machine_flow import execute_machine_flow
+
+            return execute_machine_flow(payload, registry, client)
+        if mode in {"knowledge_flow", "cad_spec_flow", "review_flow"}:
+            from app.skills.task_testing import execute_task
+
+            record = {"agent": agent, "name": str(payload.get("name") or ""),
+                      "mode": mode, "sample": dict(payload.get("sample") or {})}
+            output, criteria = execute_task(record, registry, TrialClient(client, mode))
+            return {"ok": True, "result": output, "criteria": criteria}
         return _run_instruction_preview(payload, registry, client)
     except TrialFailure as error:
         return {"ok": False, "message": str(error)}

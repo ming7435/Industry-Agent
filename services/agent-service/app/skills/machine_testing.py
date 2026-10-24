@@ -56,6 +56,7 @@ class MachineTrials(SkillTrials):
         self.factory = factory
         self.backend = backend
         self.registries = {}
+        self._legacy_enabled = False
         # Sample previews are retained as a read-only API. They cannot publish.
         self.require_machine_publish = True
 
@@ -71,7 +72,12 @@ class MachineTrials(SkillTrials):
         return self.factory, self.backend
 
     def catalog_machines(self, actor):
-        factory, _ = self._clients()
+        if os.getenv('FACTORY_CONTROL_MODE', '').lower() != 'virtual':
+            raise SkillEditError(409, '全流程测试只支持监控中心的模拟机器')
+        if self.factory is None:
+            from app.monitor.factory_api import FactoryApiClient
+            self.factory = FactoryApiClient(os.getenv('FACTORY_API_BASE_URL', 'http://127.0.0.1:4529'))
+        factory = self.factory
         responsible = actor.get('responsible_device_ids') or [actor.get('primary_device_id')]
         items = []
         for device in factory.devices():
@@ -82,7 +88,7 @@ class MachineTrials(SkillTrials):
             items.append({'device_id': did, 'name': device.get('name') or did, 'status': device.get('status'),
                           'scenarios': [{k: s.get(k) for k in ('scenario_id', 'name', 'alarm_code', 'summary')}
                                         for s in scenarios if s.get('scenario_id') and s.get('default_device_id') == did]})
-        return {'items': items, 'scope': '使用现有模拟机器；测试会暂停整线，并保存工单及报告。'}
+        return {'items': items, 'scope': '现有模拟机器场景仅作为测试输入；完整流程在一次性沙箱内模拟，不暂停整线或保存正式工单。'}
 
     def _dependencies(self, agent=None):
         if agent is not None:
@@ -92,6 +98,8 @@ class MachineTrials(SkillTrials):
                 for folder in AGENTS for path in self.manager.registry.source_files(folder)}
 
     def _active(self):
+        if not self._legacy_enabled:
+            return None
         pointer = self.manager.backup_root / 'machine-test.json'
         if not pointer.exists():
             return None
@@ -120,7 +128,7 @@ class MachineTrials(SkillTrials):
     @staticmethod
     def _public(record):
         public = SkillTrials._public(record)
-        public.update({key: record.get(key) for key in ('machine', 'event_id', 'workorders', 'report_id', 'progress', 'details', 'cancelled_at', 'assessment')})
+        public.update({key: record.get(key) for key in ('machine', 'event_id', 'workorders', 'report_id', 'progress', 'details', 'cancelled_at', 'assessment', 'simulation')})
         if record.get('status') in ACTIVE:
             public['assessment'] = None
         return public
@@ -129,6 +137,19 @@ class MachineTrials(SkillTrials):
         from app.skills.optimization import verification_mode
         if verification_mode(agent, name) != 'machine_flow':
             raise SkillEditError(422, '此技能使用本领域任务样例验证，不能触发模拟机器故障')
+        if self._sandbox().supports('machine_flow'):
+            from app.skills.sandbox_machine_trial import start
+            return start(self, agent, name, values, actor)
+        raise SkillEditError(503, '完整闭环测试需要启用技能沙箱，请检查 SKILL_SANDBOX_ENABLED 与沙箱服务')
+
+    def _execute_sandboxed(self, record, registry, sandbox):
+        if record['mode'] == 'machine_flow':
+            from app.skills.sandbox_machine_trial import execute
+            return execute(self, record, registry, sandbox)
+        return super()._execute_sandboxed(record, registry, sandbox)
+
+    def _legacy_start_machine(self, agent, name, values, actor):
+        self._legacy_enabled = True
         factory, backend = self._clients()
         if actor.get('role') != 'technician':
             raise SkillEditError(403, '请使用负责设备的维修人员账号测试')
@@ -299,7 +320,9 @@ class MachineTrials(SkillTrials):
         if record.get('mode') != 'machine_flow':
             return super().get(test_id, actor)
         if record['status'] in ACTIVE and record['instance'] != self.instance:
-            record = self._save_changes(test_id, status='failed', message='服务已重启，请完成原工单后重新测试；原测试不能用于发布')
+            record = self._save_changes(test_id, status='failed', message=(
+                '服务已重启，沙箱试运行中断，请重新测试' if record.get('simulation')
+                else '服务已重启，请完成原工单后重新测试；原测试不能用于发布'))
         if record['status'] == 'awaiting_fault' and time() - record['created_epoch'] > 120:
             record = self._save_changes(test_id, status='failed', message='监控中心尚未收到本次故障，请检查监控服务；不会自动重新触发')
         if record.get('event_id'):

@@ -221,8 +221,7 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
       </aside>
       <section className="vision-output vision-result-stage" aria-labelledby="vision-output-heading">
         {referenceBlocked && <p className="vision-error">测试齿轮图片只能用于流程验证。请切换至流程验证实物，或上传当前生产实物的图片。</p>}
-        <p className="vision-note">{qualityPart ? '本次视觉检测关联实物：' + qualityPart.serial_number + ' · 批次 ' + qualityPart.batch_id + ' · 设计版本 ' + qualityPart.design_version
-          : '未选择综合复核实物，本次视觉结果单独保存，不计入综合合格率。'}</p>
+        {qualityPart && <p className="vision-note">本次视觉检测关联实物：{qualityPart.serial_number} · 批次 {qualityPart.batch_id} · 设计版本 {qualityPart.design_version}</p>}
         <header><h3 id="vision-output-heading">视觉检测结果</h3><span className={`vision-status ${result?.status || ''}`}>{result ? result.status === 'clear' ? '本图未检出异常' : result.classification === 'known_defect' ? '已定位视觉缺陷' : '异常待复核' : '等待串联检测'}</span></header>
         <p className="vision-note">结论仅针对本次图片；未检出异常不代表整件质量合格。尺寸结果在“尺寸比对”查看。</p>
         <VisionPipelineResult result={result} busy={busy === 'detect'} />

@@ -115,13 +115,15 @@ def test_sandbox_is_disabled_by_default(monkeypatch):
     assert SkillSandbox(config).supports("diagnosis") is False
 
 
-def test_sandbox_only_supports_trial_modes(monkeypatch):
+def test_sandbox_supports_all_readonly_trial_modes(monkeypatch):
     monkeypatch.setenv("SKILL_SANDBOX_ENABLED", "true")
     sandbox = SkillSandbox.from_env()
     assert sandbox.supports("diagnosis") is True
     assert sandbox.supports("instruction_preview") is True
-    assert sandbox.supports("knowledge_flow") is False
-    assert sandbox.supports("machine_flow") is False
+    assert sandbox.supports("knowledge_flow") is True
+    assert sandbox.supports("cad_spec_flow") is True
+    assert sandbox.supports("review_flow") is True
+    assert sandbox.supports("machine_flow") is True
 
 
 def test_runner_instruction_preview_returns_structured_result():
@@ -163,15 +165,82 @@ def test_runner_diagnosis_mode_uses_real_skill_without_production_tools():
         },
     }
     result = execute(payload, client=DiagnosisModel())
-    assert result["ok"] is True, result
+    assert result["ok"] is True, json.dumps(result, ensure_ascii=True)
     assert result["result"]["summary"] == "样例刀塔分度超时"
     assert result["checks"]["stop_reason"] == "validator_pass"
 
 
 def test_runner_rejects_unsupported_mode():
-    result = execute({"mode": "machine_flow"}, client=FakeClient())
+    result = execute({"mode": "unrecognized_mode"}, client=FakeClient())
     assert result["ok"] is False
     assert "不支持" in result["message"]
+
+
+def test_runner_executes_review_flow_with_actual_readonly_validator():
+    class ReviewModel(FakeClient):
+        def chat(self, messages, **kwargs):
+            return {"choices": [{"message": {"content": json.dumps({"skills": {
+                "repair_plan_skill": {"highlights": ["/input/fault"], "missing": []}
+            }}, ensure_ascii=False)}}]}
+
+    skill = SkillDefinition.from_payload(
+        "maintenance", {"name": "repair_plan_skill", "version": "1.0", "goal": "核查", "tools": [], "steps": []},
+        Path("/tmp/repair_plan_skill.md"), "核对故障事实。",
+    )
+    result = execute({"agent": "maintenance", "name": "repair_plan_skill", "mode": "review_flow",
+                      "definitions": [{"metadata": dict(skill.metadata), "document": skill.document}],
+                      "sample": {"input": {"fault": "刀塔超时"}, "output": {"status": "completed"},
+                                 "expected_highlights": ["/input/fault"], "expected_missing": []}}, client=ReviewModel())
+    assert result["ok"] is True, result
+    assert result["criteria"] == {"skill_used": True, "evidence_scope": True, "readonly": True, "expected_result": True}
+    assert result["result"]["highlights"][0]["path"] == "/input/fault"
+
+
+def test_runner_executes_knowledge_and_cad_task_graphs():
+    from app.skills.registry import SkillRegistry
+    from test_skill_evolution import model_reply
+
+    registry = SkillRegistry(Path(__file__).resolve().parents[1] / "app" / "skills")
+    knowledge = registry.get("knowledge", "manual_search_skill")
+    assert knowledge is not None
+    knowledge_result = execute({"agent": "knowledge", "name": knowledge.name, "mode": "knowledge_flow",
+                                "definitions": [{"metadata": dict(knowledge.metadata), "document": knowledge.document}],
+                                "sample": {"query": "查找主轴手册", "expected_status": "completed",
+                                           "expected_document_ids": ["DOC-1"], "documents": [{"document_id": "DOC-1",
+                                           "title": "主轴手册", "content": "检查主轴冷却流量。", "source_type": "manual"}]}},
+                               client=model_reply({"retrieval_plan": ["search_manual", "search_knowledge"]}))
+    assert knowledge_result["ok"] is True, knowledge_result
+    assert knowledge_result["criteria"]["skill_used"] is True
+    assert knowledge_result["criteria"]["retrieval"] is True
+
+    cad = registry.get("cad", "production_modeling_skill")
+    assert cad is not None
+    cad_result = execute({"agent": "cad", "name": cad.name, "mode": "cad_spec_flow",
+                          "definitions": [{"metadata": dict(cad.metadata), "document": cad.document}],
+                          "sample": {"prompt": "生成带孔齿轮，需要核对孔的位置。", "expected_status": "needs_input",
+                                     "expected_spec": None}},
+                         client=model_reply({"status": "needs_input", "questions": ["请明确孔的位置。"]}))
+    assert cad_result["ok"] is True, cad_result
+    assert cad_result["criteria"]["skill_used"] is True
+    assert cad_result["criteria"]["missing_dimensions"] is True
+
+
+def test_runner_executes_machine_simulation_without_production_tools():
+    from app.skills.registry import SkillRegistry
+
+    registry = SkillRegistry(Path(__file__).resolve().parents[1] / "app" / "skills")
+    definitions = [{"agent": agent, "metadata": dict(skill.metadata), "document": skill.document}
+                   for agent in ("diagnosis", "maintenance", "workorder", "report")
+                   for skill in registry.list(agent)]
+    result = execute({"agent": "diagnosis", "name": "alarm_diagnosis_skill", "mode": "machine_flow",
+                      "test_id": "T-MACHINE-SIM", "definitions": definitions,
+                      "sample": {"alarm_code": "700006", "alarm_definition": "刀塔旋转超时",
+                                 "scenario": "刀塔分度超时，现场尚未确定原因。", "severity": "critical",
+                                 "sop_document": "刀塔分度超时：断电挂牌后检查分度机构和就位反馈，确认无报警再申请复机。"}},
+                     client=DiagnosisModel())
+    assert result["ok"] is True, json.dumps(result, ensure_ascii=True)
+    assert result["simulation"] is True
+    assert result["criteria"]["report"] is True
 
 
 def test_trial_writes_sandbox_result_without_touching_local_paths(tmp_path, monkeypatch):

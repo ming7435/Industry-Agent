@@ -37,7 +37,7 @@ export default function ExpertTrialDetails({ trial, actor, formatTime }) {
         {plan.workorder_ready===false && <p>方案已生成，尚未通过派工校验。</p>}
         {!!plan.validation_findings?.length && <ul>{plan.validation_findings.map((finding,index)=><li key={index}>{finding}</li>)}</ul>}
         {plan.summary && <ExpertDocument value={plan.summary} label="维修方案说明" readOnly />}
-        {!!plan.steps?.length && <ol>{plan.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>}
+        {!!(plan.steps || plan.repair_steps)?.length && <ol>{(plan.steps || plan.repair_steps).map((step, index) => <li key={index}>{step}</li>)}</ol>}
       </section>
       <section className="expert-trial-detail">
         <h4>工单与检查结果</h4>
@@ -45,24 +45,28 @@ export default function ExpertTrialDetails({ trial, actor, formatTime }) {
         {orders.map(order => <section key={order.workorder_id} className="expert-trial-order">
           <h5>工单 {order.workorder_id}</h5>
           <dl><div><dt>工单状态</dt><dd>{statuses[order.status] || '待确认'}</dd></div>
-            <div><dt>维修负责人</dt><dd>{ownerName(order)}</dd></div>
+            <div><dt>维修负责人</dt><dd>{trial.simulation ? '沙箱模拟维修人员' : ownerName(order)}</dd></div>
             <div><dt>派发时间</dt><dd>{formatTime(order.created_at)}</dd></div>
             <div><dt>确认完成时间</dt><dd>{formatTime(order.completed_at)}</dd></div></dl>
           {order.confirmation_method === 'manual_confirmation' && <p>检查方式：维修人员人工确认。</p>}
           <h5>处理说明</h5>
-          {order.feedback ? <ExpertDocument value={order.feedback} label="已保存的处理说明" readOnly /> : <p>维修人员尚未提交处理说明。</p>}
-          <a href={`/?view=workorder&workorder_id=${encodeURIComponent(order.workorder_id)}`}>查看此工单</a>
+          {trial.simulation ? <p>沙箱按模拟维修反馈完成校验；无现场人员处理记录。</p> :
+            order.feedback ? <ExpertDocument value={order.feedback} label="已保存的处理说明" readOnly /> : <p>维修人员尚未提交处理说明。</p>}
+          {trial.simulation ? <p>仅存在于本次沙箱测试中。</p> :
+            <a href={`/?view=workorder&workorder_id=${encodeURIComponent(order.workorder_id)}`}>查看此工单</a>}
         </section>)}
       </section>
       <section className="expert-trial-detail expert-trial-detail-wide">
         <h4>整线复机情况</h4>
-        <p>{restart.completed ? `本轮已保存复机记录，复机时间：${formatTime(restart.restarted_at)}` : '本轮尚未读取到整线复机记录。'}</p>
+        <p>{trial.simulation ? (restart.completed ? '虚拟设备恢复快照已通过校验；实际设备未操作。' : '模拟复机尚未通过。') :
+          restart.completed ? `本轮已保存复机记录，复机时间：${formatTime(restart.restarted_at)}` : '本轮尚未读取到整线复机记录。'}</p>
         {!!restart.devices?.length && <dl className="expert-trial-overview">{restart.devices.map(device =>
           <div key={device.device_id}><dt>{device.name}</dt><dd>{statuses[device.status] || '状态暂未读取'}</dd></div>)}</dl>}
       </section>
       <section className="expert-trial-detail expert-trial-detail-wide">
         <h4>汇总报告</h4>
-        {report.report_id ? <><p>{report.title || '故障处理汇总报告'} · {report.report_id}</p>
+        {trial.simulation ? <p>{report.status === 'completed' ? '沙箱模拟报告已生成，未保存到报告中心。' : '沙箱模拟报告尚未生成。'}</p> :
+          report.report_id ? <><p>{report.title || '故障处理汇总报告'} · {report.report_id}</p>
           {report.article ? <ExpertDocument value={report.article} label="本轮汇总报告正文" readOnly /> : <p>报告已保存，正文暂未读取。</p>}
           <a href="/?view=report">打开报告中心</a></> : <p>本轮汇总报告尚未保存。</p>}
       </section>

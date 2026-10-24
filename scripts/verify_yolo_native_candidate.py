@@ -94,11 +94,15 @@ def stage(selection_path,test_path):
     directory=OUT/'staged-model';directory.mkdir(exist_ok=False)
     shutil.copyfile(weights,directory/'best.pt');assert digest(directory/'best.pt')==digest(weights)
     model=read(ACTIVE/'model.json');metrics=result['metrics'];m=metrics['class_and_position']
+    data=read(OUT/'data-summary.json')
+    training_images=data.get('unique_training_images',data.get('training_inputs'))
+    assert isinstance(training_images,int) and training_images>0
     model.update(name='YOLO11n 齿轮缺陷定位（补样训练候选）',
         description=f'原图局部补样及纹理、边缘负样本训练候选。{result["images"]}张真实回归图：污渍{m["by_class"]["dirt"]["tp"]}/{m["by_class"]["dirt"]["gt"]}、细丝{m["by_class"]["hair"]["tp"]}/{m["by_class"]["hair"]["gt"]}，全类别定位{m["tp"]}/{m["gt_instances"]}、误框{m["fp"]}。研究验证结果。',
         weights_sha256=digest(weights),recommended_confidence=selection['recommended_confidence'],
         recommended_iou=selection['recommended_iou'],inference=selection['inference'],
-        training_images=2395,training_source_photos=779,new_independent_training_photos=0,
+        training_images=training_images,training_source_photos=data['source_photos'],
+        new_independent_training_photos=data['new_independent_photos'],
         calibration_scope=OUT.name,evaluation_status='research_candidate_not_deployed',
         test_class_and_position_tp=m['tp'],test_class_and_position_fp=m['fp'],
         test_spatial_tp=metrics['spatial']['tp'],test_extra_boxes=metrics['spatial']['fp'],

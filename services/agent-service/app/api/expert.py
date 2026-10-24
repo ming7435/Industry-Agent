@@ -82,6 +82,7 @@ class MachineSample(BaseModel):
     device_id: str = Field(min_length=1, max_length=120)
     scenario_id: str = Field(min_length=1, max_length=120)
     expected: str = Field(min_length=1, max_length=2000)
+    sop_document: str = Field(default='', max_length=6000)
 
     @field_validator('expected')
     @classmethod
@@ -176,6 +177,8 @@ def build_expert_router(runtime, require_auth):
         from app.api.team_auth import require_assignee
         actor = write_actor(request)
         receipt = run(manager.trials.get, test_id, actor)
+        if receipt.get('simulation') is True:
+            raise HTTPException(409, '沙箱模拟测试没有实际工单，无需现场维修确认')
         if receipt.get('mode') != 'machine_flow' or values.workorder_id not in [o['workorder_id'] for o in receipt.get('workorders') or []]:
             raise HTTPException(409, '只能确认本次测试生成的工单')
         require_assignee(values.workorder_id, actor, manager.trials.backend)

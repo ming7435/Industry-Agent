@@ -296,12 +296,33 @@ class SkillTrials:
             response.update(sandbox.run(payload))
             return response.get('result') or {}
 
-        output = (operation() if record['mode'] == 'instruction_preview'
+        output = (operation() if record['mode'] in {'instruction_preview', 'review_flow'}
                   else _observe_isolated_agent(self.manager.trace, record, operation))
         if not response.get('ok'):
             raise TrialFailure(str(response.get('message') or '沙箱试运行未通过'))
         if not isinstance(output, dict):
             raise TrialFailure('沙箱未返回有效结果，请检查镜像和模型服务。')
+
+        if record['mode'] in {'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
+            from app.skills.optimization import assessment_keys
+
+            required = set(assessment_keys(record['mode'])) - {'baseline_unchanged', 'dependencies_unchanged'}
+            criteria = response.get('criteria')
+            if not isinstance(criteria, dict) or set(criteria) != required or any(type(value) is not bool for value in criteria.values()):
+                raise TrialFailure('沙箱未返回有效验收结果，请重新测试。')
+            with self.manager._transaction():
+                criteria.update(
+                    baseline_unchanged=self.manager._detail(record['agent'], record['name'])['revision'] == record['baseline_revision'],
+                    dependencies_unchanged=self._dependencies(record['agent']) == record['dependencies'],
+                )
+                accepted = all(criteria.values())
+                record.update(status='completed' if accepted else 'failed', result=output,
+                              message='任务验证通过，等待人工核对并发布。' if accepted else '任务验证未通过或候选未实际参与决策，旧版保留。',
+                              assessment={'schema': 1, 'assessment_id': record['test_id'], 'agent': record['agent'], 'name': record['name'],
+                                          'trial_fingerprint': record['fingerprint'], 'completed_at': datetime.now(timezone.utc).isoformat(),
+                                          'accepted': accepted, 'criteria': criteria, 'basis': record['mode'] + '_receipt'})
+                self._write(record)
+            return
 
         keys = (('summary', 'diagnosis', 'recommendation', 'confidence')
                 if record['mode'] == 'diagnosis' else
@@ -328,7 +349,7 @@ class SkillTrials:
                     return
                 except Exception as error:
                     # 默认失败关闭；只有显式允许回退时才继续走原有进程内路径。
-                    if not sandbox.fallback:
+                    if not sandbox.fallback or record['mode'] == 'machine_flow':
                         from app.clients.skill_sandbox import SkillSandboxError
                         if isinstance(error, SkillSandboxError):
                             raise TrialFailure(str(error)) from error

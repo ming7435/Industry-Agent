@@ -11,13 +11,38 @@ from scripts.train_yolo_target_separation import OUT
 
 
 def main():
+    global OUT
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--result',type=Path,required=True)
     parser.add_argument('--api',type=Path,required=True)
+    parser.add_argument('--experiment-root',type=Path,default=OUT)
     args=parser.parse_args()
+    OUT=args.experiment_root.resolve(strict=True)
     baseline=read(ROOT/'output/gear-yolo-fine-defects-v1/evaluation/packed-classifier-epoch4-contained/test-comparison.json')
     result=read(args.result);proof=read(OUT/'verification.json');api=read(args.api/'report.json')
     data=read(OUT/'data-summary.json');history=read(OUT/'training/history.json')
+    feature_training=read(OUT/'protocol.json').get('experiment')=='v5_feature_separation'
+    if feature_training:
+        method='固定骨干层 0–10 和归一化统计量，训练特征融合层以及分类、定位分支；使用质量加权检测损失、两类权重 3 和避开目标区域的旧模型约束。'
+        export_note='保存为一个标准 YOLO 权重；特征融合、分类和定位分支均允许变化，因此同时检查全部类别指标。冻结骨干与重载检查见验证记录。'
+        calibration_note='第 2、4 轮先在固定 43 张校准图上筛查（包含全部污渍、细丝标注），再对入选或诊断候选运行 188 张完整校准图。固定模型和参数后运行 118 张真实回归图，保留原替换门槛。'
+        diagnosis_path='../gear-yolo-fine-defects-v4/'
+        chosen=read(OUT/'final-checkpoint-selection.json')
+        calibration_note+=f' 最终回归使用第 {chosen["epoch"]} 轮检查点，选择依据为校准结果。'
+    else:
+        method='固定骨干、特征融合和定位分支，只训练两类分类分支；采用类别平衡的焦点损失、几何正样本和重叠片段忽略规则。'
+        export_note='打包为一个标准 YOLO 权重，保留其他 14 类分类输出；导出和重新加载一致性检查通过。'
+        calibration_note='第 2、4 轮在 188 张校准图上比较，参数冻结后才运行真实测试；原替换门槛保留。'
+        diagnosis_path=''
+    feature_findings=''
+    if feature_training:
+        lines=[]
+        for epoch in (2,4):
+            analysis=read(OUT/'evaluation'/f'features-epoch{epoch}'/'failure-diagnosis.json')
+            baseline_same,current=analysis['models']
+            m=current['final_metrics']['class_and_position']['by_class']
+            lines.append(f'- 第 {epoch} 轮沿用现用推理配置：污渍检出 {m["dirt"]["tp"]}/10、误框 {m["dirt"]["fp"]}；细丝检出 {m["hair"]["tp"]}/10、误框 {m["hair"]["fp"]}。')
+        feature_findings='## 本轮特征层训练的校准发现\n\n同一组 43 张真实校准图、相同推理配置下，原模型污渍检出 2/10、细丝 3/10，两类在这组图片上的误框均为 0。\n\n'+'\n'.join(lines)+'\n\n第 2、4 轮按各自阈值优化后仍未满足原校准门槛。低阈值增加了检出，也增加了误框；本轮没有验证出同时改善两类漏检和误检的模型。\n\n'
     a=baseline['metrics']['class_and_position'];b=result['metrics']['class_and_position']
     rows=[]
     for label,title in [('dirt','污渍'),('hair','细丝')]:
@@ -54,10 +79,11 @@ def main():
 - {data['unique_training_images']} 个训练输入来自 {data['source_photos']} 张源图；新增独立照片为 0。
 - {data['whole_target_inputs']} 张含污渍或细丝的整图每轮呈现 6 次；每轮共 {data['presentations_per_epoch']} 次输入。
 - 保留原有 498 张纹理、边缘与夹具负样本；其来源是没有标注框的局部区域，不是经独立认证的正常工件。
-- 固定骨干、特征融合和定位分支，只训练两类分类分支；采用类别平衡的焦点损失、几何正样本和重叠片段忽略规则。
-- 完成 {len(history)} 轮训练。第 2、4 轮在 188 张校准图上比较，参数冻结后才运行真实测试；原替换门槛保留。
-- 打包为一个标准 YOLO 权重，保留其他 14 类分类输出；导出和重新加载一致性检查通过。
+- {method}
+- 完成 {len(history)} 轮训练。{calibration_note}
+- {export_note}
 
+{feature_findings}
 ## 接口与程序验证
 
 - {api['metrics']['images']} 张目标真实图运行实际 PatchCore→YOLO 接口；{api['metrics']['yolo_completed_images']} 张完成 YOLO。
@@ -72,7 +98,7 @@ PatchCore 的建库数据与公开塑料齿轮图来源不同，接口运行完�
 
 ## 完整证据
 
-- [退化排查](diagnosis.md)
+- [退化排查]({diagnosis_path}diagnosis.md)
 - [逐图回归记录]({args.result.resolve().as_posix()})
 - [全部真实接口图]({args.api.resolve().as_posix()}/index.html)
 - [验证记录](verification.json)
@@ -82,8 +108,8 @@ PatchCore 的建库数据与公开塑料齿轮图来源不同，接口运行完�
     table_html=''.join('<tr>'+''.join(f'<td>{html.escape(c)}</td>' for c in row)+'</tr>' for row in rows)
     page='''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>YOLO 定向训练实测</title><style>body{font:16px/1.7 system-ui;max-width:1100px;margin:32px auto;padding:0 24px;background:#f3f6f7;color:#19343d}section{padding:24px;background:white;border-radius:12px;margin:20px 0}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #dbe4e8}img{max-width:100%}a{color:#007f78}</style>'''
     page+=f'<h1>YOLO 污渍与细丝 · 退化排查及真实验证</h1><p><strong>{decision}</strong></p><section><h2>{result["images"]}张真实图片回归</h2><table><tr><th>指标</th><th>现用基线</th><th>候选</th></tr>{table_html}</table><p>公开实拍回归图；无独立正常工件测试集，误框数不等于正常件误报率。</p></section>'
-    page+='<section><h2>发现的问题</h2><p>上一轮污渍在放大裁剪图上的分数提高，而整图分数降低；同一推理配置下检出也退步。简单降低阈值产生大量误框。</p><p>本轮增加整图尺度监督并保持原定位能力，同时保留困难负样本。</p><img src="training-dirt-audit.jpg"><p>原始训练集28处污渍标注。</p><img src="hard-negative-audit.jpg"><p>训练中最容易混淆的16张纹理及边缘负样本。</p></section>'
-    page+=f'<section><h2>完整记录</h2><p><a href="report.md">完整报告</a> · <a href="diagnosis.md">原因排查</a> · <a href="../{html.escape(args.api.name)}/index.html">全部真实接口图</a> · <a href="verification.json">验证记录</a></p></section>'
+    page+=f'<section><h2>发现的问题</h2><p>上一轮污渍在放大裁剪图上的分数提高，而整图分数降低；同一推理配置下检出也退步。简单降低阈值产生大量误框。</p><p>{html.escape(method)}</p><img src="{diagnosis_path}training-dirt-audit.jpg"><p>原始训练集28处污渍标注。</p><img src="{diagnosis_path}hard-negative-audit.jpg"><p>训练中最容易混淆的16张纹理及边缘负样本。</p></section>'
+    page+=f'<section><h2>完整记录</h2><p><a href="report.md">完整报告</a> · <a href="{diagnosis_path}diagnosis.md">原因排查</a> · <a href="../{html.escape(args.api.name)}/index.html">全部真实接口图</a> · <a href="verification.json">验证记录</a></p></section>'
     (OUT/'index.html').write_text(page,encoding='utf-8')
     print({'report':str(OUT/'report.md'),'candidate_deployed':proof['candidate_deployed']})
 

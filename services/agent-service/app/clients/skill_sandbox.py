@@ -1,7 +1,7 @@
 """专家技能试运行的 OpenSandbox 宿主侧客户端。
 
-只在显式启用 ``SKILL_SANDBOX_ENABLED`` 时生效，且只接管专家中心的
-``diagnosis`` / ``instruction_preview`` 试运行。调用方保留原有进程内路径，
+只在显式启用 ``SKILL_SANDBOX_ENABLED`` 时生效，接管专家中心的
+草稿样例与领域任务验证。调用方保留原有进程内路径，
 沙箱不可用时默认**失败关闭**，不会静默退回共享工具环境。
 """
 
@@ -15,7 +15,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 
-SUPPORTED_MODES = frozenset({"diagnosis", "instruction_preview"})
+SUPPORTED_MODES = frozenset({"diagnosis", "instruction_preview", "knowledge_flow", "cad_spec_flow", "review_flow", "machine_flow"})
 _SANDBOX_WORKDIR = "/work"
 _INPUT_PATH = _SANDBOX_WORKDIR + "/input.json"
 _RESULT_PATH = _SANDBOX_WORKDIR + "/result.json"
@@ -39,7 +39,7 @@ def _hosts(value: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class SkillSandboxConfig:
     enabled: bool = False
-    domain: str = "127.0.0.1:8080"
+    domain: str = "127.0.0.1:18080"
     protocol: str = "http"
     api_key: str = ""
     image: str = "industry-skill-runner:0.1"
@@ -50,6 +50,7 @@ class SkillSandboxConfig:
     cpu: str = "1"
     memory: str = "1Gi"
     fallback: bool = False
+    use_server_proxy: bool = True
 
     @classmethod
     def from_env(cls) -> "SkillSandboxConfig":
@@ -70,7 +71,7 @@ class SkillSandboxConfig:
             ready_timeout = 300
         return cls(
             enabled=_flag("SKILL_SANDBOX_ENABLED", False),
-            domain=os.getenv("SKILL_SANDBOX_DOMAIN", "127.0.0.1:8080").strip(),
+            domain=os.getenv("SKILL_SANDBOX_DOMAIN", "127.0.0.1:18080").strip(),
             protocol=os.getenv("SKILL_SANDBOX_PROTOCOL", "http").strip().lower(),
             api_key=os.getenv("SKILL_SANDBOX_API_KEY", "").strip(),
             image=os.getenv("SKILL_SANDBOX_IMAGE", "industry-skill-runner:0.1").strip(),
@@ -81,6 +82,7 @@ class SkillSandboxConfig:
             cpu=os.getenv("SKILL_SANDBOX_CPU", "1").strip(),
             memory=os.getenv("SKILL_SANDBOX_MEMORY", "1Gi").strip(),
             fallback=_flag("SKILL_SANDBOX_FALLBACK", False),
+            use_server_proxy=_flag("SKILL_SANDBOX_USE_SERVER_PROXY", True),
         )
 
 
@@ -212,6 +214,7 @@ class SkillSandbox:
             # 首次创建可能要拉取 execd/egress 镜像；HTTP 截止时间必须覆盖
             # 沙箱就绪预算，不能用 SDK 默认的 30 秒。
             request_timeout=timedelta(seconds=max(60, self.config.ready_timeout_seconds + 60)),
+            use_server_proxy=self.config.use_server_proxy,
         )
         kwargs: dict[str, Any] = {
             "image": models["SandboxImageSpec"](self.config.image),

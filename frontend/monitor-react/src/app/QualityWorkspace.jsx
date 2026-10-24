@@ -9,7 +9,6 @@ import { detectSimulation, formatSimulationRate, pendingSimulationKey, simulatio
 import './qualityPart.css';
 import QualityVisionWorkspace from './QualityVisionWorkspace.jsx';
 import ProductionVisionValidation from './ProductionVisionValidation.jsx';
-import CombinedQualityWorkspace from './CombinedQualityWorkspace.jsx';
 import './qualityWorkbench.css';
 
 const prefix = '/api/quality/simulation';
@@ -58,13 +57,21 @@ export default function QualityWorkspace() {
     const requested = query.get('quality_panel');
     let previous;
     try { previous = sessionStorage.getItem('quality.active-panel'); } catch { /* Optional view preference. */ }
-    return ['vision', 'dimensions', 'review'].includes(requested) ? requested
-      : query.has('design_run_id') ? 'dimensions' : query.has('production_job_id') ? 'review'
-        : ['vision', 'dimensions', 'review'].includes(previous) ? previous : 'vision';
+    return ['vision', 'dimensions'].includes(requested) ? requested
+      : requested === 'review' ? 'vision'
+        : query.has('design_run_id') ? 'dimensions' : query.has('production_job_id') ? 'vision'
+          : ['vision', 'dimensions'].includes(previous) ? previous : 'vision';
   });
-  useEffect(() => { try { sessionStorage.setItem('quality.active-panel', panel); } catch { /* Optional view preference. */ } }, [panel]);
+  useEffect(() => {
+    try { sessionStorage.setItem('quality.active-panel', panel); } catch { /* Optional view preference. */ }
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('quality_panel') === 'review') {
+      url.searchParams.set('quality_panel', panel);
+      window.history.replaceState(window.history.state, '', url);
+    }
+  }, [panel]);
   const [historyReady, setHistoryReady] = useState(() => new URLSearchParams(window.location.search).has('production_job_id'));
-  const panels = [['vision', '视觉检测', '图片与缺陷定位'], ['dimensions', '尺寸比对', '建模参数与模拟测量'], ['review', '综合复核', '实物登记与合格统计']];
+  const panels = [['vision', '视觉检测', '图片与缺陷定位'], ['dimensions', '尺寸比对', '建模参数与模拟测量']];
   function selectPanel(value) {
     setPanel(value);
     const url = new URL(window.location.href);
@@ -78,8 +85,6 @@ export default function QualityWorkspace() {
   const [capability, setCapability] = useState(null), [basis, setBasis] = useState(null), [result, setResult] = useState(null);
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
   const [stationBlock, setStationBlock] = useState(null);
-  const [combinedPart, setCombinedPart] = useState(null), [latestInspection, setLatestInspection] = useState(null);
-  useEffect(() => { setCombinedPart(null); setLatestInspection(null); }, [auth.version]);
   const [catalogEpoch,setCatalogEpoch] = useState(0),[followCurrent,setFollowCurrent]=useState(true),[newVersionNotice,setNewVersionNotice]=useState(false);
   const [waitingRunIds,setWaitingRunIds] = useState([]);
   const revision = useRef(0), posting = useRef(false);
@@ -278,7 +283,6 @@ export default function QualityWorkspace() {
   const displayedCounts=itemSummary?.counts || counts, displayedRates=itemSummary?.rates || result?.rates;
   return <section className="workspace-view active quality-workspace" aria-label="质检系统">
     <header className="module-hero quality-heading"><div><span className="quality-kicker">QUALITY WORKSPACE</span><h1>质量检测</h1><p>从图像检测到参数比对，集中查看每一次检验结果。</p></div>
-      <div className="quality-part-context"><span>当前复核实物</span><strong>{combinedPart?.serial_number || '尚未选择'}</strong><button className="button" type="button" onClick={() => selectPanel('review')}>{combinedPart ? '切换实物' : '选择实物'}</button></div>
     </header>
     <div className="quality-tabs" role="tablist" aria-label="质检工作区">{panels.map(([id, title, description], index) => <button key={id} type="button" role="tab"
       id={`quality-tab-${id}`} aria-label={title} aria-controls={`quality-panel-${id}`} aria-selected={panel === id} tabIndex={panel === id ? 0 : -1}
@@ -287,10 +291,7 @@ export default function QualityWorkspace() {
         if (next >= 0) { event.preventDefault(); selectPanel(panels[next][0]); document.getElementById(`quality-tab-${panels[next][0]}`).focus(); }
       }}><span>{String(index + 1).padStart(2, '0')}</span><div><strong>{title}</strong><small>{description}</small></div></button>)}</div>
     <div role="tabpanel" id="quality-panel-vision" aria-labelledby="quality-tab-vision" hidden={panel !== 'vision'}>
-      <QualityVisionWorkspace auth={auth} checked={checked} part={part} qualityPart={combinedPart} onInspection={setLatestInspection} />
-    </div>
-    <div role="tabpanel" id="quality-panel-review" aria-labelledby="quality-tab-review" hidden={panel !== 'review'}>
-      <CombinedQualityWorkspace auth={auth} checked={checked} onSelectionChange={setCombinedPart} latestInspection={latestInspection} />
+      <QualityVisionWorkspace auth={auth} checked={checked} part={part} />
       <details className="quality-history" open={new URLSearchParams(window.location.search).has('production_job_id') || undefined}
         onToggle={event => { if (event.currentTarget.open) setHistoryReady(true); }}><summary>查看历史流程验证</summary>{historyReady && <ProductionVisionValidation auth={auth} checked={checked} />}</details>
     </div>
