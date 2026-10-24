@@ -1,5 +1,6 @@
 """真实FastAPI入口不能由客户端伪造来源、审批身份或验证通过。"""
 from types import SimpleNamespace
+from time import monotonic, sleep
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,6 +51,95 @@ def test_confirmation_endpoint_stores_human_identity_before_starting_validation(
     assert response.json()['status'] == 'confirmed'
     assert response.json()['confirmed_by'] == 'U-WORKER'
     assert not (api.service.manager.backup_root / 'tests').exists()
+
+
+def test_confirmation_preserves_sop_and_rejects_changing_it_after_approval(api):
+    c = api.candidate
+    endpoint = '/api/expert/evolution/' + c['proposal_id'] + '/confirm'
+    sop = '断电挂牌后核对刀塔就位反馈，确认报警清除后申请复机。'
+    body = {'candidate_hash': c['candidate_hash'], 'machine': {**MACHINE, 'sop_document': sop}}
+    first = api.client.post(endpoint, json=body, headers=headers())
+    assert first.status_code == 200, first.text
+    saved = api.service.get(c['proposal_id'])
+    assert saved['machine']['sop_document'] == sop
+    assert saved['confirmed_by'] == 'U-WORKER'
+    repeated = api.client.post(endpoint, json=body, headers=headers())
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()['confirmation_id'] == first.json()['confirmation_id']
+    changed = api.client.post(endpoint, json={**body, 'machine': {
+        **body['machine'], 'sop_document': '另一份未经本次确认的维修依据。'}}, headers=headers())
+    assert changed.status_code == 409, changed.text
+    assert api.service.get(c['proposal_id'])['machine']['sop_document'] == sop
+    assert not (api.service.manager.backup_root / 'tests').exists()
+
+
+@pytest.mark.parametrize('blank_sop', ['', ' \t '])
+def test_legacy_confirmation_replay_treats_blank_sop_as_omitted(api, blank_sop):
+    c = api.candidate
+    # Existing approvals saved the three-field shape before SOP was added to the API.
+    original = api.service.confirm(c['proposal_id'], c['candidate_hash'], dict(MACHINE),
+                                   api.actors['worker'], lambda: api.actors['worker'])
+    response = api.client.post('/api/expert/evolution/' + c['proposal_id'] + '/confirm',
+        json={'candidate_hash': c['candidate_hash'], 'machine': {**MACHINE, 'sop_document': blank_sop}},
+        headers=headers())
+    assert response.status_code == 200, response.text
+    assert response.json()['confirmation_id'] == original['confirmation_id']
+    assert api.service.get(c['proposal_id'])['machine'] == MACHINE
+
+
+@pytest.mark.parametrize('fields', [
+    {'device_id': ' ', 'scenario_id': 'turret', 'expected': '完成验证'},
+    {'device_id': 'D-EXAMPLE', 'expected': '完成验证'},
+    {**MACHINE, 'sop_document': None},
+    {**MACHINE, 'sop_document': 'x' * 6001},
+    {**MACHINE, 'passed': True},
+])
+def test_confirmation_still_rejects_invalid_machine_fields(api, fields):
+    c = api.candidate
+    response = api.client.post('/api/expert/evolution/' + c['proposal_id'] + '/confirm',
+        json={'candidate_hash': c['candidate_hash'], 'machine': fields}, headers=headers())
+    assert response.status_code == 422, response.text
+    assert api.service.get(c['proposal_id'])['status'] == 'awaiting_confirmation'
+    assert not (api.service.manager.backup_root / 'tests').exists()
+
+
+def test_confirmed_sop_reaches_real_machine_trial_without_production_writes(api, monkeypatch):
+    from test_expert_machine_trials import Machines
+    from test_skill_sandbox_machine_api import Sandbox
+
+    monkeypatch.setenv('FACTORY_CONTROL_MODE', 'virtual')
+    manager = api.service.manager
+    factory = Machines()
+    manager.trials.factory, manager.trials.backend = factory, object()
+    manager.trials._sandbox_executor = Sandbox()
+    api.actors['worker']['responsible_device_ids'] = ['D-1']
+    monkeypatch.setattr('app.api.skill_evolution.BackendServiceClient',
+                        lambda: SimpleNamespace(resolve_session=api.actors.get))
+    c = api.candidate
+    sop = '断电挂牌，检查刀塔就位反馈与分度机构，确认报警消除后申请复机。'
+    response = api.client.post('/api/expert/evolution/' + c['proposal_id'] + '/confirm',
+        json={'candidate_hash': c['candidate_hash'], 'machine': {
+            'device_id': 'D-1', 'scenario_id': 'turret', 'expected': '完成沙箱模拟闭环',
+            'sop_document': sop}}, headers=headers())
+    assert response.status_code == 200, response.text
+    try:
+        verifying = api.service.advance(c['proposal_id'])
+        assert verifying['status'] == 'verifying', verifying
+        deadline = monotonic() + 5
+        while True:
+            receipt = manager.trials.get(verifying['test_id'], api.actors['worker'])
+            if receipt['status'] != 'running' or monotonic() >= deadline:
+                break
+            sleep(.01)
+        assert receipt['status'] == 'completed', receipt
+        assert receipt['machine']['sop_document'] == sop
+        assert receipt['simulation'] is True
+        assert receipt['assessment']['accepted'] is True
+        assert receipt['workorders'] == [] and receipt['event_id'] == '' and receipt['report_id'] == ''
+        assert factory.starts == [] and factory.clears == 0
+        assert api.service.get(c['proposal_id'])['status'] == 'verifying'
+    finally:
+        manager.trials.pool.shutdown(wait=True)
 
 
 @pytest.mark.parametrize('actor,origin,extra,want', [

@@ -253,14 +253,25 @@ class SkillEvolution:
             raise SkillEditError(403, '请由负责模拟设备的维修人员确认修改稿')
         if candidate_hash != record.get('candidate_hash'):
             raise SkillEditError(409, '确认的修改稿版本不一致')
+        if mode not in {'knowledge_flow', 'cad_spec_flow', 'review_flow'}:
+            required = {'device_id', 'scenario_id', 'expected'}
+            if (not required <= set(machine) <= required | {'sop_document'}
+                    or any(not str(machine[key]).strip() for key in required)):
+                raise SkillEditError(422, '请选择测试设备、故障场景和预期结果')
+            sop = machine.get('sop_document', '')
+            if not isinstance(sop, str) or len(sop) > 6000:
+                raise SkillEditError(422, '测试用 SOP 或知识库依据必须为不超过 6000 字的文本')
+            # Normalize the API's optional default before comparing old approvals.
+            # Nonempty SOP is part of the approval and must reach the sandbox unchanged.
+            machine = dict(machine)
+            if not sop.strip():
+                machine.pop('sop_document', None)
         if record['status'] in {'confirmed', 'verification_starting', 'verifying', 'awaiting_publication', 'publishing', 'published'}:
             if record.get('confirmed_by') == actor['user_id'] and record.get('machine') == machine:
                 return record
             raise SkillEditError(409, '该修改稿已由其它确认信息锁定')
         if record['status'] != 'awaiting_confirmation':
             raise SkillEditError(409, '当前修改稿不能确认')
-        if mode not in {'knowledge_flow', 'cad_spec_flow', 'review_flow'} and (set(machine) != {'device_id', 'scenario_id', 'expected'} or any(not str(v).strip() for v in machine.values())):
-            raise SkillEditError(422, '请选择测试设备、故障场景和预期结果')
         self._baseline(record)
         # 会话解析闭包只在本进程内保存，不进入MySQL、日志或修改稿。
         self._contexts[proposal_id] = resolve_actor
