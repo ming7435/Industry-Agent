@@ -5,10 +5,11 @@ import { readQualityCandidates, verifiedQualityPart,mergePublishedParts } from '
 import { publishCompletedDesign, subscribeCompletedDesigns } from './production-cad/completedDesigns.mjs';
 import { getTeamSession, setTeamSessionActor, subscribeTeamSession } from '../teamSession.mjs';
 import { teamRequest } from '../teamApi.mjs';
-import { detectSimulation, formatSimulationRate, pendingSimulationKey, simulationResult, simulationItemSummary, possibleProblemLocations } from './qualitySimulation.mjs';
+import { detectSimulation, formatSimulationRate, pendingSimulationKey, simulationResult, simulationItemSummary } from './qualitySimulation.mjs';
 import './qualityPart.css';
 import QualityVisionWorkspace from './QualityVisionWorkspace.jsx';
 import ProductionVisionValidation from './ProductionVisionValidation.jsx';
+import QualityAssessment from './QualityAssessment.jsx';
 import './qualityWorkbench.css';
 
 const prefix = '/api/quality/simulation';
@@ -23,33 +24,6 @@ function qualitySource() {
   return readQualityCandidates(storage,shared);
 }
 const sourceKey = source => JSON.stringify([source.currentRunId,source.submittedRunId,source.automaticRunId,source.candidates.map(item=>[item.run_id,item.version])]);
-
-function ProblemLocations({ result }) {
-  const locations = possibleProblemLocations(result);
-  return <section className="quality-location-panel" aria-labelledby="quality-location-heading">
-    <h3 id="quality-location-heading">可能的问题机器／位置</h3>
-    {locations.length ? <>
-      <p className="quality-standard-note">根据本批次异常参数推测排查方向，不代表设备故障已确认；不自动调整或控制设备。</p>
-      <ul className="quality-location-list">{locations.map(item => <li className="quality-location-card" data-location-category={item.category} key={item.category}>
-        <header><h4>{item.location}</h4><span className="quality-location-status">可能原因，待核实</span></header>
-        <dl className="quality-location-fields">
-          <div><dt>可能的问题机器</dt><dd>{item.device_name} · {item.device_id || '未知编号'}</dd></div>
-          <div><dt>关联产线</dt><dd>{displayLineName(item.line_name)}</dd></div>
-        </dl>
-        <p className="quality-problem-note">异常依据：{item.reason}</p>
-        <p className="quality-standard-note">涉及 {item.sample_count} 件样本：</p>
-        <ul className="quality-location-evidence">{item.evidence.map(row => <li key={`${row.part_id}:${row.key}`}>
-          {row.part_id} · {row.name || row.key}：{row.actual == null ? '缺少测量记录' : `设计值 ${row.expected} ${row.unit === '—' ? '' : row.unit}，模拟测量值 ${row.actual} ${row.unit === '—' ? '' : row.unit}`}
-        </li>)}</ul>
-        <p className="quality-problem-note">对应解决建议：</p>
-        <ol className="quality-location-advice">{item.recommendations.map(step => <li key={step}>{step}</li>)}</ol>
-      </li>)}</ul>
-    </> : <p className="quality-problem-note">{!result ? '尚无检测结果，不能推测问题机器／位置。'
-      : result.status === 'qualified' ? '未发现可用于定位的异常，不推测问题机器。'
-        : result.status === 'review' ? '结果待复核，暂不推测问题机器／位置。'
-          : '异常或缺测明细不足，暂不能推测问题机器／位置。'}</p>}
-  </section>;
-}
 
 export default function QualityWorkspace() {
   const [panel, setPanel] = useState(() => {
@@ -71,7 +45,7 @@ export default function QualityWorkspace() {
     }
   }, [panel]);
   const [historyReady, setHistoryReady] = useState(() => new URLSearchParams(window.location.search).has('production_job_id'));
-  const panels = [['vision', '视觉检测', '图片与缺陷定位'], ['dimensions', '尺寸比对', '建模参数与模拟测量']];
+  const panels = [['vision', '视觉检测', '图片、缺陷定位与处置'], ['dimensions', '尺寸检测', '尺寸比对、偏差分类与处置']];
   function selectPanel(value) {
     setPanel(value);
     const url = new URL(window.location.href);
@@ -282,7 +256,7 @@ export default function QualityWorkspace() {
   const itemSummary=pendingParameters.length ? simulationItemSummary(result) : null;
   const displayedCounts=itemSummary?.counts || counts, displayedRates=itemSummary?.rates || result?.rates;
   return <section className="workspace-view active quality-workspace" aria-label="质检系统">
-    <header className="module-hero quality-heading"><div><span className="quality-kicker">QUALITY WORKSPACE</span><h1>质量检测</h1><p>从图像检测到参数比对，集中查看每一次检验结果。</p></div>
+    <header className="module-hero quality-heading"><div><span className="quality-kicker">QUALITY WORKSPACE</span><h1>质量检测</h1><p>尺寸与视觉双通道检测，按问题位置、原因类别和处置方式查看结果。</p></div>
     </header>
     <div className="quality-tabs" role="tablist" aria-label="质检工作区">{panels.map(([id, title, description], index) => <button key={id} type="button" role="tab"
       id={`quality-tab-${id}`} aria-label={title} aria-controls={`quality-panel-${id}`} aria-selected={panel === id} tabIndex={panel === id ? 0 : -1}
@@ -290,11 +264,6 @@ export default function QualityWorkspace() {
         const next = event.key === 'ArrowRight' ? (index + 1) % panels.length : event.key === 'ArrowLeft' ? (index + panels.length - 1) % panels.length : event.key === 'Home' ? 0 : event.key === 'End' ? panels.length - 1 : -1;
         if (next >= 0) { event.preventDefault(); selectPanel(panels[next][0]); document.getElementById(`quality-tab-${panels[next][0]}`).focus(); }
       }}><span>{String(index + 1).padStart(2, '0')}</span><div><strong>{title}</strong><small>{description}</small></div></button>)}</div>
-    <div role="tabpanel" id="quality-panel-vision" aria-labelledby="quality-tab-vision" hidden={panel !== 'vision'}>
-      <QualityVisionWorkspace auth={auth} checked={checked} part={part} />
-      <details className="quality-history" open={new URLSearchParams(window.location.search).has('production_job_id') || undefined}
-        onToggle={event => { if (event.currentTarget.open) setHistoryReady(true); }}><summary>查看历史流程验证</summary>{historyReady && <ProductionVisionValidation auth={auth} checked={checked} />}</details>
-    </div>
     <div role="tabpanel" id="quality-panel-dimensions" aria-labelledby="quality-tab-dimensions" hidden={panel !== 'dimensions'}>
     <div className="quality-dimension-grid">
     <section className="quality-part-panel" aria-labelledby="quality-part-heading">
@@ -354,17 +323,23 @@ export default function QualityWorkspace() {
         </details>
       </section>}
       {result?.issues?.length ? <>
-        <h3>问题项（模拟设计不一致）</h3>
         <p className="quality-problem-note">模拟生产关联：{trace.production_device_name || '未知机器'} · {trace.production_device_id || '未知编号'} · {displayLineName(trace.line_name)}。根因尚未确认，关联不等于机器已发生故障。</p>
+        <details className="quality-standard-summary"><summary>查看尺寸比对原始明细（{result.issues.length} 项）</summary>
         <ul className="quality-issue-list">{result.issues.map((issue, index) => <li key={`${issue.part_id}:${issue.key}:${index}`}><strong>{issue.name}</strong>
           <p>设计值 {issue.expected} {issue.unit} · 模拟测量值 {issue.actual} {issue.unit} · 差值 {issue.difference ?? '—'} {issue.unit}</p>
           <small>样本：{issue.part_id}</small></li>)}</ul>
-        <h3>对应核查与解决建议</h3><ol className="quality-recommendations">{(result.recommendations || []).map(item => <li key={item}>{item}</li>)}</ol>
+        </details>
       </> : <p className="quality-problem-note">{result && result.status !== 'review'
         ? counts.determinate > 0 ? '本次已完成样本未发现设计参数不一致。' : '已比对项目未发现不一致；仍有待判定项目，不能判定整件合格。'
         : '问题项：尚无可核实的检测结果。'}</p>}
-      <ProblemLocations result={result} />
+      <QualityAssessment result={result} kind="dimensions" />
     </section>
-    </div></div>
+    </div>
+    </div>
+    <div role="tabpanel" id="quality-panel-vision" aria-labelledby="quality-tab-vision" hidden={panel !== 'vision'}>
+    <QualityVisionWorkspace auth={auth} checked={checked} part={part} />
+    <details className="quality-history" open={new URLSearchParams(window.location.search).has('production_job_id') || undefined}
+      onToggle={event => { if (event.currentTarget.open) setHistoryReady(true); }}><summary>查看历史流程验证</summary>{historyReady && <ProductionVisionValidation auth={auth} checked={checked} />}</details>
+    </div>
   </section>;
 }

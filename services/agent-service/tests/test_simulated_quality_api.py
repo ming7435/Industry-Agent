@@ -81,6 +81,9 @@ def test_click_detect_saves_and_refresh_reads_same_batch(connected):
     detected = client.post('/api/quality/simulation/detect', json=payload)
     assert detected.status_code == 200, detected.text
     result = detected.json(); assert result['samples'] and result['issues']
+    assert result['quality_assessment']['source_id'] == result['batch_id']
+    assert result['quality_assessment']['agent'] == 'quality'
+    assert result['quality_assessment']['checks']['vision'] == 'not_tested'
     assert result['traceability']['production_device_id'] is None  # no machining trace in directory
     app.state.factory_error = True; app.state.cad_error = 404
     assert client.post('/api/quality/simulation/detect', json=payload).json() == result

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile, mkdir} from 'node:fs/promises';
 import { centerFixture, respond, deferred } from './helpers/center-fixture.mjs';
 
 const id = 'FC-' + 'a'.repeat(56) + '00016973';
@@ -9,6 +9,15 @@ const run = { run_id: id, status: 'completed', part_name: '安装底板', part_n
   validation: { valid: true, step_roundtrip: true, solid_count: 1 }, spec: { units: 'mm', operations: [] } };
 const basis = { ...run, parameters: [{ key: 'operations.0.length', name: '主体 · 长度', expected: '100', unit: 'mm', kind: 'number' }], digest: 'verified' };
 const batch = (requestId, runId=id) => ({ batch_id: 'SIM-BATCH-'+requestId, request_id: requestId, design_run_id: runId,
+  quality_assessment: {version:1,agent:'quality',mode:'evidence_rules',source_id:'SIM-BATCH-'+requestId,scope:'simulation',status:'review',
+    execution:'not_executed',release_allowed:false,checks:{dimensions:'partial',vision:'not_tested'},uncovered_count:0,
+    cause_summary:[{category:'equipment_parameters',label:'设备参数',status:'待确认',evidence:'缺少加工参数证据'},
+      {category:'drawing',label:'图纸／设计',status:'待确认',evidence:'缺少图纸错误证据'}],
+    issues:[{category:'dimension',category_label:'尺寸／设计参数偏差',location:'主体 · 长度',part_id:'SIM-PART-7',
+      evidence:'设计值 100 mm · 模拟测量 100.1 mm',cause_status:'unconfirmed',cause_categories:['equipment_parameters','drawing','measurement'],
+      disposition:{code:'remeasure',label:'复测后判定',basis:'缺少公差及根因证据',requires_confirmation:true}},
+      {category:'acquisition',category_label:'测量数据缺失',location:'主体 · 长度',part_id:'SIM-PART-9',evidence:'缺少测量记录',
+      cause_status:'unconfirmed',cause_categories:['measurement'],disposition:{code:'complete_measurement',label:'补测后复检',basis:'补齐测量数据',requires_confirmation:true}}]},
   simulation: true, synthetic: true, status: 'partial', counts: { total: 10, determinate: 9, qualified: 7, unqualified: 2, pending: 1, review: 0 },
   rates: { qualified: 77.78, defect: 22.22, coverage: 90 },
   basis: { ...basis, run_id: runId }, station: { measurement_device_id: 'RENISHAW-EQUATOR300-001' },
@@ -18,11 +27,16 @@ const batch = (requestId, runId=id) => ({ batch_id: 'SIM-BATCH-'+requestId, requ
   recommendations: ['核对刀具磨损和刀补设置；由授权人员确认后再调整。'] });
 
 async function setup({ gate, failure, loggedIn=true, pendingWithCadError=false, savedWithCadError=false, resultOverrides={}, runOverrides={}, basisOverrides={} }={}) {
-  const fixture = await centerFixture();
+  const fixture = await centerFixture({withStyles:true});
   const page = await fixture.browser.newPage();
   page.setDefaultTimeout(5000);
   const errors = [], posts = [];
-  let saved = pendingWithCadError || savedWithCadError ? {...batch('unconfirmed-click'),...resultOverrides} : null;
+  const savedBatch = (requestId, runId=id) => {
+    const original=batch(requestId,runId), combined={...original,...resultOverrides};
+    if(resultOverrides.quality_assessment) combined.quality_assessment={...original.quality_assessment,...resultOverrides.quality_assessment};
+    return combined;
+  };
+  let saved = pendingWithCadError || savedWithCadError ? savedBatch('unconfirmed-click') : null;
   await page.addInitScript(({id,secondId,pendingWithCadError}) => {
     sessionStorage.setItem('freecad.active-run', JSON.stringify({ run_id: id, prompt: '底板', command_id: 'saved' }));
     sessionStorage.setItem('freecad.design-versions', JSON.stringify([{ run_id: id, status: 'completed' }, { run_id: secondId, status: 'completed' }]));
@@ -45,7 +59,7 @@ async function setup({ gate, failure, loggedIn=true, pendingWithCadError=false, 
       const body=req.postDataJSON(); posts.push(body);
       if (gate) await gate.promise;
       if (failure) return respond(route,{detail:typeof failure==='object'?failure:{message:'比对仪离线，未生成检测样本',execution_started:false}},typeof failure==='object'?409:503);
-      saved={...batch(body.request_id,body.design_run_id),...resultOverrides}; return respond(route,saved);
+      saved=savedBatch(body.request_id,body.design_run_id); return respond(route,saved);
     }
     if (path.includes('/simulation/requests/')) return saved ? respond(route,saved) : respond(route,{detail:'尚未查到'},404);
     return respond(route,{items:[],devices:[],runs:[]});
@@ -64,9 +78,9 @@ test('actual start click displays saved rates deviations machine line and reload
     assert.deepEqual(await results.locator('.quality-rate-fields dd').allTextContents(),['77.78%','22.22%','90.00%']);
     assert.match(await results.textContent(),/100\.1/);
     assert.match(await results.textContent(),/TRAK-TC820LTYSI-001/);
-    assert.deepEqual(await results.locator('.quality-location-fields div:last-child dd').allTextContents(),['A 线','A 线']);
     assert.doesNotMatch(await results.textContent(),/模拟 A 线/);
-    assert.match(await results.textContent(),/刀具磨损/);
+    assert.match(await results.textContent(),/复测后判定/);
+    assert.doesNotMatch(await results.textContent(),/对应核查与解决建议|可能的问题机器／位置/);
     assert.deepEqual(Object.keys(posts[0]).sort(),['design_run_id','request_id']);
     assert.equal(posts[0].design_run_id,id);
     await page.reload();
@@ -167,59 +181,84 @@ test('successful saved batch remains readable when CAD fails without any pending
   } finally {await fixture.close();}
 });
 
-test('possible machine locations connect deviations and missing records to different devices and survive reload',async()=>{
+test('dimension tab keeps its classifications separate from visual detection',async()=>{
   const {fixture,page,posts,errors}=await setup();
   try {
     await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
     await page.getByRole('button',{name:'开始检测',exact:true}).click();
-    const locations=page.getByRole('region',{name:'可能的问题机器／位置',exact:true});
+    const locations=page.getByRole('region',{name:'尺寸问题分类与处置',exact:true});
     await locations.waitFor();
-    const size=locations.locator('[data-location-category="size"]');
+    const size=locations.locator('[data-issue-category="dimension"]');
     await size.waitFor();
-    assert.match(await size.textContent(),/TRAK 车床.*TRAK-TC820LTYSI-001/s);
-    assert.match(await size.textContent(),/刀具.*刀补.*加工程序/s);
     assert.match(await size.textContent(),/主体 · 长度.*100\.1/s);
-    assert.match(await size.textContent(),/可能原因，待核实/);
-    const acquisition=locations.locator('[data-location-category="acquisition"]');
-    assert.match(await acquisition.textContent(),/RENISHAW-EQUATOR300-001/);
-    assert.match(await acquisition.textContent(),/SIM-PART-9.*缺少测量记录/s);
-    assert.doesNotMatch(await acquisition.textContent(),/TRAK-TC820LTYSI-001/);
+    assert.match(await size.textContent(),/设备参数.*图纸.*根因待确认/s);
+    assert.match(await size.textContent(),/复测后判定/);
+    const acquisition=locations.locator('[data-issue-category="acquisition"]');
+    assert.match(await acquisition.textContent(),/缺少测量记录.*SIM-PART-9/s);
+    assert.match(await acquisition.textContent(),/补测后复检/);
+    assert.equal(await page.getByRole('heading',{name:'视觉缺陷检测',exact:true}).isVisible(),false);
+    assert.equal(await page.getByLabel('待检测图片').isVisible(),false);
+    assert.equal(await page.getByRole('tabpanel').count(),1);
+    await page.getByRole('tab',{name:'视觉检测',exact:true}).click();
+    assert.equal(await page.getByLabel('待检测图片').isVisible(),true);
+    assert.equal(await locations.isVisible(),false);
+    await page.getByRole('tab',{name:'尺寸检测',exact:true}).click();
+    assert.equal(await size.isVisible(),true);
+    assert.equal(posts.length,1);
+    assert.doesNotMatch(await page.locator('.quality-workspace').textContent(),/对应核查与解决建议|可能的问题机器／位置/);
     await page.reload(); await size.waitFor();
-    assert.equal(await locations.locator('.quality-location-card').count(),2);
+    assert.equal(await locations.locator('.quality-classification-card').count(),2);
     assert.deepEqual(await page.locator('.quality-rate-fields dd').allTextContents(),['77.78%','22.22%','90.00%']);
     assert.equal(posts.length,1);
+    await mkdir('output/quality-classification-20261026',{recursive:true});
+    await page.addStyleTag({path:'frontend/monitor-react/src/styles.css'});
     await page.addStyleTag({content:await readFile(new URL('../../frontend/monitor-react/src/app/qualityPart.css',import.meta.url),'utf8')});
+    await page.addStyleTag({path:'frontend/monitor-react/src/app/qualityAssessment.css'});
+    await page.setViewportSize({width:1440,height:1000});
+    await page.locator('.quality-workspace').screenshot({path:'output/quality-classification-20261026/dimensions-desktop.png'});
     await page.setViewportSize({width:390,height:900});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await page.locator('.quality-workspace').screenshot({path:'output/quality-classification-20261026/dimensions-mobile.png'});
     assert.deepEqual(errors,[]);
   } finally {await fixture.close();}
 });
 
-test('unknown production trace displays unknown machine without guessing a factory machine',async()=>{
-  const {fixture,page}=await setup({resultOverrides:{traceability:{traceability_source:'unknown',measurement_device_id:'RENISHAW-EQUATOR300-001',root_cause_status:'unconfirmed'}}});
+test('legacy records without a server classification do not invent machine causes',async()=>{
+  const {fixture,page}=await setup({resultOverrides:{quality_assessment:null,traceability:{traceability_source:'unknown'}}});
   try {
     await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions'); await page.getByRole('button',{name:'开始检测',exact:true}).click();
-    const size=page.getByRole('region',{name:'可能的问题机器／位置',exact:true}).locator('[data-location-category="size"]');
-    await size.waitFor();
-    assert.match(await size.textContent(),/未知机器.*未知编号/s);
-    assert.match(await size.textContent(),/未知产线/);
-    assert.doesNotMatch(await size.textContent(),/TRAK-TC820LTYSI-001/);
-    assert.match(await size.textContent(),/无法定位具体机器/);
+    const classification=page.getByRole('region',{name:'尺寸问题分类与处置',exact:true});
+    await classification.waitFor();
+    assert.match(await classification.textContent(),/没有匹配的 Agent 分类/);
+    assert.equal(await classification.locator('.quality-classification-card').count(),0);
+    assert.doesNotMatch(await classification.textContent(),/质检 Agent 已接入|TRAK-TC820LTYSI-001/);
   } finally {await fixture.close();}
 });
 
-test('without mismatches or missing records the page does not label any machine as suspicious',async()=>{
+test('without classified anomalies the page does not label any machine as faulty',async()=>{
   const {fixture,page}=await setup({resultOverrides:{status:'qualified',issues:[],
+    quality_assessment:{status:'clear',issues:[]},
     counts:{total:10,determinate:10,qualified:10,unqualified:0,pending:0,review:0},rates:{qualified:100,defect:0,coverage:100},
     samples:Array.from({length:10},(_,i)=>({part_id:'SIM-PART-'+i,simulation:true,synthetic:true,observations:{'operations.0.length':{value:'100',unit:'mm'}}}))}});
   try {
     await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions'); await page.getByRole('button',{name:'开始检测',exact:true}).click();
     await page.getByText('0.00%',{exact:true}).waitFor();
-    const locations=page.getByRole('region',{name:'可能的问题机器／位置',exact:true});
-    assert.equal(await locations.locator('.quality-location-card').count(),0);
-    assert.match(await locations.textContent(),/未发现可用于定位的异常/);
+    const locations=page.getByRole('region',{name:'尺寸问题分类与处置',exact:true});
+    assert.equal(await locations.locator('.quality-classification-card').count(),0);
+    assert.match(await locations.textContent(),/未检出可分类异常/);
     assert.doesNotMatch(await locations.textContent(),/TRAK-TC820LTYSI-001/);
   } finally {await fixture.close();}
+});
+
+test('a classification belonging to another batch is not shown as this batch decision',async()=>{
+  const {fixture,page}=await setup({resultOverrides:{quality_assessment:{source_id:'SIM-BATCH-other'}}});
+  try {
+    await page.goto(fixture.base+'/?view=quality&quality_panel=dimensions');
+    await page.getByRole('button',{name:'开始检测',exact:true}).click();
+    const panel=page.getByRole('region',{name:'尺寸问题分类与处置',exact:true});await panel.waitFor();
+    assert.equal(await panel.locator('.quality-classification-card').count(),0);
+    assert.match(await panel.textContent(),/没有匹配的 Agent 分类/);
+  }finally{await fixture.close();}
 });
 
 test('completed multi-body production models remain selectable and display uncovered parameters as pending',async()=>{
@@ -247,7 +286,7 @@ test('completed multi-body production models remain selectable and display uncov
     assert.match(await results.textContent(),/共 10 件，0 件可判定，10 件待判定/);
     const pending=results.getByRole('region',{name:'待判定项目',exact:true});
     assert.match(await pending.textContent(),/圆角.*1 mm.*尚未覆盖/s);
-    assert.doesNotMatch(await results.getByRole('region',{name:'可能的问题机器／位置',exact:true}).textContent(),/圆角／半径|缺少测量记录/);
+    assert.doesNotMatch(await results.getByRole('region',{name:'尺寸问题分类与处置',exact:true}).textContent(),/圆角／半径.*补测后复检/s);
     await page.getByRole('combobox',{name:'零件名称',exact:true}).selectOption(secondId);
     await results.getByText('待检测',{exact:true}).waitFor();
     assert.deepEqual(await results.locator('.quality-rate-fields dd').allTextContents(),['—','—','—']);

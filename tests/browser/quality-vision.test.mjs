@@ -64,6 +64,14 @@ async function setup({ models = [gearPreset, yolo], gate, patchcoreFailure = fal
         defects: localized.defects, annotated_image: localized.annotated_image,
       };
       if (pipelineTamper) value.status = 'clear';
+      value.quality_assessment = {version:1,agent:'quality',mode:'evidence_rules',source_id:value.inspection_id,
+        scope:body.image_source === 'public_gear_reference' ? 'reference_image' : 'image_only',status:'review',
+        checks:{vision:value.status,dimensions:'not_tested'},execution:'not_executed',release_allowed:false,uncovered_count:0,
+        cause_summary:[{category:'workpiece',label:'工件外观',status:'模型检出异常',evidence:'仅依据图片'}],
+        issues:pipelineCase === 'clear' ? [] : [{category:pipelineCase === 'known_defect' ? 'surface_damage' : 'visual_unknown',
+          category_label:pipelineCase === 'known_defect' ? '划伤' : '视觉异常待定位',location:pipelineCase === 'known_defect' ? '图片区域 [1, 2, 10, 12] px' : '位置待确认',
+          evidence:'模型检测结果',cause_categories:['workpiece'],cause_status:'unconfirmed',
+          disposition:{code:pipelineCase === 'known_defect' ? 'rework_review' : 'hold_review',label:pipelineCase === 'known_defect' ? '返工评估' : '隔离待复核',basis:'确认缺陷后制定处置',requires_confirmation:true}}]};
       return respond(route, value);
     }
     if (path.startsWith('/api/quality/vision/inspections/')) {
@@ -102,14 +110,18 @@ test('quality workspaces keep the image and result across navigation and fit a n
     await page.getByLabel('待检测图片').setInputFiles(file('preserved.png'));
     await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
     await page.getByText('已定位视觉缺陷', { exact: true }).waitFor();
-    await page.getByRole('tab', { name: '尺寸比对', exact: true }).click();
+    await page.getByRole('tab', { name: '尺寸检测', exact: true }).click();
     await page.getByRole('heading', { name: '检测零件', exact: true }).waitFor();
+    assert.equal(await page.getByRole('heading', { name: '视觉缺陷检测', exact: true }).isVisible(), false);
+    assert.equal(await page.getByLabel('待检测图片').isVisible(), false);
+    assert.equal(await page.getByRole('tabpanel').count(), 1);
     await page.getByRole('tab', { name: '视觉检测', exact: true }).click();
+    assert.equal(await page.getByRole('heading', { name: '检测零件', exact: true }).isVisible(), false);
     await page.getByText('待检测：preserved.png', { exact: true }).waitFor();
     await page.getByText('已定位视觉缺陷', { exact: true }).waitFor();
     const tab = page.getByRole('tab', { name: '视觉检测', exact: true });
     await tab.focus(); await tab.press('ArrowRight');
-    assert.equal(await page.getByRole('tab', { name: '尺寸比对', selected: true }).count(), 1);
+    assert.equal(await page.getByRole('tab', { name: '尺寸检测', selected: true }).count(), 1);
     await page.getByRole('tab', { name: '视觉检测', exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.addStyleTag({ content: 'body { padding: 12px; }' });
@@ -236,6 +248,10 @@ for (const [pipelineCase, message] of [
     assert.equal(posts[0].body.patchcore_model_id, gearPreset.model_id);
     assert.equal(posts[0].body.algorithm, undefined);
     assert.equal(await page.getByAltText('PatchCore 异常热力图').count(), 1);
+    const assessment = page.getByRole('region', {name:'视觉问题分类与处置',exact:true});
+    assert.match(await assessment.textContent(), /质检 Agent 已接入/);
+    if (pipelineCase === 'known_defect') assert.match(await assessment.textContent(), /返工评估/);
+    if (['unknown_anomaly', 'localization_failed'].includes(pipelineCase)) assert.match(await assessment.textContent(), /隔离待复核/);
     if (pipelineCase === 'known_defect') {
       await page.getByRole('cell', { name: 'scratch', exact: true }).waitFor();
       await mkdir('output/quality-fixed-models', { recursive: true });
@@ -248,6 +264,7 @@ for (const [pipelineCase, message] of [
     }
     await page.getByLabel('待检测图片').setInputFiles(file('new-image.png'));
     assert.equal(await page.getByText(message, { exact: true }).count(), 0);
+    assert.equal(await assessment.count(),0);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
 });

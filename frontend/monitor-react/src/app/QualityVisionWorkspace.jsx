@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { request } from './apiRequest.mjs';
 import AutoVisionInbox from './AutoVisionInbox.jsx';
 import VisionPipelineResult from './VisionPipelineResult.jsx';
+import QualityAssessment from './QualityAssessment.jsx';
 import { VISION_LIMITS, DEFAULT_PATCHCORE_PREPROCESSING, CALIBRATION_POLICIES, validateVisionFiles,
   verifiedVisionModel, verifiedCalibrationModel, verifiedPipelineVisionResult, yoloModelParameters, visionDetectionBlocker } from './qualityVision.mjs';
 import './qualityVision.css';
@@ -223,13 +224,14 @@ export default function QualityVisionWorkspace({ auth, checked, part, qualityPar
         {referenceBlocked && <p className="vision-error">测试齿轮图片只能用于流程验证。请切换至流程验证实物，或上传当前生产实物的图片。</p>}
         {qualityPart && <p className="vision-note">本次视觉检测关联实物：{qualityPart.serial_number} · 批次 {qualityPart.batch_id} · 设计版本 {qualityPart.design_version}</p>}
         <header><h3 id="vision-output-heading">视觉检测结果</h3><span className={`vision-status ${result?.status || ''}`}>{result ? result.status === 'clear' ? '本图未检出异常' : result.classification === 'known_defect' ? '已定位视觉缺陷' : '异常待复核' : '等待串联检测'}</span></header>
-        <p className="vision-note">结论仅针对本次图片；未检出异常不代表整件质量合格。尺寸结果在“尺寸比对”查看。</p>
+        <p className="vision-note">结论仅针对本次图片；未检出异常不代表整件质量合格。尺寸结果在“尺寸检测”查看。</p>
         <VisionPipelineResult result={result} busy={busy === 'detect'} />
         {!inputImage && <div className="vision-empty-state"><svg width="56" height="56" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="7" y="8" width="34" height="32" rx="5" stroke="currentColor" strokeWidth="1.5"/><circle cx="17" cy="18" r="3" stroke="currentColor" strokeWidth="1.5"/><path d="m8 33 10-9 7 6 6-5 10 8" stroke="currentColor" strokeWidth="1.5"/></svg><h4>上传图片，开始视觉检测</h4><p>已有记忆库和缺陷模型会自动完成两阶段检测。</p><span>PNG / JPEG / WebP · 单张不超过 4 MB</span></div>}
         {inputImage && <div className="vision-images"><figure><img src={inputImage.data} alt="待检测原图" /><figcaption>原图 · {inputImage.name}</figcaption></figure>
           {result && <figure><img src={result.annotated_image} alt="缺陷定位结果" /><figcaption>{result.classification === 'known_defect' ? 'YOLO 缺陷定位' : 'PatchCore 异常区域'} · {result.image.width} × {result.image.height}</figcaption></figure>}
           {result?.heatmap_image && <figure><img src={result.heatmap_image} alt="PatchCore 异常热力图" /><figcaption>异常距离热力图</figcaption></figure>}</div>}
         {result?.yolo?.defects.length > 0 && <div className="vision-table-scroll"><table><thead><tr><th>缺陷类别</th><th>置信度</th><th>位置 [x1, y1, x2, y2]</th></tr></thead><tbody>{result.yolo.defects.map((d, i) => <tr key={i}><td>{d.label}</td><td>{(d.confidence * 100).toFixed(1)}%</td><td>{d.bbox.map(v => Number(v.toFixed(1))).join(', ')}</td></tr>)}</tbody></table></div>}
+        <QualityAssessment result={result} kind="vision" />
       </section>
     </div>
     <div className="vision-secondary">

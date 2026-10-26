@@ -49,7 +49,9 @@ def main():
         if digest==MD5: print('Archive already verified',flush=True);return
         raise ValueError('Existing archive checksum mismatch')
     count=(SIZE+CHUNK-1)//CHUNK; started=time.monotonic()
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    # Independent byte ranges resume completed blocks. Bound parallelism to
+    # 24 requests; each streamed worker holds at most one 1-MiB payload block.
+    with ThreadPoolExecutor(max_workers=24) as pool:
         futures=[pool.submit(fetch,i) for i in range(count)]
         for completed,future in enumerate(as_completed(futures),1):
             future.result()

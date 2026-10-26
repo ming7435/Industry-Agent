@@ -18,7 +18,13 @@ QUALITY_CLOSURE_AUTHORITY = object()
 
 class QualityAgent(BaseAgent):
     name = "quality"
-    capabilities = ("quality_inspection", "quality_review", "virtual_size_inspection")
+    capabilities = ("quality_inspection", "quality_review", "virtual_size_inspection", "inspection_classification")
+
+    @staticmethod
+    def assess_inspection(record: dict[str, Any], *, kind: str) -> dict[str, Any]:
+        """Classify server-owned dimension or visual evidence without physical actions."""
+        from .assessment import classify_inspection
+        return classify_inspection(record, kind=kind)
 
     def __init__(self, tools: ToolRegistry | None = None) -> None:
         self.tools = tools or ToolRegistry()

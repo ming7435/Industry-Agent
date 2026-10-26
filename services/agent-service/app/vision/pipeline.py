@@ -45,6 +45,8 @@ class VisionPipelineService:
                           heatmap_image=pc.get('heatmap_image'),
                           parameters={'threshold': values['threshold'], 'confidence': values['confidence'],
                                       'iou': values['iou']})
+            from app.agents.quality.agent import QualityAgent
+            record['quality_assessment'] = QualityAgent.assess_inspection(record, kind='vision')
             path = self.vision._owner_root(owner) / 'inspections' / (inspection_id + '.json')
             publish = lambda: self.vision._atomic_json(path, record)
             if record.get('quality_part_id'):

@@ -71,6 +71,9 @@ def test_gated_order_same_pixels_and_persisted_verdict(pipeline, pc, yolo, class
     response = client.post(ENDPOINT, json=body)
     assert response.status_code == 200, response.text
     record = response.json()
+    assert record['quality_assessment']['source_id'] == record['inspection_id']
+    assert record['quality_assessment']['agent'] == 'quality'
+    assert record['quality_assessment']['release_allowed'] is False
     assert [call[0] for call in calls] == order
     assert all(call[1:] == calls[0][1:] and call[2] for call in calls)
     assert record['classification'] == classification and record['yolo_state'] == state

@@ -1,0 +1,23 @@
+.quality-assessment { margin: 24px 0 0; border-top: 1px solid #dce7e8; padding-top: 22px; min-width: 0; }
+.quality-assessment > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.quality-assessment h3 { margin: 5px 0 0; font-size: 18px; }
+.quality-agent-state { border-radius: 6px; padding: 6px 9px; font-size: 12px; color: #60747b; background: #f0f4f5; }
+.quality-agent-state.connected { color: #087468; background: #e7f4ef; }
+.quality-assessment-note { color: #627981; font-size: 13px; line-height: 1.8; }
+.quality-cause-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0; }
+.quality-cause-grid > div { display: grid; gap: 7px; padding: 14px; border: 1px solid #e0e9eb; background: #f6f9fa; border-radius: 8px; }
+.quality-cause-grid span, .quality-disposition > span { font-size: 12px; color: #657c85; }
+.quality-cause-grid strong { font-size: 15px; color: #304f5b; }
+.quality-cause-grid small { font-size: 12px; line-height: 1.7; color: #6a8089; }
+.quality-classification-list { display: grid; gap: 12px; }
+.quality-classification-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(155px, .6fr); border: 1px solid #dbe5e7; border-radius: 9px; overflow: hidden; background: #fff; }
+.quality-classification-evidence { padding: 17px; min-width: 0; }
+.quality-category { font-size: 11px; color: #805b26; background: #fff0d9; padding: 4px 8px; border-radius: 5px; }
+.quality-classification-card h4 { margin: 12px 0 8px; color: #1d3f4b; font-size: 15px; overflow-wrap: anywhere; }
+.quality-classification-card p { margin: 8px 0; font-size: 13px; line-height: 1.75; overflow-wrap: anywhere; }
+.quality-classification-card small { display: block; font-size: 11px; line-height: 1.7; color: #70858c; overflow-wrap: anywhere; }
+.quality-cause-state { color: #6b8087; font-size: 12px !important; }
+.quality-disposition { padding: 18px; background: #f0f7f6; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; border-left: 1px solid #dce8e6; }
+.quality-disposition strong { color: #136f64; font-size: 16px; }
+.quality-disposition p { color: #4d6970; }
+@media (max-width: 650px) { .quality-classification-card { grid-template-columns: 1fr; } .quality-disposition { border-left: 0; border-top: 1px solid #dce8e6; } .quality-cause-grid { grid-template-columns: 1fr; } }

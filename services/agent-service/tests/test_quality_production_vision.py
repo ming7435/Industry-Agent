@@ -447,7 +447,8 @@ def test_production_uses_saved_yolo_defaults_and_retains_parameter_provenance(li
     assert run['status'] == 'completed'
     for scene in run['scenarios']:
         result = next(item for item in scene['results'] if item['algorithm'] == 'yolo')
-        assert result['parameters'] == {'threshold': .65, 'confidence': .65, 'iou': .35, 'input_size': 640}
+        assert result['parameters'] == {'threshold': .65, 'confidence': .65, 'iou': .35, 'input_size': 640,
+                                        'inference': {'mode': 'full'}}
         assert result['model']['recommended_confidence'] == .65
     assert latest(client).json()['run'] == run
 

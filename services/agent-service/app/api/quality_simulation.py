@@ -11,6 +11,7 @@ from app.clients.backend import BackendServiceClient, BackendServiceError
 from app.api.team_auth import team_actor
 from app.agents.cad.modeling_api import get_freecad_run_record
 from shared import simulated_part_design_quality as sim
+from app.agents.quality.agent import QualityAgent
 
 
 class DetectRequest(BaseModel):
@@ -41,7 +42,16 @@ def build_simulation_router(require_write_auth, *, backend_factory=BackendServic
 
     def stored(backend, actor, operation, **body):
         try:
-            return backend.request('/internal/quality/simulation/' + operation, {'actor_id': actor, **body})['result']
+            result = backend.request('/internal/quality/simulation/' + operation, {'actor_id': actor, **body})['result']
+            # Classification is recomputed from the authenticated stored batch,
+            # including historical reads and request reconciliation.
+            def assessed(batch):
+                return {**batch, 'quality_assessment': QualityAgent.assess_inspection(batch, kind='dimensions')} if batch else batch
+            if operation in {'request', 'detect'}:
+                result = assessed(result)
+            elif operation == 'design' and result.get('latest'):
+                result = {**result, 'latest': assessed(result['latest'])}
+            return result
         except BackendServiceError as error:
             code = error.status_code if error.status_code in {401, 403, 409, 422} else 503
             message = str(error) if code == 409 else '模拟检测后端暂不可用；提交结果需按原请求编号核对'
