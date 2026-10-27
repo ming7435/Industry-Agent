@@ -249,6 +249,9 @@ export function verifiedSequentialVisionResult(value, expected) {
 }
 
 export function verifiedPipelineVisionResult(value, expected) {
+  if(expected.dimension_request_id && (value?.joint_identity?.request_id!==expected.dimension_request_id
+    || value.joint_identity.sample_id!==expected.dimension_sample_id || value.joint_identity.design_run_id!==expected.part_id
+    || value.joint_identity.scope!==(expected.dimension_request_id.startsWith('MB-')?'measured_batch':'simulation_validation'))) throw new Error('视觉结果未关联所选尺寸样本，请核对联合记录。');
   const invalid = () => { throw new Error('串联检测结果不完整、顺序错误或图片不一致，请重新检测。'); };
   if (value?.algorithm !== 'patchcore_yolo_pipeline' || value.pipeline_version !== 1
     || !inspectionId(value.inspection_id) || !Number.isFinite(Date.parse(value.created_at))) invalid();

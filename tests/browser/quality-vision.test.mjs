@@ -24,10 +24,11 @@ const result = (body, inspectionId) => ({ inspection_id: inspectionId, algorithm
   annotated_image: image, ...(body.algorithm === 'patchcore' ? { heatmap_image: image } : {}),
   steps: [{ name: '特征提取', status: 'completed', detail: '完成图像推理' }] });
 
-async function setup({ models = [gearPreset, yolo], gate, patchcoreFailure = false, pipelineCase = 'known_defect', pipelineTamper = false, detailsOpen = false, patchcoreReady = true, legacyReceipt = null, yoloReady = true, partSegReady = true, modelWarnings = [], dataset = null } = {}) {
+async function setup({ models = [gearPreset, yolo], gate, patchcoreFailure = false, pipelineCase = 'known_defect', pipelineTamper = false, detailsOpen = false, patchcoreReady = true, legacyReceipt = null, yoloReady = true, partSegReady = true, modelWarnings = [], dataset = null, statisticsHistory = [] } = {}) {
   const fixture = await centerFixture({ withStyles: true }), page = await fixture.browser.newPage();
   page.setDefaultTimeout(5000);
   const posts = [], gets = [], errors = [];
+  const inspections = [...statisticsHistory];
   let nextInspection = 0;
   const nextId = () => 'VI-' + (++nextInspection).toString(16).padStart(32, '0');
   if (legacyReceipt) await page.addInitScript(receipt => { sessionStorage.setItem('quality-sequential:U-vision', JSON.stringify(receipt)); }, legacyReceipt);
@@ -35,6 +36,23 @@ async function setup({ models = [gearPreset, yolo], gate, patchcoreFailure = fal
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/team/me') return respond(route, { user: { user_id: 'U-vision', role: 'technician' } });
+    if (path === '/api/quality/vision/statistics') {
+      const query = new URL(route.request().url()).searchParams, source=query.get('image_source'), partId=query.get('part_id');
+      const records=inspections.filter(row=>row.image_source===source && (!partId || row.part_id===partId));
+      const qualified=records.filter(row=>row.status==='clear').length, unqualified=records.length-qualified;
+      const groups=new Map();let unlocalized=0;
+      for(const row of records.filter(row=>row.status==='defect')) {
+        const labels=(row.yolo?.defects || []).map(d=>d.label);
+        if(!labels.length)unlocalized++;
+        for(const key of new Set(labels.length?labels:['unlocalized'])) {
+          const group=groups.get(key)||{key,label:key==='scratch'?'划伤':key==='unlocalized'?'异常待定位／分类':key,image_count:0,occurrences:0};
+          group.image_count++;group.occurrences+=labels.filter(label=>label===key).length;groups.set(key,group);
+        }
+      }
+      return respond(route,{version:1,unit:'image_inspection',image_source:source,part_id:partId,
+        counts:{total:records.length,qualified,unqualified,unlocalized},qualified_rate:records.length?Math.round(10000*qualified/records.length)/100:null,
+        types:[...groups.values()].map(row=>({...row,share:Math.round(10000*row.image_count/unqualified)/100})),invalid_records:0,research_model_count:0,truncated:false});
+    }
     if (path === '/api/quality/vision/capabilities') return respond(route, {
       algorithms: [{ id: 'patchcore', name: 'PatchCore', available: patchcoreReady, can_train: true, reason: patchcoreReady ? '' : 'PatchCore 模型不可用' },
         { id: 'yolo', name: 'YOLO', available: yoloReady, can_train: false, reason: yoloReady ? '' : '尚未配置缺陷检测权重' }],
@@ -72,6 +90,7 @@ async function setup({ models = [gearPreset, yolo], gate, patchcoreFailure = fal
           category_label:pipelineCase === 'known_defect' ? '划伤' : '视觉异常待定位',location:pipelineCase === 'known_defect' ? '图片区域 [1, 2, 10, 12] px' : '位置待确认',
           evidence:'模型检测结果',cause_categories:['workpiece'],cause_status:'unconfirmed',
           disposition:{code:pipelineCase === 'known_defect' ? 'rework_review' : 'hold_review',label:pipelineCase === 'known_defect' ? '返工评估' : '隔离待复核',basis:'确认缺陷后制定处置',requires_confirmation:true}}]};
+      inspections.push(value);
       return respond(route, value);
     }
     if (path.startsWith('/api/quality/vision/inspections/')) {
@@ -87,7 +106,7 @@ async function setup({ models = [gearPreset, yolo], gate, patchcoreFailure = fal
   if (detailsOpen) {
     await page.locator('.vision-tuning > summary').click();
     await page.locator('.vision-model-disclosure > summary').click();
-    if (dataset) await page.locator('.vision-sample-library > summary').click();
+
   }
   return { fixture, page, posts, gets, errors };
 }
@@ -103,7 +122,9 @@ test('quality workspaces keep the image and result across navigation and fit a n
     assert.equal(await page.getByRole('heading', { name: '综合判定与合格率' }).isVisible(), false);
     const settings = await page.getByRole('complementary', { name: '检测设置' }).boundingBox();
     const results = await page.getByRole('region', { name: '视觉检测结果', exact: true }).boundingBox();
-    assert.ok(settings.x + settings.width <= results.x + 1);
+    assert.ok(settings.y + settings.height <= results.y + 1);
+    const sidebar=await page.getByRole('complementary',{name:'联合判定与处置'}).boundingBox();
+    assert.ok(results.x+results.width<=sidebar.x);
     await mkdir('output/quality-page-redesign', { recursive: true });
     await page.locator('.quality-workspace').screenshot({ path: 'output/quality-page-redesign/desktop.png' });
     assert.ok((await page.getByRole('button', { name: '运行缺陷检测', exact: true }).boundingBox()).y < 900);
@@ -111,12 +132,12 @@ test('quality workspaces keep the image and result across navigation and fit a n
     await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
     await page.getByText('已定位视觉缺陷', { exact: true }).waitFor();
     await page.getByRole('tab', { name: '尺寸检测', exact: true }).click();
-    await page.getByRole('heading', { name: '检测零件', exact: true }).waitFor();
+    await page.getByRole('heading', { name: '批次尺寸检测', exact: true }).waitFor();
     assert.equal(await page.getByRole('heading', { name: '视觉缺陷检测', exact: true }).isVisible(), false);
     assert.equal(await page.getByLabel('待检测图片').isVisible(), false);
     assert.equal(await page.getByRole('tabpanel').count(), 1);
     await page.getByRole('tab', { name: '视觉检测', exact: true }).click();
-    assert.equal(await page.getByRole('heading', { name: '检测零件', exact: true }).isVisible(), false);
+    assert.equal(await page.getByRole('heading', { name: '批次尺寸检测', exact: true }).isVisible(), false);
     await page.getByText('待检测：preserved.png', { exact: true }).waitFor();
     await page.getByText('已定位视觉缺陷', { exact: true }).waitFor();
     const tab = page.getByRole('tab', { name: '视觉检测', exact: true });
@@ -151,6 +172,26 @@ test('one fixed defect workflow uses the existing memory with no selection, segm
     assert.equal(posts[0].body.threshold, gearPreset.suggested_threshold);
     assert.deepEqual(errors, []);
   } finally { await fixture.close(); }
+});
+
+test('visual statistics refresh after detection, persist on reload and separate reference images',async()=>{
+  const {fixture,page,errors}=await setup({statisticsHistory:[{image_source:'upload',part_id:'',status:'clear',yolo:null}]});
+  try {
+    const stats=page.getByRole('region',{name:'视觉质检统计',exact:true});
+    assert.equal(await page.locator('.vision-statistics-disclosure').getAttribute('open'),null);
+    await page.locator('.vision-statistics-disclosure > summary').click();
+    await stats.getByText('100.00%',{exact:true}).waitFor();
+    await page.getByLabel('待检测图片').setInputFiles(file('stats.png'));
+    await page.getByRole('button',{name:'运行缺陷检测',exact:true}).click();
+    await stats.getByText('50.00%',{exact:true}).waitFor();
+    assert.match(await stats.locator('tbody').textContent(),/划伤/);
+    assert.match(await stats.textContent(),/1 \/ 2 图次/);
+    await page.reload();await page.locator('.vision-statistics-disclosure > summary').click();await stats.getByText('50.00%',{exact:true}).waitFor();
+    await page.getByLabel('视觉统计图片来源').selectOption('public_gear_reference');
+    await stats.getByText('当前范围暂无已完成检测。',{exact:true}).waitFor();
+    assert.equal(await stats.getByText('50.00%',{exact:true}).count(),0);
+    assert.deepEqual(errors,[]);
+  }finally{await fixture.close();}
 });
 
 test('missing fixed memory cannot fall back to a demo or personal bank and refresh loads the existing deployment', async () => {
@@ -219,18 +260,15 @@ test('changing the image or threshold discards a late pipeline result', async ()
   }
 });
 
-test('held-out example enters the fixed pipeline without sending ground truth', async () => {
-  const dataset = { name: '塑料齿轮测试数据', normal_count: 0, samples: [{ sample_id: 'endface123', filename: 'endface123.png', defect_labels: ['darkspot'] }] };
-  const { fixture, page, posts } = await setup({ dataset, detailsOpen: true });
+test('normal batch workspace does not expose reference-image shortcuts',async()=>{
+  const dataset={name:'公开齿轮',normal_count:0,samples:[{sample_id:'example',filename:'example.png',defect_labels:['darkspot']}]};
+  const {fixture,page,posts}=await setup({dataset,detailsOpen:true});
   try {
-    await page.getByRole('button', { name: '加载齿轮测试图片' }).click();
-    await page.getByText('已加载齿轮独立测试图片', { exact: false }).waitFor();
-    await page.getByRole('button', { name: '运行缺陷检测', exact: true }).click();
-    await page.getByText('已定位视觉缺陷', { exact: true }).waitFor();
-    assert.equal(posts[0].body.image_source, 'public_gear_reference');
-    assert.equal(posts[0].body.patchcore_model_id, 'patchcore-gear');
-    assert.equal(posts[0].body.ground_truth, undefined); assert.equal(posts[0].body.defect_labels, undefined);
-  } finally { await fixture.close(); }
+    assert.equal(await page.getByRole('button',{name:'加载齿轮测试图片'}).count(),0);
+    assert.equal(await page.getByTestId('gear-dataset').count(),0);
+    assert.equal(await page.getByText('查看历史流程验证',{exact:true}).count(),0);
+    assert.deepEqual(posts,[]);
+  }finally{await fixture.close();}
 });
 
 for (const [pipelineCase, message] of [

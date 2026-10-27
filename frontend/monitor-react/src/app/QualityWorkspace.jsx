@@ -1,345 +1,118 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { request } from './apiRequest.mjs';
-import { freeCadRequest } from './production-cad/freecad.mjs';
-import { readQualityCandidates, verifiedQualityPart,mergePublishedParts } from './qualityParts.mjs';
-import { publishCompletedDesign, subscribeCompletedDesigns } from './production-cad/completedDesigns.mjs';
-import { getTeamSession, setTeamSessionActor, subscribeTeamSession } from '../teamSession.mjs';
-import { teamRequest } from '../teamApi.mjs';
-import { detectSimulation, formatSimulationRate, pendingSimulationKey, simulationResult, simulationItemSummary } from './qualitySimulation.mjs';
-import './qualityPart.css';
+import React, {useEffect,useRef,useState} from 'react';
+import {request} from './apiRequest.mjs';
+import {getTeamSession,setTeamSessionActor,subscribeTeamSession} from '../teamSession.mjs';
+import {teamRequest} from '../teamApi.mjs';
 import QualityVisionWorkspace from './QualityVisionWorkspace.jsx';
-import ProductionVisionValidation from './ProductionVisionValidation.jsx';
-import QualityAssessment from './QualityAssessment.jsx';
+import JointQualityPanel from './JointQualityPanel.jsx';
+import QualityIcon from './QualityIcon.jsx';
+import {measurementTemplate,parseMeasurementCsv,verifiedMeasuredBatch} from './measuredQuality.mjs';
+import './qualityPart.css';
 import './qualityWorkbench.css';
+import './qualityRedesign.css';
 
-const prefix = '/api/quality/simulation';
-const statusLabel = { qualified: '模拟一致性合格', unqualified: '模拟一致性不合格', partial: '存在不一致／待判定样本', review: '待复核' };
-const stationStateLabel = value => ({ running: '运行中', stopped: '已停止', emergency_stop: '急停', alarm: '报警', offline: '离线', idle: '待机', paused: '已暂停' }[value] || '未知状态');
-const displayLineName = name => name === '模拟 A 线' ? 'A 线' : name || '未知产线';
-
-function qualitySource() {
-  let storage,shared;
-  try { storage=window.sessionStorage; } catch { /* No local candidate index. */ }
-  try { shared=window.localStorage; } catch { /* Other tabs may not be available. */ }
-  return readQualityCandidates(storage,shared);
-}
-const sourceKey = source => JSON.stringify([source.currentRunId,source.submittedRunId,source.automaticRunId,source.candidates.map(item=>[item.run_id,item.version])]);
+const prefix='/api/quality/vision/batches';
+const statusLabel={qualified:'通过',unqualified:'不通过',pending:'待检测'};
 
 export default function QualityWorkspace() {
-  const [panel, setPanel] = useState(() => {
-    const query = new URLSearchParams(window.location.search);
-    const requested = query.get('quality_panel');
-    let previous;
-    try { previous = sessionStorage.getItem('quality.active-panel'); } catch { /* Optional view preference. */ }
-    return ['vision', 'dimensions'].includes(requested) ? requested
-      : requested === 'review' ? 'vision'
-        : query.has('design_run_id') ? 'dimensions' : query.has('production_job_id') ? 'vision'
-          : ['vision', 'dimensions'].includes(previous) ? previous : 'vision';
-  });
-  useEffect(() => {
-    try { sessionStorage.setItem('quality.active-panel', panel); } catch { /* Optional view preference. */ }
-    const url = new URL(window.location.href);
-    if (url.searchParams.get('quality_panel') === 'review') {
-      url.searchParams.set('quality_panel', panel);
-      window.history.replaceState(window.history.state, '', url);
-    }
-  }, [panel]);
-  const [historyReady, setHistoryReady] = useState(() => new URLSearchParams(window.location.search).has('production_job_id'));
-  const panels = [['vision', '视觉检测', '图片、缺陷定位与处置'], ['dimensions', '尺寸检测', '尺寸比对、偏差分类与处置']];
-  function selectPanel(value) {
-    setPanel(value);
-    const url = new URL(window.location.href);
-    url.searchParams.set('quality_panel', value);
-    window.history.replaceState(window.history.state, '', url);
-  }
-  const [auth, setAuth] = useState(getTeamSession);
-  const [checked, setChecked] = useState(false);
-  const [parts, setParts] = useState([]), [selected, setSelected] = useState('');
-  const [loading, setLoading] = useState(true), [reading, setReading] = useState(false);
-  const [capability, setCapability] = useState(null), [basis, setBasis] = useState(null), [result, setResult] = useState(null);
-  const [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [pending, setPending] = useState(null);
-  const [stationBlock, setStationBlock] = useState(null);
-  const [catalogEpoch,setCatalogEpoch] = useState(0),[followCurrent,setFollowCurrent]=useState(true),[newVersionNotice,setNewVersionNotice]=useState(false);
-  const [waitingRunIds,setWaitingRunIds] = useState([]);
-  const revision = useRef(0), posting = useRef(false);
-  const sourceFingerprint = useRef(''),catalogAbort=useRef(null),catalogSession=useRef(-1),publishedCatalog=useRef([]),selectedRef=useRef(''),followRef=useRef(true),publishedFingerprint=useRef('');
-  selectedRef.current=selected;followRef.current=followCurrent;
-  const userId = auth.actor?.user_id;
-
-  useEffect(() => {
-    let active = true;
-    const unsubscribe = subscribeTeamSession(value => { if (active) setAuth(value); });
-    teamRequest('me').then(value => { if (active) setTeamSessionActor(value.user); })
-      .catch(() => {}).finally(() => { if (active) setChecked(true); });
-    return () => { active = false; unsubscribe(); };
-  }, []);
-
-  useEffect(() => {
-    if(!checked) return;
-    const refresh = () => {
-      const source=qualitySource(),fingerprint=sourceKey(source);
-      if(!sourceFingerprint.current) { sourceFingerprint.current=fingerprint; return; }
-      if(fingerprint===sourceFingerprint.current) return;
-      sourceFingerprint.current=fingerprint;
-      catalogAbort.current?.abort();
-      // Invalidate late results immediately, before the new model/basis GETs complete.
-      if(followRef.current&&!publishedCatalog.current.length&&source.currentRunId!==selectedRef.current){revision.current++; posting.current=false;setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');}
-      else if(!followRef.current)setNewVersionNotice(true);
-      setCatalogEpoch(value=>value+1);
-    };
-    const unsubscribe=subscribeCompletedDesigns(refresh);
-    refresh();
-    return unsubscribe;
-  }, [checked,auth.version]);
-
-  useEffect(() => {
-    if (!checked) return;
-    const abort = new AbortController();
-    catalogAbort.current=abort;
-    if(catalogSession.current!==auth.version){catalogSession.current=auth.version;publishedCatalog.current=[];publishedFingerprint.current='';revision.current++; posting.current = false;setParts([]);setSelected('');setFollowCurrent(true);setLoading(true); setCapability(null); setBasis(null); setResult(null); setPending(null); setBusy(false); setMessage('');}
-    const source=qualitySource();
-    sourceFingerprint.current=sourceKey(source);
-    let readFailure = '';
-    const waiting=[];
-    const cad = Promise.all(source.candidates.map(candidate => freeCadRequest(`/runs/${candidate.run_id}`, { signal: abort.signal })
-      .then(record => {
-        if(abort.signal.aborted || record.run_id!==candidate.run_id) return null;
-        if(record.run_id===candidate.run_id && record.status==='running') waiting.push(record.run_id);
-        if(record.status==='completed' && record.run_id===source.submittedRunId) publishCompletedDesign(record);
-        return verifiedQualityPart(record, candidate);
-      }).catch(error => {
-        if(abort.signal.aborted) return null;
-        if(userId && candidate.run_id===source.submittedRunId && (!error.status || error.status===404 || error.status>=500)) waiting.push(candidate.run_id);
-        if (error.status >= 500) readFailure = error.message;
-        return null;
-      })));
-    const catalog = userId ? request(prefix + '/designs', { signal: abort.signal }).then(value => value.items || []).catch(error => { readFailure = error.message; return []; }) : Promise.resolve([]);
-    if (userId) request(prefix + '/capabilities', { signal: abort.signal }).then(value => {
-      if (!abort.signal.aborted) { setCapability(value); if (!value.enabled) setMessage(value.reason || '模拟检测未启用'); }
-    }).catch(error => { if (!abort.signal.aborted) setMessage(error.message); });
-    Promise.all([cad, catalog]).then(([values, saved]) => {
-      if (abort.signal.aborted) return;
-      const available = values.filter(Boolean), ids = new Set(available.map(p => p.run_id));
-      for (const item of saved) if (!ids.has(item.run_id)) {
-        const part = verifiedQualityPart({ ...item, status: 'completed', validation: { valid: true, solid_count: 1 } }, item);
-        if (part) { available.push(part); ids.add(item.run_id); }
-      }
-      const merged=mergePublishedParts(available,publishedCatalog.current);
-      setParts(merged);
-      setWaitingRunIds(waiting);
-      setSelected(previous=>!followRef.current&&merged.some(p=>p.run_id===previous)?previous:mergePublishedParts([],publishedCatalog.current)[0]?.run_id||(available.some(p => p.run_id === source.currentRunId) ? source.currentRunId : available[0]?.run_id || ''));
-      setLoading(false);
-      if (readFailure) setMessage(readFailure);
-    });
-    return () => { abort.abort(); };
-  }, [checked, auth.version, catalogEpoch]);
-
+  const [auth,setAuth]=useState(getTeamSession),[checked,setChecked]=useState(false);
+  const [panel,setPanel]=useState(()=>new URLSearchParams(location.search).get('quality_panel')==='dimensions'?'dimensions':'vision');
+  const [catalog,setCatalog]=useState([]),[selected,setSelected]=useState(''),[loaded,setLoaded]=useState(null);
+  const [sample,setSample]=useState(''),[jointRevision,setJointRevision]=useState(0),[refresh,setRefresh]=useState(0);
+  const [file,setFile]=useState(null),[planComplete,setPlanComplete]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+  const operation=useRef(null),generation=useRef(0),selection=useRef('');
+  const userId=auth.actor?.user_id;
+  const authKey=JSON.stringify([auth.version,userId]);
+  const context=useRef(authKey);context.current=authKey;
+  selection.current=selected;
+  const batch=loaded?.authKey===authKey&&loaded.value.request_id===selected?loaded.value:null;
+  const selectedPart=batch?.samples.find(row=>row.part_id===sample);
+  const jointTarget=selectedPart?{scope:'measured_batch',request_id:batch.request_id,batch_id:batch.batch_id,design_run_id:batch.design_run_id,sample_id:sample,serial_number:selectedPart.serial_number}:null;
+  const part=batch?{run_id:batch.design_run_id,name:batch.part_name||batch.batch_id,number:batch.design_run_id}:null;
   useEffect(()=>{
-    if(!checked||!userId)return;const abort=new AbortController();let timer,readingDirectory=false;
-    const refresh=async()=>{
-      clearTimeout(timer);if(document.visibilityState==='hidden'||readingDirectory)return;readingDirectory=true;
-      try {
-        const items=[];let cursor='';do{const page=await request('/api/cad/text-to-cad/designs?limit=100&cursor='+encodeURIComponent(cursor),{signal:abort.signal});if(!Array.isArray(page.items))throw new Error('发布目录返回无效');items.push(...page.items);cursor=page.next_cursor||'';}while(cursor&&!abort.signal.aborted);
-        if(abort.signal.aborted)return;
-        const fingerprint=JSON.stringify(items.map(p=>[p.run_id,p.revision,p.standard_parameters?.digest]));
-        if(fingerprint!==publishedFingerprint.current) {
-          publishedFingerprint.current=fingerprint;publishedCatalog.current=items;
-          setParts(current=>mergePublishedParts(current,items));
-          const latest=mergePublishedParts([],items)[0];
-          if(latest&&latest.run_id!==selectedRef.current) {
-            if(followRef.current){revision.current++;posting.current=false;setBasis(null);setResult(null);setPending(null);setBusy(false);setMessage('');setSelected(latest.run_id);setNewVersionNotice(false);}
-            else setNewVersionNotice(true);
-          }
-        }
-      }catch(error){if(!abort.signal.aborted&&error.name!=='AbortError'&&error.status!==404)setMessage(error.message);}
-      finally{readingDirectory=false;if(!abort.signal.aborted&&document.visibilityState!=='hidden')timer=window.setTimeout(refresh,2000);}
-    };
-    const visible=()=>{clearTimeout(timer);if(document.visibilityState!=='hidden')refresh();};
-    const unsubscribe=subscribeCompletedDesigns(refresh);refresh();document.addEventListener('visibilitychange',visible);
-    return()=>{abort.abort();clearTimeout(timer);unsubscribe();document.removeEventListener('visibilitychange',visible);};
-  },[checked,userId,auth.version]);
-
-  useEffect(() => {
-    if(!userId || !waitingRunIds.length) return;
+    let active=true;const unsubscribe=subscribeTeamSession(value=>{if(active)setAuth(value);});
+    teamRequest('me').then(value=>{if(active)setTeamSessionActor(value.user);}).catch(()=>{}).finally(()=>{if(active)setChecked(true);});
+    return()=>{active=false;unsubscribe();};
+  },[]);
+  useEffect(()=>{
+    generation.current++;operation.current?.abort();operation.current=null;
+    setCatalog([]);setSelected('');setLoaded(null);setSample('');setFile(null);setBusy(false);setError('');setPlanComplete(false);
+  },[authKey]);
+  useEffect(()=>{
+    if(!checked||!userId)return;
     const abort=new AbortController();
-    let timer, remaining=waitingRunIds;
-    const poll=async()=>{
-      const running=[];
-      await Promise.all(remaining.map(async runId=>{
-        try {
-          const record=await freeCadRequest(`/runs/${runId}`,{signal:abort.signal});
-          if(abort.signal.aborted || record.run_id!==runId) return;
-          if(record.status==='running') running.push(runId);
-          else if(record.status==='completed') publishCompletedDesign(record);
-        } catch(error) { if(!abort.signal.aborted && (!error.status || error.status===404 || error.status>=500)) running.push(runId); }
-      }));
-      if(abort.signal.aborted) return;
-      remaining=running;
-      if(remaining.length) timer=window.setTimeout(poll,1500);
-      else setWaitingRunIds([]);
-    };
-    timer=window.setTimeout(poll,1500);
-    return()=>{abort.abort();window.clearTimeout(timer);};
-  }, [waitingRunIds,auth.version]);
-
-  useEffect(() => {
-    const generation = ++revision.current, abort = new AbortController();
-    posting.current=false;setBusy(false);
-    setBasis(null); setResult(null); setPending(null); setStationBlock(null);
-    if (loading || !selected || !userId) { setReading(false); return () => abort.abort(); }
-    setMessage(''); setReading(true);
-    let savedRequest;
-    try { savedRequest = JSON.parse(sessionStorage.getItem(pendingSimulationKey(userId, selected)) || 'null'); } catch { /* unavailable storage */ }
-    if (savedRequest?.design_run_id !== selected || !/^[A-Za-z0-9_-]{1,128}$/.test(savedRequest?.request_id || '')) savedRequest = null;
-    if (savedRequest) setPending(savedRequest);
-    const readBasis = request(prefix + '/designs/' + selected, { signal: abort.signal }).then(value => {
-      if (abort.signal.aborted || generation !== revision.current) return;
-      if (!savedRequest && value.latest) setResult(simulationResult(value.latest, selected));
-      if (value.standard_error) {
-        setMessage(`建模标准暂不可用：${value.standard_error}。当前仅展示已保存的模拟批次，不能发起新检测。`);
-        return;
-      }
-      if (value.basis?.run_id !== selected || !Array.isArray(value.basis?.parameters) || !value.basis.parameters.length) throw new Error('建模标准返回无效');
-      setBasis(value.basis);
-    }).catch(error => { if (!abort.signal.aborted && generation === revision.current) setMessage(error.message); });
-    const readPending = savedRequest ? request(prefix + '/requests/' + savedRequest.request_id, { signal: abort.signal }).then(value => {
-      if (abort.signal.aborted || generation !== revision.current) return;
-      setResult(simulationResult(value, selected, savedRequest.request_id)); setPending(null);
-      try { sessionStorage.removeItem(pendingSimulationKey(userId, selected)); } catch { /* no storage */ }
-    }).catch(() => {
-      if (!abort.signal.aborted && generation === revision.current) setMessage('上次提交结果待确认，请先核对或按原请求重试。');
-    }) : Promise.resolve();
-    Promise.all([readBasis, readPending])
-      .finally(() => { if (!abort.signal.aborted && generation === revision.current) setReading(false); });
-    return () => { abort.abort(); revision.current++; };
-  }, [selected, loading, auth.version]);
-
-  async function detect() {
-    if (posting.current || !basis || !userId || capability?.enabled !== true) return;
-    const generation = revision.current, retrying = !!pending, body = pending || { design_run_id: selected, request_id: crypto.randomUUID() };
-    const storageKey = pendingSimulationKey(userId, selected);
-    posting.current = true; setBusy(true); setMessage(''); setResult(null); setPending(body); setStationBlock(null);
-    try { sessionStorage.setItem(storageKey, JSON.stringify(body)); } catch { /* current-page reconciliation remains available */ }
-    try {
-      const saved = await detectSimulation(request, body);
-      if (generation !== revision.current) return;
-      setResult(saved); setPending(null);
-      try { sessionStorage.removeItem(storageKey); } catch { /* no storage */ }
-    } catch (error) {
-      if (generation !== revision.current) return;
-      setMessage(error.message);
-      if (error.status === 409 && error.detail?.code === 'simulation_station_not_running'
-        && error.detail.execution_started === false && error.detail.station?.device_id === 'RENISHAW-EQUATOR300-001') {
-        setStationBlock(error.detail.station);
-      }
-      if (!retrying && !error.outcomeUnknown && !error.sessionChanged) {
-        setPending(null); try { sessionStorage.removeItem(storageKey); } catch { /* no storage */ }
-      }
-    } finally { if (generation === revision.current) { posting.current = false; setBusy(false); } }
+    request(prefix,{signal:abort.signal}).then(value=>{
+      if(abort.signal.aborted)return;
+      if(!Array.isArray(value.items)||value.items.some(item=>!/^MB-[a-f0-9]{32}$/.test(item.request_id)||!item.batch_id))throw new Error('实测批次列表无效');
+      setCatalog(value.items);setSelected(previous=>value.items.some(item=>item.request_id===previous)?previous:value.items[0]?.request_id||'');
+    }).catch(e=>{if(!abort.signal.aborted&&!e.sessionChanged)setError(e.message);});
+    return()=>abort.abort();
+  },[authKey,checked,refresh]);
+  useEffect(()=>{
+    setSample('');setLoaded(null);
+    if(!selected||!userId)return;
+    const abort=new AbortController();
+    request(prefix+'/'+encodeURIComponent(selected),{signal:abort.signal}).then(value=>{
+      if(!abort.signal.aborted&&selection.current===selected)setLoaded({authKey,value:verifiedMeasuredBatch(value)});
+    }).catch(e=>{if(!abort.signal.aborted&&!e.sessionChanged)setError(e.message);});
+    return()=>abort.abort();
+  },[selected,authKey]);
+  useEffect(()=>()=>{generation.current++;operation.current?.abort();},[]);
+  function selectPanel(value) {
+    setPanel(value);const url=new URL(location.href);url.searchParams.set('quality_panel',value);history.replaceState(history.state,'',url);
   }
-
-  async function reconcile() {
-    if (!pending || posting.current) return;
-    const generation = revision.current;
-    posting.current = true; setBusy(true);
+  async function importMeasurements() {
+    if(!file||!userId||operation.current)return;
+    const abort=new AbortController(),epoch=++generation.current,key=authKey;
+    operation.current=abort;setBusy(true);setError('');
     try {
-      const saved = simulationResult(await request(prefix + '/requests/' + pending.request_id), selected, pending.request_id);
-      if (generation !== revision.current) return;
-      setResult(saved); setPending(null); setMessage('');
-      try { sessionStorage.removeItem(pendingSimulationKey(userId, selected)); } catch { /* no storage */ }
-    } catch (error) { if (generation === revision.current) setMessage(error.message + '；结果仍待确认，不会自动新建一批。'); }
-    finally { if (generation === revision.current) { posting.current = false; setBusy(false); } }
+      if(file.size>4*1024*1024)throw new Error('测量文件不能超过 4 MB');
+      const text=await file.text();
+      if(generation.current!==epoch||context.current!==key)return;
+      const values=parseMeasurementCsv(text,file.name,planComplete);
+      const value=verifiedMeasuredBatch(await request(prefix,{method:'POST',body:JSON.stringify(values),signal:abort.signal}));
+      if(generation.current!==epoch||context.current!==key)return;
+      setSelected(value.request_id);setLoaded({authKey:key,value});setSample('');setJointRevision(n=>n+1);
+      setRefresh(n=>n+1);setError('');
+    }catch(e){if(generation.current===epoch&&context.current===key&&!abort.signal.aborted&&!e.sessionChanged)setError(e.message);}
+    finally{if(generation.current===epoch&&context.current===key){setBusy(false);operation.current=null;}}
   }
-
-  const part = parts.find(p => p.run_id === selected), counts = result?.counts || {}, trace = result?.traceability || {};
-  const pendingParameters = (result?.basis?.parameters || []).filter(p => p.comparable === false);
-  const itemSummary=pendingParameters.length ? simulationItemSummary(result) : null;
-  const displayedCounts=itemSummary?.counts || counts, displayedRates=itemSummary?.rates || result?.rates;
+  function template() {
+    const url=URL.createObjectURL(new Blob([measurementTemplate],{type:'text/csv;charset=utf-8'}));
+    const a=document.createElement('a');a.href=url;a.download='批次实测记录_空白模板.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  const panels=[['vision','视觉检测','上传实拍图片，定位缺陷'],['dimensions','尺寸检测','导入实测记录，按验收范围判断']];
   return <section className="workspace-view active quality-workspace" aria-label="质检系统">
-    <header className="module-hero quality-heading"><div><span className="quality-kicker">QUALITY WORKSPACE</span><h1>质量检测</h1><p>尺寸与视觉双通道检测，按问题位置、原因类别和处置方式查看结果。</p></div>
-    </header>
-    <div className="quality-tabs" role="tablist" aria-label="质检工作区">{panels.map(([id, title, description], index) => <button key={id} type="button" role="tab"
-      id={`quality-tab-${id}`} aria-label={title} aria-controls={`quality-panel-${id}`} aria-selected={panel === id} tabIndex={panel === id ? 0 : -1}
-      onClick={() => selectPanel(id)} onKeyDown={event => {
-        const next = event.key === 'ArrowRight' ? (index + 1) % panels.length : event.key === 'ArrowLeft' ? (index + panels.length - 1) % panels.length : event.key === 'Home' ? 0 : event.key === 'End' ? panels.length - 1 : -1;
-        if (next >= 0) { event.preventDefault(); selectPanel(panels[next][0]); document.getElementById(`quality-tab-${panels[next][0]}`).focus(); }
-      }}><span>{String(index + 1).padStart(2, '0')}</span><div><strong>{title}</strong><small>{description}</small></div></button>)}</div>
-    <div role="tabpanel" id="quality-panel-dimensions" aria-labelledby="quality-tab-dimensions" hidden={panel !== 'dimensions'}>
-    <div className="quality-dimension-grid">
-    <section className="quality-part-panel" aria-labelledby="quality-part-heading">
-      <h2 id="quality-part-heading">检测零件</h2>
-      <dl className="quality-part-fields">
-        <div><dt><label htmlFor="quality-part-name">零件名称</label></dt><dd><select id="quality-part-name" value={selected}
-          disabled={loading || busy || !!pending || !parts.length} onChange={e => {
-            revision.current++; setBasis(null); setResult(null); setMessage(''); setFollowCurrent(false);setNewVersionNotice(false);setSelected(e.target.value);
-          }}>
-          {!parts.length && <option value="">{loading ? '正在读取零件…' : '暂无已完成零件'}</option>}
-          {parts.map(item => <option key={item.run_id} value={item.run_id}>{parts.filter(other => other.name === item.name).length > 1
-            ? `${item.name}（${item.number} · ${item.version ? `版本 ${item.version}` : item.run_id.slice(3, 11)}）` : item.name}</option>)}
-        </select></dd></div><div><dt>零件编号</dt><dd>{part?.number || '—'}</dd></div>
-      </dl>
-      <label className="quality-standard-note"><input type="checkbox" checked={followCurrent} disabled={busy||!!pending} onChange={e=>{setFollowCurrent(e.target.checked);if(e.target.checked){const latest=mergePublishedParts([],publishedCatalog.current)[0]?.run_id||qualitySource().currentRunId;if(latest&&latest!==selected){revision.current++;setBasis(null);setResult(null);setPending(null);setMessage('');setSelected(latest);}setNewVersionNotice(false);}}}/>跟随最新发布版本</label>
-      {newVersionNotice&&<p role="status">发现新发布版本；当前保留你选择的历史版本。</p>}
-      <p className="quality-standard-note">模拟比对仪：RENISHAW-EQUATOR300-001 · 标准来自生产建模已保存版本</p>
-      {waitingRunIds.length>0 && <p className="quality-standard-note" role="status">新模型正在生成，完成后更新标准；点击开始检测创建新批次。</p>}
-      {basis && <details className="quality-standard-summary"><summary>建模标准参数（{basis.parameters.length} 项，只读）</summary>
-        <ul>{basis.parameters.map(p => <li key={p.key}>{p.name}：{p.expected} {p.unit}
-          {p.comparable === false ? ' · 待判定' : p.comparable === true ? ' · 可比对' : ''}</li>)}</ul></details>}
-      {!basis && part?.spec && <details className="quality-standard-summary"><summary>生产建模参数（只读）</summary>
-        <pre className="quality-model-spec">{JSON.stringify(part.spec, null, 2)}</pre></details>}
-      {!userId && checked && <p className="quality-standard-note">请先通过顶部“注册 / 登录”登录维修小组账号，再开始模拟检测。</p>}
-      <div className="quality-detection-actions">
-        {pending && !busy && <button className="button" type="button" onClick={reconcile}>核对结果</button>}
-        <button className="button primary" type="button" disabled={loading || reading || !basis || !userId || capability?.enabled !== true || busy}
-          onClick={()=>detect()}>{busy ? '正在模拟检测…' : pending ? '按原请求重试' : '开始检测'}</button>
+    <header className="module-hero quality-heading"><div><span className="quality-kicker">质量管理 / 批次质检</span><h1>质量检测<span className="quality-title-marker" aria-hidden="true">工作台</span></h1><p>按零件编号关联实测尺寸与视觉图片，汇总本批合格率、不合格类型与处理方式。</p></div>
+      <div className="quality-current-part"><QualityIcon name="box" size={22}/><div><span>当前批次</span><strong>{batch?.batch_id||'等待实测记录'}</strong></div></div></header>
+    <div className="quality-batch-toolbar"><label htmlFor="measured-batch">检测批次</label><select id="measured-batch" value={selected} disabled={!userId||busy||!catalog.length} onChange={e=>{setSelected(e.target.value);setError('');}}>
+      {!catalog.length&&<option value="">{!checked?'正在读取…':'暂无实测批次'}</option>}{catalog.map(row=><option value={row.request_id} key={row.request_id}>{row.batch_id} · {row.part_name||row.design_run_id}</option>)}</select>
+      <button className="button" disabled={!userId||busy} onClick={()=>setRefresh(n=>n+1)}>刷新批次</button><button className="button" onClick={()=>selectPanel('dimensions')}>导入实测记录</button></div>
+    {error&&<p className="quality-import-error" role="alert">{error}</p>}
+    {!userId&&checked&&<p className="quality-standard-note">请先通过顶部“注册 / 登录”登录账号，再保存实测记录和图片检测结果。</p>}
+    <JointQualityPanel auth={auth} batch={batch} sampleId={selectedPart?.part_id||''} onSampleChange={setSample} revision={jointRevision}
+      onOpenVision={()=>selectPanel('vision')} onOpenDimensions={()=>selectPanel('dimensions')}>
+      <div className="quality-tabs" role="tablist" aria-label="质检工作区">{panels.map(([id,title,description],index)=><button key={id} type="button" role="tab" id={'quality-tab-'+id} aria-label={title} aria-controls={'quality-panel-'+id} aria-selected={panel===id} tabIndex={panel===id?0:-1} onClick={()=>selectPanel(id)} onKeyDown={e=>{
+        const next=e.key==='ArrowRight'?(index+1)%2:e.key==='ArrowLeft'?(index+1)%2:e.key==='Home'?0:e.key==='End'?1:-1;
+        if(next>=0){e.preventDefault();selectPanel(panels[next][0]);document.getElementById('quality-tab-'+panels[next][0]).focus();}
+      }}><span><QualityIcon name={id==='vision'?'camera':'ruler'} size={18}/></span><div><strong>{title}</strong><small>{description}</small></div></button>)}</div>
+      <div role="tabpanel" id="quality-panel-dimensions" aria-labelledby="quality-tab-dimensions" hidden={panel!=='dimensions'}>
+        <section className="quality-measurement-import" aria-labelledby="measurement-heading"><header><div><h2 id="measurement-heading">批次尺寸检测</h2><p>读取实际测量记录，逐项核对图纸或检验标准中的验收上下限。</p></div><QualityIcon name="ruler"/></header>
+          <label className="quality-measurement-file">尺寸测量记录（CSV）<input key={authKey} aria-label="尺寸测量记录（CSV）" type="file" accept=".csv,text/csv" disabled={!userId||busy} onChange={e=>{setFile(e.target.files[0]||null);setPlanComplete(false);setError('');}}/></label>
+          <div className="quality-import-guide"><button className="button" onClick={template}>下载空白模板</button><p>每行填写一件零件的一个检验项目。实测值为空的项目保持待检测；同一项目的验收范围须一致。</p></div>
+          <label className="quality-plan-check"><input type="checkbox" checked={planComplete} disabled={!file||busy} onChange={e=>setPlanComplete(e.target.checked)}/>本文件已包含该图纸版本全部必检尺寸项目和本批全部零件编号</label>
+          <p className="quality-small-note">未确认检验清单完整时，已超差项仍记为不合格，其余零件保持待判定。</p>
+          <button className="button primary" disabled={!file||!userId||busy} onClick={importMeasurements}>{busy?'正在核验实测记录…':'核验并保存本批尺寸'}</button>
+          <details className="quality-secondary-details"><summary>记录格式与复检</summary><p>使用 UTF-8 CSV。下限与上限填写允许的实际值，单边公差可只填一侧；测量时间示例格式：2026-10-26T08:30:00+08:00。填写实际图纸版本与标准来源。</p><p>同一文件重复导入不会增加零件数。复检后导入本批完整记录，更新后的尺寸记录需要重新关联视觉图片。</p></details>
+        </section>
+        {batch&&<section className="quality-measurement-result" aria-labelledby="measured-result-heading"><header><h2 id="measured-result-heading">尺寸核验记录</h2><span>{batch.samples.length} 件 · {batch.basis.parameters.length} 项 / 件</span></header>
+          <p>图纸版本：{batch.design_run_id} · 标准：{batch.standard_reference}</p><p>记录：{batch.measurement_reference} · 测量时间：{batch.measured_at}</p>
+          {!batch.plan_complete&&<p className="quality-import-error">尚未确认检验清单完整，不能判定整件尺寸通过。</p>}
+          {selectedPart?<><h3>零件 {selectedPart.serial_number}</h3><div className="joint-table"><table><thead><tr><th>问题位置 / 检验项目</th><th>验收范围</th><th>实测值</th><th>结果</th></tr></thead><tbody>{selectedPart.comparison.items.map(row=><tr key={row.key}><td>{row.name}</td><td>{row.lower??'无下限'} ～ {row.upper??'无上限'} {row.unit}</td><td>{row.actual??'未测量'} {row.actual!=null?row.actual_unit:''}</td><td>{statusLabel[row.status]}{row.reason&&<small>{row.reason}</small>}</td></tr>)}</tbody></table></div></>:<p>在上方选择零件编号，查看逐项测量值、超差位置与缺测项。</p>}
+        </section>}
       </div>
-    </section>
-    <section className="quality-result-panel" aria-labelledby="quality-result-heading">
-      <header className="quality-result-header"><h2 id="quality-result-heading">检测结果</h2><span className="quality-result-status">{busy ? '正在模拟检测' : pending ? '结果待确认' : statusLabel[result?.status] || '待检测'}</span></header>
-      <p className="quality-result-message" role="status">{busy ? '正在读取模拟工位并比对建模参数，保存本次检测结果…' : message || result?.message
-        || (loading || reading ? '正在读取零件和建模标准…' : !part ? '请先选择生产建模中的已完成零件。'
-          : result ? `模拟检测已保存：共 ${counts.total || 0} 件，${counts.determinate || 0} 件可判定，${counts.pending || 0} 件待判定。`
-            : '点击开始检测，自动生成并比对 10 件模拟测量样本。')}</p>
-      {capability && !capability.enabled && <p className="quality-standard-note">{capability.reason || '模拟检测未启用'}</p>}
-      {stationBlock && <section className="quality-location-card" aria-labelledby="quality-station-block-heading">
-        <h3 id="quality-station-block-heading">检测工位未就绪</h3>
-        <p>本次读取的比对仪状态：设备{stationStateLabel(stationBlock.device_status)} · 监控{stationStateLabel(stationBlock.monitor_status)} · 控制{stationStateLabel(stationBlock.control_state)}。</p>
-        <p>{stationBlock.control_reason ? `停机原因：${stationBlock.control_reason}` : '工位未提供停机原因，请先核查工位状态和相关维修记录。'}</p>
-        <p>如有待处理工单，请完成核查和维修，再在工单中申请复机；没有关联工单时，请先核查停机原因。比对仪恢复运行后，返回本页重新开始检测。</p>
-        <a className="button" href="/?view=workorder">前往工单系统核查／申请复机</a>
-      </section>}
-      <dl className="quality-rate-fields">
-        <div><dt>{itemSummary?'已检测项通过率':'模拟合格率（良品率／优良率）'}</dt><dd>{formatSimulationRate(displayedRates?.qualified)}</dd>{result && <small>{displayedCounts.qualified ?? '—'} / {displayedCounts.determinate ?? '—'} {itemSummary?'项':'件'}</small>}</div>
-        <div><dt>{itemSummary?'已检测项不通过率':'模拟不良率'}</dt><dd>{formatSimulationRate(displayedRates?.defect)}</dd>{result && <small>{displayedCounts.unqualified ?? '—'} / {displayedCounts.determinate ?? '—'} {itemSummary?'项':'件'}</small>}</div>
-        <div><dt>{itemSummary?'参数检测覆盖率':'模拟检测覆盖率'}</dt><dd>{formatSimulationRate(displayedRates?.coverage)}</dd>{result && <small>{displayedCounts.determinate ?? '—'} / {displayedCounts.total ?? '—'} {itemSummary?'项':'件'}</small>}</div>
-      </dl>
-      {itemSummary && <p className="quality-standard-note">上述比例按检测项统计，不是整件合格率。已判定 {displayedCounts.determinate} 项，待判定 {displayedCounts.pending} 项。</p>}
-      {result?.batch_id && <p className="quality-batch-id">本次批次：{result.batch_id}</p>}
-      {pendingParameters.length > 0 && <section aria-labelledby="quality-pending-heading">
-        <h3 id="quality-pending-heading">待判定项目</h3>
-        <p className="quality-problem-note">部分成品特征尚未覆盖完整比对，已保留设计参数。整件保持待判定，不计入合格率分母。</p>
-        <details className="quality-standard-summary"><summary>查看 {pendingParameters.length} 项待判定参数</summary>
-          <ul>{pendingParameters.map(p => <li key={p.key}>{p.name}：{p.expected} {p.unit} · {p.reason || '尚未覆盖完整成品特征比对'}</li>)}</ul>
-        </details>
-      </section>}
-      {result?.issues?.length ? <>
-        <p className="quality-problem-note">模拟生产关联：{trace.production_device_name || '未知机器'} · {trace.production_device_id || '未知编号'} · {displayLineName(trace.line_name)}。根因尚未确认，关联不等于机器已发生故障。</p>
-        <details className="quality-standard-summary"><summary>查看尺寸比对原始明细（{result.issues.length} 项）</summary>
-        <ul className="quality-issue-list">{result.issues.map((issue, index) => <li key={`${issue.part_id}:${issue.key}:${index}`}><strong>{issue.name}</strong>
-          <p>设计值 {issue.expected} {issue.unit} · 模拟测量值 {issue.actual} {issue.unit} · 差值 {issue.difference ?? '—'} {issue.unit}</p>
-          <small>样本：{issue.part_id}</small></li>)}</ul>
-        </details>
-      </> : <p className="quality-problem-note">{result && result.status !== 'review'
-        ? counts.determinate > 0 ? '本次已完成样本未发现设计参数不一致。' : '已比对项目未发现不一致；仍有待判定项目，不能判定整件合格。'
-        : '问题项：尚无可核实的检测结果。'}</p>}
-      <QualityAssessment result={result} kind="dimensions" />
-    </section>
-    </div>
-    </div>
-    <div role="tabpanel" id="quality-panel-vision" aria-labelledby="quality-tab-vision" hidden={panel !== 'vision'}>
-    <QualityVisionWorkspace auth={auth} checked={checked} part={part} />
-    <details className="quality-history" open={new URLSearchParams(window.location.search).has('production_job_id') || undefined}
-      onToggle={event => { if (event.currentTarget.open) setHistoryReady(true); }}><summary>查看历史流程验证</summary>{historyReady && <ProductionVisionValidation auth={auth} checked={checked} />}</details>
-    </div>
+      <div role="tabpanel" id="quality-panel-vision" aria-labelledby="quality-tab-vision" hidden={panel!=='vision'}>
+        <QualityVisionWorkspace auth={auth} checked={checked} part={part} jointTarget={jointTarget} requireBatchSample={Boolean(batch)} showReferenceTools={false} onInspection={()=>setJointRevision(n=>n+1)}/>
+      </div>
+    </JointQualityPanel>
   </section>;
 }

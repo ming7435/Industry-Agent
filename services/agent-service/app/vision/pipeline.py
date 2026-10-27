@@ -11,8 +11,14 @@ class VisionPipelineService:
     def __init__(self, vision):
         self.vision = vision
 
-    def detect(self, owner, values, *, source_context=None):
+    def detect(self, owner, values, *, source_context=None, joint_identity=None):
         with self.vision._task():
+            if joint_identity is not None and joint_identity.get('scope') == 'measured_batch':
+                # A new physical-part inspection supersedes the earlier image even
+                # if feature extraction fails. An absent artifact is explicitly pending.
+                from app.vision.joint import JointQualityService
+                JointQualityService(self.vision).record_inspection(owner, {
+                    'joint_identity': joint_identity, 'inspection_id': 'VI-' + uuid4().hex})
             shared = {k: values[k] for k in ('image', 'filename', 'part_id', 'quality_part_id',
                        'image_source', 'threshold', 'confidence', 'iou') if k in values}
             pc = self.vision._detect_unlocked(owner, {**shared, 'algorithm': 'patchcore',
@@ -47,9 +53,17 @@ class VisionPipelineService:
                                       'iou': values['iou']})
             from app.agents.quality.agent import QualityAgent
             record['quality_assessment'] = QualityAgent.assess_inspection(record, kind='vision')
+            if joint_identity is not None:
+                record['joint_identity'] = deepcopy(joint_identity)
             path = self.vision._owner_root(owner) / 'inspections' / (inspection_id + '.json')
             publish = lambda: self.vision._atomic_json(path, record)
-            if record.get('quality_part_id'):
+            if joint_identity is not None:
+                # Publish the pointer first: a failed artifact write leaves the
+                # sample pending verification instead of retaining a stale pass.
+                from app.vision.joint import JointQualityService
+                JointQualityService(self.vision).record_inspection(owner, record)
+                publish()
+            elif record.get('quality_part_id'):
                 # Each stage invalidates stale approval; the final record is the review evidence.
                 CombinedQualityService(self.vision).record_inspection(owner, record, publish=publish)
             else:

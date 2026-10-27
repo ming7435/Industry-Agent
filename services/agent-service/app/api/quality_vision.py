@@ -16,6 +16,7 @@ from app.vision.service import VisionService, VisionServiceError
 from app.vision.auto_inbox import VisionAutoInbox
 from app.vision.pipeline import VisionPipelineService
 from app.vision.combined import CombinedQualityService
+from app.vision.measured import MeasuredBatchService, MeasuredBatchRequest
 from app.vision.preprocessing import parse_patchcore_config
 from app.vision.production import ProductionVisionService, JOB_PATTERN, REQUEST_PATTERN
 from app.production_simulation.backend import VirtualProductionBackend
@@ -99,6 +100,16 @@ class PipelineDetectRequest(BaseModel):
     threshold: float = Field(gt=0)
     confidence: float = Field(default=0.25, gt=0, le=1)
     iou: float = Field(default=0.45, gt=0, le=1)
+    dimension_request_id: str = Field(default='', max_length=128, pattern=r'^[A-Za-z0-9_-]*$')
+    dimension_sample_id: str = Field(default='', max_length=64, pattern=r'^((SIM-PART|MP)-[a-f0-9]{32})?$')
+
+    @model_validator(mode='after')
+    def joint_sample(self):
+        if bool(self.dimension_request_id) != bool(self.dimension_sample_id):
+            raise ValueError('关联检测需要尺寸请求和样本编号')
+        if self.dimension_request_id and (self.quality_part_id or self.image_source != 'upload'):
+            raise ValueError('逐件关联只支持该零件的上传图片，不可混入其他登记或参考图')
+        return self
 
 
 class PartSegmentationRequest(BaseModel):
@@ -169,8 +180,13 @@ async def _body(request, schema):
         payload.extend(chunk)
     try:
         return schema.model_validate(json.loads(payload)).model_dump(mode='json')
-    except (ValidationError, ValueError, TypeError, UnicodeError):
+    except (ValidationError, ValueError, TypeError, UnicodeError) as error:
         # Validation errors may contain submitted image bytes; never echo them.
+        if schema is MeasuredBatchRequest:
+            detail = '实测记录格式无效，请核对批次、编号、验收范围、单位和含时区的测量时间'
+            if isinstance(error, ValidationError):
+                detail += '：' + '；'.join('.'.join(map(str, e['loc'])) + ' ' + e['msg'] for e in error.errors(include_input=False)[:4])
+            raise HTTPException(422, detail) from None
         raise HTTPException(422, '请求参数无效，请检查图片、模型、训练数量和检测阈值') from None
 
 
@@ -178,6 +194,7 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
     router = APIRouter(prefix='/api/quality/vision', tags=['quality-vision'])
     vision = service or VisionService()
     combined = CombinedQualityService(vision)
+    measured = MeasuredBatchService(vision)
     production = ProductionVisionService(vision)
     inbox_dir = os.getenv('QUALITY_VISION_AUTO_INBOX_DIR', '').strip()
     if auto_inbox is None:
@@ -245,9 +262,42 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
 
     @router.post('/pipeline/detect', dependencies=[Depends(require_write_auth)])
     async def detect_pipeline(request: Request):
-        owner = await run_in_threadpool(actor, request)
+        user, backend = await run_in_threadpool(context, request)
+        owner = user['user_id']
         values = await _body(request, PipelineDetectRequest)
-        return await run_in_threadpool(call, VisionPipelineService(vision).detect, owner, values)
+        def execute():
+            identity = None
+            if values.get('dimension_request_id'):
+                from app.vision.joint import saved_batch, sample_identity
+                batch = (measured.get(owner, values['dimension_request_id']) if values['dimension_request_id'].startswith('MB-')
+                         else saved_batch(backend, owner, values['dimension_request_id']))
+                identity = sample_identity(batch, values['dimension_sample_id'])
+                if values['part_id'] != batch['design_run_id']:
+                    raise VisionServiceError(409, '图片关联设计版本与尺寸批次不一致')
+            return VisionPipelineService(vision).detect(owner, values, joint_identity=identity)
+        return await run_in_threadpool(call, execute)
+
+    @router.get('/joint/{dimension_request_id}')
+    def joint_report(dimension_request_id: str, request: Request):
+        from app.vision.joint import JointQualityService, saved_batch
+        user, backend = context(request)
+        return call(lambda: JointQualityService(vision).report(user['user_id'],
+            measured.get(user['user_id'], dimension_request_id) if dimension_request_id.startswith('MB-')
+            else saved_batch(backend, user['user_id'], dimension_request_id)))
+
+    @router.get('/batches')
+    def measured_batches(request: Request):
+        return call(measured.list_batches, actor(request))
+
+    @router.get('/batches/{request_id}')
+    def measured_batch(request_id: str, request: Request):
+        return call(measured.get, actor(request), request_id)
+
+    @router.post('/batches', dependencies=[Depends(require_write_auth)])
+    async def import_measurements(request: Request):
+        owner = await run_in_threadpool(actor, request)
+        values = await _body(request, MeasuredBatchRequest)
+        return await run_in_threadpool(call, measured.save, owner, values)
 
     @router.post('/detect', dependencies=[Depends(require_write_auth)])
     async def detect(request: Request):
@@ -270,6 +320,14 @@ def build_quality_vision_router(require_write_auth, *, backend_factory=BackendSe
     @router.get('/inspections/{inspection_id}')
     def inspection(inspection_id: str, request: Request):
         return call(vision.get_inspection, actor(request), inspection_id)
+
+    @router.get('/statistics')
+    def statistics(request: Request, image_source: Literal['upload', 'public_gear_reference'] = 'upload', part_id: str = ''):
+        from app.vision.statistics import inspection_statistics
+        owner = actor(request)
+        if len(part_id) > 256:
+            raise HTTPException(422, '零件编号过长')
+        return call(lambda: inspection_statistics(vision, owner, image_source=image_source, part_id=part_id))
 
     @router.get('/combined/parts')
     def combined_parts(request: Request, scope: Literal['production', 'validation'] = 'validation',

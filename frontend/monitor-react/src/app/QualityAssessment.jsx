@@ -17,9 +17,9 @@ export default function QualityAssessment({ result, kind }) {
     {!valid ? <p className="quality-assessment-note">当前记录没有匹配的 Agent 分类结果，请刷新记录或重新检测。</p> : <>
       <p className="quality-assessment-note">{value.scope === 'simulation' ? '模拟尺寸批次' : value.scope === 'reference_image' ? '公开参考图片' : '上传图片'} · 处置待确认，尚未执行。
         {kind === 'dimensions' ? ' 视觉检测请切换到“视觉检测”页签。' : ' 本图结果不代表尺寸已合格。'}</p>
-      <div className="quality-cause-grid">{value.cause_summary.map(item => <div key={item.category}>
+      <details className="quality-cause-disclosure"><summary>查看归因核查状态</summary><div className="quality-cause-grid">{value.cause_summary.map(item => <div key={item.category}>
         <span>{item.label}</span><strong>{item.status}</strong><small>{item.evidence}</small>
-      </div>)}</div>
+      </div>)}</div></details>
       {value.issues.length ? <div className="quality-classification-list">{value.issues.map((issue, index) => <article className="quality-classification-card"
         data-issue-category={issue.category} key={`${issue.part_id}:${issue.location}:${index}`}>
         <div className="quality-classification-evidence"><span className="quality-category">{issue.category_label}</span><h4>{issue.location}</h4>
